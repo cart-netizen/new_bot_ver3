@@ -1,0 +1,301 @@
+"""
+Менеджер стакана ордеров.
+Управляет локальным состоянием стакана для каждой торговой пары.
+"""
+
+from typing import Dict, List, Tuple, Optional
+from collections import OrderedDict
+
+from core.logger import get_logger
+from core.exceptions import OrderBookError, OrderBookSyncError
+from models.orderbook import OrderBookSnapshot, OrderBookDelta
+from utils.helpers import get_timestamp_ms
+
+logger = get_logger(__name__)
+
+
+class OrderBookManager:
+  """Менеджер для управления состоянием стакана ордеров."""
+
+  def __init__(self, symbol: str):
+    """
+    Инициализация менеджера стакана.
+
+    Args:
+        symbol: Торговая пара
+    """
+    self.symbol = symbol
+
+    # Хранилище уровней стакана
+    self.bids: OrderedDict[float, float] = OrderedDict()  # {price: quantity}
+    self.asks: OrderedDict[float, float] = OrderedDict()  # {price: quantity}
+
+    # Метаданные
+    self.last_update_id: Optional[int] = None
+    self.last_sequence_id: Optional[int] = None
+    self.last_update_timestamp: Optional[int] = None
+    self.snapshot_received: bool = False
+
+    # Счетчики
+    self.snapshot_count: int = 0
+    self.delta_count: int = 0
+
+    logger.info(f"Инициализирован OrderBook менеджер для {symbol}")
+
+  def apply_snapshot(self, data: Dict) -> OrderBookSnapshot:
+    """
+    Применение snapshot (полного снимка) стакана.
+
+    Args:
+        data: Данные snapshot от WebSocket
+
+    Returns:
+        OrderBookSnapshot: Объект снимка стакана
+    """
+    try:
+      # Очищаем текущее состояние
+      self.bids.clear()
+      self.asks.clear()
+
+      # Применяем новые данные
+      bids_list = []
+      asks_list = []
+
+      for bid_data in data.get("b", []):
+        price = float(bid_data[0])
+        quantity = float(bid_data[1])
+        self.bids[price] = quantity
+        bids_list.append((price, quantity))
+
+      for ask_data in data.get("a", []):
+        price = float(ask_data[0])
+        quantity = float(ask_data[1])
+        self.asks[price] = quantity
+        asks_list.append((price, quantity))
+
+      # Сортируем
+      self.bids = OrderedDict(sorted(self.bids.items(), reverse=True))
+      self.asks = OrderedDict(sorted(self.asks.items()))
+
+      # Обновляем метаданные
+      self.last_update_id = data.get("u")
+      self.last_sequence_id = data.get("seq")
+      self.last_update_timestamp = data.get("ts") or get_timestamp_ms()
+      self.snapshot_received = True
+      self.snapshot_count += 1
+
+      logger.debug(
+        f"{self.symbol} | Применен snapshot: "
+        f"{len(self.bids)} bids, {len(self.asks)} asks"
+      )
+
+      # Создаем объект snapshot
+      snapshot = OrderBookSnapshot(
+        symbol=self.symbol,
+        bids=bids_list,
+        asks=asks_list,
+        timestamp=self.last_update_timestamp,
+        update_id=self.last_update_id,
+        sequence_id=self.last_sequence_id
+      )
+
+      return snapshot
+
+    except Exception as e:
+      logger.error(f"{self.symbol} | Ошибка применения snapshot: {e}")
+      raise OrderBookError(f"Failed to apply snapshot: {str(e)}")
+
+  def apply_delta(self, data: Dict) -> OrderBookDelta:
+    """
+    Применение delta (инкрементального обновления) стакана.
+
+    Args:
+        data: Данные delta от WebSocket
+
+    Returns:
+        OrderBookDelta: Объект дельта-обновления
+    """
+    if not self.snapshot_received:
+      logger.warning(f"{self.symbol} | Delta получена до snapshot, игнорируем")
+      raise OrderBookSyncError("Delta received before snapshot")
+
+    try:
+      bids_update = []
+      asks_update = []
+
+      # Обновляем bids
+      for bid_data in data.get("b", []):
+        price = float(bid_data[0])
+        quantity = float(bid_data[1])
+
+        if quantity == 0:
+          # Удаляем уровень
+          self.bids.pop(price, None)
+        else:
+          # Добавляем или обновляем уровень
+          self.bids[price] = quantity
+
+        bids_update.append((price, quantity))
+
+      # Обновляем asks
+      for ask_data in data.get("a", []):
+        price = float(ask_data[0])
+        quantity = float(ask_data[1])
+
+        if quantity == 0:
+          # Удаляем уровень
+          self.asks.pop(price, None)
+        else:
+          # Добавляем или обновляем уровень
+          self.asks[price] = quantity
+
+        asks_update.append((price, quantity))
+
+      # Пересортировываем для сохранения порядка
+      self.bids = OrderedDict(sorted(self.bids.items(), reverse=True))
+      self.asks = OrderedDict(sorted(self.asks.items()))
+
+      # Обновляем метаданные
+      self.last_update_id = data.get("u")
+      self.last_sequence_id = data.get("seq")
+      self.last_update_timestamp = data.get("ts") or get_timestamp_ms()
+      self.delta_count += 1
+
+      logger.debug(
+        f"{self.symbol} | Применена delta: "
+        f"{len(bids_update)} bids, {len(asks_update)} asks"
+      )
+
+      # Создаем объект delta
+      delta = OrderBookDelta(
+        symbol=self.symbol,
+        bids_update=bids_update,
+        asks_update=asks_update,
+        timestamp=self.last_update_timestamp,
+        update_id=self.last_update_id,
+        sequence_id=self.last_sequence_id
+      )
+
+      return delta
+
+    except Exception as e:
+      logger.error(f"{self.symbol} | Ошибка применения delta: {e}")
+      raise OrderBookError(f"Failed to apply delta: {str(e)}")
+
+  def get_snapshot(self) -> Optional[OrderBookSnapshot]:
+    """
+    Получение текущего состояния стакана.
+
+    Returns:
+        OrderBookSnapshot: Снимок текущего состояния или None
+    """
+    if not self.snapshot_received:
+      return None
+
+    return OrderBookSnapshot(
+      symbol=self.symbol,
+      bids=list(self.bids.items()),
+      asks=list(self.asks.items()),
+      timestamp=self.last_update_timestamp,
+      update_id=self.last_update_id,
+      sequence_id=self.last_sequence_id
+    )
+
+  def get_best_bid(self) -> Optional[Tuple[float, float]]:
+    """
+    Получение лучшего bid.
+
+    Returns:
+        Tuple[float, float]: (price, quantity) или None
+    """
+    if self.bids:
+      price = next(iter(self.bids))
+      return (price, self.bids[price])
+    return None
+
+  def get_best_ask(self) -> Optional[Tuple[float, float]]:
+    """
+    Получение лучшего ask.
+
+    Returns:
+        Tuple[float, float]: (price, quantity) или None
+    """
+    if self.asks:
+      price = next(iter(self.asks))
+      return (price, self.asks[price])
+    return None
+
+  def get_spread(self) -> Optional[float]:
+    """
+    Получение спреда.
+
+    Returns:
+        float: Спред или None
+    """
+    best_bid = self.get_best_bid()
+    best_ask = self.get_best_ask()
+
+    if best_bid and best_ask:
+      return best_ask[0] - best_bid[0]
+    return None
+
+  def get_mid_price(self) -> Optional[float]:
+    """
+    Получение средней цены.
+
+    Returns:
+        float: Средняя цена или None
+    """
+    best_bid = self.get_best_bid()
+    best_ask = self.get_best_ask()
+
+    if best_bid and best_ask:
+      return (best_bid[0] + best_ask[0]) / 2
+    return None
+
+  def get_depth_volume(self, side: str, levels: int = 10) -> float:
+    """
+    Получение суммарного объема на заданной глубине.
+
+    Args:
+        side: Сторона ("bid" или "ask")
+        levels: Количество уровней
+
+    Returns:
+        float: Суммарный объем
+    """
+    if side == "bid":
+      items = list(self.bids.items())[:levels]
+    else:
+      items = list(self.asks.items())[:levels]
+
+    return sum(quantity for _, quantity in items)
+
+  def get_stats(self) -> Dict:
+    """
+    Получение статистики стакана.
+
+    Returns:
+        Dict: Статистика
+    """
+    best_bid = self.get_best_bid()
+    best_ask = self.get_best_ask()
+
+    return {
+      "symbol": self.symbol,
+      "snapshot_received": self.snapshot_received,
+      "snapshot_count": self.snapshot_count,
+      "delta_count": self.delta_count,
+      "levels": {
+        "bids": len(self.bids),
+        "asks": len(self.asks),
+      },
+      "best_prices": {
+        "bid": best_bid[0] if best_bid else None,
+        "ask": best_ask[0] if best_ask else None,
+      },
+      "spread": self.get_spread(),
+      "mid_price": self.get_mid_price(),
+      "last_update_timestamp": self.last_update_timestamp,
+      "last_update_id": self.last_update_id,
+    }
