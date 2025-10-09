@@ -1,7 +1,12 @@
-import React from 'react';
 import { cn } from '../../utils/helpers.ts';
 
-export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+interface CardProps {
+  className?: string;
+  children?: React.ReactNode;
+  onClick?: () => void;
+}
+
+export function Card({ className, children, ...props }: CardProps) {
   return (
     <div
       className={cn(
@@ -9,6 +14,8 @@ export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElemen
         className
       )}
       {...props}
-    />
+    >
+      {children}
+    </div>
   );
 }

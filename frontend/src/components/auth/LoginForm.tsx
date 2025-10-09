@@ -1,3 +1,4 @@
+import type { FormEvent } from 'react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card } from '../ui/Card.tsx';
@@ -11,13 +12,13 @@ export function LoginForm() {
   const { login, isLoading } = useAuthStore();
   const navigate = useNavigate();
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     try {
       await login({ password });
       toast.success('Вход выполнен');
       navigate('/dashboard');
-    } catch {
+    } catch  {
       toast.error('Неверный пароль');
     }
   };

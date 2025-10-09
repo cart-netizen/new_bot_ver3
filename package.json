@@ -1,6 +1,10 @@
 {
   "dependencies": {
     "autoprefixer": "^10.4.21",
-    "tailwindcss": "^4.1.14"
+    "postcss": "^8.5.6",
+    "recharts": "^3.2.1"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.1"
   }
 }

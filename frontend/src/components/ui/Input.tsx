@@ -1,7 +1,15 @@
-import React from 'react';
 import { cn } from '../../utils/helpers.ts';
 
-export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
+interface InputProps {
+  className?: string;
+  type?: string;
+  value?: string;
+  onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  placeholder?: string;
+  required?: boolean;
+}
+
+export function Input({ className, ...props }: InputProps) {
   return (
     <input
       className={cn(
