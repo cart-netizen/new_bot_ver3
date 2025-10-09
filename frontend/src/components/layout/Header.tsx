@@ -1,8 +1,8 @@
 import { LogOut } from 'lucide-react';
-import { Button } from '../ui/Button.tsx';
-import { useAuthStore } from '../../store/authStore.ts';
+import { Button } from '../ui/Button';
+import { useAuthStore } from '../../store/authStore';
 import { useNavigate } from 'react-router-dom';
-import { useWebSocket } from '../../hooks/useWebSocket.ts';
+import { useWebSocket } from '../../hooks/useWebSocket';
 
 export function Header() {
   const logout = useAuthStore((state) => state.logout);

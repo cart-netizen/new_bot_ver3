@@ -1,6 +1,6 @@
 import apiClient from './client';
-import { API_ENDPOINTS } from '../config/app.config.ts';
-import type { ConfigResponse } from '../types/api.types.ts';
+import { API_ENDPOINTS } from '../config/app.config';
+import type { ConfigResponse } from '../types/api.types';
 
 export const botApi = {
   start: async (): Promise<{ status: string; message: string }> => {

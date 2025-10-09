@@ -1,6 +1,6 @@
 import apiClient from './client';
-import { API_ENDPOINTS } from '../config/app.config.ts';
-import type { TradingSignal } from '../types/signal.types.ts';
+import { API_ENDPOINTS } from '../config/app.config';
+import type { TradingSignal } from '../types/signal.types';
 
 export const tradingApi = {
   getSignals: async (params?: {

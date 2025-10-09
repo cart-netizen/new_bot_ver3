@@ -1,6 +1,6 @@
-import { Card } from '../ui/Card.tsx';
-import { useMarketStore } from '../../store/marketStore.ts';
-import { formatPrice, formatVolume } from '../../utils/format.ts';
+import { Card } from '../ui/Card';
+import { useMarketStore } from '../../store/marketStore';
+import { formatPrice, formatVolume } from '../../utils/format';
 
 interface OrderBookProps {
   symbol: string;

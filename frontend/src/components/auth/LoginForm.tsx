@@ -1,10 +1,10 @@
 import type { FormEvent } from 'react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card } from '../ui/Card.tsx';
-import { Button } from '../ui/Button.tsx';
-import { Input } from '../ui/Input.tsx';
-import { useAuthStore } from '../../store/authStore.ts';
+import { Card } from '../ui/Card';
+import { Button } from '../ui/Button';
+import { Input } from '../ui/Input';
+import { useAuthStore } from '../../store/authStore';
 import { toast } from 'sonner';
 
 export function LoginForm() {

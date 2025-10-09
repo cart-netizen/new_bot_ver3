@@ -1,5 +1,5 @@
 import axios, {type AxiosInstance } from 'axios';
-import { APP_CONFIG } from '../config/app.config.ts';
+import { APP_CONFIG } from '../config/app.config';
 
 const apiClient: AxiosInstance = axios.create({
   baseURL: APP_CONFIG.apiUrl,

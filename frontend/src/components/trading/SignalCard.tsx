@@ -1,7 +1,7 @@
-import { Card } from '../ui/Card.tsx';
+import { Card } from '../ui/Card';
 import { TrendingUp, TrendingDown } from 'lucide-react';
-import {type TradingSignal, SignalType } from '../../types/signal.types.ts';
-import { formatPrice, formatPercent, formatRelativeTime } from '../../utils/format.ts';
+import {type TradingSignal, SignalType } from '../../types/signal.types';
+import { formatPrice, formatPercent, formatRelativeTime } from '../../utils/format';
 
 interface SignalCardProps {
   signal: TradingSignal;

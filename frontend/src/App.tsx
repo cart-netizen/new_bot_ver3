@@ -36,12 +36,12 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
-import { Layout } from './components/layout/Layout.tsx';
-import { ProtectedRoute } from './components/auth/ProtectedRoute.tsx';
-import { LoginPage } from './pages/LoginPage.tsx';
-import { DashboardPage } from './pages/DashboardPage.tsx';
-import { MarketPage } from './pages/MarketPage.tsx';
-import { TradingPage } from './pages/TradingPage.tsx';
+import { Layout } from './components/layout/Layout';
+import { ProtectedRoute } from './components/auth/ProtectedRoute';
+import { LoginPage } from './pages/LoginPage';
+import { DashboardPage } from './pages/DashboardPage';
+import { MarketPage } from './pages/MarketPage';
+import { TradingPage } from './pages/TradingPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {

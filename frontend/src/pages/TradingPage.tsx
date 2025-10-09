@@ -1,5 +1,5 @@
-import { SignalCard } from '../components/trading/SignalCard.tsx';
-import { useTradingStore } from '../store/tradingStore.ts';
+import { SignalCard } from '../components/trading/SignalCard';
+import { useTradingStore } from '../store/tradingStore';
 
 export function TradingPage() {
   const signals = useTradingStore((state) => state.signals);

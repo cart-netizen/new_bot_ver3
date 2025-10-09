@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
-import { BotControls } from '../components/bot/BotControls.tsx';
-import { useBotStore } from '../store/botStore.ts';
+import { BotControls } from '../components/bot/BotControls';
+import { useBotStore } from '../store/botStore';
 
 export function DashboardPage() {
   const { fetchStatus, fetchConfig, symbols } = useBotStore();
