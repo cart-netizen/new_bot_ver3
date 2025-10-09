@@ -253,8 +253,18 @@ class BotController:
             if not manager.snapshot_received:
               continue
 
+            # ===== НОВОЕ: Отправляем стакан на фронтенд =====
+            snapshot = manager.get_snapshot()
+            if snapshot:
+              from api.websocket import broadcast_orderbook_update
+              await broadcast_orderbook_update(symbol, snapshot.to_dict())
+
             # Анализируем стакан
             metrics = self.market_analyzer.analyze_symbol(symbol, manager)
+
+            # ===== НОВОЕ: Отправляем метрики на фронтенд =====
+            from api.websocket import broadcast_metrics_update
+            await broadcast_metrics_update(symbol, metrics.to_dict())
 
             # Генерируем торговый сигнал
             signal = self.strategy_engine.analyze_and_generate_signal(

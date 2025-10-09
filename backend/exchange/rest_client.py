@@ -203,29 +203,34 @@ class BybitRESTClient:
 
   async def get_wallet_balance(self, account_type: str = "UNIFIED") -> Dict:
     """
-    Получение баланса кошелька (ЗАГЛУШКА).
+    Получение баланса кошелька.
 
     Args:
-        account_type: Тип аккаунта
+        account_type: Тип аккаунта (UNIFIED для UTA)
 
     Returns:
         Dict: Данные баланса
     """
     logger.info("Запрос баланса кошелька")
 
-    # ЗАГЛУШКА: возвращаем тестовые данные
-    logger.warning("ЗАГЛУШКА: Возвращаем тестовый баланс")
-    return {
-      "result": {
-        "list": [{
-          "coin": [{
-            "coin": "USDT",
-            "walletBalance": "10000.0",
-            "availableToWithdraw": "10000.0"
+    # Если нет API ключей - возвращаем моковые данные БЕЗ логов
+    if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
+      return {
+        "result": {
+          "list": [{
+            "coin": [{
+              "coin": "USDT",
+              "walletBalance": "10000.0",
+              "availableToWithdraw": "10000.0"
+            }]
           }]
-        }]
+        }
       }
-    }
+
+    # Реальный запрос к API
+    params = {"accountType": account_type}
+    response = await self._request("GET", BybitAPIPaths.GET_WALLET_BALANCE, params)
+    return response
 
   async def place_order(
       self,
@@ -237,7 +242,7 @@ class BybitRESTClient:
       time_in_force: str = "GTC"
   ) -> Dict:
     """
-    Размещение ордера (ЗАГЛУШКА).
+    Размещение ордера.
 
     Args:
         symbol: Торговая пара
@@ -255,26 +260,42 @@ class BybitRESTClient:
       f"qty={quantity} price={price}"
     )
 
-    # ЗАГЛУШКА: только логируем, не размещаем реальный ордер
-    logger.warning("ЗАГЛУШКА: Ордер не размещается на бирже")
-    return {
-      "result": {
-        "orderId": f"mock_order_{get_timestamp_ms()}",
-        "orderLinkId": "",
-        "symbol": symbol,
-        "side": side,
-        "orderType": order_type,
-        "price": str(price) if price else "",
-        "qty": str(quantity),
-        "timeInForce": time_in_force,
-        "orderStatus": "New",
-        "createdTime": str(get_timestamp_ms())
+    # Если нет API ключей - возвращаем моковые данные БЕЗ логов
+    if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
+      return {
+        "result": {
+          "orderId": f"mock_order_{get_timestamp_ms()}",
+          "orderLinkId": "",
+          "symbol": symbol,
+          "side": side,
+          "orderType": order_type,
+          "price": str(price) if price else "",
+          "qty": str(quantity),
+          "timeInForce": time_in_force,
+          "orderStatus": "New",
+          "createdTime": str(get_timestamp_ms())
+        }
       }
+
+    # Реальный запрос к API
+    params = {
+      "category": BybitCategory.LINEAR.value,  # LINEAR для фьючерсов
+      "symbol": symbol,
+      "side": side,
+      "orderType": order_type,
+      "qty": str(quantity),
+      "timeInForce": time_in_force
     }
+
+    if price:
+      params["price"] = str(price)
+
+    response = await self._request("POST", BybitAPIPaths.PLACE_ORDER, params)
+    return response
 
   async def cancel_order(self, symbol: str, order_id: str) -> Dict:
     """
-    Отмена ордера (ЗАГЛУШКА).
+    Отмена ордера.
 
     Args:
         symbol: Торговая пара
@@ -285,20 +306,30 @@ class BybitRESTClient:
     """
     logger.info(f"Отмена ордера: {symbol} order_id={order_id}")
 
-    # ЗАГЛУШКА
-    logger.warning("ЗАГЛУШКА: Ордер не отменяется")
-    return {
-      "result": {
-        "orderId": order_id,
-        "orderLinkId": "",
-        "symbol": symbol,
-        "status": "Cancelled"
+    # Если нет API ключей - возвращаем моковые данные БЕЗ логов
+    if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
+      return {
+        "result": {
+          "orderId": order_id,
+          "orderLinkId": "",
+          "symbol": symbol,
+          "status": "Cancelled"
+        }
       }
+
+    # Реальный запрос к API
+    params = {
+      "category": BybitCategory.LINEAR.value,
+      "symbol": symbol,
+      "orderId": order_id
     }
+
+    response = await self._request("POST", BybitAPIPaths.CANCEL_ORDER, params)
+    return response
 
   async def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict]:
     """
-    Получение открытых ордеров (ЗАГЛУШКА).
+    Получение открытых ордеров.
 
     Args:
         symbol: Торговая пара (опционально)
@@ -308,13 +339,21 @@ class BybitRESTClient:
     """
     logger.info(f"Запрос открытых ордеров{f' для {symbol}' if symbol else ''}")
 
-    # ЗАГЛУШКА
-    logger.warning("ЗАГЛУШКА: Возвращаем пустой список ордеров")
-    return {"result": {"list": []}}
+    # Если нет API ключей - возвращаем пустой список БЕЗ логов
+    if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
+      return {"result": {"list": []}}
+
+    # Реальный запрос к API
+    params = {"category": BybitCategory.LINEAR.value}
+    if symbol:
+      params["symbol"] = symbol
+
+    response = await self._request("GET", BybitAPIPaths.GET_OPEN_ORDERS, params)
+    return response
 
   async def get_positions(self, symbol: Optional[str] = None) -> List[Dict]:
     """
-    Получение позиций (ЗАГЛУШКА).
+    Получение позиций.
 
     Args:
         symbol: Торговая пара (опционально)
@@ -324,9 +363,74 @@ class BybitRESTClient:
     """
     logger.info(f"Запрос позиций{f' для {symbol}' if symbol else ''}")
 
-    # ЗАГЛУШКА
-    logger.warning("ЗАГЛУШКА: Возвращаем пустой список позиций")
-    return {"result": {"list": []}}
+    # Если нет API ключей - возвращаем пустой список БЕЗ логов
+    if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
+      return {"result": {"list": []}}
+
+    # Реальный запрос к API
+    params = {"category": BybitCategory.LINEAR.value}
+    if symbol:
+      params["symbol"] = symbol
+
+    response = await self._request("GET", BybitAPIPaths.GET_POSITIONS, params)
+    return response
+
+  @retry_async(max_attempts=3, delay=1.0)
+  async def get_orderbook(self, symbol: str, limit: int = 50) -> Dict:
+    """
+    Получение стакана ордеров для символа.
+
+    Args:
+        symbol: Торговая пара
+        limit: Количество уровней (1, 50, 200, 500)
+
+    Returns:
+        Dict: Данные стакана
+    """
+    logger.debug(f"Запрос стакана для {symbol}, лимит: {limit}")
+    params = {
+      "category": BybitCategory.LINEAR.value,  # LINEAR для фьючерсов
+      "symbol": symbol,
+      "limit": limit
+    }
+    response = await self._request("GET", BybitAPIPaths.ORDERBOOK, params)
+    return response["result"]
+
+  @retry_async(max_attempts=3, delay=1.0)
+  async def get_tickers(self, symbol: Optional[str] = None) -> List[Dict]:
+    """
+    Получение тикеров.
+
+    Args:
+        symbol: Торговая пара (опционально, для всех если не указано)
+
+    Returns:
+        List[Dict]: Список тикеров
+    """
+    logger.debug(f"Запрос тикеров{f' для {symbol}' if symbol else ''}")
+    params = {"category": BybitCategory.LINEAR.value}  # LINEAR для фьючерсов
+    if symbol:
+      params["symbol"] = symbol
+    response = await self._request("GET", BybitAPIPaths.TICKERS, params)
+    return response["result"]["list"]
+
+  @retry_async(max_attempts=3, delay=1.0)
+  async def get_instruments_info(self, symbol: Optional[str] = None) -> List[Dict]:
+    """
+    Получение информации о торговых парах.
+
+    Args:
+        symbol: Торговая пара (опционально)
+
+    Returns:
+        List[Dict]: Информация о парах
+    """
+    logger.debug(f"Запрос информации о парах{f' для {symbol}' if symbol else ''}")
+    params = {"category": BybitCategory.LINEAR.value}  # LINEAR для фьючерсов
+    if symbol:
+      params["symbol"] = symbol
+    response = await self._request("GET", BybitAPIPaths.INSTRUMENTS_INFO, params)
+    return response["result"]["list"]
 
 
 # Глобальный экземпляр клиента
