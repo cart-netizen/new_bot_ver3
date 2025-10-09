@@ -28,9 +28,12 @@ export const useAuthStore = create<AuthState>((set) => ({
         isAuthenticated: true,
         isLoading: false,
       });
-    } catch (error: any) {
+    } catch (error) {
+      const errorMessage = error instanceof Error
+        ? error.message
+        : 'Ошибка входа';
       set({
-        error: error.response?.data?.detail || 'Ошибка входа',
+        error: errorMessage,
         isLoading: false,
       });
       throw error;

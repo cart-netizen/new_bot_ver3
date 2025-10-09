@@ -1,9 +1,7 @@
 import React from 'react';
 import { cn } from '../../utils/helpers.ts';
 
-interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {}
-
-export function Input({ className, ...props }: InputProps) {
+export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       className={cn(

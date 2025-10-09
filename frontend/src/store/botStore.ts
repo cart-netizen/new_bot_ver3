@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { botApi } from '../api/bot.api.ts';
 import type { ConfigResponse } from '../types/api.types.ts';
-import {BotStatus} from "../types/botStatus.ts";
+// import {BotStatus} from "../types/botStatus.ts";
+import {BotStatus} from "../types/common.types.ts";
 
 interface BotState {
   status: BotStatus;

@@ -2,9 +2,8 @@ import { Play, Square } from 'lucide-react';
 import { Button } from '../ui/Button.tsx';
 import { Card } from '../ui/Card.tsx';
 import { useBotStore } from '../../store/botStore.ts';
-// import { BotStatus } from '@/types/common.types.ts';
+import { BotStatus } from '../../types/common.types.ts';
 import { toast } from 'sonner';
-import {BotStatus} from "../../types/botStatus.ts";
 
 export function BotControls() {
   const { status, startBot, stopBot, isLoading } = useBotStore();

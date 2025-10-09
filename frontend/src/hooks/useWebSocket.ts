@@ -75,7 +75,7 @@ export function useWebSocket() {
     };
 
     wsRef.current = ws;
-  }, [isAuthenticated, token]);
+  }, [isAuthenticated, token, updateOrderBook, updateMetrics, addSignal, updateStatus]);
 
   useEffect(() => {
     connect();
