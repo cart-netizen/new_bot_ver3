@@ -1,4 +1,4 @@
-import { cn } from '../../utils/helpers.ts';
+import { cn } from '../../utils/helpers';
 import React from "react";
 
 interface InputProps {

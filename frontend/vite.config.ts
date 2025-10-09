@@ -2,14 +2,12 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
+// https://vite.dev/config/
 export default defineConfig({
   plugins: [
     react({
-      // Убираем явную настройку jsxRuntime
-      // Плагин сам определит правильную конфигурацию для React 19
-      jsxImportSource: undefined,
-      // Включаем Fast Refresh для React 19
-      // fastRefresh: true,
+      // Для @vitejs/plugin-react 5.0.4 достаточно пустой конфигурации
+      // Плагин автоматически определит правильные настройки для React 19
     })
   ],
   resolve: {
@@ -21,18 +19,17 @@ export default defineConfig({
     port: 3000,
     host: true,
   },
-  // Оптимизация сборки
-  build: {
-    sourcemap: true,
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
-          'ui-vendor': ['lucide-react', 'sonner'],
-        },
-      },
-    },
-  },
-  // Явное определение логирования
+  // Детальное логирование для отладки
   logLevel: 'info',
+  // Оптимизация для разработки
+  optimizeDeps: {
+    include: [
+      'react',
+      'react-dom',
+      'react-router-dom',
+      '@tanstack/react-query',
+      'zustand',
+      'axios',
+    ],
+  },
 })
