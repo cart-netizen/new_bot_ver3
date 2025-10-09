@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "@vitejs/plugin-react": "^5.0.4",
     "autoprefixer": "^10.4.21",
     "postcss": "^8.5.6",
     "recharts": "^3.2.1"

@@ -5,7 +5,11 @@ import path from 'path'
 export default defineConfig({
   plugins: [
     react({
-      jsxRuntime: 'automatic',
+      // Убираем явную настройку jsxRuntime
+      // Плагин сам определит правильную конфигурацию для React 19
+      jsxImportSource: undefined,
+      // Включаем Fast Refresh для React 19
+      // fastRefresh: true,
     })
   ],
   resolve: {
@@ -17,4 +21,18 @@ export default defineConfig({
     port: 3000,
     host: true,
   },
+  // Оптимизация сборки
+  build: {
+    sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          'ui-vendor': ['lucide-react', 'sonner'],
+        },
+      },
+    },
+  },
+  // Явное определение логирования
+  logLevel: 'info',
 })

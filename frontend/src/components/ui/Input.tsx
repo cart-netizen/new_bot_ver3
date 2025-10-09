@@ -1,4 +1,5 @@
 import { cn } from '../../utils/helpers.ts';
+import React from "react";
 
 interface InputProps {
   className?: string;

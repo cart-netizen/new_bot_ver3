@@ -1,12 +1,10 @@
+import type { ReactNode, ButtonHTMLAttributes } from 'react';
 import { cn } from '../../utils/helpers.ts';
 
-interface ButtonProps {
+interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'default' | 'destructive' | 'outline';
   className?: string;
-  disabled?: boolean;
-  type?: 'button' | 'submit' | 'reset';
-  onClick?: () => void;
-  children?: React.ReactNode;
+  children?: ReactNode;
 }
 
 export function Button({

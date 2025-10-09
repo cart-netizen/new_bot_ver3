@@ -1,8 +1,9 @@
+import {ReactNode} from 'react';
 import { cn } from '../../utils/helpers.ts';
 
 interface CardProps {
   className?: string;
-  children?: React.ReactNode;
+  children?: ReactNode;
   onClick?: () => void;
 }
 
