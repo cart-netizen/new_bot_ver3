@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { APP_CONFIG } from '../config/app.config.ts';
-import { useAuthStore } from '../store/authStore.ts';
-import { useMarketStore } from '../store/marketStore.ts';
-import { useTradingStore } from '../store/tradingStore.ts';
-import { useBotStore } from '../store/botStore.ts';
+import { APP_CONFIG } from '../config/app.config';
+import { useAuthStore } from '../store/authStore';
+import { useMarketStore } from '../store/marketStore';
+import { useTradingStore } from '../store/tradingStore';
+import { useBotStore } from '../store/botStore';
 import { toast } from 'sonner';
 
 export function useWebSocket() {

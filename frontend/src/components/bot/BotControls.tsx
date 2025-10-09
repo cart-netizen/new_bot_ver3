@@ -1,8 +1,8 @@
 import { Play, Square } from 'lucide-react';
-import { Button } from '../ui/Button.tsx';
-import { Card } from '../ui/Card.tsx';
-import { useBotStore } from '../../store/botStore.ts';
-import { BotStatus } from '../../types/common.types.ts';
+import { Button } from '../ui/Button';
+import { Card } from '../ui/Card';
+import { useBotStore } from '../../store/botStore';
+import { BotStatus } from '../../types/common.types';
 import { toast } from 'sonner';
 
 export function BotControls() {

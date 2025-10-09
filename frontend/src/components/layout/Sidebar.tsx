@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { Home, BarChart3, TrendingUp } from 'lucide-react';
-import { cn } from '../../utils/helpers.ts';
+import { cn } from '../../utils/helpers';
 
 const NAV_ITEMS = [
   { path: '/dashboard', label: 'Dashboard', icon: Home },

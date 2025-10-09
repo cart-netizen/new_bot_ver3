@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { TradingSignal } from '../types/signal.types.ts';
+import type { TradingSignal } from '../types/signal.types';
 
 interface TradingState {
   signals: TradingSignal[];

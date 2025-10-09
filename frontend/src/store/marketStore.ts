@@ -1,6 +1,6 @@
 import { create } from 'zustand';
-import type { OrderBook } from '../types/orderbook.types.ts';
-import type { OrderBookMetrics } from '../types/metrics.types.ts';
+import type { OrderBook } from '../types/orderbook.types';
+import type { OrderBookMetrics } from '../types/metrics.types';
 
 interface MarketState {
   orderbooks: Record<string, OrderBook>;

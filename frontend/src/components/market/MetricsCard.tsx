@@ -1,6 +1,6 @@
-import { Card } from '../ui/Card.tsx';
-import type {OrderBookMetrics} from '../../types/metrics.types.ts';
-import { formatPrice, formatVolume, formatPercent } from '../../utils/format.ts' ;
+import { Card } from '../ui/Card';
+import type {OrderBookMetrics} from '../../types/metrics.types';
+import { formatPrice, formatVolume, formatPercent } from '../../utils/format' ;
 
 interface MetricsCardProps {
   metrics: OrderBookMetrics;

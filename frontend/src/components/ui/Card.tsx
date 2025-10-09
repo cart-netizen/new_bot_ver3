@@ -1,5 +1,5 @@
 import {ReactNode} from 'react';
-import { cn } from '../../utils/helpers.ts';
+import { cn } from '../../utils/helpers';
 
 interface CardProps {
   className?: string;

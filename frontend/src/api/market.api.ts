@@ -1,7 +1,7 @@
 import apiClient from './client';
-import { API_ENDPOINTS } from '../config/app.config.ts';
-import type { OrderBook } from '../types/orderbook.types.ts';
-import type { OrderBookMetrics } from '../types/metrics.types.ts';
+import { API_ENDPOINTS } from '../config/app.config';
+import type { OrderBook } from '../types/orderbook.types';
+import type { OrderBookMetrics } from '../types/metrics.types';
 
 export const marketApi = {
   getPairs: async (): Promise<{ pairs: string[]; count: number }> => {

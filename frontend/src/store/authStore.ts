@@ -1,6 +1,6 @@
 import { create } from 'zustand';
-import { authApi } from '../api/auth.api.ts';
-import type { LoginRequest } from '../types/api.types.ts';
+import { authApi } from '../api/auth.api';
+import type { LoginRequest } from '../types/api.types';
 
 interface AuthState {
   token: string | null;

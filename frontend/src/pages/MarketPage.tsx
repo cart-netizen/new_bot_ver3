@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { OrderBook } from '../components/market/OrderBook.tsx';
-import { MetricsCard } from '../components/market/MetricsCard.tsx';
-import { useBotStore } from '../store/botStore.ts';
-import { useMarketStore } from '../store/marketStore.ts';
+import { OrderBook } from '../components/market/OrderBook';
+import { MetricsCard } from '../components/market/MetricsCard';
+import { useBotStore } from '../store/botStore';
+import { useMarketStore } from '../store/marketStore';
 
 export function MarketPage() {
   const symbols = useBotStore((state) => state.symbols);

@@ -1,27 +1,29 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import path from 'path'
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import path from 'path';
 
-// https://vite.dev/config/
 export default defineConfig({
   plugins: [
     react({
-      // Для @vitejs/plugin-react 5.0.4 достаточно пустой конфигурации
-      // Плагин автоматически определит правильные настройки для React 19
+      // jsxRuntime: 'automatic' — включено по умолчанию в новых версиях, можно не указывать
+      // fastRefresh: true — тоже по умолчанию
     })
   ],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
     },
+    extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json']
   },
   server: {
     port: 3000,
     host: true,
+    cors: true,
+    hmr: {
+      overlay: true
+    }
   },
-  // Детальное логирование для отладки
   logLevel: 'info',
-  // Оптимизация для разработки
   optimizeDeps: {
     include: [
       'react',
@@ -30,6 +32,20 @@ export default defineConfig({
       '@tanstack/react-query',
       'zustand',
       'axios',
-    ],
+      'clsx',
+      'tailwind-merge',
+      'lucide-react',
+      'sonner'
+    ]
   },
-})
+  build: {
+    target: 'es2022',
+    minify: 'esbuild',
+    sourcemap: true,
+    chunkSizeWarningLimit: 1000
+  },
+  esbuild: {
+    jsx: 'automatic', // Это нормально, но на самом деле esbuild в Vite не обрабатывает JSX напрямую — этим занимается plugin-react
+    treeShaking: true
+  }
+});
