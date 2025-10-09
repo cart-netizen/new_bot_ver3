@@ -9,7 +9,7 @@ import hashlib
 from typing import Dict, Optional
 from urllib.parse import urlencode
 
-from backend.config import settings
+from config import settings
 from core.logger import get_logger
 
 logger = get_logger(__name__)

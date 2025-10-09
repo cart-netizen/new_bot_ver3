@@ -8,7 +8,7 @@ import json
 from typing import Dict, List, Callable, Any
 import websockets
 
-from backend.config import settings
+from config import settings
 from core.logger import get_logger
 from core.exceptions import (
   WebSocketConnectionError,

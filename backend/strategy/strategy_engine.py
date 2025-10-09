@@ -16,7 +16,7 @@ from models.signal import (
   SignalSource,
   SignalStatistics
 )
-from backend.config import settings
+from config import settings
 
 logger = get_logger(__name__)
 

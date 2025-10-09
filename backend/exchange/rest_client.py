@@ -7,7 +7,7 @@ import aiohttp
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
-from backend.config import settings
+from config import settings
 from core.logger import get_logger
 from core.exceptions import ExchangeAPIError, RateLimitError
 from exchange.bybit_auth import authenticator

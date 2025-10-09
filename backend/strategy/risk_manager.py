@@ -11,7 +11,7 @@ from core.exceptions import (
   RiskManagementError
 )
 from models.signal import TradingSignal, SignalType
-from backend.config import settings
+from config import settings
 
 logger = get_logger(__name__)
 

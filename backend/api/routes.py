@@ -14,7 +14,7 @@ from core.auth import (
 )
 from core.exceptions import AuthenticationError
 from models.user import LoginRequest, LoginResponse, ChangePasswordRequest
-from backend.config import settings
+from config import settings
 
 logger = get_logger(__name__)
 

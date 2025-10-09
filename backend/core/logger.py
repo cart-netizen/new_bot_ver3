@@ -8,7 +8,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
-from backend.config import settings
+from config import settings
 
 
 class ColoredFormatter(logging.Formatter):

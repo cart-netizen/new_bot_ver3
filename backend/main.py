@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import WebSocket, WebSocketDisconnect
 
-from backend.config import settings
+from config import settings
 from core.logger import setup_logging, get_logger
 from core.exceptions import log_exception
 from exchange.rest_client import rest_client

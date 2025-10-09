@@ -9,7 +9,7 @@ from core.logger import get_logger
 from core.exceptions import AnalysisError
 from models.orderbook import OrderBookSnapshot, OrderBookMetrics
 from strategy.orderbook_manager import OrderBookManager
-from backend.config import settings
+from config import settings
 from utils.helpers import safe_divide, get_timestamp_ms
 
 logger = get_logger(__name__)
