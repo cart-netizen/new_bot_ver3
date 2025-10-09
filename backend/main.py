@@ -13,7 +13,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from config import settings
 from core.logger import setup_logging, get_logger
-from core.exceptions import log_exception
+from core.exceptions import log_exception, OrderBookSyncError, OrderBookError
 from exchange.rest_client import rest_client
 from exchange.websocket_manager import BybitWebSocketManager
 from strategy.orderbook_manager import OrderBookManager
@@ -199,9 +199,9 @@ class BotController:
       log_exception(logger, e, "Остановка бота")
       raise
 
-  async def _handle_orderbook_message(self, data: dict):
+  async def _handle_orderbook_message(self, data: Dict[str, Any]):
     """
-    Обработка сообщения от WebSocket стакана.
+    Обработка сообщений стакана от WebSocket.
 
     Args:
         data: Данные от WebSocket
@@ -211,7 +211,7 @@ class BotController:
       message_type = data.get("type", "")
       message_data = data.get("data", {})
 
-      # Извлекаем символ из топика
+      # Извлекаем символ из топика (формат: "orderbook.200.BTCUSDT")
       if "orderbook" in topic:
         parts = topic.split(".")
         if len(parts) >= 3:
@@ -223,15 +223,40 @@ class BotController:
 
           manager = self.orderbook_managers[symbol]
 
-          # Обрабатываем snapshot или delta
+          # ИСПРАВЛЕНИЕ: Правильная обработка snapshot и delta
           if message_type == "snapshot":
+            # Применяем snapshot (полный снимок стакана)
+            logger.info(f"{symbol} | Получен snapshot стакана")
             manager.apply_snapshot(message_data)
+            logger.info(
+              f"{symbol} | Snapshot применен: "
+              f"{len(manager.bids)} bids, {len(manager.asks)} asks"
+            )
+
           elif message_type == "delta":
+            # Проверяем, был ли получен snapshot
+            if not manager.snapshot_received:
+              logger.debug(
+                f"{symbol} | Delta получена до snapshot, пропускаем "
+                f"(seq={message_data.get('seq', 'N/A')})"
+              )
+              return  # Просто пропускаем, без ошибок
+
+            # Применяем delta (инкрементальное обновление)
             manager.apply_delta(message_data)
+            logger.debug(
+              f"{symbol} | Delta применена "
+              f"(seq={message_data.get('seq', 'N/A')})"
+            )
+          else:
+            logger.warning(f"{symbol} | Неизвестный тип сообщения: {message_type}")
 
     except Exception as e:
+      # Логируем ошибку, но не останавливаем работу бота
       logger.error(f"Ошибка обработки сообщения стакана: {e}")
-      log_exception(logger, e, "Обработка сообщения стакана")
+      # Убираем подробный traceback если это ожидаемая ошибка
+      if not isinstance(e, (OrderBookSyncError, OrderBookError)):
+        log_exception(logger, e, "Обработка сообщения стакана")
 
   async def _analysis_loop(self):
     """Цикл анализа и генерации сигналов."""

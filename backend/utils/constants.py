@@ -14,9 +14,9 @@ class BybitEndpoints:
   MAINNET_REST = "https://api.bybit.com"
   TESTNET_REST = "https://api-testnet.bybit.com"
 
-  # WebSocket API
-  MAINNET_WS_PUBLIC = "wss://stream.bybit.com/v5/public/spot"
-  TESTNET_WS_PUBLIC = "wss://stream-testnet.bybit.com/v5/public/spot"
+  # WebSocket API - LINEAR для фьючерсов
+  MAINNET_WS_PUBLIC = "wss://stream.bybit.com/v5/public/linear"
+  TESTNET_WS_PUBLIC = "wss://stream-testnet.bybit.com/v5/public/linear"
 
   MAINNET_WS_PRIVATE = "wss://stream.bybit.com/v5/private"
   TESTNET_WS_PRIVATE = "wss://stream-testnet.bybit.com/v5/private"
@@ -265,3 +265,6 @@ class Colors:
   BG_MAGENTA = '\033[45m'
   BG_CYAN = '\033[46m'
   BG_WHITE = '\033[47m'
+
+# Константа по умолчанию для всего приложения
+DEFAULT_CATEGORY = BybitCategory.LINEAR

@@ -142,63 +142,6 @@ class BybitRESTClient:
     logger.info(f"Серверное время: {datetime.fromtimestamp(server_time / 1000)}")
     return server_time
 
-  @retry_async(max_attempts=3, delay=1.0)
-  async def get_orderbook(self, symbol: str, limit: int = 50) -> Dict:
-    """
-    Получение стакана ордеров для символа.
-
-    Args:
-        symbol: Торговая пара
-        limit: Количество уровней (1, 50, 200, 500)
-
-    Returns:
-        Dict: Данные стакана
-    """
-    logger.debug(f"Запрос стакана для {symbol}, лимит: {limit}")
-    params = {
-      "category": BybitCategory.SPOT.value,
-      "symbol": symbol,
-      "limit": limit
-    }
-    response = await self._request("GET", BybitAPIPaths.ORDERBOOK, params)
-    return response["result"]
-
-  @retry_async(max_attempts=3, delay=1.0)
-  async def get_tickers(self, symbol: Optional[str] = None) -> List[Dict]:
-    """
-    Получение тикеров.
-
-    Args:
-        symbol: Торговая пара (опционально, для всех если не указано)
-
-    Returns:
-        List[Dict]: Список тикеров
-    """
-    logger.debug(f"Запрос тикеров{f' для {symbol}' if symbol else ''}")
-    params = {"category": BybitCategory.SPOT.value}
-    if symbol:
-      params["symbol"] = symbol
-    response = await self._request("GET", BybitAPIPaths.TICKERS, params)
-    return response["result"]["list"]
-
-  @retry_async(max_attempts=3, delay=1.0)
-  async def get_instruments_info(self, symbol: Optional[str] = None) -> List[Dict]:
-    """
-    Получение информации о торговых парах.
-
-    Args:
-        symbol: Торговая пара (опционально)
-
-    Returns:
-        List[Dict]: Информация о парах
-    """
-    logger.debug(f"Запрос информации о парах{f' для {symbol}' if symbol else ''}")
-    params = {"category": BybitCategory.SPOT.value}
-    if symbol:
-      params["symbol"] = symbol
-    response = await self._request("GET", BybitAPIPaths.INSTRUMENTS_INFO, params)
-    return response["result"]["list"]
-
   # ===== ПРИВАТНЫЕ МЕТОДЫ (ЗАГЛУШКИ) =====
 
   async def get_wallet_balance(self, account_type: str = "UNIFIED") -> Dict:
@@ -210,26 +153,31 @@ class BybitRESTClient:
 
     Returns:
         Dict: Данные баланса
+
+    Raises:
+        ValueError: Если API ключи не настроены
     """
     logger.info("Запрос баланса кошелька")
 
-    # Если нет API ключей - возвращаем моковые данные БЕЗ логов
+    # Проверяем наличие API ключей
     if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
-      return {
-        "result": {
-          "list": [{
-            "coin": [{
-              "coin": "USDT",
-              "walletBalance": "10000.0",
-              "availableToWithdraw": "10000.0"
-            }]
-          }]
-        }
-      }
+      error_msg = (
+        "API ключи Bybit не настроены. "
+        "Установите BYBIT_API_KEY и BYBIT_API_SECRET в файле .env"
+      )
+      logger.error(error_msg)
+      raise ValueError(error_msg)
 
     # Реальный запрос к API
     params = {"accountType": account_type}
-    response = await self._request("GET", BybitAPIPaths.GET_WALLET_BALANCE, params)
+    response = await self._request(
+      "GET",
+      BybitAPIPaths.GET_WALLET_BALANCE,
+      params,
+      authenticated=True
+    )
+
+    logger.info(f"Баланс получен успешно для аккаунта {account_type}")
     return response
 
   async def place_order(
@@ -239,7 +187,9 @@ class BybitRESTClient:
       order_type: str,
       quantity: float,
       price: Optional[float] = None,
-      time_in_force: str = "GTC"
+      time_in_force: str = "GTC",
+      stop_loss: Optional[float] = None,
+      take_profit: Optional[float] = None
   ) -> Dict:
     """
     Размещение ордера.
@@ -251,33 +201,30 @@ class BybitRESTClient:
         quantity: Количество
         price: Цена (для лимитных ордеров)
         time_in_force: Time in force
+        stop_loss: Уровень стоп-лосса (опционально)
+        take_profit: Уровень тейк-профита (опционально)
 
     Returns:
         Dict: Результат размещения ордера
+
+    Raises:
+        ValueError: Если API ключи не настроены
     """
     logger.info(
       f"Размещение ордера: {symbol} {side} {order_type} "
-      f"qty={quantity} price={price}"
+      f"qty={quantity} price={price} SL={stop_loss} TP={take_profit}"
     )
 
-    # Если нет API ключей - возвращаем моковые данные БЕЗ логов
+    # Проверяем наличие API ключей
     if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
-      return {
-        "result": {
-          "orderId": f"mock_order_{get_timestamp_ms()}",
-          "orderLinkId": "",
-          "symbol": symbol,
-          "side": side,
-          "orderType": order_type,
-          "price": str(price) if price else "",
-          "qty": str(quantity),
-          "timeInForce": time_in_force,
-          "orderStatus": "New",
-          "createdTime": str(get_timestamp_ms())
-        }
-      }
+      error_msg = (
+        "API ключи Bybit не настроены. "
+        "Установите BYBIT_API_KEY и BYBIT_API_SECRET в файле .env"
+      )
+      logger.error(error_msg)
+      raise ValueError(error_msg)
 
-    # Реальный запрос к API
+    # Реальный запрос к API для фьючерсов
     params = {
       "category": BybitCategory.LINEAR.value,  # LINEAR для фьючерсов
       "symbol": symbol,
@@ -290,7 +237,20 @@ class BybitRESTClient:
     if price:
       params["price"] = str(price)
 
-    response = await self._request("POST", BybitAPIPaths.PLACE_ORDER, params)
+    if stop_loss:
+      params["stopLoss"] = str(stop_loss)
+
+    if take_profit:
+      params["takeProfit"] = str(take_profit)
+
+    response = await self._request(
+      "POST",
+      BybitAPIPaths.PLACE_ORDER,
+      params,
+      authenticated=True
+    )
+
+    logger.info(f"Ордер размещен успешно: order_id={response['result']['orderId']}")
     return response
 
   async def cancel_order(self, symbol: str, order_id: str) -> Dict:
@@ -303,19 +263,20 @@ class BybitRESTClient:
 
     Returns:
         Dict: Результат отмены
+
+    Raises:
+        ValueError: Если API ключи не настроены
     """
     logger.info(f"Отмена ордера: {symbol} order_id={order_id}")
 
-    # Если нет API ключей - возвращаем моковые данные БЕЗ логов
+    # Проверяем наличие API ключей
     if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
-      return {
-        "result": {
-          "orderId": order_id,
-          "orderLinkId": "",
-          "symbol": symbol,
-          "status": "Cancelled"
-        }
-      }
+      error_msg = (
+        "API ключи Bybit не настроены. "
+        "Установите BYBIT_API_KEY и BYBIT_API_SECRET в файле .env"
+      )
+      logger.error(error_msg)
+      raise ValueError(error_msg)
 
     # Реальный запрос к API
     params = {
@@ -324,10 +285,17 @@ class BybitRESTClient:
       "orderId": order_id
     }
 
-    response = await self._request("POST", BybitAPIPaths.CANCEL_ORDER, params)
+    response = await self._request(
+      "POST",
+      BybitAPIPaths.CANCEL_ORDER,
+      params,
+      authenticated=True
+    )
+
+    logger.info(f"Ордер отменен успешно: order_id={order_id}")
     return response
 
-  async def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict]:
+  async def get_open_orders(self, symbol: Optional[str] = None) -> Dict:
     """
     Получение открытых ордеров.
 
@@ -335,23 +303,39 @@ class BybitRESTClient:
         symbol: Торговая пара (опционально)
 
     Returns:
-        List[Dict]: Список открытых ордеров
+        Dict: Список открытых ордеров
+
+    Raises:
+        ValueError: Если API ключи не настроены
     """
     logger.info(f"Запрос открытых ордеров{f' для {symbol}' if symbol else ''}")
 
-    # Если нет API ключей - возвращаем пустой список БЕЗ логов
+    # Проверяем наличие API ключей
     if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
-      return {"result": {"list": []}}
+      error_msg = (
+        "API ключи Bybit не настроены. "
+        "Установите BYBIT_API_KEY и BYBIT_API_SECRET в файле .env"
+      )
+      logger.error(error_msg)
+      raise ValueError(error_msg)
 
     # Реальный запрос к API
     params = {"category": BybitCategory.LINEAR.value}
     if symbol:
       params["symbol"] = symbol
 
-    response = await self._request("GET", BybitAPIPaths.GET_OPEN_ORDERS, params)
+    response = await self._request(
+      "GET",
+      BybitAPIPaths.GET_OPEN_ORDERS,
+      params,
+      authenticated=True
+    )
+
+    order_count = len(response.get("result", {}).get("list", []))
+    logger.info(f"Получено {order_count} открытых ордеров")
     return response
 
-  async def get_positions(self, symbol: Optional[str] = None) -> List[Dict]:
+  async def get_positions(self, symbol: Optional[str] = None) -> Dict:
     """
     Получение позиций.
 
@@ -359,20 +343,36 @@ class BybitRESTClient:
         symbol: Торговая пара (опционально)
 
     Returns:
-        List[Dict]: Список позиций
+        Dict: Список позиций
+
+    Raises:
+        ValueError: Если API ключи не настроены
     """
     logger.info(f"Запрос позиций{f' для {symbol}' if symbol else ''}")
 
-    # Если нет API ключей - возвращаем пустой список БЕЗ логов
+    # Проверяем наличие API ключей
     if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
-      return {"result": {"list": []}}
+      error_msg = (
+        "API ключи Bybit не настроены. "
+        "Установите BYBIT_API_KEY и BYBIT_API_SECRET в файле .env"
+      )
+      logger.error(error_msg)
+      raise ValueError(error_msg)
 
     # Реальный запрос к API
     params = {"category": BybitCategory.LINEAR.value}
     if symbol:
       params["symbol"] = symbol
 
-    response = await self._request("GET", BybitAPIPaths.GET_POSITIONS, params)
+    response = await self._request(
+      "GET",
+      BybitAPIPaths.GET_POSITIONS,
+      params,
+      authenticated=True
+    )
+
+    position_count = len(response.get("result", {}).get("list", []))
+    logger.info(f"Получено {position_count} позиций")
     return response
 
   @retry_async(max_attempts=3, delay=1.0)
@@ -432,6 +432,146 @@ class BybitRESTClient:
     response = await self._request("GET", BybitAPIPaths.INSTRUMENTS_INFO, params)
     return response["result"]["list"]
 
+  @retry_async(max_attempts=3, delay=1.0)
+  async def get_api_key_info(self) -> Dict:
+    """
+    Получение информации об API ключе.
+
+    Returns:
+        Dict: Информация об API ключе
+
+    Raises:
+        ValueError: Если API ключи не настроены
+    """
+    logger.info("Запрос информации об API ключе")
+
+    # Проверяем наличие API ключей
+    if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
+      error_msg = (
+        "API ключи Bybit не настроены. "
+        "Установите BYBIT_API_KEY и BYBIT_API_SECRET в файле .env"
+      )
+      logger.error(error_msg)
+      raise ValueError(error_msg)
+
+    response = await self._request(
+      "GET",
+      BybitAPIPaths.GET_API_KEY_INFO,
+      authenticated=True
+    )
+
+    logger.info("Информация об API ключе получена успешно")
+    return response
+
+  @retry_async(max_attempts=3, delay=1.0)
+  async def set_leverage(self, symbol: str, buy_leverage: str, sell_leverage: str) -> Dict:
+    """
+    Установка кредитного плеча для символа.
+
+    Args:
+        symbol: Торговая пара
+        buy_leverage: Плечо для покупок (1-100)
+        sell_leverage: Плечо для продаж (1-100)
+
+    Returns:
+        Dict: Результат установки плеча
+
+    Raises:
+        ValueError: Если API ключи не настроены
+    """
+    logger.info(f"Установка плеча для {symbol}: Buy={buy_leverage}x, Sell={sell_leverage}x")
+
+    # Проверяем наличие API ключей
+    if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
+      error_msg = (
+        "API ключи Bybit не настроены. "
+        "Установите BYBIT_API_KEY и BYBIT_API_SECRET в файле .env"
+      )
+      logger.error(error_msg)
+      raise ValueError(error_msg)
+
+    params = {
+      "category": BybitCategory.LINEAR.value,
+      "symbol": symbol,
+      "buyLeverage": buy_leverage,
+      "sellLeverage": sell_leverage
+    }
+
+    response = await self._request(
+      "POST",
+      BybitAPIPaths.SET_LEVERAGE,
+      params,
+      authenticated=True
+    )
+
+    logger.info(f"Плечо успешно установлено для {symbol}")
+    return response
+
+  @retry_async(max_attempts=3, delay=1.0)
+  async def get_recent_trades(self, symbol: str, limit: int = 60) -> List[Dict]:
+    """
+    Получение последних сделок.
+
+    Args:
+        symbol: Торговая пара
+        limit: Количество сделок (макс 1000)
+
+    Returns:
+        List[Dict]: Список последних сделок
+    """
+    logger.debug(f"Запрос последних сделок для {symbol}, лимит: {limit}")
+    params = {
+      "category": BybitCategory.LINEAR.value,  # LINEAR для фьючерсов
+      "symbol": symbol,
+      "limit": limit
+    }
+
+    response = await self._request("GET", BybitAPIPaths.RECENT_TRADES, params)
+
+    trade_count = len(response["result"]["list"])
+    logger.debug(f"Получено {trade_count} последних сделок для {symbol}")
+    return response["result"]["list"]
+
+  @retry_async(max_attempts=3, delay=1.0)
+  async def get_kline(
+      self,
+      symbol: str,
+      interval: str,
+      limit: int = 200,
+      start: Optional[int] = None,
+      end: Optional[int] = None
+  ) -> List[Dict]:
+    """
+    Получение свечных данных (kline).
+
+    Args:
+        symbol: Торговая пара
+        interval: Интервал свечи (1, 3, 5, 15, 30, 60, 120, 240, 360, 720, D, W, M)
+        limit: Количество свечей (макс 1000)
+        start: Timestamp начала (опционально)
+        end: Timestamp окончания (опционально)
+
+    Returns:
+        List[Dict]: Список свечей
+    """
+    logger.debug(f"Запрос kline для {symbol}, интервал: {interval}, лимит: {limit}")
+    params = {
+      "category": BybitCategory.LINEAR.value,  # LINEAR для фьючерсов
+      "symbol": symbol,
+      "interval": interval,
+      "limit": limit
+    }
+
+    if start:
+      params["start"] = start
+    if end:
+      params["end"] = end
+
+    response = await self._request("GET", BybitAPIPaths.KLINE, params)
+
+    kline_count = len(response["result"]["list"])
+    logger.debug(f"Получено {kline_count} свечей для {symbol}")
+    return response["result"]["list"]
 
 # Глобальный экземпляр клиента
 rest_client = BybitRESTClient()

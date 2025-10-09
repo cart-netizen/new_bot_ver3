@@ -81,12 +81,13 @@ class OrderBookManager:
       self.last_update_id = data.get("u")
       self.last_sequence_id = data.get("seq")
       self.last_update_timestamp = data.get("ts") or get_timestamp_ms()
-      self.snapshot_received = True
+      self.snapshot_received = True  # ВАЖНО: Флаг что snapshot получен
       self.snapshot_count += 1
 
-      logger.debug(
-        f"{self.symbol} | Применен snapshot: "
-        f"{len(self.bids)} bids, {len(self.asks)} asks"
+      logger.info(
+        f"{self.symbol} | Snapshot применен: "
+        f"bids={len(self.bids)}, asks={len(self.asks)}, "
+        f"seq={self.last_sequence_id}"
       )
 
       # Создаем объект snapshot
@@ -105,7 +106,7 @@ class OrderBookManager:
       logger.error(f"{self.symbol} | Ошибка применения snapshot: {e}")
       raise OrderBookError(f"Failed to apply snapshot: {str(e)}")
 
-  def apply_delta(self, data: Dict) -> OrderBookDelta:
+  def apply_delta(self, data: Dict) -> Optional[OrderBookDelta]:
     """
     Применение delta (инкрементального обновления) стакана.
 
@@ -113,11 +114,12 @@ class OrderBookManager:
         data: Данные delta от WebSocket
 
     Returns:
-        OrderBookDelta: Объект дельта-обновления
+        OrderBookDelta: Объект дельта-обновления или None если snapshot не получен
     """
     if not self.snapshot_received:
-      logger.warning(f"{self.symbol} | Delta получена до snapshot, игнорируем")
-      raise OrderBookSyncError("Delta received before snapshot")
+      # ИСПРАВЛЕНИЕ: Не выбрасываем исключение, просто возвращаем None
+      logger.debug(f"{self.symbol} | Delta пропущена: snapshot не получен")
+      return None
 
     try:
       bids_update = []
@@ -162,8 +164,9 @@ class OrderBookManager:
       self.delta_count += 1
 
       logger.debug(
-        f"{self.symbol} | Применена delta: "
-        f"{len(bids_update)} bids, {len(asks_update)} asks"
+        f"{self.symbol} | Delta применена: "
+        f"bids={len(bids_update)}, asks={len(asks_update)}, "
+        f"seq={self.last_sequence_id}"
       )
 
       # Создаем объект delta

@@ -238,18 +238,48 @@ class BybitWebSocketManager:
     # Сохраняем подписанные топики
     self.subscribed_topics[connection_id] = topics
 
-    # Ждем подтверждения подписки
+    # ИСПРАВЛЕНИЕ: Bybit V5 может прислать либо подтверждение, либо сразу snapshot
+    # Ждем ответа и правильно его обрабатываем
     try:
       response = await asyncio.wait_for(websocket.recv(), timeout=5.0)
       response_data = json.loads(response)
 
+      # Проверяем тип ответа
       if response_data.get("success"):
-        logger.info(f"Подписка соединения {connection_id} успешна")
+        # Подтверждение подписки
+        logger.info(f"Подписка соединения {connection_id} подтверждена")
+
+      elif response_data.get("op") == "subscribe" and response_data.get("success"):
+        # Альтернативный формат подтверждения
+        logger.info(f"Подписка соединения {connection_id} подтверждена (alt format)")
+
+      elif "topic" in response_data and "type" in response_data:
+        # Bybit сразу прислал данные (snapshot или delta)!
+        message_type = response_data.get("type")
+        logger.info(
+          f"Подписка соединения {connection_id} активна - "
+          f"получено первое сообщение: {message_type}"
+        )
+
+        # КРИТИЧНО: Передаем первое сообщение в обработчик!
+        await self._process_message(connection_id, response_data)
+
       else:
-        logger.error(f"Ошибка подписки соединения {connection_id}: {response_data}")
+        # Неожиданный формат ответа - логируем для анализа
+        logger.warning(
+          f"Подписка соединения {connection_id}: "
+          f"неожиданный формат ответа: {response_data.get('op', 'unknown')}"
+        )
 
     except asyncio.TimeoutError:
-      logger.warning(f"Таймаут ожидания подтверждения подписки {connection_id}")
+      logger.warning(
+        f"Таймаут ожидания подтверждения подписки {connection_id}. "
+        f"Продолжаем работу - данные могут прийти позже."
+      )
+    except json.JSONDecodeError as e:
+      logger.error(f"Ошибка парсинга ответа подписки {connection_id}: {e}")
+    except Exception as e:
+      logger.error(f"Неожиданная ошибка при подписке {connection_id}: {e}")
 
   async def _handle_messages(
       self,
@@ -277,18 +307,27 @@ class BybitWebSocketManager:
             logger.debug(f"Отправлен pong для соединения {connection_id}")
             continue
 
-          # Пропускаем служебные сообщения
-          if data.get("op") in ["subscribe", "pong"]:
+          # Пропускаем подтверждения подписки (они уже обработаны)
+          if data.get("op") == "subscribe":
+            logger.debug(f"Получено подтверждение подписки: {data.get('success')}")
             continue
 
-          # Обрабатываем данные
+          # Пропускаем pong ответы
+          if data.get("op") == "pong":
+            continue
+
+          # Обрабатываем данные стакана
           if "topic" in data and "data" in data:
             await self._process_message(connection_id, data)
+          else:
+            # Логируем неизвестные сообщения для отладки
+            logger.debug(f"Пропущено сообщение: op={data.get('op')}, keys={list(data.keys())}")
 
         except json.JSONDecodeError as e:
           logger.error(f"Ошибка парсинга JSON для соединения {connection_id}: {e}")
         except Exception as e:
           logger.error(f"Ошибка обработки сообщения {connection_id}: {e}")
+          # НЕ прерываем цикл - продолжаем обработку других сообщений
 
     except websockets.exceptions.ConnectionClosed:
       logger.warning(f"Соединение {connection_id} закрыто во время обработки сообщений")
@@ -303,11 +342,23 @@ class BybitWebSocketManager:
         data: Данные сообщения
     """
     try:
-      # Вызываем callback функцию для обработки сообщения
-      await self.on_message(data)
+      topic = data.get("topic", "")
+      message_type = data.get("type", "")
+
+      # Дополнительные поля для логирования
+      timestamp = data.get("ts", "N/A")
+
+      logger.debug(
+        f"Conn {connection_id} | Topic: {topic} | "
+        f"Type: {message_type} | TS: {timestamp}"
+      )
+
+      # Передаем сообщение в callback (в main.py)
+      if self.on_message:
+        await self.on_message(data)
 
     except Exception as e:
-      logger.error(f"Ошибка в callback обработки сообщения {connection_id}: {e}")
+      logger.error(f"Ошибка обработки сообщения conn {connection_id}: {e}")
 
   def get_connection_statuses(self) -> Dict[int, str]:
     """
