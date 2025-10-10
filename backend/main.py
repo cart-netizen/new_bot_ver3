@@ -5,7 +5,7 @@
 
 import asyncio
 import signal
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 from contextlib import asynccontextmanager
 
 import uvicorn

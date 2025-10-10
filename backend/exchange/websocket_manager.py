@@ -236,40 +236,27 @@ class BybitWebSocketManager:
     await websocket.send(json.dumps(subscribe_message))
 
     # Сохраняем подписанные топики
+    # Сохраняем подписанные топики
     self.subscribed_topics[connection_id] = topics
 
-    # ИСПРАВЛЕНИЕ: Bybit V5 может прислать либо подтверждение, либо сразу snapshot
-    # Ждем ответа и правильно его обрабатываем
+    # Ждем первого ответа (может быть snapshot!)
     try:
       response = await asyncio.wait_for(websocket.recv(), timeout=5.0)
       response_data = json.loads(response)
 
-      # Проверяем тип ответа
-      if response_data.get("success"):
-        # Подтверждение подписки
-        logger.info(f"Подписка соединения {connection_id} подтверждена")
-
-      elif response_data.get("op") == "subscribe" and response_data.get("success"):
-        # Альтернативный формат подтверждения
-        logger.info(f"Подписка соединения {connection_id} подтверждена (alt format)")
-
-      elif "topic" in response_data and "type" in response_data:
-        # Bybit сразу прислал данные (snapshot или delta)!
-        message_type = response_data.get("type")
+      # Если пришел snapshot - обрабатываем его!
+      if "topic" in response_data and "type" in response_data:
         logger.info(
-          f"Подписка соединения {connection_id} активна - "
-          f"получено первое сообщение: {message_type}"
+          f"Подписка {connection_id}: получено первое сообщение "
+          f"type={response_data.get('type')}"
         )
-
-        # КРИТИЧНО: Передаем первое сообщение в обработчик!
+        # ВАЖНО: Передаем snapshot в обработчик!
         await self._process_message(connection_id, response_data)
-
       else:
-        # Неожиданный формат ответа - логируем для анализа
-        logger.warning(
-          f"Подписка соединения {connection_id}: "
-          f"неожиданный формат ответа: {response_data.get('op', 'unknown')}"
-        )
+        logger.info(f"Подписка {connection_id} подтверждена")
+
+    except asyncio.TimeoutError:
+      logger.warning(f"Таймаут подтверждения подписки {connection_id}")
 
     except asyncio.TimeoutError:
       logger.warning(

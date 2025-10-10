@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 
 
 class BybitAuthenticator:
-  """Класс для аутентификации запросов к Bybit API."""
+  """Класс для аутентификации запросов к Bybit V5 API."""
 
   def __init__(self, api_key: str, api_secret: str):
     """
@@ -26,30 +26,61 @@ class BybitAuthenticator:
         api_key: API ключ Bybit
         api_secret: API секрет Bybit
     """
-    self.api_key = api_key
-    self.api_secret = api_secret
-    logger.info(f"Инициализирован аутентификатор Bybit (ключ: {api_key[:8]}...)")
+    # Очищаем от возможных пробелов
+    self.api_key = api_key.strip()
+    self.api_secret = api_secret.strip()
+
+    logger.info(f"Инициализирован аутентификатор Bybit (ключ: {self.api_key[:8]}...)")
+    logger.debug(f"Длина API ключа: {len(self.api_key)}")
+    logger.debug(f"Длина API secret: {len(self.api_secret)}")
 
   def generate_signature(
       self,
       timestamp: int,
+      method: str,
       params: Dict,
       recv_window: int = 5000
   ) -> str:
     """
-    Генерация HMAC SHA256 подписи для запроса.
+    Генерация HMAC SHA256 подписи для запроса согласно документации Bybit V5.
+
+    Формат подписи:
+    - GET:  timestamp + api_key + recv_window + queryString
+    - POST: timestamp + api_key + recv_window + jsonBody
 
     Args:
         timestamp: Unix timestamp в миллисекундах
+        method: HTTP метод (GET или POST)
         params: Параметры запроса
         recv_window: Окно приема запроса в миллисекундах
 
     Returns:
         str: Hex строка подписи
     """
-    # Формируем строку для подписи
-    param_str = urlencode(sorted(params.items()))
+    # Формируем параметры в зависимости от метода
+    if method == "GET":
+      # Для GET: сортированный query string
+      if params:
+        # Сортируем по ключам и формируем query string
+        param_str = urlencode(sorted(params.items()))
+      else:
+        param_str = ""
+    else:  # POST, PUT, DELETE
+      # Для POST: JSON строка БЕЗ пробелов
+      if params:
+        param_str = json.dumps(params, separators=(',', ':'), sort_keys=True)
+      else:
+        param_str = ""
+
+    # Собираем строку для подписи согласно документации V5
     sign_str = f"{timestamp}{self.api_key}{recv_window}{param_str}"
+
+    logger.debug(f"Создание подписи ({method}):")
+    logger.debug(f"  Timestamp: {timestamp}")
+    logger.debug(f"  API Key: {self.api_key}")
+    logger.debug(f"  Recv Window: {recv_window}")
+    logger.debug(f"  Param String: {param_str[:100]}...")
+    logger.debug(f"  Sign String: {sign_str[:100]}...")
 
     # Генерируем HMAC SHA256
     signature = hmac.new(
@@ -58,7 +89,7 @@ class BybitAuthenticator:
       hashlib.sha256
     ).hexdigest()
 
-    logger.debug(f"Сгенерирована подпись для запроса: {signature[:16]}...")
+    logger.debug(f"  Signature: {signature}")
     return signature
 
   def get_headers(
@@ -78,17 +109,21 @@ class BybitAuthenticator:
     Returns:
         Dict[str, str]: Заголовки запроса
     """
-    return {
+    headers = {
       "X-BAPI-API-KEY": self.api_key,
       "X-BAPI-SIGN": signature,
-      "X-BAPI-SIGN-TYPE": "2",
       "X-BAPI-TIMESTAMP": str(timestamp),
       "X-BAPI-RECV-WINDOW": str(recv_window),
       "Content-Type": "application/json"
     }
 
+    # НЕ добавляем X-BAPI-SIGN-TYPE для V5 API (это для V3)
+
+    return headers
+
   def prepare_request(
       self,
+      method: str,
       params: Optional[Dict] = None,
       recv_window: int = 5000
   ) -> Dict:
@@ -96,6 +131,7 @@ class BybitAuthenticator:
     Подготовка аутентифицированного запроса.
 
     Args:
+        method: HTTP метод (GET, POST, etc.)
         params: Параметры запроса
         recv_window: Окно приема запроса в миллисекундах
 
@@ -108,8 +144,8 @@ class BybitAuthenticator:
     # Генерируем timestamp
     timestamp = int(time.time() * 1000)
 
-    # Генерируем подпись
-    signature = self.generate_signature(timestamp, params, recv_window)
+    # Генерируем подпись с учетом метода
+    signature = self.generate_signature(timestamp, method, params, recv_window)
 
     # Формируем заголовки
     headers = self.get_headers(timestamp, signature, recv_window)
@@ -157,7 +193,8 @@ def create_authenticator() -> BybitAuthenticator:
   api_key, api_secret = settings.get_bybit_credentials()
 
   logger.info(f"Создан аутентификатор для режима: {settings.BYBIT_MODE}")
-  logger.info(f"API ключ: {api_key[:8]}...")
+  logger.info(f"API ключ: {api_key[:8]}... (длина: {len(api_key)})")
+  logger.info(f"API secret: {'*' * len(api_secret)} (длина: {len(api_secret)})")
 
   return BybitAuthenticator(api_key, api_secret)
 

@@ -1,0 +1,578 @@
+[2025-10-09 17:59:45.292] [ERROR   ] [exchange.websocket_manager] [_subscribe_to_topics:249] Ошибка подписки соединения 0: {'topic': 'orderbook.200.BTCUSDT', 'type': 'snapshot', 'ts': 1760007585365, 'data': {'s': 'BTCUSDT', 'b': [['77843.30', '0.001'], ['77831.70', '0.006'], ['77772.10', '0.001'], ['77746.70', '0.001'], ['77676.40', '0.010'], ['77669.00', '0.001'], ['77591.40', '0.001'], ['77580.40', '0.068'], ['77550.90', '0.001'], ['77408.00', '0.001'], ['77401.70', '0.002'], ['77397.70', '0.001'], ['77345.80', '0.001'], ['77341.20', '0.002'], ['77328.10', '0.001'], ['77220.70', '0.007'], ['77181.40', '0.001'], ['77154.00', '0.001'], ['77137.50', '0.001'], ['77115.20', '0.001'], ['77091.30', '0.001'], ['77006.50', '0.010'], ['77000.00', '0.002'], ['76973.70', '0.039'], ['76962.30', '0.001'], ['76951.50', '0.001'], ['76936.10', '0.012'], ['76917.50', '0.001'], ['76888.90', '0.001'], ['76796.80', '0.001'], ['76752.00', '0.001'], ['76657.70', '0.001'], ['76647.40', '0.015'], ['76629.70', '0.002'], ['76618.50', '0.001'], ['76500.30', '0.001'], ['76400.00', '0.001'], ['76396.70', '0.001'], ['76364.00', '0.001'], ['76363.80', '0.003'], ['76341.10', '0.004'], ['76336.60', '0.010'], ['76319.20', '0.002'], ['76265.50', '0.001'], ['76250.80', '0.001'], ['76203.30', '0.003'], ['76176.90', '0.001'], ['76096.00', '0.001'], ['76062.90', '0.001'], ['76003.40', '0.002'], ['75922.20', '0.012'], ['75776.20', '0.001'], ['75773.60', '0.026'], ['75757.30', '0.001'], ['75739.90', '0.001'], ['75734.20', '0.001'], ['75686.20', '0.001'], ['75666.60', '0.004'], ['75654.80', '0.001'], ['75522.90', '0.001'], ['75510.20', '0.001'], ['75440.00', '0.001'], ['75364.50', '0.001'], ['75364.20', '0.001'], ['75346.60', '0.002'], ['75250.10', '0.001'], ['75236.70', '0.002'], ['75208.20', '0.001'], ['75202.90', '0.001'], ['75120.80', '0.008'], ['75089.70', '0.001'], ['74996.70', '0.010'], ['74947.00', '0.282'], ['74945.60', '0.003'], ['74908.30', '0.012'], ['74894.10', '0.002'], ['74809.40', '0.001'], ['74784.00', '0.001'], ['74764.90', '0.001'], ['74753.80', '0.001'], ['74671.60', '0.001'], ['74670.20', '0.002'], ['74660.60', '0.001'], ['74583.50', '0.080'], ['74477.60', '0.001'], ['74455.20', '0.015'], ['74353.60', '0.001'], ['74335.10', '0.281'], ['74334.50', '0.001'], ['74326.80', '0.010'], ['74298.40', '0.001'], ['74154.10', '0.002'], ['74140.30', '0.001'], ['74128.00', '0.001'], ['74058.00', '0.001'], ['74008.40', '0.003'], ['74000.00', '0.002'], ['73963.90', '0.001'], ['73894.40', '0.012'], ['73821.40', '0.001'], ['73734.00', '0.001'], ['73723.30', '0.281'], ['73656.90', '0.010'], ['73609.00', '0.001'], ['73590.90', '0.001'], ['73498.90', '0.001'], ['73472.00', '0.001'], ['73430.10', '0.001'], ['73351.90', '0.002'], ['73331.40', '0.001'], ['73326.90', '0.002'], ['73297.30', '0.006'], ['73118.50', '0.001'], ['73111.40', '0.281'], ['73077.70', '0.001'], ['73071.60', '0.002'], ['73007.10', '0.004'], ['73000.00', '0.014'], ['72986.90', '0.010'], ['72889.10', '0.001'], ['72880.50', '0.012'], ['72872.10', '0.001'], ['72856.80', '0.001'], ['72816.00', '0.001'], ['72800.00', '0.001'], ['72704.30', '0.001'], ['72644.30', '0.001'], ['72629.50', '0.001'], ['72605.90', '0.001'], ['72546.40', '0.001'], ['72538.90', '0.001'], ['72536.60', '0.001'], ['72499.50', '0.281'], ['72368.00', '0.008'], ['72353.70', '0.001'], ['72317.00', '0.010'], ['72273.00', '0.001'], ['72263.10', '0.015'], ['72203.30', '0.001'], ['72170.20', '0.001'], ['72160.00', '0.001'], ['72141.40', '0.001'], ['72131.50', '0.019'], ['72015.10', '0.001'], ['72000.00', '0.014'], ['71989.00', '0.002'], ['71956.70', '0.001'], ['71887.70', '0.281'], ['71866.60', '0.012'], ['71817.60', '0.001'], ['71789.70', '0.001'], ['71654.10', '0.001'], ['71652.90', '0.003'], ['71647.10', '0.010'], ['71598.00', '0.001'], ['71504.00', '0.001'], ['71483.80', '0.001'], ['71466.60', '0.001'], ['71427.60', '0.001'], ['71415.30', '0.001'], ['71397.90', '0.003'], ['71357.30', '0.002'], ['71298.20', '0.001'], ['71296.90', '0.080'], ['71289.30', '0.001'], ['71275.80', '0.281'], ['71189.70', '0.001'], ['71153.80', '0.001'], ['71033.30', '0.057'], ['71024.30', '0.001'], ['71000.00', '0.016'], ['70979.30', '0.001'], ['70977.10', '0.010'], ['70954.50', '0.001'], ['70952.50', '0.001'], ['70935.00', '0.001'], ['70931.00', '0.001'], ['70927.90', '0.005'], ['70906.50', '0.002'], ['70852.70', '0.012'], ['70848.00', '0.001'], ['70782.20', '0.001'], ['70766.60', '0.057'], ['70743.50', '0.002'], ['70702.90', '0.001'], ['70664.00', '0.281'], ['70650.30', '0.002'], ['70582.10', '0.001'], ['70500.00', '0.059'], ['70421.20', '0.001'], ['70307.20', '0.010'], ['70233.30', '0.057'], ['70217.40', '0.001'], ['70192.00', '0.001'], ['70092.00', '0.001'], ['70080.40', '0.001'], ['70070.90', '0.015'], ['70052.10', '0.281'], ['70044.40', '0.001'], ['70005.50', '0.001']], 'a': [['78071.70', '0.003'], ['78227.30', '0.003'], ['78637.60', '0.003'], ['78684.80', '0.001'], ['78720.00', '0.001'], ['78720.10', '0.001'], ['78763.50', '0.001'], ['78842.20', '0.001'], ['78910.70', '0.001'], ['79026.60', '0.001'], ['79036.70', '0.001'], ['79262.50', '0.001'], ['79376.00', '0.001'], ['79415.70', '0.001'], ['79481.40', '0.001'], ['79566.80', '0.002'], ['79647.90', '0.001'], ['79797.40', '0.001'], ['79866.50', '0.001'], ['79882.10', '0.001'], ['80000.00', '0.001'], ['80032.00', '0.001'], ['80033.30', '0.001'], ['80064.50', '0.001'], ['80336.10', '0.001'], ['80348.00', '0.001'], ['80418.70', '0.001'], ['80443.30', '0.001'], ['80500.00', '0.009'], ['80626.50', '0.008'], ['80649.40', '0.002'], ['80684.00', '0.001'], ['80688.00', '0.001'], ['80727.60', '0.001'], ['80804.10', '0.001'], ['81000.00', '0.009'], ['81031.80', '0.015'], ['81074.60', '0.003'], ['81156.70', '0.080'], ['81189.50', '0.001'], ['81190.70', '0.001'], ['81280.40', '0.001'], ['81318.60', '0.001'], ['81330.50', '0.002'], ['81344.00', '0.001'], ['81356.60', '0.002'], ['81464.00', '0.001'], ['81500.00', '0.009'], ['81506.00', '0.001'], ['81570.70', '0.001'], ['81573.00', '0.001'], ['81574.90', '0.001'], ['81644.80', '0.001'], ['81731.90', '0.002'], ['81960.30', '0.001'], ['82000.00', '0.011'], ['82045.30', '0.001'], ['82212.80', '0.001'], ['82250.80', '0.001'], ['82336.10', '0.001'], ['82345.70', '0.001'], ['82418.50', '0.001'], ['82457.30', '0.001'], ['82500.00', '0.009'], ['82523.60', '0.002'], ['82656.00', '0.001'], ['82731.10', '0.001'], ['82770.70', '0.001'], ['82814.50', '0.002'], ['82900.00', '0.001'], ['82947.60', '0.001'], ['83000.00', '0.009'], ['83116.50', '0.001'], ['83145.10', '0.001'], ['83224.00', '0.015'], ['83264.00', '0.001'], ['83312.00', '0.001'], ['83325.20', '0.002'], ['83343.90', '0.001'], ['83379.30', '0.008'], ['83430.10', '0.003'], ['83500.00', '0.009'], ['83501.90', '0.001'], ['83670.00', '0.029'], ['83682.30', '0.002'], ['83754.60', '0.001'], ['83887.30', '0.001'], ['83897.00', '0.002'], ['83968.00', '0.001'], ['83990.20', '0.001'], ['84000.00', '0.010'], ['84033.20', '0.002'], ['84077.50', '0.001'], ['84109.40', '0.001'], ['84222.90', '0.001'], ['84228.80', '0.001'], ['84230.60', '0.001'], ['84272.70', '0.001'], ['84389.10', '0.001'], ['84443.40', '0.080'], ['84500.00', '0.009'], ['84609.30', '0.001'], ['84624.00', '0.001'], ['84658.10', '0.001'], ['84809.10', '0.001'], ['84954.90', '0.001'], ['84979.60', '0.002'], ['84993.80', '0.001'], ['85000.00', '0.010'], ['85009.00', '0.029'], ['85009.90', '0.001'], ['85117.20', '0.001'], ['85280.00', '0.001'], ['85319.80', '0.002'], ['85416.20', '0.015'], ['85428.90', '0.001'], ['85463.90', '0.001'], ['85488.10', '0.001'], ['85500.00', '0.009'], ['85675.00', '0.001'], ['85696.30', '0.001'], ['85800.30', '0.001'], ['85814.30', '0.001'], ['85830.70', '0.001'], ['85916.30', '0.001'], ['85936.00', '0.001'], ['85942.20', '0.001'], ['85991.50', '0.001'], ['86000.00', '0.011'], ['86003.80', '0.001'], ['86062.10', '0.002'], ['86121.60', '0.001'], ['86132.10', '0.008'], ['86136.30', '0.001'], ['86199.70', '0.001'], ['86318.50', '0.001'], ['86348.00', '0.029'], ['86450.30', '0.002'], ['86500.00', '0.007'], ['86585.10', '0.001'], ['86592.00', '0.001'], ['86645.80', '0.001'], ['86709.70', '0.002'], ['86739.50', '0.001'], ['86837.20', '0.001'], ['86867.50', '0.001'], ['86874.60', '0.001'], ['86890.50', '0.001'], ['86970.50', '0.001'], ['87000.00', '0.009'], ['87127.10', '0.001'], ['87144.60', '0.002'], ['87173.20', '0.001'], ['87248.00', '0.001'], ['87314.50', '0.002'], ['87355.90', '0.001'], ['87456.50', '0.001'], ['87491.30', '0.001'], ['87500.00', '0.009'], ['87608.30', '0.015'], ['87627.80', '0.029'], ['87686.90', '0.029'], ['87730.00', '0.080'], ['87741.30', '0.001'], ['87777.10', '0.001'], ['87807.00', '0.001'], ['87818.70', '0.001'], ['87904.00', '0.001'], ['88000.00', '0.009'], ['88014.40', '0.001'], ['88027.80', '0.001'], ['88076.30', '0.002'], ['88126.70', '0.001'], ['88223.80', '0.001'], ['88225.60', '0.001'], ['88227.20', '0.002'], ['88336.70', '0.001'], ['88342.70', '0.001'], ['88410.10', '0.001'], ['88500.00', '0.009'], ['88512.10', '0.001'], ['88560.00', '0.001'], ['88579.20', '0.001'], ['88663.80', '0.001'], ['88725.40', '0.001'], ['88739.40', '0.001'], ['88770.00', '0.001'], ['88828.80', '0.004'], ['88882.40', '0.001'], ['88884.90', '0.008'], ['88928.70', '0.001'], ['89000.00', '0.011'], ['89004.10', '0.003'], ['89025.90', '0.029'], ['89031.70', '0.001'], ['89182.20', '0.001'], ['89216.00', '0.001'], ['89282.90', '0.001'], ['89309.10', '0.002'], ['89309.70', '0.002']], 'u': 889146, 'seq': 9530938887}, 'cts': 1760007585257}
+[2025-10-09 17:59:45.294] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:45.295] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:45.296] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:45.296] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:45.297] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:45.297] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:45.298] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:45.298] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:45.299] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:45.299] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:45.300] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:45.300] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:45.301] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:45.301] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:45.301] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:45.301] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:45.302] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:45.302] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:45.303] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:45.303] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:45.304] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:45.304] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:46.419] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:46.419] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007587767}}
+[2025-10-09 17:59:46.419] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007587767}}
+[2025-10-09 17:59:46.516] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:46.516] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:46.705] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:46.705] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007588050}}
+[2025-10-09 17:59:46.705] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007588050}}
+[2025-10-09 17:59:46.916] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:46.916] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:47.020] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:47.020] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:47.099] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:47.100] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007588450}}
+[2025-10-09 17:59:47.100] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007588450}}
+[2025-10-09 17:59:47.116] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:47.116] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:47.578] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:47.578] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007588928}}
+[2025-10-09 17:59:47.578] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007588928}}
+[2025-10-09 17:59:48.088] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:48.089] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007589439}}
+[2025-10-09 17:59:48.089] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007589439}}
+[2025-10-09 17:59:48.613] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:48.613] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007589963}}
+[2025-10-09 17:59:48.614] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007589963}}
+[2025-10-09 17:59:49.112] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:49.113] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007590463}}
+[2025-10-09 17:59:49.113] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007590463}}
+[2025-10-09 17:59:49.611] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:49.618] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007590958}}
+[2025-10-09 17:59:49.624] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007590958}}
+[2025-10-09 17:59:50.103] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:50.103] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007591454}}
+[2025-10-09 17:59:50.103] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007591454}}
+[2025-10-09 17:59:50.625] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:50.626] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007591975}}
+[2025-10-09 17:59:50.627] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007591975}}
+[2025-10-09 17:59:51.154] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:51.154] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007592504}}
+[2025-10-09 17:59:51.155] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007592504}}
+[2025-10-09 17:59:51.661] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:51.662] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007593011}}
+[2025-10-09 17:59:51.662] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007593011}}
+[2025-10-09 17:59:51.815] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:51.815] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:51.915] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:51.916] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:52.172] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:52.174] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007593522}}
+[2025-10-09 17:59:52.174] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007593522}}
+[2025-10-09 17:59:52.695] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:52.695] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007594045}}
+[2025-10-09 17:59:52.695] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007594045}}
+[2025-10-09 17:59:53.206] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:53.207] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007594556}}
+[2025-10-09 17:59:53.208] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007594556}}
+[2025-10-09 17:59:53.728] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:53.729] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007595078}}
+[2025-10-09 17:59:53.729] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007595078}}
+[2025-10-09 17:59:54.229] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:54.230] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007595577}}
+[2025-10-09 17:59:54.231] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007595577}}
+[2025-10-09 17:59:54.721] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:54.721] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007596071}}
+[2025-10-09 17:59:54.721] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007596071}}
+[2025-10-09 17:59:55.227] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:55.228] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007596577}}
+[2025-10-09 17:59:55.229] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007596577}}
+[2025-10-09 17:59:55.730] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:55.731] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007597078}}
+[2025-10-09 17:59:55.732] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007597078}}
+[2025-10-09 17:59:56.206] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:56.207] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007597557}}
+[2025-10-09 17:59:56.207] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007597557}}
+[2025-10-09 17:59:56.705] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:56.706] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007598055}}
+[2025-10-09 17:59:56.707] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007598055}}
+[2025-10-09 17:59:57.221] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:57.222] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007598567}}
+[2025-10-09 17:59:57.223] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007598567}}
+[2025-10-09 17:59:57.723] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:57.724] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007599071}}
+[2025-10-09 17:59:57.724] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007599071}}
+[2025-10-09 17:59:58.204] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:58.204] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007599555}}
+[2025-10-09 17:59:58.204] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007599555}}
+[2025-10-09 17:59:58.517] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:58.517] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:58.616] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:58.616] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:58.701] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:58.702] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007600051}}
+[2025-10-09 17:59:58.703] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007600051}}
+[2025-10-09 17:59:58.723] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:58.723] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:58.815] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:58.815] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:58.916] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:58.916] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:59.017] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:59.017] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:59.115] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:59.115] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:59.199] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:59.199] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007600549}}
+[2025-10-09 17:59:59.199] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007600549}}
+[2025-10-09 17:59:59.215] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:59.216] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:59.316] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:59.316] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:59.418] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:59.419] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:59.517] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:59.518] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:59.616] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 17:59:59.617] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 17:59:59.708] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 17:59:59.709] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007601057}}
+[2025-10-09 17:59:59.709] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007601057}}
+[2025-10-09 18:00:00.219] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:00.220] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007601568}}
+[2025-10-09 18:00:00.221] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007601568}}
+[2025-10-09 18:00:00.725] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:00.726] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007602074}}
+[2025-10-09 18:00:00.727] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007602074}}
+[2025-10-09 18:00:01.223] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:01.224] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007602573}}
+[2025-10-09 18:00:01.225] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007602573}}
+[2025-10-09 18:00:01.744] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:01.745] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007603095}}
+[2025-10-09 18:00:01.745] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007603095}}
+[2025-10-09 18:00:02.249] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:02.249] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007603599}}
+[2025-10-09 18:00:02.249] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007603599}}
+[2025-10-09 18:00:02.736] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:02.736] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007604085}}
+[2025-10-09 18:00:02.736] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007604085}}
+[2025-10-09 18:00:03.216] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 18:00:03.218] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 18:00:03.236] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:03.236] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007604586}}
+[2025-10-09 18:00:03.236] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007604586}}
+[2025-10-09 18:00:03.319] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 18:00:03.319] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 18:00:03.418] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 18:00:03.418] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 18:00:03.516] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 18:00:03.516] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 18:00:03.616] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 18:00:03.616] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 18:00:03.738] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:03.739] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007605089}}
+[2025-10-09 18:00:03.740] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007605089}}
+[2025-10-09 18:00:04.253] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:04.253] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007605604}}
+[2025-10-09 18:00:04.253] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007605604}}
+[2025-10-09 18:00:04.750] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:04.750] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007606101}}
+[2025-10-09 18:00:04.750] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007606101}}
+[2025-10-09 18:00:05.273] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:05.274] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007606624}}
+[2025-10-09 18:00:05.275] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007606624}}
+[2025-10-09 18:00:05.750] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:05.751] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007607100}}
+[2025-10-09 18:00:05.752] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007607100}}
+[2025-10-09 18:00:06.262] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:06.263] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007607611}}
+[2025-10-09 18:00:06.264] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007607611}}
+[2025-10-09 18:00:06.316] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 18:00:06.316] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 18:00:06.417] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 18:00:06.417] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 18:00:06.618] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 18:00:06.619] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 18:00:06.751] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:06.752] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007608100}}
+[2025-10-09 18:00:06.753] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007608100}}
+[2025-10-09 18:00:07.280] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:07.282] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007608630}}
+[2025-10-09 18:00:07.282] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007608630}}
+[2025-10-09 18:00:07.760] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:07.760] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007609111}}
+[2025-10-09 18:00:07.760] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007609111}}
+[2025-10-09 18:00:08.262] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:08.264] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007609613}}
+[2025-10-09 18:00:08.265] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007609613}}
+[2025-10-09 18:00:08.779] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:08.779] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007610126}}
+[2025-10-09 18:00:08.779] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007610126}}
+[2025-10-09 18:00:09.276] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:09.276] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007610626}}
+[2025-10-09 18:00:09.277] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007610626}}
+[2025-10-09 18:00:09.793] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:09.802] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007611153}}
+[2025-10-09 18:00:09.802] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007611153}}
+[2025-10-09 18:00:10.217] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 18:00:10.217] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 18:00:10.301] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:10.302] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007611652}}
+[2025-10-09 18:00:10.302] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007611652}}
+[2025-10-09 18:00:11.016] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 18:00:11.016] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 18:00:11.112] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:11.113] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007612463}}
+[2025-10-09 18:00:11.113] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007612463}}
+[2025-10-09 18:00:11.398] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:11.398] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007612748}}
+[2025-10-09 18:00:11.398] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007612748}}
+[2025-10-09 18:00:11.807] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:11.808] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007613159}}
+[2025-10-09 18:00:11.808] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007613159}}
+[2025-10-09 18:00:12.018] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 18:00:12.019] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 18:00:12.218] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 18:00:12.218] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 18:00:12.307] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:12.307] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007613658}}
+[2025-10-09 18:00:12.308] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007613658}}
+[2025-10-09 18:00:12.802] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:12.803] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007614152}}
+[2025-10-09 18:00:12.803] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007614152}}
+[2025-10-09 18:00:13.305] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:13.306] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007614655}}
+[2025-10-09 18:00:13.307] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007614655}}
+[2025-10-09 18:00:13.809] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:13.810] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007615161}}
+[2025-10-09 18:00:13.810] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007615161}}
+[2025-10-09 18:00:14.304] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:14.304] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007615655}}
+[2025-10-09 18:00:14.304] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007615655}}
+[2025-10-09 18:00:14.417] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 18:00:14.418] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 18:00:14.824] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:14.825] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007616174}}
+[2025-10-09 18:00:14.826] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007616174}}
+[2025-10-09 18:00:15.313] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:15.314] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007616662}}
+[2025-10-09 18:00:15.314] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007616662}}
+[2025-10-09 18:00:15.797] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:15.797] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007617148}}
+[2025-10-09 18:00:15.797] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007617148}}
+[2025-10-09 18:00:16.326] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:16.326] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007617675}}
+[2025-10-09 18:00:16.326] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007617675}}
+[2025-10-09 18:00:16.715] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 18:00:16.715] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 18:00:16.814] [ERROR   ] [main                     ] [_handle_orderbook_message:233] Ошибка обработки сообщения стакана: Delta received before snapshot
+[2025-10-09 18:00:16.814] [ERROR   ] [main                     ] [log_exception:222] Обработка сообщения стакана: Delta received before snapshot
+Traceback (most recent call last):
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\main.py", line 230, in _handle_orderbook_message
+    manager.apply_delta(message_data)
+  File "C:\Users\1q\PycharmProjects\Bot_ver3_stakan_new\backend\strategy\orderbook_manager.py", line 120, in apply_delta
+    raise OrderBookSyncError("Delta received before snapshot")
+core.exceptions.OrderBookSyncError: Delta received before snapshot
+[2025-10-09 18:00:16.816] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:16.816] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007618167}}
+[2025-10-09 18:00:16.816] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007618167}}
+[2025-10-09 18:00:17.323] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:17.323] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007618674}}
+[2025-10-09 18:00:17.324] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007618674}}
+[2025-10-09 18:00:17.817] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:17.819] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007619168}}
+[2025-10-09 18:00:17.820] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007619168}}
+[2025-10-09 18:00:18.317] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:18.318] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007619668}}
+[2025-10-09 18:00:18.318] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007619668}}
+[2025-10-09 18:00:18.823] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:18.824] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007620173}}
+[2025-10-09 18:00:18.824] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007620173}}
+[2025-10-09 18:00:19.317] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:19.318] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007620663}}
+[2025-10-09 18:00:19.318] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007620663}}
+[2025-10-09 18:00:19.821] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:19.822] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007621172}}
+[2025-10-09 18:00:19.823] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007621172}}
+[2025-10-09 18:00:20.322] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:20.322] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007621670}}
+[2025-10-09 18:00:20.323] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007621670}}
+[2025-10-09 18:00:20.828] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:20.829] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007622178}}
+[2025-10-09 18:00:20.829] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007622178}}
+[2025-10-09 18:00:21.350] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:21.350] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007622700}}
+[2025-10-09 18:00:21.350] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007622700}}
+[2025-10-09 18:00:21.848] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:21.848] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007623195}}
+[2025-10-09 18:00:21.848] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007623195}}
+[2025-10-09 18:00:22.333] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:22.333] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007623684}}
+[2025-10-09 18:00:22.333] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007623684}}
+[2025-10-09 18:00:22.841] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:22.841] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007624192}}
+[2025-10-09 18:00:22.842] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007624192}}
+[2025-10-09 18:00:23.347] [ERROR   ] [exchange.rest_client     ] [_request:115] Ошибка API Bybit: API key is invalid.
+[2025-10-09 18:00:23.348] [ERROR   ] [execution.execution_manager] [_place_order:237] SOLUSDT | Ошибка размещения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007624698}}
+[2025-10-09 18:00:23.348] [ERROR   ] [execution.execution_manager] [_execute_signal:179] SOLUSDT | Ошибка исполнения ордера: Bybit API error: API key is invalid. | Детали: {'status_code': 10003, 'response': {'retCode': 10003, 'retMsg': 'API key is invalid.', 'result': {}, 'retExtInfo': {}, 'time': 1760007624698}}

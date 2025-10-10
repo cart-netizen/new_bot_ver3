@@ -84,9 +84,12 @@ class BybitRESTClient:
     url = f"{self.base_url}{path}"
     headers = {"Content-Type": "application/json"}
 
-    # Добавляем аутентификацию если требуется
+    # ИСПРАВЛЕНИЕ: Передаем метод в prepare_request
     if authenticated:
-      auth_data = self.authenticator.prepare_request(params or {})
+      auth_data = self.authenticator.prepare_request(
+        method=method,  # ← ВАЖНО: Передаем метод!
+        params=params or {}
+      )
       headers.update(auth_data["headers"])
       params = auth_data["params"]
 
@@ -102,20 +105,42 @@ class BybitRESTClient:
           json=params if method == "POST" else None,
           headers=headers
       ) as response:
-        data = await response.json()
+        # Пытаемся получить JSON
+        try:
+          data = await response.json()
+        except:
+          # Если не JSON - получаем текст
+          text = await response.text()
+          logger.error(f"Не удалось распарсить JSON. Ответ: {text[:500]}")
+          raise ExchangeAPIError(
+            f"Invalid JSON response: {text[:200]}",
+            status_code=response.status
+          )
 
-        # Проверяем код ответа
+        # Логируем статус
+        logger.debug(f"HTTP Status: {response.status}")
+
+        # Проверяем код ответа HTTP
+        if response.status == 401:
+          logger.error("401 Unauthorized - проблема с аутентификацией")
+          raise ExchangeAPIError(
+            "Unauthorized: Invalid API key or signature",
+            status_code=401,
+            response=data
+          )
+
         if response.status == 429:
           logger.warning("Превышен лимит запросов к API")
           raise RateLimitError("Превышен лимит запросов к Bybit API")
 
         # Проверяем статус в ответе Bybit
-        if data.get("retCode") != 0:
+        ret_code = data.get("retCode")
+        if ret_code != 0:
           error_msg = data.get("retMsg", "Unknown error")
-          logger.error(f"Ошибка API Bybit: {error_msg}")
+          logger.error(f"Ошибка API Bybit: код={ret_code}, сообщение={error_msg}")
           raise ExchangeAPIError(
             f"Bybit API error: {error_msg}",
-            status_code=data.get("retCode"),
+            status_code=ret_code,
             response=data
           )
 
