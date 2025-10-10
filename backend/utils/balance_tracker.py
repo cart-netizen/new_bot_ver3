@@ -115,6 +115,13 @@ class BalanceTracker:
       try:
         # Получаем текущий баланс
         from exchange.rest_client import rest_client
+        from config import settings
+
+        # Проверяем что API ключи настроены
+        if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
+          logger.warning("API ключи не настроены, пропускаем сохранение баланса")
+          await asyncio.sleep(self.save_interval)
+          continue
 
         try:
           balance_data = await rest_client.get_wallet_balance()
@@ -139,6 +146,9 @@ class BalanceTracker:
 
           logger.debug(f"Баланс сохранен: ${total_balance:.2f}")
 
+        except ValueError as e:
+          # API ключи не настроены
+          logger.warning(f"Не удалось получить баланс: {e}")
         except Exception as e:
           logger.error(f"Ошибка получения баланса: {e}")
 
