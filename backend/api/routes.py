@@ -2,7 +2,7 @@
 API маршруты.
 Определение всех REST API эндпоинтов для взаимодействия с фронтендом.
 """
-
+from datetime import datetime
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -15,6 +15,7 @@ from core.auth import (
 from core.exceptions import AuthenticationError
 from models.user import LoginRequest, LoginResponse, ChangePasswordRequest
 from config import settings
+from utils.balance_tracker import balance_tracker
 
 logger = get_logger(__name__)
 
@@ -405,26 +406,162 @@ async def get_signals(
 @trading_router.get("/balance")
 async def get_balance(current_user: dict = Depends(require_auth)):
   """
-  Получение баланса (ЗАГЛУШКА).
+  Получение баланса аккаунта.
+  Возвращает реальный баланс из Bybit API.
 
   Args:
       current_user: Текущий пользователь
 
   Returns:
-      dict: Баланс
+      dict: Баланс аккаунта с детализацией по активам
   """
   logger.info("Запрос баланса через API")
-  return {
-    "balance": {
-      "USDT": {
-        "free": 10000.0,
-        "locked": 0.0,
-        "total": 10000.0
-      }
-    },
-    "note": "ЗАГЛУШКА: Тестовые данные"
-  }
 
+  try:
+    # Получаем реальный баланс из Bybit
+    from exchange.rest_client import rest_client
+
+    balance_data = await rest_client.get_wallet_balance()
+    result = balance_data.get("result", {})
+    wallet_list = result.get("list", [])
+
+    # Парсим балансы по активам
+    balances = {}
+    total_usdt = 0.0
+
+    for wallet in wallet_list:
+      account_type = wallet.get("accountType", "UNIFIED")
+      coins = wallet.get("coin", [])
+
+      for coin in coins:
+        coin_name = coin.get("coin", "")
+        wallet_balance = float(coin.get("walletBalance", 0))
+        available_balance = float(coin.get("availableToWithdraw", 0))
+        locked_balance = wallet_balance - available_balance
+
+        # Добавляем только активы с балансом > 0
+        if wallet_balance > 0:
+          balances[coin_name] = {
+            "asset": coin_name,
+            "free": round(available_balance, 8),
+            "locked": round(locked_balance, 8),
+            "total": round(wallet_balance, 8)
+          }
+
+          # Считаем USDT эквивалент
+          if coin_name == "USDT":
+            total_usdt += wallet_balance
+
+    logger.info(f"Баланс получен: {len(balances)} активов, ${total_usdt:.2f} USDT")
+
+    return {
+      "balance": {
+        "balances": balances,
+        "total_usdt": round(total_usdt, 2),
+        "timestamp": int(datetime.now().timestamp() * 1000)
+      }
+    }
+
+  except ValueError as e:
+    # API ключи не настроены
+    logger.warning(f"API ключи не настроены: {e}")
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="API ключи Bybit не настроены. Настройте BYBIT_API_KEY и BYBIT_API_SECRET в .env файле."
+    )
+  except Exception as e:
+    logger.error(f"Ошибка получения баланса: {e}")
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=f"Не удалось получить баланс: {str(e)}"
+    )
+
+@trading_router.get("/balance/history")
+async def get_balance_history(
+    period: str = "24h",
+    current_user: dict = Depends(require_auth)
+):
+  """
+  Получение истории изменения баланса.
+  Возвращает реальные данные из трекера баланса.
+
+  Args:
+      period: Период ('1h', '24h', '7d', '30d')
+      current_user: Текущий пользователь
+
+  Returns:
+      dict: История баланса с точками данных
+  """
+  logger.info(f"Запрос истории баланса за период: {period}")
+
+  try:
+    # Проверяем валидность периода
+    valid_periods = ['1h', '24h', '7d', '30d']
+    if period not in valid_periods:
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Неверный период. Используйте: {', '.join(valid_periods)}"
+      )
+
+    # Получаем историю из трекера
+    history = balance_tracker.get_history(period)
+
+    if not history:
+      logger.warning(f"История баланса пуста для периода {period}")
+      # Возвращаем пустую историю
+      return {
+        "points": [],
+        "period": period
+      }
+
+    logger.info(f"Возвращено {len(history)} точек истории для периода {period}")
+
+    return {
+      "points": history,
+      "period": period
+    }
+
+  except HTTPException:
+    raise
+  except Exception as e:
+    logger.error(f"Ошибка получения истории баланса: {e}")
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=f"Не удалось получить историю: {str(e)}"
+    )
+
+@trading_router.get("/balance/stats")
+async def get_balance_stats(current_user: dict = Depends(require_auth)):
+  """
+  Получение статистики баланса.
+  Возвращает реальные данные: начальный баланс, PnL, лучший/худший день.
+
+  Args:
+      current_user: Текущий пользователь
+
+  Returns:
+      dict: Статистика баланса
+  """
+  logger.info("Запрос статистики баланса")
+
+  try:
+    # Получаем статистику из трекера
+    stats = balance_tracker.get_stats()
+
+    logger.info(
+      f"Статистика: начальный=${stats['initial_balance']:.2f}, "
+      f"текущий=${stats['current_balance']:.2f}, "
+      f"PnL=${stats['total_pnl']:.2f} ({stats['total_pnl_percentage']:.2f}%)"
+    )
+
+    return stats
+
+  except Exception as e:
+    logger.error(f"Ошибка получения статистики баланса: {e}")
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=f"Не удалось получить статистику: {str(e)}"
+    )
 
 @trading_router.get("/positions")
 async def get_positions(current_user: dict = Depends(require_auth)):

@@ -42,6 +42,7 @@ import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { MarketPage } from './pages/MarketPage';
 import { TradingPage } from './pages/TradingPage';
+import {AccountPage} from '@/pages/AccountPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -68,6 +69,8 @@ export default function App() {
             }
           >
             <Route index element={<Navigate to="/dashboard" replace />} />
+            <Route path="account" element={<AccountPage />} />
+
             <Route path="dashboard" element={<DashboardPage />} />
             <Route path="market" element={<MarketPage />} />
             <Route path="trading" element={<TradingPage />} />

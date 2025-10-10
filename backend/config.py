@@ -6,7 +6,7 @@
 import os
 from typing import List, Literal
 from pydantic_settings import BaseSettings
-from pydantic import Field, validator
+from pydantic import Field, validator, field_validator
 from dotenv import load_dotenv
 
 # Загрузка переменных окружения из .env файла
@@ -66,7 +66,7 @@ class Settings(BaseSettings):
   WS_MAX_RECONNECT_ATTEMPTS: int = Field(default=10)
   WS_PING_INTERVAL: int = Field(default=20)
 
-  @validator("TRADING_PAIRS")
+  @field_validator("TRADING_PAIRS")
   def validate_trading_pairs(cls, v):
     """Валидация формата торговых пар."""
     if not v or v.strip() == "":
@@ -76,7 +76,7 @@ class Settings(BaseSettings):
       raise ValueError("Необходимо указать хотя бы одну торговую пару")
     return v
 
-  @validator("ORDERBOOK_DEPTH")
+  @field_validator("ORDERBOOK_DEPTH")
   def validate_orderbook_depth(cls, v):
     """Валидация глубины стакана."""
     allowed_depths = [1, 50, 200, 500]
@@ -84,14 +84,14 @@ class Settings(BaseSettings):
       raise ValueError(f"ORDERBOOK_DEPTH должен быть одним из {allowed_depths}")
     return v
 
-  @validator("IMBALANCE_BUY_THRESHOLD", "IMBALANCE_SELL_THRESHOLD")
+  @field_validator("IMBALANCE_BUY_THRESHOLD", "IMBALANCE_SELL_THRESHOLD")
   def validate_imbalance_thresholds(cls, v):
     """Валидация порогов дисбаланса."""
     if not 0.0 <= v <= 1.0:
       raise ValueError("Пороги дисбаланса должны быть в диапазоне 0.0-1.0")
     return v
 
-  @validator("SECRET_KEY")
+  @field_validator("SECRET_KEY")
   def validate_secret_key(cls, v):
     """Валидация секретного ключа."""
     if v == "your_secret_key_here_change_this_to_random_string":
@@ -103,7 +103,7 @@ class Settings(BaseSettings):
       raise ValueError("SECRET_KEY должен содержать минимум 32 символа")
     return v
 
-  @validator("APP_PASSWORD")
+  @field_validator("APP_PASSWORD")
   def validate_app_password(cls, v):
     """Валидация пароля приложения."""
     if v == "change_this_password":

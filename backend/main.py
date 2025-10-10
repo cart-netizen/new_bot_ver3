@@ -21,6 +21,7 @@ from strategy.analyzer import MarketAnalyzer
 from strategy.strategy_engine import StrategyEngine
 from strategy.risk_manager import RiskManager
 from execution.execution_manager import ExecutionManager
+from utils.balance_tracker import balance_tracker
 from utils.constants import BotStatus
 from api.websocket import manager as ws_manager, handle_websocket_messages
 
@@ -44,7 +45,7 @@ class BotController:
     self.strategy_engine: Optional[StrategyEngine] = None
     self.risk_manager: Optional[RiskManager] = None
     self.execution_manager: Optional[ExecutionManager] = None
-
+    self.balance_tracker = balance_tracker
     # Задачи
     self.websocket_task: Optional[asyncio.Task] = None
     self.analysis_task: Optional[asyncio.Task] = None
@@ -121,6 +122,10 @@ class BotController:
       await self.execution_manager.start()
       logger.info("✓ Менеджер исполнения запущен")
 
+      # Запускаем трекер баланса
+      await self.balance_tracker.start()
+      logger.info("✓ Трекер баланса запущен")
+
       # Запускаем WebSocket соединения
       self.websocket_task = asyncio.create_task(
         self.websocket_manager.start()
@@ -176,6 +181,11 @@ class BotController:
       if self.websocket_manager:
         await self.websocket_manager.stop()
       logger.info("✓ WebSocket соединения закрыты")
+
+      # Останавливаем трекер баланса
+      if self.balance_tracker:
+        await self.balance_tracker.stop()
+      logger.info("✓ Трекер баланса остановлен")
 
       # Останавливаем менеджер исполнения
       if self.execution_manager:

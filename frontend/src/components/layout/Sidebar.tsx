@@ -1,8 +1,11 @@
+// frontend/src/components/layout/Sidebar.tsx
+
 import { Link, useLocation } from 'react-router-dom';
-import { Home, BarChart3, TrendingUp } from 'lucide-react';
+import { User, Home, BarChart3, TrendingUp } from 'lucide-react';
 import { cn } from '../../utils/helpers';
 
 const NAV_ITEMS = [
+  { path: '/account', label: 'Личный Кабинет', icon: User },
   { path: '/dashboard', label: 'Dashboard', icon: Home },
   { path: '/market', label: 'Рынок', icon: BarChart3 },
   { path: '/trading', label: 'Торговля', icon: TrendingUp },

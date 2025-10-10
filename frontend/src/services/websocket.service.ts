@@ -99,8 +99,8 @@ export class WebSocketService {
         this.isConnecting = false;
         this.reconnectAttempts = 0;
 
-        // Отправляем токен для аутентификации
-        this.send({ type: 'auth', token });
+        // ИСПРАВЛЕНИЕ: Отправляем 'authenticate' вместо 'auth'
+        this.send({ type: 'authenticate', token });
 
         // Запускаем ping для поддержания соединения
         this.startPing();

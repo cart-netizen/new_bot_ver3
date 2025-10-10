@@ -1,6 +1,6 @@
 // frontend/src/pages/DashboardPage.tsx
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { BotControls } from '../components/bot/BotControls';
 import { MetricsCard } from '../components/market/MetricsCard';
 import { OrderBookWidget } from '../components/market/OrderBookWidget';
@@ -8,106 +8,45 @@ import { SignalsTable } from '../components/market/SignalsTable';
 import { useBotStore } from '../store/botStore';
 import { useMarketStore } from '../store/marketStore';
 import { useTradingStore } from '../store/tradingStore';
-import { useAuthStore } from '../store/authStore';
-import { wsService } from '../services/websocket.service';
 import { Activity, Wifi, WifiOff } from 'lucide-react';
 import { toast } from 'sonner';
 
 /**
  * Главная страница дашборда.
  * Отображает управление ботом, метрики по парам, стакан и сигналы в реальном времени.
+ *
+ * Примечание: WebSocket управляется на уровне Layout, поэтому соединение
+ * остается активным при переключении между страницами.
  */
 export function DashboardPage() {
   const { fetchStatus, fetchConfig, symbols } = useBotStore();
-  const { token } = useAuthStore();
   const {
     orderbooks,
     metrics,
     selectedSymbol,
     isConnected,
-    updateOrderBook,
-    updateMetrics,
     setSelectedSymbol,
-    setConnected,
   } = useMarketStore();
-  const { signals, addSignal } = useTradingStore();
+  const { signals } = useTradingStore();
 
   const [isInitializing, setIsInitializing] = useState(true);
 
   /**
-   * Подключение к WebSocket с обработчиками событий.
-   */
-  const connectWebSocket = useCallback(() => {
-    if (!token) {
-      console.error('No auth token available');
-      return;
-    }
-
-    wsService.connect(token, {
-      // Успешное подключение
-      onConnect: () => {
-        console.log('[Dashboard] WebSocket connected');
-        setConnected(true);
-        toast.success('Подключение установлено');
-      },
-
-      // Отключение
-      onDisconnect: () => {
-        console.log('[Dashboard] WebSocket disconnected');
-        setConnected(false);
-        toast.error('Соединение потеряно');
-      },
-
-      // Обновление статуса бота
-      onBotStatus: (data) => {
-        console.log('[Dashboard] Bot status:', data.status);
-        // Обновляется через botStore автоматически
-      },
-
-      // Обновление стакана
-      onOrderBookUpdate: (symbol, orderbook) => {
-        updateOrderBook(symbol, orderbook);
-      },
-
-      // Обновление метрик
-      onMetricsUpdate: (symbol, metricsData) => {
-        updateMetrics(symbol, metricsData);
-      },
-
-      // Новый торговый сигнал
-      onTradingSignal: (signal) => {
-        addSignal(signal);
-
-        // Уведомление о сигнале
-        toast.info(`Сигнал: ${signal.signal_type} ${signal.symbol}`, {
-          description: signal.reason,
-        });
-      },
-
-      // Ошибка
-      onError: (error) => {
-        console.error('[Dashboard] WebSocket error:', error);
-        toast.error(`Ошибка: ${error}`);
-      },
-    });
-  }, [token, setConnected, updateOrderBook, updateMetrics, addSignal]);
-
-  /**
-   * Инициализация: загрузка данных и подключение к WebSocket.
+   * Инициализация: загрузка данных бота.
+   * WebSocket уже подключен на уровне Layout.
    */
   useEffect(() => {
     const initialize = async () => {
       try {
+        console.log('[Dashboard] Initializing...');
+
         // Загружаем статус и конфигурацию бота
         await fetchStatus();
         await fetchConfig();
 
-        // Подключаемся к WebSocket, если есть токен
-        if (token) {
-          connectWebSocket();
-        }
+        console.log('[Dashboard] Initialized successfully');
       } catch (error) {
-        console.error('Initialization error:', error);
+        console.error('[Dashboard] Initialization error:', error);
         toast.error('Ошибка инициализации');
       } finally {
         setIsInitializing(false);
@@ -116,11 +55,9 @@ export function DashboardPage() {
 
     initialize();
 
-    // Отключение WebSocket при размонтировании
-    return () => {
-      wsService.disconnect();
-    };
-  }, [fetchStatus, fetchConfig, token, connectWebSocket]);
+    // WebSocket НЕ отключается при размонтировании DashboardPage,
+    // так как он управляется на уровне Layout
+  }, [fetchStatus, fetchConfig]);
 
   /**
    * Выбор пары для детального просмотра.

@@ -151,6 +151,8 @@ async def handle_websocket_messages(websocket: WebSocket):
 
       message_type = message.get("type")
 
+      logger.debug(f"Получено WebSocket сообщение: type={message_type}, keys={list(message.keys())}")
+
       # Обрабатываем аутентификацию
       if message_type == "authenticate":
         token = message.get("token")
