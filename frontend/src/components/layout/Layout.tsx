@@ -1,5 +1,5 @@
 // frontend/src/components/layout/Layout.tsx
-// ИСПРАВЛЕННАЯ ВЕРСИЯ с правильной инициализацией WebSocket
+// ИСПРАВЛЕННАЯ ВЕРСИЯ - правильная работа с React Strict Mode
 
 import { useEffect, useCallback, useRef } from 'react';
 import { Outlet } from 'react-router-dom';
@@ -14,20 +14,30 @@ import { toast } from 'sonner';
 /**
  * Главный Layout компонент.
  * Управляет WebSocket соединением на глобальном уровне.
+ *
+ * ВАЖНО: Правильно обрабатывает React Strict Mode,
+ * который в dev режиме монтирует/размонтирует компоненты дважды.
  */
 export function Layout() {
   const { token, isAuthenticated } = useAuthStore();
   const { updateOrderBook, updateMetrics, setConnected } = useMarketStore();
   const { addSignal } = useTradingStore();
 
-  // Ref для отслеживания, был ли WebSocket уже подключен
-  const wsConnectedRef = useRef(false);
+  // КРИТИЧЕСКИ ВАЖНО: Используем ref для предотвращения двойного подключения
+  const isConnectingRef = useRef(false);
+  const connectionAttemptRef = useRef(0);
 
   /**
    * Подключение к WebSocket с обработчиками событий.
    */
   const connectWebSocket = useCallback(() => {
-    // КРИТИЧЕСКАЯ ПРОВЕРКА: Токен должен быть валидным JWT
+    // Проверка: уже подключаемся
+    if (isConnectingRef.current) {
+      console.log('[Layout] Already connecting, skipping duplicate call');
+      return;
+    }
+
+    // Проверка: токен должен быть валидным JWT
     if (!token) {
       console.error('[Layout] No auth token available');
       return;
@@ -37,31 +47,41 @@ export function Layout() {
     const tokenParts = token.split('.');
     if (tokenParts.length !== 3) {
       console.error('[Layout] Invalid token format:', token.substring(0, 20) + '...');
-      console.error('[Layout] Token должен быть JWT с 3 частями');
       toast.error('Невалидный токен. Пожалуйста, войдите заново.');
-
-      // Очищаем невалидный токен
       localStorage.removeItem('auth-token');
       return;
     }
 
+    // Проверка: WebSocket уже подключен
+    if (wsService.isConnected()) {
+      console.log('[Layout] WebSocket already connected');
+      setConnected(true);
+      return;
+    }
+
+    // Устанавливаем флаг подключения
+    isConnectingRef.current = true;
+    connectionAttemptRef.current++;
+
+    const attemptId = connectionAttemptRef.current;
+    console.log(`[Layout] 🔌 Connection attempt #${attemptId}`);
     console.log('[Layout] Token valid, connecting to WebSocket...');
     console.log('[Layout] Token preview:', token.substring(0, 20) + '...' + token.substring(token.length - 20));
 
     wsService.connect(token, {
       // Успешное подключение
       onConnect: () => {
-        console.log('[Layout] ✅ WebSocket connected successfully');
+        console.log(`[Layout] ✅ WebSocket connected (attempt #${attemptId})`);
         setConnected(true);
-        wsConnectedRef.current = true;
+        isConnectingRef.current = false;
         toast.success('Подключение установлено');
       },
 
       // Отключение
       onDisconnect: () => {
-        console.log('[Layout] ❌ WebSocket disconnected');
+        console.log(`[Layout] ❌ WebSocket disconnected (attempt #${attemptId})`);
         setConnected(false);
-        wsConnectedRef.current = false;
+        isConnectingRef.current = false;
         toast.error('Соединение потеряно');
       },
 
@@ -91,6 +111,7 @@ export function Layout() {
       // Ошибка
       onError: (error) => {
         console.error('[Layout] WebSocket error:', error);
+        isConnectingRef.current = false;
 
         // Если ошибка аутентификации - очищаем токен
         if (error.includes('токен') || error.includes('token') || error.includes('аутентификац')) {
@@ -106,16 +127,18 @@ export function Layout() {
 
   /**
    * Эффект для инициализации WebSocket.
-   * Подключается только если:
-   * 1. Пользователь аутентифицирован
-   * 2. Есть валидный токен
-   * 3. WebSocket еще не подключен
+   *
+   * ВАЖНО: Правильно обрабатывает React Strict Mode:
+   * - В dev режиме React монтирует компонент → вызывает cleanup → монтирует снова
+   * - Мы используем isConnectingRef для предотвращения двойного подключения
+   * - Cleanup отключает WebSocket только при РЕАЛЬНОМ размонтировании
    */
   useEffect(() => {
     console.log('[Layout] Effect triggered');
     console.log('[Layout] isAuthenticated:', isAuthenticated);
     console.log('[Layout] token exists:', !!token);
-    console.log('[Layout] wsConnectedRef:', wsConnectedRef.current);
+    console.log('[Layout] isConnecting:', isConnectingRef.current);
+    console.log('[Layout] wsService.isConnected():', wsService.isConnected());
 
     // Проверяем предусловия
     if (!isAuthenticated) {
@@ -128,23 +151,43 @@ export function Layout() {
       return;
     }
 
-    // Если уже подключен - не переподключаемся
-    if (wsConnectedRef.current && wsService.isConnected()) {
-      console.log('[Layout] WebSocket already connected, skipping');
-      return;
-    }
-
-    // Подключаемся
-    console.log('[Layout] Initializing WebSocket connection...');
-    connectWebSocket();
+    // КРИТИЧЕСКИ ВАЖНО: Добавляем небольшую задержку для React Strict Mode
+    // Это позволяет предыдущему cleanup завершиться перед новым подключением
+    const timeoutId = setTimeout(() => {
+      console.log('[Layout] Delayed initialization after React Strict Mode cleanup');
+      connectWebSocket();
+    }, 100); // 100ms задержка
 
     // Cleanup при размонтировании
     return () => {
-      console.log('[Layout] Unmounting - disconnecting WebSocket');
-      wsService.disconnect();
-      wsConnectedRef.current = false;
+      console.log('[Layout] Cleanup triggered');
+
+      // Отменяем отложенное подключение, если компонент размонтируется до его выполнения
+      clearTimeout(timeoutId);
+
+      // ВАЖНО: Отключаем WebSocket только если это НЕ React Strict Mode remount
+      // React Strict Mode вызывает cleanup → effect снова очень быстро (< 50ms)
+      // Реальное размонтирование происходит при выходе пользователя
+
+      // Даем WebSocket время подключиться перед отключением
+      const disconnectTimeoutId = setTimeout(() => {
+        // Проверяем, что компонент действительно размонтирован (прошло время)
+        // и это не просто React Strict Mode remount
+        if (wsService.isConnected()) {
+          console.log('[Layout] Cleanup: Disconnecting WebSocket (real unmount)');
+          wsService.disconnect();
+          setConnected(false);
+          isConnectingRef.current = false;
+        } else {
+          console.log('[Layout] Cleanup: WebSocket not connected, skipping disconnect');
+        }
+      }, 200); // Даем 200ms на случай React Strict Mode
+
+      return () => {
+        clearTimeout(disconnectTimeoutId);
+      };
     };
-  }, [isAuthenticated, token, connectWebSocket]);
+  }, [isAuthenticated, token, connectWebSocket, setConnected]);
 
   return (
     <div className="min-h-screen bg-background flex flex-col">

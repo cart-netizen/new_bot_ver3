@@ -422,35 +422,88 @@ async def get_balance(current_user: dict = Depends(require_auth)):
     from exchange.rest_client import rest_client
 
     balance_data = await rest_client.get_wallet_balance()
+
+    # Логируем полученную структуру данных для отладки
+    logger.debug(f"Структура balance_data: {type(balance_data)}")
+    logger.debug(f"Ключи balance_data: {balance_data.keys() if isinstance(balance_data, dict) else 'не dict'}")
+
     result = balance_data.get("result", {})
     wallet_list = result.get("list", [])
 
-    # Парсим балансы по активам
+    logger.debug(f"Количество кошельков в wallet_list: {len(wallet_list)}")
+
+    # Парсим балансы по активам с безопасной обработкой
     balances = {}
     total_usdt = 0.0
+    parsing_errors = []
 
-    for wallet in wallet_list:
-      account_type = wallet.get("accountType", "UNIFIED")
-      coins = wallet.get("coin", [])
+    for wallet_idx, wallet in enumerate(wallet_list):
+      try:
+        account_type = wallet.get("accountType", "UNIFIED")
+        coins = wallet.get("coin", [])
 
-      for coin in coins:
-        coin_name = coin.get("coin", "")
-        wallet_balance = float(coin.get("walletBalance", 0))
-        available_balance = float(coin.get("availableToWithdraw", 0))
-        locked_balance = wallet_balance - available_balance
+        logger.debug(f"Обработка wallet {wallet_idx}: accountType={account_type}, монет={len(coins)}")
 
-        # Добавляем только активы с балансом > 0
-        if wallet_balance > 0:
-          balances[coin_name] = {
-            "asset": coin_name,
-            "free": round(available_balance, 8),
-            "locked": round(locked_balance, 8),
-            "total": round(wallet_balance, 8)
-          }
+        for coin_idx, coin in enumerate(coins):
+          try:
+            coin_name = coin.get("coin", "")
 
-          # Считаем USDT эквивалент
-          if coin_name == "USDT":
-            total_usdt += wallet_balance
+            # Безопасное получение числовых значений
+            wallet_balance_raw = coin.get("walletBalance", "0")
+            available_balance_raw = coin.get("availableToWithdraw", "0")
+
+            logger.debug(
+              f"  Монета {coin_idx}: {coin_name}, "
+              f"walletBalance={wallet_balance_raw} (тип: {type(wallet_balance_raw)}), "
+              f"availableToWithdraw={available_balance_raw} (тип: {type(available_balance_raw)})"
+            )
+
+            # Преобразуем в float с обработкой исключений
+            try:
+              wallet_balance = float(wallet_balance_raw) if wallet_balance_raw else 0.0
+            except (ValueError, TypeError) as e:
+              logger.warning(f"Не удалось преобразовать walletBalance '{wallet_balance_raw}' для {coin_name}: {e}")
+              wallet_balance = 0.0
+              parsing_errors.append(f"{coin_name}.walletBalance")
+
+            try:
+              available_balance = float(available_balance_raw) if available_balance_raw else 0.0
+            except (ValueError, TypeError) as e:
+              logger.warning(
+                f"Не удалось преобразовать availableToWithdraw '{available_balance_raw}' для {coin_name}: {e}")
+              available_balance = 0.0
+              parsing_errors.append(f"{coin_name}.availableToWithdraw")
+
+            locked_balance = max(0.0, wallet_balance - available_balance)
+
+            # Добавляем только активы с балансом > 0
+            if wallet_balance > 0:
+              balances[coin_name] = {
+                "asset": coin_name,
+                "free": round(available_balance, 8),
+                "locked": round(locked_balance, 8),
+                "total": round(wallet_balance, 8)
+              }
+
+              # Считаем USDT эквивалент
+              if coin_name == "USDT":
+                total_usdt += wallet_balance
+
+              logger.debug(f"  Добавлен актив: {coin_name} = {wallet_balance:.8f}")
+
+          except Exception as e:
+            logger.error(f"Ошибка обработки монеты {coin_idx} ({coin.get('coin', 'unknown')}): {e}", exc_info=True)
+            parsing_errors.append(f"coin_{coin_idx}")
+            continue
+
+      except Exception as e:
+        logger.error(f"Ошибка обработки кошелька {wallet_idx}: {e}", exc_info=True)
+        parsing_errors.append(f"wallet_{wallet_idx}")
+        continue
+
+    # Логируем итоги парсинга
+    if parsing_errors:
+      logger.warning(f"Ошибки парсинга полей: {', '.join(parsing_errors)}")
 
     logger.info(f"Баланс получен: {len(balances)} активов, ${total_usdt:.2f} USDT")
 
@@ -463,8 +516,9 @@ async def get_balance(current_user: dict = Depends(require_auth)):
     }
 
   except ValueError as e:
-    # API ключи не настроены - возвращаем тестовые данные
-    logger.warning(f"API ключи не настроены, возвращаем тестовые данные")
+    # API ключи не настроены - это единственный случай когда должен быть ValueError от rest_client
+    logger.warning(f"API ключи не настроены: {e}")
+    logger.warning(f"Возвращаем тестовые данные")
 
     return {
       "balance": {
@@ -482,7 +536,8 @@ async def get_balance(current_user: dict = Depends(require_auth)):
     }
 
   except Exception as e:
-    logger.error(f"Ошибка получения баланса: {e}")
+    # Любые другие ошибки
+    logger.error(f"Критическая ошибка получения баланса: {type(e).__name__}: {e}", exc_info=True)
 
     # Возвращаем тестовые данные вместо ошибки
     return {
