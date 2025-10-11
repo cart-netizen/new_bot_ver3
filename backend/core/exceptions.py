@@ -185,6 +185,9 @@ class OptimisticLockError(DatabaseError):
         super().__init__(message, details)
 
 
+
+
+
 # ===== ИСКЛЮЧЕНИЯ СТРАТЕГИИ =====
 
 class StrategyError(TradingBotException):
@@ -276,6 +279,16 @@ class IdempotencyError(ResilienceError):
     """Ошибка системы идемпотентности."""
     pass
 
+class InvalidStateTransitionError(ExecutionError):
+    """Ошибка невалидного перехода состояния."""
+    def __init__(self, entity_id: str, from_state: str, to_state: str):
+        message = f"Invalid transition for {entity_id}: {from_state} -> {to_state}"
+        details = {
+            "entity_id": entity_id,
+            "from_state": from_state,
+            "to_state": to_state
+        }
+        super().__init__(message, details)
 
 # ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====
 
