@@ -17,9 +17,8 @@ interface OrderBookWidgetProps {
 export function OrderBookWidget({
   orderbook,
   loading = false,
-  maxLevels = 10
+  maxLevels = 10,
 }: OrderBookWidgetProps) {
-
   /**
    * Подготовка данных для отображения.
    * Ограничиваем количество уровней и находим максимальный объем.
@@ -107,7 +106,7 @@ export function OrderBookWidget({
         <div className="text-right">Всего</div>
       </div>
 
-      {/* Asks (продажи) - красные */}
+      {/* Asks (продажи) - КРАСНЫЕ с красным фоном */}
       <div className="space-y-1 mb-2">
         {asks.map(([price, quantity], index) => {
           const cumulative = asks
@@ -120,9 +119,9 @@ export function OrderBookWidget({
               key={`ask-${price}`}
               className="relative grid grid-cols-3 gap-2 text-xs py-1 px-2 rounded hover:bg-gray-800/50 transition-colors"
             >
-              {/* Фоновый индикатор объема */}
+              {/* ИСПРАВЛЕНИЕ: Фоновый индикатор объема - КРАСНЫЙ для asks */}
               <div
-                className="absolute right-0 top-0 bottom-0 bg-destructive/10 rounded"
+                className="absolute right-0 top-0 bottom-0 bg-destructive/20 rounded"
                 style={{ width: `${volumePercent}%` }}
               />
 
@@ -156,7 +155,7 @@ export function OrderBookWidget({
         </div>
       </div>
 
-      {/* Bids (покупки) - зеленые */}
+      {/* Bids (покупки) - ЗЕЛЕНЫЕ с зеленым фоном */}
       <div className="space-y-1 mt-2">
         {bids.map(([price, quantity], index) => {
           const cumulative = bids
@@ -169,9 +168,9 @@ export function OrderBookWidget({
               key={`bid-${price}`}
               className="relative grid grid-cols-3 gap-2 text-xs py-1 px-2 rounded hover:bg-gray-800/50 transition-colors"
             >
-              {/* Фоновый индикатор объема */}
+              {/* Фоновый индикатор объема - ЗЕЛЕНЫЙ для bids */}
               <div
-                className="absolute right-0 top-0 bottom-0 bg-success/10 rounded"
+                className="absolute right-0 top-0 bottom-0 bg-success/20 rounded"
                 style={{ width: `${volumePercent}%` }}
               />
 

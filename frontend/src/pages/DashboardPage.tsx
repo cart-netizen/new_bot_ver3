@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { BotControls } from '../components/bot/BotControls';
 import { MetricsCard } from '../components/market/MetricsCard';
 import { OrderBookWidget } from '../components/market/OrderBookWidget';
+import { PriceChart } from '../components/market/PriceChart';
 import { SignalsTable } from '../components/market/SignalsTable';
 import { useBotStore } from '../store/botStore';
 import { useMarketStore } from '../store/marketStore';
@@ -23,6 +24,7 @@ export function DashboardPage() {
   const {
     orderbooks,
     metrics,
+    metricsHistory,
     selectedSymbol,
     isConnected,
     setSelectedSymbol,
@@ -89,20 +91,21 @@ export function DashboardPage() {
         <h1 className="text-3xl font-bold">Dashboard</h1>
 
         {/* Индикатор WebSocket соединения */}
-        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${
-          isConnected ? 'bg-success/20 text-success' : 'bg-gray-800 text-gray-400'
-        }`}>
+        <div
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${
+            isConnected
+              ? 'bg-success/10 text-success'
+              : 'bg-destructive/10 text-destructive'
+          }`}
+        >
           {isConnected ? (
-            <>
-              <Wifi className="h-4 w-4" />
-              <span className="text-sm font-medium">Подключено</span>
-            </>
+            <Wifi className="h-4 w-4" />
           ) : (
-            <>
-              <WifiOff className="h-4 w-4" />
-              <span className="text-sm font-medium">Отключено</span>
-            </>
+            <WifiOff className="h-4 w-4" />
           )}
+          <span className="text-sm font-medium">
+            {isConnected ? 'Подключено' : 'Отключено'}
+          </span>
         </div>
       </div>
 
@@ -112,50 +115,56 @@ export function DashboardPage() {
       {/* Список торговых пар */}
       {symbols.length > 0 && (
         <div>
-          <h2 className="text-xl font-semibold mb-4">Торговые Пары</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          <h2 className="text-xl font-semibold mb-4">Торговые пары</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {symbols.map((symbol) => {
               const symbolMetrics = metrics[symbol];
-              const isActive = symbol === currentSymbol;
 
               return (
                 <button
                   key={symbol}
                   onClick={() => handleSymbolSelect(symbol)}
-                  className={`
-                    p-4 rounded-lg border transition-all text-left
-                    ${isActive 
-                      ? 'border-primary bg-primary/10' 
+                  className={`p-4 rounded-lg border transition-all text-left ${
+                    selectedSymbol === symbol
+                      ? 'border-primary bg-primary/10'
                       : 'border-gray-800 bg-surface hover:border-gray-700'
-                    }
-                  `}
+                  }`}
                 >
                   <div className="flex items-center justify-between mb-2">
                     <h3 className="font-semibold">{symbol}</h3>
                     {symbolMetrics && (
-                      <div className={`w-2 h-2 rounded-full ${
-                        symbolMetrics.imbalance.overall > 0.6 ? 'bg-success' :
-                        symbolMetrics.imbalance.overall < 0.4 ? 'bg-destructive' :
-                        'bg-gray-500'
-                      }`} />
+                      <div
+                        className={`flex items-center gap-1 text-xs ${
+                          symbolMetrics.imbalance.overall > 0.6
+                            ? 'text-success'
+                            : symbolMetrics.imbalance.overall < 0.4
+                            ? 'text-destructive'
+                            : 'text-gray-400'
+                        }`}
+                      >
+                        <span>
+                          {(symbolMetrics.imbalance.overall * 100).toFixed(1)}%
+                        </span>
+                      </div>
                     )}
                   </div>
 
                   {symbolMetrics ? (
-                    <div className="space-y-1 text-xs text-gray-400">
+                    <div className="space-y-1 text-sm">
                       <div className="flex justify-between">
-                        <span>Имбаланс:</span>
+                        <span className="text-gray-400">Mid Price:</span>
                         <span className="font-mono">
-                          {(symbolMetrics.imbalance.overall * 100).toFixed(1)}%
+                          {symbolMetrics.prices.mid_price
+                            ? symbolMetrics.prices.mid_price.toFixed(2)
+                            : '-'}
                         </span>
                       </div>
                       <div className="flex justify-between">
-                        <span>Спред:</span>
-                        <span className="font-mono">
-                          {symbolMetrics.prices.spread !== null
+                        <span className="text-gray-400">Spread:</span>
+                        <span className="font-mono text-xs">
+                          {symbolMetrics.prices.spread
                             ? symbolMetrics.prices.spread.toFixed(8)
-                            : '-'
-                          }
+                            : '-'}
                         </span>
                       </div>
                     </div>
@@ -176,18 +185,32 @@ export function DashboardPage() {
             Детали: {currentSymbol}
           </h2>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Метрики */}
-            <MetricsCard
-              metrics={metrics[currentSymbol] || null}
-              loading={!metrics[currentSymbol]}
-            />
+          {/* НОВЫЙ LAYOUT: 3 колонки - Метрики | График | Order Book (1/3 ширины) */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            {/* Колонка 1: Метрики (1/3) */}
+            <div className="lg:col-span-1">
+              <MetricsCard
+                metrics={metrics[currentSymbol] || null}
+                loading={!metrics[currentSymbol]}
+              />
+            </div>
 
-            {/* Стакан ордеров */}
-            <OrderBookWidget
-              orderbook={orderbooks[currentSymbol] || null}
-              loading={!orderbooks[currentSymbol]}
-            />
+            {/* Колонка 2: График цены (1/3) */}
+            <div className="lg:col-span-1">
+              <PriceChart
+                symbol={currentSymbol}
+                metricsHistory={metricsHistory[currentSymbol] || []}
+                loading={!metricsHistory[currentSymbol]}
+              />
+            </div>
+
+            {/* Колонка 3: Order Book (1/3) */}
+            <div className="lg:col-span-1">
+              <OrderBookWidget
+                orderbook={orderbooks[currentSymbol] || null}
+                loading={!orderbooks[currentSymbol]}
+              />
+            </div>
           </div>
         </div>
       )}

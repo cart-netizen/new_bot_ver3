@@ -110,7 +110,7 @@ export function BalanceCard({ balance, stats, loading = false }: BalanceCardProp
 
       {/* PnL ИНФОРМАЦИЯ */}
       {stats && (
-        <Card className="p-6">
+        <Card className="p-4">
           <div className="flex items-center gap-2 mb-4">
             <DollarSign className="h-5 w-5 text-primary" />
             <h3 className="text-lg font-semibold">Прибыль/Убыток</h3>
