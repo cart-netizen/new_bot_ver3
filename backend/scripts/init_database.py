@@ -8,8 +8,19 @@ import sys
 from pathlib import Path
 
 # Добавляем backend в путь
-backend_path = Path(__file__).parent.parent  # Поднимаемся на 2 уровня вверх до backend/
+backend_path = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_path))
+
+# ВАЖНО: Импортируем модели ДО инициализации БД
+# Это необходимо, чтобы SQLAlchemy знал о всех таблицах
+from database.models import (
+    Order,
+    Position,
+    Trade,
+    AuditLog,
+    IdempotencyCache,
+    MarketDataSnapshot
+)
 
 from database.connection import db_manager
 from core.logger import setup_logging, get_logger
@@ -32,6 +43,24 @@ async def init_database():
         # Создаем таблицы
         await db_manager.create_tables()
         logger.info("✓ Таблицы созданы")
+
+        # Проверяем созданные таблицы
+        async with db_manager.session() as session:
+            # Проверяем наличие таблиц
+            result = await session.execute("""
+                SELECT tablename 
+                FROM pg_tables 
+                WHERE schemaname = 'public' 
+                ORDER BY tablename
+            """)
+            tables = result.fetchall()
+
+            if tables:
+                logger.info("Созданные таблицы:")
+                for table in tables:
+                    logger.info(f"  - {table[0]}")
+            else:
+                logger.warning("⚠ Таблицы не найдены в базе данных!")
 
         logger.info("=" * 80)
         logger.info("БАЗА ДАННЫХ УСПЕШНО ИНИЦИАЛИЗИРОВАНА")
@@ -62,6 +91,7 @@ async def check_connection():
         await db_manager.initialize()
 
         async with db_manager.session() as session:
+            # Версия PostgreSQL
             result = await session.execute("SELECT version()")
             version = result.scalar()
             logger.info(f"✓ PostgreSQL версия: {version}")
@@ -75,6 +105,22 @@ async def check_connection():
                 logger.info(f"✓ TimescaleDB версия: {timescale[1]}")
             else:
                 logger.warning("⚠ TimescaleDB не установлен")
+
+            # Проверяем существующие таблицы
+            result = await session.execute("""
+                SELECT tablename 
+                FROM pg_tables 
+                WHERE schemaname = 'public'
+                ORDER BY tablename
+            """)
+            tables = result.fetchall()
+
+            if tables:
+                logger.info(f"✓ Найдено таблиц: {len(tables)}")
+                for table in tables:
+                    logger.info(f"  - {table[0]}")
+            else:
+                logger.info("⚠ Таблицы не найдены (БД пуста)")
 
         logger.info("✓ Подключение работает корректно")
 
@@ -98,6 +144,16 @@ async def reset_database():
         return
 
     try:
+        # ВАЖНО: Импортируем модели
+        from database.models import (
+            Order,
+            Position,
+            Trade,
+            AuditLog,
+            IdempotencyCache,
+            MarketDataSnapshot
+        )
+
         await db_manager.initialize()
 
         async with db_manager.session() as session:
@@ -135,6 +191,10 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+
+    # Настройка event loop для Windows
+    if sys.platform.startswith('win'):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     if args.command == "init":
         asyncio.run(init_database())
