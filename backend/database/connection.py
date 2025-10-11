@@ -5,13 +5,14 @@
 
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import (
-  create_async_engine,
-  AsyncSession,
-  async_sessionmaker,
-  AsyncEngine
+    create_async_engine,
+    AsyncSession,
+    async_sessionmaker,
+    AsyncEngine
 )
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.pool import NullPool
+from sqlalchemy import text
 from contextlib import asynccontextmanager
 
 from config import settings
@@ -24,102 +25,113 @@ Base = declarative_base()
 
 
 class DatabaseManager:
-  """Менеджер подключения к базе данных."""
+    """Менеджер подключения к базе данных."""
 
-  def __init__(self):
-    """Инициализация менеджера БД."""
-    self.engine: AsyncEngine | None = None
-    self.session_factory: async_sessionmaker | None = None
-    self._is_initialized = False
+    def __init__(self):
+        """Инициализация менеджера БД."""
+        self.engine: AsyncEngine | None = None
+        self.session_factory: async_sessionmaker | None = None
+        self._is_initialized = False
 
-  async def initialize(self):
-    """Инициализация подключения к БД."""
-    if self._is_initialized:
-      logger.warning("Database уже инициализирована")
-      return
+    async def initialize(self):
+        """Инициализация подключения к БД."""
+        if self._is_initialized:
+            logger.warning("Database уже инициализирована")
+            return
 
-    try:
-      logger.info("Инициализация подключения к PostgreSQL...")
+        try:
+            logger.info("Инициализация подключения к PostgreSQL...")
 
-      # Создаем движок
-      self.engine = create_async_engine(
-        settings.DATABASE_URL,
-        echo=settings.DEBUG,
-        pool_pre_ping=True,
-        pool_size=10,
-        max_overflow=20,
-        poolclass=NullPool if settings.DEBUG else None,
-      )
+            # Параметры для create_async_engine
+            engine_kwargs = {
+                "echo": settings.DEBUG,
+                "pool_pre_ping": True,
+            }
 
-      # Создаем фабрику сессий
-      self.session_factory = async_sessionmaker(
-        self.engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-        autocommit=False,
-        autoflush=False,
-      )
+            # Добавляем pool параметры только если НЕ используется NullPool
+            if settings.DEBUG:
+                # В DEBUG режиме используем NullPool (без пула)
+                engine_kwargs["poolclass"] = NullPool
+            else:
+                # В production используем пул с настройками
+                engine_kwargs["pool_size"] = 10
+                engine_kwargs["max_overflow"] = 20
 
-      # Проверяем подключение
-      async with self.engine.begin() as conn:
-        await conn.execute("SELECT 1")
+            # Создаем движок
+            self.engine = create_async_engine(
+                settings.DATABASE_URL,
+                **engine_kwargs
+            )
 
-      logger.info("✓ База данных подключена успешно")
-      self._is_initialized = True
+            # Создаем фабрику сессий
+            self.session_factory = async_sessionmaker(
+                self.engine,
+                class_=AsyncSession,
+                expire_on_commit=False,
+                autocommit=False,
+                autoflush=False,
+            )
 
-    except Exception as e:
-      logger.error(f"Ошибка подключения к БД: {e}")
-      raise
+            # Проверяем подключение
+            async with self.engine.begin() as conn:
+                await conn.execute(text("SELECT 1"))
 
-  async def create_tables(self):
-    """Создание таблиц в БД."""
-    if not self._is_initialized:
-      raise RuntimeError("Database не инициализирована")
+            logger.info("✓ База данных подключена успешно")
+            self._is_initialized = True
 
-    try:
-      logger.info("Создание таблиц в БД...")
+        except Exception as e:
+            logger.error(f"Ошибка подключения к БД: {e}")
+            raise
 
-      async with self.engine.begin() as conn:
-        # Создаем расширение TimescaleDB
-        await conn.execute("CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE")
+    async def create_tables(self):
+        """Создание таблиц в БД."""
+        if not self._is_initialized:
+            raise RuntimeError("Database не инициализирована")
 
-        # Создаем все таблицы
-        await conn.run_sync(Base.metadata.create_all)
+        try:
+            logger.info("Создание таблиц в БД...")
 
-      logger.info("✓ Таблицы созданы успешно")
+            async with self.engine.begin() as conn:
+                # Создаем расширение TimescaleDB
+                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE"))
 
-    except Exception as e:
-      logger.error(f"Ошибка создания таблиц: {e}")
-      raise
+                # Создаем все таблицы
+                await conn.run_sync(Base.metadata.create_all)
 
-  async def close(self):
-    """Закрытие подключения к БД."""
-    if self.engine:
-      logger.info("Закрытие подключения к БД...")
-      await self.engine.dispose()
-      self._is_initialized = False
-      logger.info("✓ БД отключена")
+            logger.info("✓ Таблицы созданы успешно")
 
-  @asynccontextmanager
-  async def session(self) -> AsyncGenerator[AsyncSession, None]:
-    """
-    Context manager для работы с сессией.
+        except Exception as e:
+            logger.error(f"Ошибка создания таблиц: {e}")
+            raise
 
-    Yields:
-        AsyncSession: Сессия БД
-    """
-    if not self._is_initialized:
-      raise RuntimeError("Database не инициализирована")
+    async def close(self):
+        """Закрытие подключения к БД."""
+        if self.engine:
+            logger.info("Закрытие подключения к БД...")
+            await self.engine.dispose()
+            self._is_initialized = False
+            logger.info("✓ БД отключена")
 
-    session = self.session_factory()
-    try:
-      yield session
-      await session.commit()
-    except Exception:
-      await session.rollback()
-      raise
-    finally:
-      await session.close()
+    @asynccontextmanager
+    async def session(self) -> AsyncGenerator[AsyncSession, None]:
+        """
+        Context manager для работы с сессией.
+
+        Yields:
+            AsyncSession: Сессия БД
+        """
+        if not self._is_initialized:
+            raise RuntimeError("Database не инициализирована")
+
+        session = self.session_factory()
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
 
 
 # Глобальный экземпляр
