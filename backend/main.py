@@ -14,8 +14,11 @@ from fastapi import WebSocket, WebSocketDisconnect
 from config import settings
 from core.logger import setup_logging, get_logger
 from core.exceptions import log_exception, OrderBookSyncError, OrderBookError
+from core.trace_context import trace_operation
+from database.connection import db_manager
 from exchange.rest_client import rest_client
 from exchange.websocket_manager import BybitWebSocketManager
+from infrastructure.resilience.recovery_service import recovery_service
 from strategy.orderbook_manager import OrderBookManager
 from strategy.analyzer import MarketAnalyzer
 from strategy.strategy_engine import StrategyEngine
@@ -24,7 +27,7 @@ from execution.execution_manager import ExecutionManager
 from utils.balance_tracker import balance_tracker
 from utils.constants import BotStatus
 from api.websocket import manager as ws_manager, handle_websocket_messages
-
+from tasks.cleanup_tasks import cleanup_tasks
 # Настройка логирования
 setup_logging()
 logger = get_logger(__name__)
@@ -372,11 +375,29 @@ async def lifespan(app):
   # Startup
   logger.info("Запуск приложения")
   try:
-    # Создаем и инициализируем контроллер
-    bot_controller = BotController()
-    await bot_controller.initialize()
 
-    logger.info("Приложение готово к работе")
+    with trace_operation("app_startup"):
+      # 1. Инициализация базы данных
+      logger.info("→ Инициализация базы данных...")
+      await db_manager.initialize()
+      logger.info("✓ База данных подключена")
+
+      # 2. Recovery & Reconciliation (если включено)
+      if settings.AUTO_RECONCILE_ON_STARTUP:
+        logger.info("→ Запуск state reconciliation...")
+        reconcile_result = await recovery_service.reconcile_state()
+        logger.info(f"✓ Reconciliation завершен: {reconcile_result}")
+
+      # Создаем и инициализируем контроллер
+      bot_controller = BotController()
+      await bot_controller.initialize()
+
+      await cleanup_tasks.start()
+
+    logger.info("=" * 80)
+    logger.info("✓ ПРИЛОЖЕНИЕ ГОТОВО К РАБОТЕ")
+    logger.info("=" * 80)
+
     yield
 
   except Exception as e:
@@ -388,12 +409,20 @@ async def lifespan(app):
     # Shutdown
     logger.info("Остановка приложения")
 
-    if bot_controller:
-      if bot_controller.status == BotStatus.RUNNING:
+    # if bot_controller:
+    #   if bot_controller.status == BotStatus.RUNNING:
+    #     await bot_controller.stop()
+    #
+    #   # Закрываем REST клиент
+    #   await rest_client.close()
+    with trace_operation("app_shutdown"):
+      if bot_controller:
         await bot_controller.stop()
 
-      # Закрываем REST клиент
       await rest_client.close()
+      await db_manager.close()
+
+      await cleanup_tasks.stop()
 
     logger.info("Приложение остановлено")
 
@@ -404,12 +433,13 @@ from api.app import app
 app.router.lifespan_context = lifespan
 
 # Регистрируем роутеры
-from api.routes import auth_router, bot_router, data_router, trading_router
+from api.routes import auth_router, bot_router, data_router, trading_router, monitoring_router
 
 app.include_router(auth_router)
 app.include_router(bot_router)
 app.include_router(data_router)
 app.include_router(trading_router)
+app.include_router(monitoring_router)
 
 
 # WebSocket эндпоинт

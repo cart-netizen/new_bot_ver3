@@ -14,6 +14,8 @@ from core.auth import (
 )
 from core.exceptions import AuthenticationError
 from exchange.rest_client import rest_client
+from infrastructure.resilience.circuit_breaker import circuit_breaker_manager
+from infrastructure.resilience.rate_limiter import rate_limiter
 from models.user import LoginRequest, LoginResponse, ChangePasswordRequest
 from config import settings
 from utils.balance_tracker import balance_tracker
@@ -26,6 +28,7 @@ bot_router = APIRouter(prefix="/bot", tags=["Bot Control"])
 data_router = APIRouter(prefix="/data", tags=["Market Data"])
 trading_router = APIRouter(prefix="/trading", tags=["Trading"])
 
+monitoring_router = APIRouter(prefix="/api/monitoring", tags=["monitoring"])
 
 # ===== МОДЕЛИ ОТВЕТОВ =====
 
@@ -845,3 +848,29 @@ async def get_candles(
       status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
       detail=f"Ошибка получения свечей: {str(e)}"
     )
+
+
+@monitoring_router.get("/circuit-breakers")
+async def get_circuit_breakers(current_user: dict = Depends(require_auth)):
+  """Получение статуса всех Circuit Breakers."""
+  return circuit_breaker_manager.get_all_status()
+
+
+@monitoring_router.get("/rate-limiters")
+async def get_rate_limiters(current_user: dict = Depends(require_auth)):
+  """Получение статуса всех Rate Limiters."""
+  return rate_limiter.get_all_status()
+
+
+@monitoring_router.post("/circuit-breakers/{name}/reset")
+async def reset_circuit_breaker(
+    name: str,
+    current_user: dict = Depends(require_auth)
+):
+  """Сброс конкретного Circuit Breaker."""
+  breaker = circuit_breaker_manager.breakers.get(name)
+  if not breaker:
+    raise HTTPException(404, f"Circuit breaker '{name}' not found")
+
+  breaker.reset()
+  return {"status": "reset", "breaker": name}

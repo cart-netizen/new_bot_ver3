@@ -1,0 +1,272 @@
+"""
+Position Repository.
+CRUD операции для позиций с полным контекстом.
+"""
+
+from typing import List, Optional
+from datetime import datetime
+from sqlalchemy import select, update
+
+from core.logger import get_logger
+from database.connection import db_manager
+from database.models import Position, PositionStatus, OrderSide
+from core.exceptions import DatabaseError
+
+logger = get_logger(__name__)
+
+
+class PositionRepository:
+  """Repository для работы с позициями."""
+
+  async def create(
+      self,
+      symbol: str,
+      side: OrderSide,
+      quantity: float,
+      entry_price: float,
+      stop_loss: Optional[float] = None,
+      take_profit: Optional[float] = None,
+      entry_signal: Optional[dict] = None,
+      entry_market_data: Optional[dict] = None,
+      entry_indicators: Optional[dict] = None,
+      entry_reason: Optional[str] = None,
+  ) -> Position:
+    """
+    Создание новой позиции.
+
+    Args:
+        symbol: Торговая пара
+        side: Сторона (Buy/Sell)
+        quantity: Количество
+        entry_price: Цена входа
+        stop_loss: Stop Loss
+        take_profit: Take Profit
+        entry_signal: Сигнал на вход
+        entry_market_data: Рыночные данные при входе
+        entry_indicators: Индикаторы при входе
+        entry_reason: Причина открытия
+
+    Returns:
+        Position: Созданная позиция
+    """
+    try:
+      async with db_manager.session() as session:
+        position = Position(
+          symbol=symbol,
+          side=side,
+          status=PositionStatus.OPENING,
+          quantity=quantity,
+          entry_price=entry_price,
+          current_price=entry_price,
+          stop_loss=stop_loss,
+          take_profit=take_profit,
+          entry_signal=entry_signal,
+          entry_market_data=entry_market_data,
+          entry_indicators=entry_indicators,
+          entry_reason=entry_reason,
+          opened_at=datetime.utcnow(),
+          updated_at=datetime.utcnow(),
+          version=1,
+        )
+
+        session.add(position)
+        await session.commit()
+        await session.refresh(position)
+
+        logger.info(
+          f"Создана позиция: {position.id} | "
+          f"{symbol} {side.value} {quantity} @ {entry_price}"
+        )
+
+        return position
+
+    except Exception as e:
+      logger.error(f"Ошибка создания позиции: {e}")
+      raise DatabaseError(f"Failed to create position: {str(e)}")
+
+  async def get_by_id(self, position_id: str) -> Optional[Position]:
+    """
+    Получение позиции по ID.
+
+    Args:
+        position_id: ID позиции
+
+    Returns:
+        Optional[Position]: Позиция или None
+    """
+    try:
+      async with db_manager.session() as session:
+        stmt = select(Position).where(Position.id == position_id)
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    except Exception as e:
+      logger.error(f"Ошибка получения позиции {position_id}: {e}")
+      return None
+
+  async def update_status(
+      self,
+      position_id: str,
+      new_status: PositionStatus,
+      exit_price: Optional[float] = None,
+      exit_signal: Optional[dict] = None,
+      exit_market_data: Optional[dict] = None,
+      exit_indicators: Optional[dict] = None,
+      exit_reason: Optional[str] = None,
+  ) -> bool:
+    """
+    Обновление статуса позиции.
+
+    Args:
+        position_id: ID позиции
+        new_status: Новый статус
+        exit_price: Цена выхода
+        exit_signal: Сигнал на выход
+        exit_market_data: Рыночные данные при выходе
+        exit_indicators: Индикаторы при выходе
+        exit_reason: Причина закрытия
+
+    Returns:
+        bool: True если обновлено успешно
+    """
+    try:
+      async with db_manager.session() as session:
+        # Получаем позицию
+        position = await self.get_by_id(position_id)
+        if not position:
+          logger.error(f"Позиция {position_id} не найдена")
+          return False
+
+        # Подготавливаем обновление
+        update_data = {
+          "status": new_status,
+          "updated_at": datetime.utcnow(),
+          "version": position.version + 1,
+        }
+
+        if new_status == PositionStatus.CLOSED:
+          update_data["closed_at"] = datetime.utcnow()
+
+          if exit_price:
+            update_data["exit_price"] = exit_price
+
+            # Расчет realized PnL
+            if position.side == OrderSide.BUY:
+              pnl = (exit_price - position.entry_price) * position.quantity
+            else:
+              pnl = (position.entry_price - exit_price) * position.quantity
+
+            update_data["realized_pnl"] = pnl
+
+          if exit_signal:
+            update_data["exit_signal"] = exit_signal
+          if exit_market_data:
+            update_data["exit_market_data"] = exit_market_data
+          if exit_indicators:
+            update_data["exit_indicators"] = exit_indicators
+          if exit_reason:
+            update_data["exit_reason"] = exit_reason
+
+        # Обновляем с проверкой версии
+        stmt = (
+          update(Position)
+          .where(
+            Position.id == position_id,
+            Position.version == position.version,
+          )
+          .values(**update_data)
+        )
+
+        result = await session.execute(stmt)
+        await session.commit()
+
+        if result.rowcount == 0:
+          logger.warning(f"Конфликт версий при обновлении позиции {position_id}")
+          return False
+
+        logger.info(f"Обновлен статус позиции {position_id}: {new_status.value}")
+        return True
+
+    except Exception as e:
+      logger.error(f"Ошибка обновления позиции {position_id}: {e}")
+      return False
+
+  async def update_current_price(
+      self,
+      position_id: str,
+      current_price: float,
+  ) -> bool:
+    """
+    Обновление текущей цены и unrealized PnL.
+
+    Args:
+        position_id: ID позиции
+        current_price: Текущая цена
+
+    Returns:
+        bool: True если обновлено
+    """
+    try:
+      async with db_manager.session() as session:
+        position = await self.get_by_id(position_id)
+        if not position:
+          return False
+
+        # Расчет unrealized PnL
+        if position.side == OrderSide.BUY:
+          unrealized_pnl = (current_price - position.entry_price) * position.quantity
+        else:
+          unrealized_pnl = (position.entry_price - current_price) * position.quantity
+
+        stmt = (
+          update(Position)
+          .where(Position.id == position_id)
+          .values(
+            current_price=current_price,
+            unrealized_pnl=unrealized_pnl,
+            updated_at=datetime.utcnow(),
+          )
+        )
+
+        await session.execute(stmt)
+        await session.commit()
+        return True
+
+    except Exception as e:
+      logger.error(f"Ошибка обновления цены позиции {position_id}: {e}")
+      return False
+
+  async def get_active_positions(self, symbol: Optional[str] = None) -> List[Position]:
+    """
+    Получение активных позиций.
+
+    Args:
+        symbol: Фильтр по символу
+
+    Returns:
+        List[Position]: Список активных позиций
+    """
+    try:
+      async with db_manager.session() as session:
+        stmt = select(Position).where(
+          Position.status.in_([PositionStatus.OPENING, PositionStatus.OPEN])
+        )
+
+        if symbol:
+          stmt = stmt.where(Position.symbol == symbol)
+
+        stmt = stmt.order_by(Position.opened_at.desc())
+
+        result = await session.execute(stmt)
+        positions = result.scalars().all()
+
+        logger.debug(f"Найдено {len(positions)} активных позиций")
+        return list(positions)
+
+    except Exception as e:
+      logger.error(f"Ошибка получения активных позиций: {e}")
+      return []
+
+
+# Глобальный экземпляр
+position_repository = PositionRepository()

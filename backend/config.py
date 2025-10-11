@@ -4,8 +4,8 @@
 """
 
 import os
-from typing import List, Literal
-from pydantic_settings import BaseSettings
+from typing import List, Literal, Optional
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, validator, field_validator
 from dotenv import load_dotenv
 
@@ -40,6 +40,8 @@ class Settings(BaseSettings):
   BYBIT_API_SECRET: str = Field(default="")
   BYBIT_MAINNET_API_KEY: str = Field(default="")
   BYBIT_MAINNET_API_SECRET: str = Field(default="")
+  BYBIT_TESTNET_URL: str = "https://api-testnet.bybit.com"
+  BYBIT_MAINNET_URL: str = "https://api.bybit.com"
 
   # ===== ТОРГОВЫЕ НАСТРОЙКИ =====
   TRADING_PAIRS: str = Field(default="BTCUSDT,ETHUSDT,SOLUSDT")
@@ -55,6 +57,8 @@ class Settings(BaseSettings):
   MAX_OPEN_POSITIONS: int = Field(default=5)
   MAX_EXPOSURE_USDT: float = Field(default=10000)
   MIN_ORDER_SIZE_USDT: float = Field(default=5)
+  MAX_POSITION_SIZE_USDT: float = 1000.0
+  IMBALANCE_THRESHOLD: float = 0.7
 
   # ===== НАСТРОЙКИ API СЕРВЕРА =====
   API_HOST: str = Field(default="0.0.0.0")
@@ -65,6 +69,48 @@ class Settings(BaseSettings):
   WS_RECONNECT_TIMEOUT: int = Field(default=5)
   WS_MAX_RECONNECT_ATTEMPTS: int = Field(default=10)
   WS_PING_INTERVAL: int = Field(default=20)
+
+  # WebSocket настройки
+  WS_RECONNECT_DELAY: int = 5
+  AUTO_RECONCILE_ON_STARTUP: bool = True
+  RECONCILE_INTERVAL_MINUTES: int = 60
+
+  # Circuit Breaker настройки
+  CIRCUIT_BREAKER_ENABLED: bool = True
+  CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = 5
+  CIRCUIT_BREAKER_COOLDOWN_SECONDS: int = 60
+
+  # Idempotency настройки
+  IDEMPOTENCY_TTL_MINUTES: int = 6
+
+  # Database (PostgreSQL + TimescaleDB)
+  DATABASE_URL: str = "postgresql+asyncpg://user:password@localhost:5432/trading_bot"
+
+  # Database настройки
+  DB_POOL_SIZE: int = 10
+  DB_MAX_OVERFLOW: int = 20
+  DB_ECHO: bool = False
+
+  # Redis (для будущего использования)
+  REDIS_URL: Optional[str] = None
+  REDIS_HOST: str = "localhost"
+  REDIS_PORT: int = 6379
+  REDIS_DB: int = 0
+
+  # Rate Limiting настройки
+  RATE_LIMIT_ENABLED: bool = True
+  RATE_LIMIT_REST_PUBLIC: int = 120  # запросов в минуту
+  RATE_LIMIT_REST_PRIVATE: int = 120
+  RATE_LIMIT_REST_TRADE: int = 100
+  RATE_LIMIT_ORDER_PLACEMENT: int = 50
+
+
+  model_config = SettingsConfigDict(
+    env_file=".env",
+    env_file_encoding="utf-8",
+    case_sensitive=True,
+    extra="ignore"
+  )
 
   @field_validator("TRADING_PAIRS")
   def validate_trading_pairs(cls, v):
@@ -137,10 +183,37 @@ class Settings(BaseSettings):
         )
       return self.BYBIT_API_KEY, self.BYBIT_API_SECRET
 
-  class Config:
-    env_file = ".env"
-    env_file_encoding = "utf-8"
-    case_sensitive = True
+  def get_bybit_api_url(self) -> str:
+    """
+    Получение URL API Bybit в зависимости от режима.
+
+    Returns:
+        str: URL API
+    """
+    if self.BYBIT_MODE == "mainnet":
+      return self.BYBIT_MAINNET_URL
+    return self.BYBIT_TESTNET_URL
+
+  def is_testnet(self) -> bool:
+    """
+    Проверка режима testnet.
+
+    Returns:
+        bool: True если testnet
+    """
+    return self.BYBIT_MODE == "testnet"
+
+  def get_redis_url(self) -> str:
+    """
+    Получение Redis URL.
+
+    Returns:
+        str: Redis URL
+    """
+    if self.REDIS_URL:
+      return self.REDIS_URL
+    return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+
 
 
 # Создание глобального экземпляра настроек
@@ -150,3 +223,4 @@ except Exception as e:
   print(f"КРИТИЧЕСКАЯ ОШИБКА: Не удалось загрузить конфигурацию: {e}")
   print("Проверьте наличие файла .env и корректность всех параметров")
   raise
+
