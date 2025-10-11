@@ -84,7 +84,7 @@ class Settings(BaseSettings):
   IDEMPOTENCY_TTL_MINUTES: int = 6
 
   # Database (PostgreSQL + TimescaleDB)
-  DATABASE_URL: str = "postgresql+asyncpg://user:password@localhost:5432/trading_bot"
+  DATABASE_URL: str = "postgresql+asyncpg://user:robocop@localhost:5432/trading_bot"
 
   # Database настройки
   DB_POOL_SIZE: int = 10
