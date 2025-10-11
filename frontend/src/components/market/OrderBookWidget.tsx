@@ -31,7 +31,8 @@ export function OrderBookWidget({
     const asks = orderbook.asks.slice(0, maxLevels);
     const bids = orderbook.bids.slice(0, maxLevels);
 
-    const allVolumes = [...asks, ...bids].map(([_, qty]) => qty);
+    // ИСПРАВЛЕНИЕ ESLint: опускаем неиспользуемую переменную (пустая позиция)
+    const allVolumes = [...asks, ...bids].map(([, qty]) => qty);
     const maxVolume = Math.max(...allVolumes, 1);
 
     return {
@@ -109,9 +110,10 @@ export function OrderBookWidget({
       {/* Asks (продажи) - КРАСНЫЕ с красным фоном */}
       <div className="space-y-1 mb-2">
         {asks.map(([price, quantity], index) => {
+          // ИСПРАВЛЕНИЕ ESLint: опускаем неиспользуемую переменную
           const cumulative = asks
             .slice(0, index + 1)
-            .reduce((sum, [_, qty]) => sum + qty, 0);
+            .reduce((sum, [, askQty]) => sum + askQty, 0);
           const volumePercent = getVolumePercentage(quantity);
 
           return (
@@ -119,7 +121,7 @@ export function OrderBookWidget({
               key={`ask-${price}`}
               className="relative grid grid-cols-3 gap-2 text-xs py-1 px-2 rounded hover:bg-gray-800/50 transition-colors"
             >
-              {/* ИСПРАВЛЕНИЕ: Фоновый индикатор объема - КРАСНЫЙ для asks */}
+              {/* Фоновый индикатор объема - КРАСНЫЙ для asks */}
               <div
                 className="absolute right-0 top-0 bottom-0 bg-destructive/20 rounded"
                 style={{ width: `${volumePercent}%` }}
@@ -158,9 +160,10 @@ export function OrderBookWidget({
       {/* Bids (покупки) - ЗЕЛЕНЫЕ с зеленым фоном */}
       <div className="space-y-1 mt-2">
         {bids.map(([price, quantity], index) => {
+          // ИСПРАВЛЕНИЕ ESLint: опускаем неиспользуемую переменную
           const cumulative = bids
             .slice(0, index + 1)
-            .reduce((sum, [_, qty]) => sum + qty, 0);
+            .reduce((sum, [, bidQty]) => sum + bidQty, 0);
           const volumePercent = getVolumePercentage(quantity);
 
           return (

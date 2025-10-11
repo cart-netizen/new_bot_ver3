@@ -1,10 +1,12 @@
 // frontend/src/components/market/PriceChart.tsx
 
-import { useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { Card } from '../ui/Card';
-import type { OrderBookMetrics } from '@/types/orderbook.types';
+import { candlesApi } from '../../api/candles.api';
+import type { Candle } from '../../types/candle.types';
+import { CandleInterval } from '../../types/candle.types';
 import {
-
+  LineChart,
   Line,
   XAxis,
   YAxis,
@@ -12,46 +14,139 @@ import {
   Tooltip,
   ResponsiveContainer,
   Legend,
-  Area,
-  AreaChart,
 } from 'recharts';
-import { TrendingUp, TrendingDown } from 'lucide-react';
+import { TrendingUp, TrendingDown, RefreshCw } from 'lucide-react';
 
 interface PriceChartProps {
   symbol: string;
-  metricsHistory: OrderBookMetrics[];
   loading?: boolean;
 }
 
 /**
  * Компонент для отображения графика цены торговой пары.
- * Показывает динамику best bid/ask и mid price.
+ * Использует минутные свечи от биржи.
+ * Автообновление: каждые 15 секунд.
  */
-export function PriceChart({ symbol, metricsHistory, loading = false }: PriceChartProps) {
+export function PriceChart({ symbol, loading: externalLoading = false }: PriceChartProps) {
+  const [candles, setCandles] = useState<Candle[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+
+  // Используем ref для предотвращения множественных запросов
+  const isLoadingRef = useRef(false);
+  const intervalRef = useRef<number | null>(null);
+
+  /**
+   * Загрузка свечей с биржи.
+   */
+  const fetchCandles = useCallback(async (showLoadingIndicator = true) => {
+    // Предотвращаем множественные одновременные запросы
+    if (isLoadingRef.current) {
+      console.log(`[PriceChart] Запрос для ${symbol} уже выполняется, пропускаем`);
+      return;
+    }
+
+    try {
+      isLoadingRef.current = true;
+
+      // Показываем индикатор загрузки только при первом запросе
+      if (showLoadingIndicator) {
+        setLoading(true);
+      }
+      setError(null);
+
+      console.log(`[PriceChart] Загрузка свечей для ${symbol}...`);
+
+      const response = await candlesApi.getCandles(
+        symbol,
+        CandleInterval.MIN_1, // Минутный таймфрейм
+        100 // Последние 100 свечей
+      );
+
+      setCandles(response.candles);
+      setLastUpdate(new Date());
+      console.log(`[PriceChart] ✓ Загружено ${response.candles.length} свечей для ${symbol}`);
+
+    } catch (err) {
+      console.error(`[PriceChart] ✗ Ошибка загрузки свечей для ${symbol}:`, err);
+
+      // Показываем ошибку только если данных еще нет
+      setError('Не удалось загрузить данные');
+    } finally {
+      setLoading(false);
+      isLoadingRef.current = false;
+    }
+  }, [symbol]); // Убрали candles.length из зависимостей
+
+  /**
+   * Загрузка данных при монтировании и изменении символа.
+   */
+  useEffect(() => {
+    console.log(`[PriceChart] useEffect triggered for ${symbol}`);
+
+    // Очищаем предыдущий интервал
+    if (intervalRef.current !== null) {
+      console.log(`[PriceChart] Clearing previous interval`);
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+
+    // Сбрасываем состояние при смене символа
+    setCandles([]);
+    setError(null);
+    setLoading(true);
+
+    // Загружаем данные для нового символа (с индикатором загрузки)
+    fetchCandles(true);
+
+    // Автообновление каждые 15 секунд
+    console.log(`[PriceChart] Setting up 15s interval for ${symbol}`);
+    intervalRef.current = window.setInterval(() => {
+      console.log(`[PriceChart] Auto-refresh triggered for ${symbol}`);
+      // При автообновлении не показываем loader
+      fetchCandles(false);
+    }, 15000); // 15 секунд
+
+    // Cleanup
+    return () => {
+      console.log(`[PriceChart] Cleanup for ${symbol}`);
+      if (intervalRef.current !== null) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [symbol, fetchCandles]); // Добавили fetchCandles в зависимости
+
+  /**
+   * Ручное обновление данных.
+   */
+  const handleManualRefresh = useCallback(() => {
+    console.log(`[PriceChart] Ручное обновление для ${symbol}`);
+    fetchCandles(false);
+  }, [fetchCandles, symbol]);
+
   /**
    * Подготовка данных для графика.
-   * Преобразуем историю метрик в формат для recharts.
    */
   const chartData = useMemo(() => {
-    if (!metricsHistory || metricsHistory.length === 0) {
+    if (!candles || candles.length === 0) {
       return [];
     }
 
-    return metricsHistory
-      .filter((m) => m.prices.best_bid && m.prices.best_ask)
-      .map((metric) => ({
-        timestamp: metric.timestamp,
-        time: new Date(metric.timestamp).toLocaleTimeString('ru-RU', {
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        }),
-        bestBid: metric.prices.best_bid || 0,
-        bestAsk: metric.prices.best_ask || 0,
-        midPrice: metric.prices.mid_price || 0,
-        spread: metric.prices.spread || 0,
-      }));
-  }, [metricsHistory]);
+    return candles.map((candle) => ({
+      timestamp: candle.timestamp,
+      time: new Date(candle.timestamp).toLocaleTimeString('ru-RU', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close,
+      volume: candle.volume,
+    }));
+  }, [candles]);
 
   /**
    * Расчёт изменения цены за период.
@@ -61,8 +156,8 @@ export function PriceChart({ symbol, metricsHistory, loading = false }: PriceCha
       return { amount: 0, percentage: 0 };
     }
 
-    const first = chartData[0]?.midPrice || 0;
-    const last = chartData[chartData.length - 1]?.midPrice || 0;
+    const first = chartData[0]?.open || 0;
+    const last = chartData[chartData.length - 1]?.close || 0;
     const amount = last - first;
     const percentage = first > 0 ? (amount / first) * 100 : 0;
 
@@ -74,11 +169,11 @@ export function PriceChart({ symbol, metricsHistory, loading = false }: PriceCha
   /**
    * Форматирование цены для отображения.
    */
-  const formatPrice = (value: number): string => {
+  const formatPrice = useCallback((value: number): string => {
     return value.toFixed(2);
-  };
+  }, []);
 
-  if (loading) {
+  if (loading || externalLoading) {
     return (
       <Card className="p-4">
         <div className="animate-pulse">
@@ -89,12 +184,31 @@ export function PriceChart({ symbol, metricsHistory, loading = false }: PriceCha
     );
   }
 
+  if (error) {
+    return (
+      <Card className="p-4">
+        <h3 className="text-lg font-semibold mb-4">График: {symbol}</h3>
+        <div className="h-64 flex flex-col items-center justify-center gap-4">
+          <p className="text-destructive">{error}</p>
+          <button
+            onClick={handleManualRefresh}
+            disabled={isLoadingRef.current}
+            className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RefreshCw className={`h-4 w-4 ${isLoadingRef.current ? 'animate-spin' : ''}`} />
+            {isLoadingRef.current ? 'Загрузка...' : 'Повторить'}
+          </button>
+        </div>
+      </Card>
+    );
+  }
+
   if (chartData.length === 0) {
     return (
       <Card className="p-4">
         <h3 className="text-lg font-semibold mb-4">График: {symbol}</h3>
         <div className="h-64 flex items-center justify-center">
-          <p className="text-gray-400">Накапливаем данные для графика...</p>
+          <p className="text-gray-400">Загрузка данных...</p>
         </div>
       </Card>
     );
@@ -107,7 +221,7 @@ export function PriceChart({ symbol, metricsHistory, loading = false }: PriceCha
         <div>
           <h3 className="text-lg font-semibold">{symbol}</h3>
           <p className="text-xs text-gray-500">
-            {chartData.length} точек данных
+            {chartData.length} свечей (1m) • {lastUpdate.toLocaleTimeString('ru-RU')}
           </p>
         </div>
 
@@ -137,11 +251,25 @@ export function PriceChart({ symbol, metricsHistory, loading = false }: PriceCha
             </div>
           </div>
         </div>
+
+        {/* Кнопка обновления */}
+        <button
+          onClick={handleManualRefresh}
+          disabled={isLoadingRef.current}
+          className={`p-2 rounded transition-colors ${
+            isLoadingRef.current 
+              ? 'opacity-50 cursor-not-allowed' 
+              : 'hover:bg-gray-800'
+          }`}
+          title="Обновить данные"
+        >
+          <RefreshCw className={`h-4 w-4 text-gray-400 ${isLoadingRef.current ? 'animate-spin' : ''}`} />
+        </button>
       </div>
 
       {/* График */}
-      <ResponsiveContainer width="100%" height={300}>
-        <AreaChart data={chartData}>
+      <ResponsiveContainer width="100%" height={300} key={`chart-${symbol}`}>
+        <LineChart data={chartData}>
           {/* Сетка */}
           <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
 
@@ -167,16 +295,8 @@ export function PriceChart({ symbol, metricsHistory, loading = false }: PriceCha
               borderRadius: '8px',
               color: '#fff',
             }}
-            formatter={(value: number, name: string) => {
-              const label =
-                name === 'bestBid'
-                  ? 'Best Bid'
-                  : name === 'bestAsk'
-                  ? 'Best Ask'
-                  : name === 'midPrice'
-                  ? 'Mid Price'
-                  : name;
-              return [formatPrice(value), label];
+            formatter={(value: number) => {
+              return [formatPrice(value), 'Close'];
             }}
             labelStyle={{ color: '#9CA3AF', marginBottom: '8px' }}
           />
@@ -187,71 +307,31 @@ export function PriceChart({ symbol, metricsHistory, loading = false }: PriceCha
             iconType="line"
           />
 
-          {/* Области между bid и ask */}
-          <defs>
-            <linearGradient id="colorBid" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#10B981" stopOpacity={0.3} />
-              <stop offset="95%" stopColor="#10B981" stopOpacity={0} />
-            </linearGradient>
-            <linearGradient id="colorAsk" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#EF4444" stopOpacity={0.3} />
-              <stop offset="95%" stopColor="#EF4444" stopOpacity={0} />
-            </linearGradient>
-          </defs>
-
-          {/* Линии */}
-          <Area
-            type="monotone"
-            dataKey="bestBid"
-            stroke="#10B981"
-            strokeWidth={2}
-            fill="url(#colorBid)"
-            name="Best Bid"
-            dot={false}
-          />
-
-          <Area
-            type="monotone"
-            dataKey="bestAsk"
-            stroke="#EF4444"
-            strokeWidth={2}
-            fill="url(#colorAsk)"
-            name="Best Ask"
-            dot={false}
-          />
-
+          {/* Линия Close - основная цена закрытия */}
           <Line
             type="monotone"
-            dataKey="midPrice"
+            dataKey="close"
             stroke="#8B5CF6"
             strokeWidth={2}
-            name="Mid Price"
+            name="Close"
             dot={false}
-            strokeDasharray="5 5"
+            isAnimationActive={false}
           />
-        </AreaChart>
+        </LineChart>
       </ResponsiveContainer>
 
-      {/* Информация о последней точке */}
+      {/* Информация о последней свече */}
       {chartData.length > 0 && (
-        <div className="mt-4 pt-3 border-t border-gray-800 grid grid-cols-3 gap-4 text-xs">
+        <div className="mt-4 pt-3 border-t border-gray-800 flex items-center justify-between text-xs">
           <div>
-            <p className="text-gray-400 mb-1">Best Bid</p>
-            <p className="font-mono text-success">
-              {formatPrice(chartData[chartData.length - 1]?.bestBid || 0)}
+            <p className="text-gray-400 mb-1">Последняя цена (Close)</p>
+            <p className="font-mono text-purple-400 text-lg">
+              {formatPrice(chartData[chartData.length - 1]?.close || 0)}
             </p>
           </div>
-          <div>
-            <p className="text-gray-400 mb-1">Mid Price</p>
-            <p className="font-mono text-purple-400">
-              {formatPrice(chartData[chartData.length - 1]?.midPrice || 0)}
-            </p>
-          </div>
-          <div>
-            <p className="text-gray-400 mb-1">Best Ask</p>
-            <p className="font-mono text-destructive">
-              {formatPrice(chartData[chartData.length - 1]?.bestAsk || 0)}
-            </p>
+          <div className="text-right">
+            <p className="text-gray-400 mb-1">Свечей на графике</p>
+            <p className="font-mono">{chartData.length}</p>
           </div>
         </div>
       )}

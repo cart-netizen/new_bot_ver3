@@ -13,6 +13,7 @@ from core.auth import (
   require_auth
 )
 from core.exceptions import AuthenticationError
+from exchange.rest_client import rest_client
 from models.user import LoginRequest, LoginResponse, ChangePasswordRequest
 from config import settings
 from utils.balance_tracker import balance_tracker
@@ -761,3 +762,86 @@ async def get_execution_stats(current_user: dict = Depends(require_auth)):
     )
 
   return bot_controller.execution_manager.get_statistics()
+
+
+@data_router.get("/candles/{symbol}")
+async def get_candles(
+    symbol: str,
+    interval: str = "1",  # По умолчанию 1 минута
+    limit: int = 100,
+    current_user: dict = Depends(require_auth)
+):
+  """
+  Получение свечных данных (klines) для торговой пары.
+
+  Args:
+      symbol: Торговая пара (например, BTCUSDT)
+      interval: Интервал свечи (1, 3, 5, 15, 30, 60, 120, 240, 360, 720, D, W, M)
+      limit: Количество свечей (макс 200, по умолчанию 100)
+      current_user: Текущий пользователь
+
+  Returns:
+      dict: Данные свечей с timestamps и ценами OHLCV
+  """
+  logger.info(f"Запрос свечей для {symbol}, интервал: {interval}, лимит: {limit}")
+
+  try:
+    # Валидация параметров
+    if limit < 1 or limit > 200:
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Limit должен быть от 1 до 200"
+      )
+
+    # Валидация интервала
+    valid_intervals = ["1", "3", "5", "15", "30", "60", "120", "240", "360", "720", "D", "W", "M"]
+    if interval not in valid_intervals:
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Неверный интервал. Допустимые: {', '.join(valid_intervals)}"
+      )
+
+    # Получаем свечи от биржи
+    klines = await rest_client.get_kline(
+      symbol=symbol,
+      interval=interval,
+      limit=limit
+    )
+
+    # Bybit возвращает массив в формате:
+    # [timestamp, open, high, low, close, volume, turnover]
+    # Нужно преобразовать в удобный формат для фронтенда
+
+    candles = []
+    for kline in reversed(klines):  # Bybit возвращает от новых к старым, разворачиваем
+      try:
+        candles.append({
+          "timestamp": int(kline[0]),  # timestamp в миллисекундах
+          "open": float(kline[1]),
+          "high": float(kline[2]),
+          "low": float(kline[3]),
+          "close": float(kline[4]),
+          "volume": float(kline[5]),
+          "turnover": float(kline[6]) if len(kline) > 6 else 0.0
+        })
+      except (IndexError, ValueError) as e:
+        logger.warning(f"Ошибка парсинга свечи: {e}")
+        continue
+
+    logger.info(f"Успешно получено {len(candles)} свечей для {symbol}")
+
+    return {
+      "symbol": symbol,
+      "interval": interval,
+      "candles": candles,
+      "count": len(candles)
+    }
+
+  except HTTPException:
+    raise
+  except Exception as e:
+    logger.error(f"Ошибка получения свечей для {symbol}: {e}", exc_info=True)
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=f"Ошибка получения свечей: {str(e)}"
+    )

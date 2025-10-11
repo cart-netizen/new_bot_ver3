@@ -24,7 +24,6 @@ export function DashboardPage() {
   const {
     orderbooks,
     metrics,
-    metricsHistory,
     selectedSymbol,
     isConnected,
     setSelectedSymbol,
@@ -185,7 +184,7 @@ export function DashboardPage() {
             Детали: {currentSymbol}
           </h2>
 
-          {/* НОВЫЙ LAYOUT: 3 колонки - Метрики | График | Order Book (1/3 ширины) */}
+          {/* LAYOUT: 3 колонки равной ширины - Метрики | График | Order Book */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
             {/* Колонка 1: Метрики (1/3) */}
             <div className="lg:col-span-1">
@@ -195,12 +194,11 @@ export function DashboardPage() {
               />
             </div>
 
-            {/* Колонка 2: График цены (1/3) */}
+            {/* Колонка 2: График цены со свечами (1/3) */}
             <div className="lg:col-span-1">
               <PriceChart
                 symbol={currentSymbol}
-                metricsHistory={metricsHistory[currentSymbol] || []}
-                loading={!metricsHistory[currentSymbol]}
+                loading={false}
               />
             </div>
 
