@@ -247,7 +247,7 @@ class BotController:
         for symbol in self.symbols:
           try:
             # Получаем последнюю свечу
-            candles_data = await rest_client.get_klines(
+            candles_data = await rest_client.get_kline(
               symbol=symbol,
               interval="1",
               limit=2  # Последние 2 свечи (закрытая + текущая)
