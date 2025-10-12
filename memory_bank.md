@@ -744,3 +744,427 @@ await idempotency_service.save_operation_result(
     result=result,
     ttl_minutes=120  # 2 часа
 )
+
+ML Feature Engineering - Полная Реализация
+✅ ЧТО РЕАЛИЗОВАНО
+Компоненты
+
+OrderBookFeatureExtractor (50 признаков) ✅
+
+Базовые микроструктурные
+Дисбаланс и давление
+Кластеры и уровни
+Ликвидность
+Временные признаки
+
+
+CandleFeatureExtractor (25 признаков) ✅
+
+OHLCV базовые
+Производные метрики
+Волатильность (Realized, Parkinson, Garman-Klass)
+Volume features
+Pattern indicators
+
+
+IndicatorFeatureExtractor (35 признаков) ✅
+
+Trend indicators (SMA, EMA, MACD, ADX)
+Momentum indicators (RSI, Stochastic, Williams R, CCI, MFI)
+Volatility indicators (Bollinger Bands, ATR, Keltner)
+Volume indicators (OBV, VWAP, A/D, CMF, VPT, NVI)
+
+
+FeaturePipeline (оркестрация) ✅
+
+Объединение всех extractors
+Multi-channel representation
+Нормализация (StandardScaler)
+Кэширование
+Batch processing для нескольких символов
+
+
+
+ИТОГО: 110 признаков из 3 источников данных
+
+backend/
+├── ml_engine/
+│   ├── __init__.py
+│   └── features/
+│       ├── __init__.py
+│       ├── orderbook_feature_extractor.py   ← Часть 1
+│       ├── candle_feature_extractor.py      ← Часть 2
+│       ├── indicator_feature_extractor.py   ← Часть 3
+│       └── feature_pipeline.py              ← Часть 4
+│
+└── tests/
+    └── ml_engine/
+        ├── __init__.py
+        └── test_feature_pipeline_integration.py  ← Тесты
+
+БЫСТРЫЙ СТАРТ
+Базовое использование
+pythonimport asyncio
+from models.orderbook import OrderBookSnapshot
+from ml_engine.features import (
+    FeaturePipeline,
+    Candle
+)
+
+# Создаем pipeline
+pipeline = FeaturePipeline("BTCUSDT", normalize=True, cache_enabled=True)
+
+# Подготавливаем данные
+orderbook = OrderBookSnapshot(
+    symbol="BTCUSDT",
+    bids=[(50000.0, 1.5), (49999.0, 2.0), ...],
+    asks=[(50001.0, 1.2), (50002.0, 1.8), ...],
+    timestamp=1234567890000
+)
+
+candles = [
+    Candle(
+        timestamp=1234567890000,
+        open=50000.0,
+        high=50100.0,
+        low=49900.0,
+        close=50050.0,
+        volume=1.5
+    ),
+    # ... минимум 50 свечей для индикаторов
+]
+
+# Извлекаем признаки
+async def extract():
+    feature_vector = await pipeline.extract_features(
+        orderbook_snapshot=orderbook,
+        candles=candles
+    )
+    
+    # Получаем массив для ML модели
+    features_array = feature_vector.to_array()  # shape: (110,)
+    
+    # Или multi-channel representation
+    channels = feature_vector.to_channels()
+    # channels["orderbook"] shape: (50,)
+    # channels["candle"] shape: (25,)
+    # channels["indicator"] shape: (35,)
+    
+    return features_array
+
+# Запускаем
+features = asyncio.run(extract())
+print(f"Извлечено {len(features)} признаков")
+Multi-Symbol Processing
+pythonfrom ml_engine.features import MultiSymbolFeaturePipeline
+
+# Создаем pipeline для нескольких символов
+symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+multi_pipeline = MultiSymbolFeaturePipeline(symbols)
+
+# Подготавливаем данные для всех символов
+data = {
+    "BTCUSDT": (orderbook_btc, candles_btc),
+    "ETHUSDT": (orderbook_eth, candles_eth),
+    "SOLUSDT": (orderbook_sol, candles_sol)
+}
+
+# Batch extraction (параллельно)
+async def extract_batch():
+    results = await multi_pipeline.extract_features_batch(data)
+    
+    for symbol, feature_vector in results.items():
+        print(f"{symbol}: {feature_vector.feature_count} признаков")
+    
+    return results
+
+results = asyncio.run(extract_batch())
+
+📊 СТРУКТУРА ПРИЗНАКОВ
+1. OrderBook Features (50)
+Базовые микроструктурные (15)
+bid_ask_spread_abs, bid_ask_spread_rel
+mid_price, micro_price
+vwap_bid_5, vwap_ask_5, vwap_bid_10, vwap_ask_10
+depth_bid_5, depth_ask_5, depth_bid_10, depth_ask_10
+total_bid_volume, total_ask_volume, book_depth_ratio
+Дисбаланс и давление (10)
+imbalance_5, imbalance_10, imbalance_total
+price_pressure, volume_delta_5, order_flow_imbalance
+bid_intensity, ask_intensity, buy_sell_ratio, smart_money_index
+Кластеры и уровни (10)
+largest_bid_cluster_price, largest_bid_cluster_volume
+largest_ask_cluster_price, largest_ask_cluster_volume
+num_bid_clusters, num_ask_clusters
+support_level_1, resistance_level_1
+distance_to_support, distance_to_resistance
+Ликвидность (8)
+liquidity_bid_5, liquidity_ask_5, liquidity_asymmetry
+effective_spread, kyle_lambda, amihud_illiquidity
+roll_spread, depth_imbalance_ratio
+Временные (7)
+level_ttl_avg, level_ttl_std
+orderbook_volatility, update_frequency
+quote_intensity, trade_arrival_rate, spread_volatility
+2. Candle Features (25)
+Базовые OHLCV (6)
+open, high, low, close, volume, typical_price
+Производные метрики (7)
+returns, log_returns
+high_low_range, close_open_diff
+upper_shadow, lower_shadow, body_size
+Волатильность (3)
+realized_volatility
+parkinson_volatility
+garman_klass_volatility
+Volume features (5)
+volume_ma_ratio, volume_change_rate
+price_volume_trend, volume_weighted_price, money_flow
+Pattern indicators (4)
+doji_strength, hammer_strength
+engulfing_strength, gap_size
+3. Indicator Features (35)
+Trend indicators (12)
+sma_10, sma_20, sma_50
+ema_10, ema_20, ema_50
+macd, macd_signal, macd_histogram
+adx, plus_di, minus_di
+Momentum indicators (9)
+rsi_14, rsi_28
+stochastic_k, stochastic_d
+williams_r, cci, momentum_10
+roc, mfi
+Volatility indicators (8)
+bollinger_upper, bollinger_middle, bollinger_lower
+bollinger_width, bollinger_pct
+atr_14, keltner_upper, keltner_lower
+Volume indicators (6)
+obv, vwap, ad_line
+cmf, vpt, nvi
+
+🔧 ИНТЕГРАЦИЯ С СУЩЕСТВУЮЩИМ КОДОМ
+С WebSocket Handler
+pythonfrom strategy.orderbook_manager import OrderBookManager
+from ml_engine.features import FeaturePipeline
+
+class TradingBot:
+    def __init__(self):
+        self.orderbook_manager = OrderBookManager("BTCUSDT")
+        self.feature_pipeline = FeaturePipeline("BTCUSDT")
+        self.candle_buffer = []
+    
+    async def on_orderbook_update(self, data):
+        # Обновляем стакан
+        await self.orderbook_manager.process_orderbook_update(data)
+        snapshot = self.orderbook_manager.get_snapshot()
+        
+        # Извлекаем признаки
+        if len(self.candle_buffer) >= 50:
+            features = await self.feature_pipeline.extract_features(
+                orderbook_snapshot=snapshot,
+                candles=self.candle_buffer
+            )
+            
+            # Передаем в ML модель
+            await self.ml_model.predict(features)
+    
+    async def on_candle_update(self, candle):
+        # Добавляем свечу в буфер
+        self.candle_buffer.append(candle)
+        
+        # Ограничиваем размер
+        if len(self.candle_buffer) > 200:
+            self.candle_buffer.pop(0)
+С ML Model
+pythonimport torch
+import torch.nn as nn
+
+class TradingModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        
+        # Multi-channel architecture
+        self.orderbook_encoder = nn.Linear(50, 64)
+        self.candle_encoder = nn.Linear(25, 32)
+        self.indicator_encoder = nn.Linear(35, 32)
+        
+        # Fusion layer
+        self.fusion = nn.Sequential(
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 3)  # Buy, Sell, Hold
+        )
+    
+    def forward(self, feature_vector):
+        # Получаем каналы
+        channels = feature_vector.to_channels()
+        
+        # Encode каждый канал
+        ob_encoded = self.orderbook_encoder(
+            torch.tensor(channels["orderbook"])
+        )
+        candle_encoded = self.candle_encoder(
+            torch.tensor(channels["candle"])
+        )
+        indicator_encoded = self.indicator_encoder(
+            torch.tensor(channels["indicator"])
+        )
+        
+        # Concatenate и fusion
+        fused = torch.cat([ob_encoded, candle_encoded, indicator_encoded])
+        output = self.fusion(fused)
+        
+        return output
+
+ВАЖНЫЕ ЗАМЕЧАНИЯ
+1. Требования к данным
+OrderBook:
+
+Минимум 10 уровней bid/ask для надежных метрик
+Регулярные обновления для временных признаков
+
+Candles:
+
+Минимум 50 свечей для индикаторов
+Рекомендуется 200+ для стабильных расчетов
+
+Индикаторы:
+
+При < 50 свечах используются дефолтные значения
+ADX, MACD требуют минимум 26 свечей
+
+2. Нормализация
+python# Для production нужно обучить scaler на исторических данных
+pipeline = FeaturePipeline("BTCUSDT", normalize=True)
+
+# Загрузите исторические данные и прогрейте
+for historical_data in history:
+    await pipeline.extract_features(...)
+
+# Теперь scaler обучен и готов к использованию
+3. Multi-Channel vs Concatenated
+Multi-Channel (рекомендуется для CNN-LSTM):
+pythonchannels = feature_vector.to_channels()
+# Отдельные каналы для разных типов данных
+Concatenated (для простых моделей):
+pythonarray = feature_vector.to_array()
+# Единый вектор (110,)
+4. Кэширование
+python# Включить для production
+pipeline = FeaturePipeline("BTCUSDT", cache_enabled=True)
+
+# Кэш автоматически ограничен (100 последних)
+# Для Redis кэша - следующая версия
+
+🐛 TROUBLESHOOTING
+Проблема: NaN в признаках
+Причина: Деление на ноль или недостаточно данных
+Решение:
+pythonarray = feature_vector.to_array()
+
+# Находим NaN
+nan_mask = np.isnan(array)
+if nan_mask.any():
+    feature_names = feature_vector.get_feature_names()
+    nan_features = [name for name, is_nan in zip(feature_names, nan_mask) if is_nan]
+    print(f"NaN features: {nan_features}")
+    
+    # Заменяем на 0
+    array = np.nan_to_num(array, nan=0.0)
+Проблема: Медленная обработка
+Причина: Отсутствует кэширование или numba
+Решение:
+python# 1. Включить кэш
+pipeline = FeaturePipeline("BTCUSDT", cache_enabled=True)
+
+# 2. Установить numba
+pip install numba
+
+# 3. Batch processing
+multi_pipeline = MultiSymbolFeaturePipeline(symbols)
+results = await multi_pipeline.extract_features_batch(data)
+Проблема: Индикаторы всегда дефолтные
+Причина: Недостаточно свечей (< 50)
+Решение:
+python# Проверьте количество свечей
+print(f"Свечей: {len(candles)}")
+
+# Нужно минимум 50 для надежных индикаторов
+assert len(candles) >= 50
+
+ПРИМЕРЫ ИСПОЛЬЗОВАНИЯ
+Пример 1: Real-time Trading Bot
+pythonclass LiveTradingBot:
+    def __init__(self, symbols):
+        self.multi_pipeline = MultiSymbolFeaturePipeline(symbols)
+        self.ml_model = load_trained_model()
+    
+    async def process_market_update(self, symbol, orderbook, candles):
+        # Извлекаем признаки
+        pipeline = self.multi_pipeline.get_pipeline(symbol)
+        features = await pipeline.extract_features(
+            orderbook_snapshot=orderbook,
+            candles=candles
+        )
+        
+        # ML предсказание
+        prediction = self.ml_model.predict(features.to_array())
+        
+        # Генерируем торговый сигнал
+        if prediction == "BUY" and features.orderbook_features.imbalance_5 > 0.7:
+            await self.place_order(symbol, "BUY", confidence=0.85)
+Пример 2: Backtesting
+pythonclass BacktestEngine:
+    def __init__(self):
+        self.pipeline = FeaturePipeline("BTCUSDT", normalize=True)
+    
+    async def backtest(self, historical_data):
+        results = []
+        
+        for orderbook, candles in historical_data:
+            # Извлекаем признаки
+            features = await self.pipeline.extract_features(
+                orderbook_snapshot=orderbook,
+                candles=candles
+            )
+            
+            # Генерируем сигнал
+            signal = self.strategy.analyze(features)
+            
+            # Симулируем исполнение
+            pnl = self.simulate_trade(signal, orderbook)
+            results.append(pnl)
+        
+        return np.sum(results)
+
+API Reference
+OrderBookFeatureExtractor:
+pythonextractor = OrderBookFeatureExtractor(symbol: str)
+features = extractor.extract(
+    snapshot: OrderBookSnapshot,
+    prev_snapshot: Optional[OrderBookSnapshot] = None
+) -> OrderBookFeatures
+CandleFeatureExtractor:
+pythonextractor = CandleFeatureExtractor(symbol: str, lookback_period: int = 20)
+features = extractor.extract(
+    candle: Candle,
+    prev_candle: Optional[Candle] = None
+) -> CandleFeatures
+IndicatorFeatureExtractor:
+pythonextractor = IndicatorFeatureExtractor(symbol: str)
+features = extractor.extract(
+    candles: List[Candle]
+) -> IndicatorFeatures
+FeaturePipeline:
+pythonpipeline = FeaturePipeline(
+    symbol: str,
+    normalize: bool = True,
+    cache_enabled: bool = False
+)
+
+feature_vector = await pipeline.extract_features(
+    orderbook_snapshot: OrderBookSnapshot,
+    candles: List[Candle],
+    prev_orderbook: Optional[OrderBookSnapshot] = None,
+    prev_candle: Optional[Candle] = None
+) -> FeatureVector
