@@ -84,10 +84,10 @@ class BybitRESTClient:
     url = f"{self.base_url}{path}"
     headers = {"Content-Type": "application/json"}
 
-    # ИСПРАВЛЕНИЕ: Передаем метод в prepare_request
+    # Подготовка аутентифицированного запроса
     if authenticated:
       auth_data = self.authenticator.prepare_request(
-        method=method,  # ← ВАЖНО: Передаем метод!
+        method=method,
         params=params or {}
       )
       headers.update(auth_data["headers"])
@@ -97,12 +97,39 @@ class BybitRESTClient:
     if params:
       logger.debug(f"Параметры: {params}")
 
+    # КРИТИЧНОЕ ИСПРАВЛЕНИЕ: Сериализуем параметры вручную с сортировкой
+    # чтобы порядок совпадал с подписью как для GET, так и для POST
+    request_body = None
+    query_params = None
+
+    if method == "GET":
+      # Для GET формируем отсортированный query string вручную
+      if params:
+        from urllib.parse import urlencode
+        # ВАЖНО: Сортируем параметры так же, как в bybit_auth.py
+        query_params = urlencode(sorted(params.items()))
+        logger.debug(f"Query string (sorted): {query_params}")
+    else:
+      # Для POST/PUT/DELETE сериализуем JSON вручную с сортировкой ключей
+      if params:
+        import json
+        # ВАЖНО: Используем те же параметры сериализации, что и в bybit_auth.py
+        request_body = json.dumps(params, separators=(',', ':'), sort_keys=True)
+        logger.debug(f"Request body (sorted): {request_body[:200]}...")
+
+    # Формируем финальный URL для GET запросов
+    if method == "GET" and query_params:
+      # Добавляем query string к URL вручную
+      final_url = f"{url}?{query_params}"
+    else:
+      final_url = url
+
     try:
       async with self.session.request(
           method,
           url,
-          params=params if method == "GET" else None,
-          json=params if method == "POST" else None,
+          params=query_params,
+          data=request_body,  # ← ИЗМЕНЕНО: Используем data вместо json
           headers=headers
       ) as response:
         # Пытаемся получить JSON
@@ -138,6 +165,19 @@ class BybitRESTClient:
         if ret_code != 0:
           error_msg = data.get("retMsg", "Unknown error")
           logger.error(f"Ошибка API Bybit: код={ret_code}, сообщение={error_msg}")
+
+          # ДОБАВЛЕНО: Детальное логирование для ошибок подписи
+          if ret_code == 10004:
+            logger.error("=" * 80)
+            logger.error("ОШИБКА ПОДПИСИ API (retCode=10004)")
+            logger.error("=" * 80)
+            logger.error(f"URL: {url}")
+            logger.error(f"Method: {method}")
+            logger.error(f"Headers: {headers}")
+            logger.error(f"Request body: {request_body}")
+            logger.error(f"Response: {data}")
+            logger.error("=" * 80)
+
           raise ExchangeAPIError(
             f"Bybit API error: {error_msg}",
             status_code=ret_code,

@@ -57,47 +57,55 @@ class BybitAuthenticator:
     Returns:
         str: Hex строка подписи
     """
-    try:
-      # Формируем параметры в зависимости от метода
-      if method == "GET":
-        # Для GET: сортированный query string
-        if params:
-          # Сортируем по ключам и формируем query string
-          param_str = urlencode(sorted(params.items()))
-        else:
-          param_str = ""
-      else:  # POST, PUT, DELETE
-        # Для POST: JSON строка БЕЗ пробелов
-        if params:
-          param_str = json.dumps(params, separators=(',', ':'), sort_keys=True)
-        else:
-          param_str = ""
+    # Формируем параметры в зависимости от метода
+    if method == "GET":
+      # Для GET: сортированный query string
+      if params:
+        # Сортируем по ключам и формируем query string
+        param_str = urlencode(sorted(params.items()))
+      else:
+        param_str = ""
+    else:  # POST, PUT, DELETE
+      # Для POST: JSON строка БЕЗ пробелов
+      if params:
+        # КРИТИЧНО: Используем те же параметры сериализации, что и в _request
+        param_str = json.dumps(params, separators=(',', ':'), sort_keys=True)
+      else:
+        param_str = ""
 
-      # Собираем строку для подписи согласно документации V5
-      sign_str = f"{timestamp}{self.api_key}{recv_window}{param_str}"
+    # Собираем строку для подписи согласно документации V5
+    sign_str = f"{timestamp}{self.api_key}{recv_window}{param_str}"
 
-      logger.debug(f"Создание подписи ({method}):")
-      logger.debug(f"  Timestamp: {timestamp}")
-      logger.debug(f"  API Key: {self.api_key}")
-      logger.debug(f"  Recv Window: {recv_window}")
+    # УЛУЧШЕННОЕ ЛОГИРОВАНИЕ
+    logger.debug("=" * 80)
+    logger.debug(f"Создание подписи ({method}):")
+    logger.debug(f"  Timestamp: {timestamp}")
+    logger.debug(f"  API Key: {self.api_key}")
+    logger.debug(f"  Recv Window: {recv_window}")
+
+    # Для POST показываем отсортированные ключи
+    if method == "POST" and params:
+      sorted_keys = sorted(params.keys())
+      logger.debug(f"  Sorted keys: {sorted_keys}")
+      logger.debug(f"  Param String (first 200 chars): {param_str[:200]}")
+      logger.debug(f"  Param String (full): {param_str}")
+    else:
       logger.debug(f"  Param String: {param_str[:100]}...")
-      logger.debug(f"  Sign String: {sign_str[:100]}...")
 
-      # Генерируем HMAC SHA256
-      signature = hmac.new(
-        self.api_secret.encode('utf-8'),
-        sign_str.encode('utf-8'),
-        hashlib.sha256
-      ).hexdigest()
+    logger.debug(f"  Sign String (first 150 chars): {sign_str[:150]}...")
+    logger.debug("=" * 80)
 
-      logger.debug(f"  Signature: {signature}")
+    # Генерируем HMAC SHA256
+    signature = hmac.new(
+      self.api_secret.encode('utf-8'),
+      sign_str.encode('utf-8'),
+      hashlib.sha256
+    ).hexdigest()
 
-      return signature
+    logger.debug(f"  Generated Signature: {signature}")
+    logger.debug("=" * 80)
 
-    except Exception as e:
-      logger.error(f"Ошибка генерации подписи: {e}", exc_info=True)
-      logger.error(f"Параметры: timestamp={timestamp}, method={method}, params={params}")
-      raise
+    return signature
 
   def get_headers(
       self,

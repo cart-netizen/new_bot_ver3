@@ -175,14 +175,32 @@ class RecoveryService:
                 f"{exchange_order_id}"
               )
 
-            # Обновляем локальный статус
-            await order_repository.update_status(
-              client_order_id=local_order.client_order_id,
-              new_status=exchange_status,
-              exchange_order_id=exchange_order_id,  # ← ДОБАВЛЕНО
-              filled_quantity=float(exchange_order.get("cumExecQty", 0)),
-              average_fill_price=float(exchange_order.get("avgPrice", 0)),
-            )
+              # БЕЗОПАСНАЯ конвертация числовых значений
+              # Bybit может возвращать пустые строки "" вместо "0"
+              cum_exec_qty = exchange_order.get("cumExecQty", "0")
+              avg_price = exchange_order.get("avgPrice", "0")
+
+              # Обрабатываем пустые строки
+              try:
+                filled_qty = float(cum_exec_qty) if cum_exec_qty and cum_exec_qty != "" else 0.0
+              except (ValueError, TypeError):
+                logger.warning(f"Некорректное значение cumExecQty: {cum_exec_qty}, используем 0")
+                filled_qty = 0.0
+
+              try:
+                avg_price_value = float(avg_price) if avg_price and avg_price != "" else 0.0
+              except (ValueError, TypeError):
+                logger.warning(f"Некорректное значение avgPrice: {avg_price}, используем 0")
+                avg_price_value = 0.0
+
+              # Обновляем локальный статус
+              await order_repository.update_status(
+                client_order_id=local_order.client_order_id,
+                new_status=exchange_status,
+                exchange_order_id=exchange_order_id,
+                filled_quantity=filled_qty,
+                average_fill_price=avg_price_value if avg_price_value > 0 else None,
+              )
 
             await audit_repository.log(
               action=AuditAction.ORDER_MODIFY,
