@@ -147,7 +147,10 @@ class MLDataCollector:
         "mid_price": orderbook_snapshot.mid_price,
         "spread": orderbook_snapshot.spread,
         "imbalance": market_metrics.imbalance,
-        "signal": executed_signal.get("type") if executed_signal else None,
+        # Сохраняем полную информацию о сигнале
+        "signal_type": executed_signal.get("type") if executed_signal else None,
+        "signal_confidence": executed_signal.get("confidence") if executed_signal else None,
+        "signal_strength": executed_signal.get("strength") if executed_signal else None,
         "feature_count": feature_vector.feature_count
       }
 
@@ -172,51 +175,50 @@ class MLDataCollector:
       logger.error(f"{symbol} | Ошибка сбора семпла: {e}")
 
   def _create_label(
-      self,
-      orderbook_snapshot: OrderBookSnapshot,
-      market_metrics: OrderBookMetrics,
-      executed_signal: Optional[Dict[str, Any]]
-  ) -> Dict[str, Any]:
-    """
-    Создание метки (label) для supervised learning.
+        self,
+        orderbook_snapshot: OrderBookSnapshot,
+        market_metrics: OrderBookMetrics,
+        executed_signal: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+      """
+      Создание метки (label) для supervised learning.
 
-    TODO: Добавить расчет future price movement через N секунд.
-    Сейчас это placeholder.
+      Future targets (direction, movement) будут добавлены ПОЗЖЕ
+      через preprocessing скрипт, который обработает собранные данные.
 
-    Args:
-        orderbook_snapshot: Снимок стакана
-        market_metrics: Метрики
-        executed_signal: Исполненный сигнал
+      В режиме real-time мы НЕ МОЖЕМ знать будущую цену,
+      поэтому сейчас сохраняем только текущее состояние.
 
-    Returns:
-        Dict: Метка с таргетами
-    """
-    # Placeholder - нужно будет добавить:
-    # 1. Future price movement (через 10s, 30s, 60s, 300s)
-    # 2. Future volatility
-    # 3. Trade outcome (если был сигнал)
+      Args:
+          orderbook_snapshot: Снимок стакана
+          market_metrics: Метрики
+          executed_signal: Исполненный сигнал
 
-    label = {
-      # Направление движения (будет заполняться позже)
-      "future_direction_10s": None,  # 1 = up, 0 = down
-      "future_direction_30s": None,
-      "future_direction_60s": None,
+      Returns:
+          Dict: Метка с текущим состоянием и заглушками для future targets
+      """
+      label = {
+        # ===== FUTURE TARGETS (заполнятся через preprocessing) =====
+        # Эти поля будут рассчитаны ПОСЛЕ сбора данных,
+        # когда мы будем знать, что произошло с ценой через N секунд
+        "future_direction_10s": None,  # 1=up, 0=neutral, -1=down
+        "future_direction_30s": None,
+        "future_direction_60s": None,
+        "future_movement_10s": None,  # % изменения цены
+        "future_movement_30s": None,
+        "future_movement_60s": None,
 
-      # Размер движения (будет заполняться позже)
-      "future_movement_10s": None,  # % change
-      "future_movement_30s": None,
-      "future_movement_60s": None,
+        # Current state
+        "current_mid_price": orderbook_snapshot.mid_price,
+        "current_imbalance": market_metrics.imbalance,
 
-      # Текущее состояние
-      "current_mid_price": orderbook_snapshot.mid_price,
-      "current_imbalance": market_metrics.imbalance,
+        # ===== ИСПРАВЛЕНИЕ: Сохраняем ВСЮ информацию о сигнале =====
+        "signal_type": executed_signal.get("type") if executed_signal else None,
+        "signal_confidence": executed_signal.get("confidence") if executed_signal else None,
+        "signal_strength": executed_signal.get("strength") if executed_signal else None,
+      }
 
-      # Сигнал (если был)
-      "signal_type": executed_signal.get("type") if executed_signal else None,
-      "signal_confidence": executed_signal.get("confidence") if executed_signal else None
-    }
-
-    return label
+      return label
 
   async def _save_batch(self, symbol: str):
     """

@@ -72,6 +72,7 @@ class BotController:
     self.analysis_task: Optional[asyncio.Task] = None
     self.candle_update_task: Optional[asyncio.Task] = None  # НОВОЕ
 
+    self.ml_stats_task: Optional[asyncio.Task] = None
     logger.info("Инициализирован контроллер бота с ML поддержкой")
 
   async def initialize(self):
@@ -189,6 +190,10 @@ class BotController:
       )
       logger.info("✓ Цикл обновления свечей запущен")
 
+      self.ml_stats_task = asyncio.create_task(
+        self._ml_stats_loop()
+      )
+
       # Запускаем задачу анализа (теперь с ML)
       self.analysis_task = asyncio.create_task(
         self._analysis_loop_ml_enhanced()
@@ -298,7 +303,8 @@ class BotController:
             if not manager.snapshot_received:
               continue
 
-            # Получаем snapshot стакана
+            # ===== 1. ПОЛУЧЕНИЕ ДАННЫХ =====
+            # Получаем snapshot стакана (ПРАВИЛЬНЫЙ МЕТОД)
             snapshot = manager.get_snapshot()
             if not snapshot:
               continue
@@ -307,20 +313,23 @@ class BotController:
             from api.websocket import broadcast_orderbook_update
             await broadcast_orderbook_update(symbol, snapshot.to_dict())
 
-            # ===== ТРАДИЦИОННЫЙ АНАЛИЗ (старый код) =====
+            # ===== 2. ТРАДИЦИОННЫЙ АНАЛИЗ =====
+            # ПРАВИЛЬНЫЙ МЕТОД: analyze_symbol (не analyze_orderbook)
             metrics = self.market_analyzer.analyze_symbol(symbol, manager)
 
             # Отправляем метрики на фронтенд
             from api.websocket import broadcast_metrics_update
             await broadcast_metrics_update(symbol, metrics.to_dict())
 
-            # ===== НОВОЕ: ML FEATURE EXTRACTION =====
+            # ===== 3. ML FEATURE EXTRACTION =====
+            feature_vector = None
+
             try:
               # Получаем свечи для индикаторов
               candles = candle_manager.get_candles()
 
               if len(candles) >= 50:  # Достаточно для индикаторов
-                # Извлекаем ML признаки
+                # Извлекаем ML признаки (ПРАВИЛЬНЫЙ ВЫЗОВ)
                 pipeline = self.ml_feature_pipeline.get_pipeline(symbol)
                 feature_vector = await pipeline.extract_features(
                   orderbook_snapshot=snapshot,
@@ -330,21 +339,10 @@ class BotController:
                 # Сохраняем признаки
                 self.latest_features[symbol] = feature_vector
 
-                # ===== СБОР ДАННЫХ ДЛЯ ML ОБУЧЕНИЯ =====
-                # Сохраняем данные каждые N итераций
-                if self.ml_data_collector.should_collect():
-                  await self.ml_data_collector.collect_sample(
-                    symbol=symbol,
-                    feature_vector=feature_vector,
-                    orderbook_snapshot=snapshot,
-                    market_metrics=metrics
-                  )
-
                 logger.debug(
                   f"{symbol} | ML признаки извлечены: "
                   f"{feature_vector.feature_count} признаков"
                 )
-
               else:
                 logger.debug(
                   f"{symbol} | Недостаточно свечей для ML: "
@@ -354,14 +352,35 @@ class BotController:
             except Exception as e:
               logger.error(f"{symbol} | Ошибка извлечения ML признаков: {e}")
 
-            # ===== ГЕНЕРАЦИЯ СИГНАЛОВ =====
-            # TODO: В будущем добавить ML валидацию сигналов
+            # ===== 4. ГЕНЕРАЦИЯ СИГНАЛОВ С ML ПРИЗНАКАМИ =====
             signal = self.strategy_engine.analyze_and_generate_signal(
-              symbol,
-              metrics
+              symbol=symbol,
+              metrics=metrics,
+              features=feature_vector  # ← ПЕРЕДАЕМ ML ПРИЗНАКИ
             )
 
-            # Если есть сигнал - отправляем на исполнение
+            # ===== 5. СБОР ДАННЫХ ДЛЯ ML ОБУЧЕНИЯ =====
+            if feature_vector and self.ml_data_collector:
+              try:
+                # ✅ ПРАВИЛЬНЫЙ МЕТОД: collect_sample (не add_sample)
+                await self.ml_data_collector.collect_sample(
+                  symbol=symbol,
+                  feature_vector=feature_vector,
+                  orderbook_snapshot=snapshot,
+                  market_metrics=metrics,
+                  executed_signal={
+                    "type": signal.signal_type.value,
+                    "confidence": signal.confidence,
+                    "strength": signal.strength.value,
+                    # "signal_type": signal.signal_type.value if signal else None,
+                    # "signal_confidence": signal.confidence if signal else None,
+                    # "signal_strength": signal.strength.value if signal else None,
+                  } if signal else None
+                )
+              except Exception as e:
+                logger.error(f"{symbol} | Ошибка сбора ML данных: {e}")
+
+            # ===== 6. ИСПОЛНЕНИЕ СИГНАЛА =====
             if signal:
               await self.execution_manager.submit_signal(signal)
 
@@ -371,15 +390,16 @@ class BotController:
 
           except Exception as e:
             logger.error(f"Ошибка анализа {symbol}: {e}")
+            log_exception(logger, e, f"Анализ {symbol}")
 
-        # Пауза между циклами анализа
+        # Пауза между циклами
         await asyncio.sleep(0.5)  # 500ms
 
       except asyncio.CancelledError:
         logger.info("Цикл анализа отменен")
         break
       except Exception as e:
-        logger.error(f"Ошибка в цикле анализа: {e}")
+        logger.error(f"Критическая ошибка в цикле анализа: {e}")
         log_exception(logger, e, "Цикл анализа")
         await asyncio.sleep(1)
 
@@ -498,67 +518,6 @@ class BotController:
       if not isinstance(e, (OrderBookSyncError, OrderBookError)):
         log_exception(logger, e, "Обработка сообщения стакана")
 
-  async def _analysis_loop(self):
-    """Цикл анализа и генерации сигналов."""
-    logger.info("Запущен цикл анализа")
-
-    while self.status == BotStatus.RUNNING:
-      try:
-        # Ждем пока все WebSocket соединения установятся
-        if not self.websocket_manager.is_all_connected():
-          await asyncio.sleep(1)
-          continue
-
-        # Анализируем каждую пару
-        for symbol in self.symbols:
-          try:
-            manager = self.orderbook_managers[symbol]
-
-            # Пропускаем если нет данных
-            if not manager.snapshot_received:
-              continue
-
-            # ===== НОВОЕ: Отправляем стакан на фронтенд =====
-            snapshot = manager.get_snapshot()
-            if snapshot:
-              from api.websocket import broadcast_orderbook_update
-              await broadcast_orderbook_update(symbol, snapshot.to_dict())
-
-            # Анализируем стакан
-            metrics = self.market_analyzer.analyze_symbol(symbol, manager)
-
-            # ===== НОВОЕ: Отправляем метрики на фронтенд =====
-            from api.websocket import broadcast_metrics_update
-            await broadcast_metrics_update(symbol, metrics.to_dict())
-
-            # Генерируем торговый сигнал
-            signal = self.strategy_engine.analyze_and_generate_signal(
-              symbol,
-              metrics
-            )
-
-            # Если есть сигнал - отправляем на исполнение
-            if signal:
-              await self.execution_manager.submit_signal(signal)
-
-              # Уведомляем фронтенд
-              from api.websocket import broadcast_signal
-              await broadcast_signal(signal.to_dict())
-
-          except Exception as e:
-            logger.error(f"Ошибка анализа {symbol}: {e}")
-
-        # Пауза между циклами анализа
-        await asyncio.sleep(0.5)  # 500ms
-
-      except asyncio.CancelledError:
-        logger.info("Цикл анализа отменен")
-        break
-      except Exception as e:
-        logger.error(f"Ошибка в цикле анализа: {e}")
-        log_exception(logger, e, "Цикл анализа")
-        await asyncio.sleep(1)
-
   def get_status(self) -> dict:
     """Получение статуса бота."""
     ws_status = {}
@@ -589,6 +548,32 @@ class BotController:
         if self.execution_manager else {}
       ),
     }
+
+  async def _ml_stats_loop(self):
+    """
+    Периодический вывод статистики сбора ML данных.
+    """
+    logger.info("Запущен цикл мониторинга ML статистики")
+
+    while True:
+      try:
+        await asyncio.sleep(300)  # Каждые 5 минут
+
+        if self.ml_data_collector:
+          stats = self.ml_data_collector.get_statistics()
+
+          for symbol, stat in stats.items():
+            logger.info(
+              f"ML Stats | {symbol}: "
+              f"samples={stat['total_samples']:,}, "
+              f"batches={stat['batches_saved']}, "
+              f"buffer={stat['buffer_size']}/{self.ml_data_collector.max_samples_per_file}"
+            )
+
+      except asyncio.CancelledError:
+        break
+      except Exception as e:
+        logger.error(f"Ошибка в ML stats loop: {e}")
 
 
 # Глобальный контроллер бота

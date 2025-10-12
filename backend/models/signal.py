@@ -57,6 +57,11 @@ class TradingSignal:
   execution_price: Optional[float] = None
   execution_timestamp: Optional[int] = None
 
+  # ===== НОВЫЕ ПОЛЯ ДЛЯ ML =====
+  ml_features_used: bool = False  # Использованы ли ML признаки
+  feature_count: Optional[int] = None  # Количество признаков
+  ml_confidence_adjustment: Optional[float] = None  # Корректировка confidence от ML
+
   def __post_init__(self):
     """Валидация после инициализации."""
     if not 0.0 <= self.confidence <= 1.0:
@@ -97,7 +102,10 @@ class TradingSignal:
         "execution_timestamp": self.execution_timestamp,
         "age_seconds": self.age_seconds,
         "is_valid": self.is_valid,
-      }
+      },
+      "ml_features_used": self.ml_features_used,
+      "feature_count": self.feature_count,
+      "ml_confidence_adjustment": self.ml_confidence_adjustment
     }
 
 

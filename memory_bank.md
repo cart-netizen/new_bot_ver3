@@ -1547,3 +1547,69 @@ for npy_file in Path("data/ml_training").rglob("*.npy"):
 print(f"\nTotal samples: {total_samples:,}")
 EOF
 
+ПРАВИЛЬНЫЙ WORKFLOW
+ЭТАП 1: Сбор данных (СЕЙЧАС - 30 дней)
+python# В _create_label() оставляем как есть:
+label = {
+    # Future targets - пока None
+    "future_direction_10s": None,
+    "future_direction_30s": None,
+    "future_direction_60s": None,
+    "future_movement_10s": None,
+    "future_movement_30s": None,
+    "future_movement_60s": None,
+    
+    # Current state - ВАЖНО СОХРАНИТЬ!
+    "current_mid_price": orderbook_snapshot.mid_price,
+    "current_imbalance": market_metrics.imbalance,
+    # ⚠️ КРИТИЧЕСКИ ВАЖНО: Сохраняем timestamp!
+    # Без него мы НЕ СМОЖЕМ рассчитать future labels
+}
+Результат после 30 дней:
+data/ml_training/
+├── BTCUSDT/
+│   ├── features/
+│   │   └── 2025-01-15_batch_0001.npy  (5,184,000 семплов × 110 признаков)
+│   └── labels/
+│       └── 2025-01-15_batch_0001.json (5,184,000 меток с None)
+
+ЭТАП 2: Preprocessing (ПОСЛЕ сбора данных)
+Когда: После сбора минимум 1 месяца данных
+Что: Запускаем скрипт preprocessing_add_future_labels.py
+Как работает:
+python# Для каждого семпла в собранных данных:
+for sample in all_samples:
+    current_timestamp = sample["current_timestamp"]  # 14:30:00
+    current_price = sample["current_mid_price"]      # 111,500
+    
+    # Ищем цену через 10 секунд
+    future_timestamp_10s = current_timestamp + 10000  # 14:30:10
+    future_price_10s = find_price_at(future_timestamp_10s)  # 111,520
+    
+    # Рассчитываем movement и direction
+    movement = (future_price_10s - current_price) / current_price  # +0.018%
+    direction = 1 if movement > 0.001 else (-1 if movement < -0.001 else 0)
+    
+    # Обновляем label
+    sample["future_movement_10s"] = movement
+    sample["future_direction_10s"] = direction
+Результат:
+json{
+  "future_direction_10s": 1,      // ✅ ЗАПОЛНЕНО
+  "future_movement_10s": 0.00018, // ✅ ЗАПОЛНЕНО
+  "current_mid_price": 111500,
+  "signal_type": "buy"
+}
+
+ЭТАП 3: Обучение модели (ПОСЛЕ preprocessing)
+Теперь данные готовы для обучения:
+python# Загружаем обработанные данные
+features = np.load("features_batch_0001.npy")  # (N, 110)
+labels = load_json("labels_batch_0001.json")   # (N,)
+
+# Извлекаем таргеты
+y_direction = [l["future_direction_10s"] for l in labels]  # ✅ Все заполнено
+y_movement = [l["future_movement_10s"] for l in labels]    # ✅ Все заполнено
+
+# Обучаем модель
+model.fit(features, y_direction)
