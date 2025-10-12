@@ -1167,4 +1167,383 @@ feature_vector = await pipeline.extract_features(
     candles: List[Candle],
     prev_orderbook: Optional[OrderBookSnapshot] = None,
     prev_candle: Optional[Candle] = None
-) -> FeatureVector
+) -> FeatureVector 
+```
+Обзор Архитектуры
+Компоненты ML-Enhanced Trading Bot
+┌─────────────────────────────────────────────────────────────┐
+│                    TRADING BOT (main.py)                     │
+├─────────────────────────────────────────────────────────────┤
+│                                                               │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │   WebSocket  │  │  OrderBook   │  │    Candle    │      │
+│  │   Manager    │─▶│   Managers   │  │   Managers   │      │
+│  └──────────────┘  └──────────────┘  └──────────────┘      │
+│         │                 │                   │              │
+│         │                 ▼                   │              │
+│         │     ┌─────────────────────┐        │              │
+│         │     │  Market Analyzer    │        │              │
+│         │     │  (Traditional)      │        │              │
+│         │     └─────────────────────┘        │              │
+│         │                 │                   │              │
+│         │                 ▼                   ▼              │
+│         │     ┌───────────────────────────────────┐         │
+│         └────▶│   ML FEATURE PIPELINE             │         │
+│               │  • OrderBook Features (50)        │         │
+│               │  • Candle Features (25)           │         │
+│               │  • Indicator Features (35)        │         │
+│               └───────────────────────────────────┘         │
+│                           │                                  │
+│              ┌────────────┴────────────┐                    │
+│              ▼                          ▼                    │
+│   ┌─────────────────────┐   ┌──────────────────────┐       │
+│   │  Strategy Engine    │   │  ML Data Collector   │       │
+│   │  (Signal Generation)│   │  (Training Data)     │       │
+│   └─────────────────────┘   └──────────────────────┘       │
+│              │                          │                    │
+│              ▼                          ▼                    │
+│   ┌─────────────────────┐   ┌──────────────────────┐       │
+│   │  Execution Manager  │   │  data/ml_training/   │       │
+│   └─────────────────────┘   │  • BTCUSDT/          │       │
+│                              │  • ETHUSDT/          │       │
+│                              │  • ...               │       │
+│                              └──────────────────────┘       │
+└─────────────────────────────────────────────────────────────┘
+Новые Компоненты
+1. CandleManager (backend/strategy/candle_manager.py)
+
+Хранит историю свечей для каждого символа
+Обновляется каждые 5 секунд через REST API
+Поддерживает до 200 свечей в памяти
+Используется для расчета технических индикаторов
+
+2. MultiSymbolFeaturePipeline (уже реализован)
+
+Координирует извлечение признаков для всех символов
+110 признаков total (OrderBook: 50, Candle: 25, Indicators: 35)
+Опциональная нормализация
+
+3. MLDataCollector (backend/ml_engine/data_collection/ml_data_collector.py)
+
+Собирает feature vectors + labels
+Сохраняет в структурированном формате
+Готов для обучения ML моделей
+
+Шаг 2: Размещение Файлов
+Разместите следующие файлы:
+backend/
+├── main.py                                    # ← ОБНОВЛЕН (новая версия с ML)
+├── strategy/
+│   ├── candle_manager.py                     # ← НОВЫЙ
+│   ├── orderbook_manager.py                  # ← СУЩЕСТВУЮЩИЙ
+│   └── analyzer.py                           # ← СУЩЕСТВУЮЩИЙ
+├── ml_engine/
+│   ├── features/
+│   │   ├── orderbook_feature_extractor.py   # ← УЖЕ ЕСТЬ
+│   │   ├── candle_feature_extractor.py      # ← УЖЕ ЕСТЬ (ИСПРАВЛЕН)
+│   │   ├── indicator_feature_extractor.py   # ← УЖЕ ЕСТЬ
+│   │   └── feature_pipeline.py              # ← УЖЕ ЕСТЬ
+│   └── data_collection/
+│       ├── __init__.py                       # ← НОВЫЙ
+│       └── ml_data_collector.py              # ← НОВЫЙ
+└── data/
+    └── ml_training/                          # ← Создается автоматически
+        ├── BTCUSDT/
+        ├── ETHUSDT/
+
+Как Работает Интеграция
+Жизненный Цикл Бота
+1. Инициализация (BotController.initialize())
+python# Создаются компоненты
+for symbol in symbols:
+    # OrderBook Managers (уже было)
+    orderbook_managers[symbol] = OrderBookManager(symbol)
+    
+    # Candle Managers (НОВОЕ)
+    candle_managers[symbol] = CandleManager(symbol, timeframe="1m")
+
+# ML Pipeline (НОВОЕ)
+ml_feature_pipeline = MultiSymbolFeaturePipeline(symbols)
+
+# ML Data Collector (НОВОЕ)
+ml_data_collector = MLDataCollector(storage_path="data/ml_training")
+2. Запуск (BotController.start())
+python# Загружаются исторические свечи
+await _load_historical_candles()  # НОВОЕ
+# ↓
+# REST API: /v5/market/kline → 200 свечей для каждого символа
+
+# Запускаются задачи
+asyncio.create_task(websocket_manager.start())           # Стаканы
+asyncio.create_task(_candle_update_loop())               # НОВОЕ: Свечи
+asyncio.create_task(_analysis_loop_ml_enhanced())        # НОВОЕ: Анализ с ML
+3. Основной Цикл Анализа (_analysis_loop_ml_enhanced())
+Выполняется каждые 500ms для каждого символа:
+pythonfor symbol in symbols:
+    # 1. Получить данные
+    orderbook = orderbook_managers[symbol].get_snapshot()
+    candles = candle_managers[symbol].get_candles()
+    
+    # 2. Традиционный анализ (старая логика)
+    metrics = market_analyzer.analyze_symbol(symbol, orderbook)
+    
+    # 3. ML Feature Extraction (НОВОЕ)
+    if len(candles) >= 50:  # Достаточно для индикаторов
+        feature_vector = await ml_feature_pipeline.extract_features(
+            orderbook_snapshot=orderbook,
+            candles=candles
+        )
+        # → 110 признаков извлечено
+        
+        # 4. Сбор данных для ML (НОВОЕ)
+        if ml_data_collector.should_collect():  # Каждые 10 итераций
+            await ml_data_collector.collect_sample(
+                symbol=symbol,
+                feature_vector=feature_vector,
+                orderbook_snapshot=orderbook,
+                market_metrics=metrics
+            )
+    
+    # 5. Генерация сигналов (существующая логика)
+    signal = strategy_engine.analyze_and_generate_signal(symbol, metrics)
+    
+    # 6. Исполнение (если есть сигнал)
+    if signal:
+        await execution_manager.submit_signal(signal)
+4. Обновление Свечей (_candle_update_loop())
+Выполняется каждые 5 секунд:
+pythonwhile running:
+    for symbol in symbols:
+        # Получить последние 2 свечи (закрытая + текущая)
+        candles_data = await rest_client.get_klines(symbol, interval="1", limit=2)
+        
+        # Обновить CandleManager
+        closed_candle = candles_data[-2]
+        current_candle = candles_data[-1]
+        
+        await candle_manager.update_candle(closed_candle, is_closed=True)
+        await candle_manager.update_candle(current_candle, is_closed=False)
+    
+    await asyncio.sleep(5)
+
+📊 Сбор Данных для ML
+Архитектура Хранения
+data/ml_training/
+├── BTCUSDT/
+│   ├── features/
+│   │   ├── 2025-01-15_batch_0001.npy    # Массивы признаков (110 features)
+│   │   ├── 2025-01-15_batch_0002.npy
+│   │   └── ...
+│   ├── labels/
+│   │   ├── 2025-01-15_batch_0001.json   # Метки (таргеты)
+│   │   ├── 2025-01-15_batch_0002.json
+│   │   └── ...
+│   └── metadata/
+│       ├── 2025-01-15_batch_0001.json   # Метаданные
+│       ├── 2025-01-15_batch_0002.json
+│       └── ...
+└── ETHUSDT/
+    └── ...
+Формат Данных
+Features (.npy файлы)
+pythonimport numpy as np
+
+# Загрузка
+features = np.load("data/ml_training/BTCUSDT/features/2025-01-15_batch_0001.npy")
+
+# Shape: (N_samples, 110)
+print(features.shape)  # (10000, 110)
+
+# Структура:
+# features[:, 0:50]   → OrderBook признаки
+# features[:, 50:75]  → Candle признаки  
+# features[:, 75:110] → Indicator признаки
+Labels (.json файлы)
+json[
+  {
+    "future_direction_10s": 1,              // 1=up, 0=down
+    "future_direction_30s": 1,
+    "future_direction_60s": 0,
+    "future_movement_10s": 0.0012,          // % изменение
+    "future_movement_30s": 0.0025,
+    "future_movement_60s": -0.0008,
+    "current_mid_price": 50000.5,
+    "current_imbalance": 0.123,
+    "signal_type": "BUY",                   // если был сигнал
+    "signal_confidence": 0.85
+  },
+  // ... 10000 samples
+]
+Metadata (.json файлы)
+json{
+  "batch_info": {
+    "symbol": "BTCUSDT",
+    "batch_number": 1,
+    "sample_count": 10000,
+    "timestamp": "2025-01-15T10:30:00",
+    "feature_shape": [10000, 110]
+  },
+  "samples": [
+    {
+      "timestamp": 1736938200000,
+      "symbol": "BTCUSDT",
+      "mid_price": 50000.5,
+      "spread": 0.1,
+      "imbalance": 0.123,
+      "signal": "BUY",
+      "feature_count": 110
+    },
+    // ... 10000 samples
+  ]
+}
+Параметры Сбора
+Настройки в MLDataCollector.__init__():
+pythonml_data_collector = MLDataCollector(
+    storage_path="data/ml_training",      # Путь хранения
+    max_samples_per_file=10000,           # Семплов в одном файле
+    collection_interval=10                # Собирать каждые 10 итераций
+)
+Расчет объема данных:
+
+1 семпл = 110 float32 = 440 bytes (features) + ~200 bytes (metadata)
+10,000 семплов = ~6.4 MB
+За 24 часа при 500ms цикле и collection_interval=10:
+
+Итераций: 24h * 3600s * 2 iter/s / 10 = ~17,280 семплов/symbol
+~2 файла/symbol/день
+Для 10 символов: ~128 MB/день
+
+
+
+Использование Собранных Данных
+python# Пример загрузки для обучения ML модели
+
+import numpy as np
+import json
+from pathlib import Path
+
+def load_training_data(symbol: str, date: str):
+    """Загрузка обучающих данных."""
+    base_path = Path(f"data/ml_training/{symbol}")
+    
+    # Найти все batch файлы за дату
+    feature_files = sorted(
+        base_path.glob(f"features/{date}_batch_*.npy")
+    )
+    label_files = sorted(
+        base_path.glob(f"labels/{date}_batch_*.json")
+    )
+    
+    # Загрузить features
+    X = np.concatenate([
+        np.load(f) for f in feature_files
+    ], axis=0)
+    
+    # Загрузить labels
+    y_list = []
+    for f in label_files:
+        with open(f) as file:
+            y_list.extend(json.load(file))
+    
+    # Конвертировать labels в numpy
+    y = np.array([
+        label["future_direction_60s"]
+        for label in y_list
+    ])
+    
+    return X, y
+
+
+# Использование
+X_train, y_train = load_training_data("BTCUSDT", "2025-01-15")
+print(f"X shape: {X_train.shape}")  # (N, 110)
+print(f"y shape: {y_train.shape}")  # (N,)
+
+# Обучение модели
+from sklearn.ensemble import RandomForestClassifier
+
+model = RandomForestClassifier(n_estimators=100)
+model.fit(X_train, y_train)
+
+📡 API и Использование
+Получение ML Статистики
+python# В main.py
+bot_controller.get_status()
+Возвращает:
+json{
+  "status": "running",
+  "ml_enabled": true,
+  "ml_status": {
+    "features_extracted": 10,
+    "data_collected_samples": {
+      "total_samples_collected": 15234,
+      "files_written": 12,
+      "symbols": {
+        "BTCUSDT": {
+          "total_samples": 8123,
+          "current_batch": 1,
+          "buffer_size": 323
+        },
+        "ETHUSDT": {
+          "total_samples": 7111,
+          "current_batch": 1,
+          "buffer_size": 111
+        }
+      }
+    }
+  }
+}
+Доступ к Последним Признакам
+python# В вашем коде
+from main import bot_controller
+
+# Получить последние признаки для символа
+feature_vector = bot_controller.latest_features.get("BTCUSDT")
+
+if feature_vector:
+    # Массив признаков
+    features_array = feature_vector.to_array()  # (110,)
+    
+    # Multi-channel representation
+    channels = feature_vector.to_channels()
+    # channels["orderbook"]  # (50,)
+    # channels["candle"]     # (25,)
+    # channels["indicator"]  # (35,)
+    
+    # Статистика
+    print(f"Feature count: {feature_vector.feature_count}")
+    print(f"Timestamp: {feature_vector.timestamp}")
+
+📈 Мониторинг
+Логи
+bash# Основные логи бота
+tail -f logs/bot.log | grep "ML"
+
+# Примеры логов:
+# ✓ ML Feature Pipeline инициализирован
+# ✓ ML Data Collector инициализирован
+# ✓ Исторические свечи загружены
+# BTCUSDT | ML признаки извлечены: 110 признаков
+# BTCUSDT | Собран семпл #5000, буфер: 5000/10000
+# BTCUSDT | Сохранен batch #1: 10000 семплов, features_shape=(10000, 110)
+Проверка Собранных Данных
+bash# Проверить структуру директорий
+tree data/ml_training/ -L 3
+
+# Проверить размер данных
+du -sh data/ml_training/*
+
+# Подсчет семплов
+python <<EOF
+import numpy as np
+from pathlib import Path
+
+total_samples = 0
+for npy_file in Path("data/ml_training").rglob("*.npy"):
+    data = np.load(npy_file)
+    total_samples += data.shape[0]
+    print(f"{npy_file.name}: {data.shape}")
+
+print(f"\nTotal samples: {total_samples:,}")
+EOF
+

@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """
-Улучшенная проверка интеграции ML Feature Engineering.
-С лучшей обработкой ошибок и edge cases.
+Проверка интеграции ML Feature Engineering (ИСПРАВЛЕНО).
+
+ИСПРАВЛЕНИЯ:
+1. Корректный синтаксис f-string для conditional formatting
+2. Правильная работа с OrderBookAnalyzer через snapshot
+3. Безопасное форматирование None значений
 
 Запуск:
-    python check_ml_features_integration_improved.py
+    python check_ml_features_integration.py
 """
 
 import sys
@@ -15,6 +19,27 @@ from datetime import datetime
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 
 
+def format_value(value, decimals=4, none_text='None'):
+  """
+  Безопасное форматирование значения с обработкой None.
+
+  Args:
+      value: Значение для форматирования
+      decimals: Количество десятичных знаков
+      none_text: Текст для отображения при None
+
+  Returns:
+      str: Отформатированная строка
+  """
+  if value is None:
+    return none_text
+
+  try:
+    return f"{float(value):.{decimals}f}"
+  except (TypeError, ValueError):
+    return none_text
+
+
 def safe_compare(val1, val2, tolerance=0.01, name="Value"):
   """Безопасное сравнение значений с обработкой None"""
   if val1 is None and val2 is None:
@@ -22,11 +47,11 @@ def safe_compare(val1, val2, tolerance=0.01, name="Value"):
     return True
 
   if val1 is None:
-    print(f"   ⚠️  {name}: первое значение None")
+    print(f"   ⚠️  {name}: первое значение None (analyzer)")
     return False
 
   if val2 is None:
-    print(f"   ⚠️  {name}: второе значение None")
+    print(f"   ⚠️  {name}: второе значение None (extractor)")
     return False
 
   try:
@@ -103,80 +128,66 @@ def test_basic_extraction():
     from ml_engine.features.orderbook_feature_extractor import OrderBookFeatureExtractor
     import numpy as np
 
-    # Создаем реалистичный снимок стакана
+    # Создаем реалистичный снимок
     snapshot = OrderBookSnapshot(
       symbol="BTCUSDT",
       bids=[
-        (50000.0, 1.5),
-        (49999.0, 2.0),
+        (50000.0, 2.0),
+        (49999.0, 1.5),
         (49998.0, 1.0),
-        (49997.0, 0.5),
-        (49996.0, 3.0),
+        (49997.0, 0.8),
+        (49996.0, 0.5),
       ],
       asks=[
-        (50001.0, 1.2),
-        (50002.0, 1.8),
+        (50001.0, 1.8),
+        (50002.0, 1.3),
         (50003.0, 0.9),
-        (50004.0, 2.5),
-        (50005.0, 1.5),
+        (50004.0, 0.7),
+        (50005.0, 0.4),
       ],
       timestamp=int(datetime.now().timestamp() * 1000)
     )
 
-    print(f"Создан снимок стакана:")
+    print("Создан снимок стакана:")
     print(f"  Symbol: {snapshot.symbol}")
-    print(f"  Bids: {len(snapshot.bids)} уровней")
-    print(f"  Asks: {len(snapshot.asks)} уровней")
     print(f"  Best Bid: {snapshot.best_bid}")
     print(f"  Best Ask: {snapshot.best_ask}")
     print(f"  Spread: {snapshot.spread}")
     print(f"  Mid Price: {snapshot.mid_price}\n")
 
     # Создаем extractor
-    print("Инициализация OrderBookFeatureExtractor...")
     extractor = OrderBookFeatureExtractor("BTCUSDT")
-    print("✓ Extractor создан\n")
 
     # Извлекаем признаки
-    print("Извлечение признаков...")
     features = extractor.extract(snapshot)
-    print("✓ Признаки извлечены\n")
 
-    # Проверяем результаты
-    print("Результаты извлечения:")
-    print(f"  Symbol: {features.symbol}")
-    print(f"  Timestamp: {features.timestamp}")
+    print("Извлеченные признаки:")
     print(f"  Mid Price: {features.mid_price:.2f}")
-    print(f"  Spread (abs): {features.bid_ask_spread_abs:.2f}")
-    print(f"  Spread (rel): {features.bid_ask_spread_rel:.4f}%")
-    print(f"  Imbalance (5): {features.imbalance_5:.4f}")
-    print(f"  Imbalance (10): {features.imbalance_10:.4f}")
+    print(f"  Imbalance (Total): {format_value(features.imbalance_total)}")
+    print(f"  Imbalance (5 levels): {format_value(features.imbalance_5)}")
     print(f"  Total Bid Volume: {features.total_bid_volume:.2f}")
     print(f"  Total Ask Volume: {features.total_ask_volume:.2f}")
-    print(f"  Bid Clusters: {features.num_bid_clusters}")
-    print(f"  Ask Clusters: {features.num_ask_clusters}")
+    print(f"  Book Depth Ratio: {features.book_depth_ratio:.4f}\n")
 
-    # Преобразование в array
-    print("\nПреобразование в numpy array:")
+    # Проверяем массив признаков
     array = features.to_array()
+    print(f"Массив признаков:")
     print(f"  Shape: {array.shape}")
-    print(f"  Dtype: {array.dtype}")
-    print(f"  Min: {array.min():.4f}")
-    print(f"  Max: {array.max():.4f}")
-    print(f"  Mean: {array.mean():.4f}")
-    print(f"  Std: {array.std():.4f}")
+    print(f"  Expected: (50,)")
 
-    # Проверка NaN/Inf
+    if array.shape != (50,):
+      print(f"  ✗ Неправильная размерность!")
+      return False
+
     if np.any(np.isnan(array)):
-      print("  ⚠️  ПРЕДУПРЕЖДЕНИЕ: Обнаружены NaN значения!")
       nan_count = np.sum(np.isnan(array))
-      print(f"      Количество NaN: {nan_count}")
+      print(f"  ⚠️  Обнаружено {nan_count} NaN значений")
       return False
     else:
       print("  ✓ Нет NaN значений")
 
     if np.any(np.isinf(array)):
-      print("  ⚠️  ПРЕДУПРЕЖДЕНИЕ: Обнаружены Inf значения!")
+      print("  ⚠️  Обнаружены Inf значения!")
       return False
     else:
       print("  ✓ Нет Inf значений")
@@ -202,6 +213,7 @@ def test_integration_with_analyzer():
     from strategy.analyzer import OrderBookAnalyzer
     from strategy.orderbook_manager import OrderBookManager
     from ml_engine.features.orderbook_feature_extractor import OrderBookFeatureExtractor
+    from collections import OrderedDict
 
     # Создаем снимок
     snapshot = OrderBookSnapshot(
@@ -211,28 +223,40 @@ def test_integration_with_analyzer():
       timestamp=int(datetime.now().timestamp() * 1000)
     )
 
-    print("Создан снимок стакана для ETHUSDT\n")
+    print("Создан снимок стакана для ETHUSDT")
+    print(f"  Mid Price: {snapshot.mid_price}")
+    print(f"  Spread: {snapshot.spread:.2f}\n")
 
-    # Используем существующий OrderBookAnalyzer
+    # ИСПРАВЛЕНО: Напрямую заполняем OrderBookManager для тестирования
     print("1. Анализ через OrderBookAnalyzer:")
     analyzer = OrderBookAnalyzer("ETHUSDT")
-    manager = OrderBookManager("ETHUSDT")
-    manager.snapshot = snapshot  # Устанавливаем снимок
 
-    metrics = analyzer.analyze(manager)
-    print(f"   Mid Price: {metrics.mid_price}")
-    print(f"   Imbalance: {metrics.imbalance:.4f if metrics.imbalance else 'None'}")
-    print(f"   Total Bid Volume: {metrics.total_bid_volume}")
-    print(f"   Total Ask Volume: {metrics.total_ask_volume}\n")
+    # Создаём временный manager и заполняем его данными
+    temp_manager = OrderBookManager("ETHUSDT")
+
+    # Заполняем внутренние структуры напрямую (для тестирования)
+    temp_manager.bids = OrderedDict(sorted(snapshot.bids, reverse=True))
+    temp_manager.asks = OrderedDict(sorted(snapshot.asks))
+    temp_manager.snapshot_received = True  # Важно!
+    temp_manager.last_update_timestamp = snapshot.timestamp
+
+    metrics = analyzer.analyze(temp_manager)
+
+    # ИСПРАВЛЕНО: Используем безопасное форматирование
+    print(f"   Mid Price: {format_value(metrics.mid_price, 2)}")
+    print(f"   Imbalance: {format_value(metrics.imbalance)}")
+    print(f"   Total Bid Volume: {format_value(metrics.total_bid_volume, 2)}")
+    print(f"   Total Ask Volume: {format_value(metrics.total_ask_volume, 2)}\n")
 
     # Используем новый FeatureExtractor
     print("2. Извлечение через OrderBookFeatureExtractor:")
     extractor = OrderBookFeatureExtractor("ETHUSDT")
     features = extractor.extract(snapshot)
-    print(f"   Mid Price: {features.mid_price}")
-    print(f"   Imbalance: {features.imbalance_total:.4f}")
-    print(f"   Total Bid Volume: {features.total_bid_volume}")
-    print(f"   Total Ask Volume: {features.total_ask_volume}\n")
+
+    print(f"   Mid Price: {format_value(features.mid_price, 2)}")
+    print(f"   Imbalance: {format_value(features.imbalance_total)}")
+    print(f"   Total Bid Volume: {format_value(features.total_bid_volume, 2)}")
+    print(f"   Total Ask Volume: {format_value(features.total_ask_volume, 2)}\n")
 
     # Сравниваем результаты
     print("3. Сравнение результатов:")
@@ -244,8 +268,16 @@ def test_integration_with_analyzer():
     safe_compare(metrics.imbalance, features.imbalance_total, name="Imbalance")
 
     # Volumes
-    safe_compare(metrics.total_bid_volume, features.total_bid_volume, name="Total Bid Volume")
-    safe_compare(metrics.total_ask_volume, features.total_ask_volume, name="Total Ask Volume")
+    safe_compare(
+      metrics.total_bid_volume,
+      features.total_bid_volume,
+      name="Total Bid Volume"
+    )
+    safe_compare(
+      metrics.total_ask_volume,
+      features.total_ask_volume,
+      name="Total Ask Volume"
+    )
 
     print("\n✅ Интеграция с OrderBookAnalyzer работает корректно!")
     print("   (Небольшие расхождения допустимы из-за разных алгоритмов)\n")
@@ -285,12 +317,12 @@ def test_temporal_features():
     print(f"✓ Добавлено {len(extractor.snapshot_history)} снимков\n")
 
     print("Временные признаки:")
-    print(f"  Update Frequency: {features.update_frequency:.2f} updates/sec")
-    print(f"  Orderbook Volatility: {features.orderbook_volatility:.6f}")
-    print(f"  Spread Volatility: {features.spread_volatility:.6f}")
-    print(f"  Quote Intensity: {features.quote_intensity:.2f}")
+    print(f"  Update Frequency: {format_value(features.update_frequency, 2)} updates/sec")
+    print(f"  Orderbook Volatility: {format_value(features.orderbook_volatility, 6)}")
+    print(f"  Spread Volatility: {format_value(features.spread_volatility, 6)}")
+    print(f"  Quote Intensity: {format_value(features.quote_intensity, 2)}")
 
-    if features.update_frequency > 0:
+    if features.update_frequency and features.update_frequency > 0:
       print("\n✅ Временные признаки работают!\n")
     else:
       print("\n⚠️  Временные признаки требуют больше данных\n")
@@ -307,7 +339,7 @@ def test_temporal_features():
 def main():
   """Главная функция проверки"""
   print("\n" + "=" * 70)
-  print("УЛУЧШЕННАЯ ПРОВЕРКА ИНТЕГРАЦИИ ML FEATURE EXTRACTION")
+  print("ПРОВЕРКА ИНТЕГРАЦИИ ML FEATURE EXTRACTION (ИСПРАВЛЕНО)")
   print("=" * 70 + "\n")
 
   results = []

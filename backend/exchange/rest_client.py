@@ -360,6 +360,152 @@ class BybitRESTClient:
     logger.info(f"Получено {order_count} открытых ордеров")
     return response
 
+  @retry_async(max_attempts=3, delay=1.0)
+  async def get_order_info(
+      self,
+      symbol: str,
+      order_id: Optional[str] = None,
+      order_link_id: Optional[str] = None
+  ) -> Optional[Dict]:
+    """
+    Получение информации о конкретном ордере.
+
+    Args:
+        symbol: Торговая пара
+        order_id: ID ордера от биржи (опционально)
+        order_link_id: Client Order ID (опционально)
+
+    Returns:
+        Optional[Dict]: Информация об ордере или None если не найден
+
+    Raises:
+        ValueError: Если API ключи не настроены или не указан ни один ID
+    """
+    # Проверяем наличие API ключей
+    if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
+      error_msg = (
+        "API ключи Bybit не настроены. "
+        "Установите BYBIT_API_KEY и BYBIT_API_SECRET в файле .env"
+      )
+      logger.error(error_msg)
+      raise ValueError(error_msg)
+
+    # Должен быть указан хотя бы один ID
+    if not order_id and not order_link_id:
+      raise ValueError("Необходимо указать order_id или order_link_id")
+
+    logger.debug(
+      f"Запрос информации об ордере: symbol={symbol}, "
+      f"order_id={order_id}, order_link_id={order_link_id}"
+    )
+
+    # Параметры запроса
+    params = {
+      "category": BybitCategory.LINEAR.value,
+      "symbol": symbol
+    }
+
+    if order_id:
+      params["orderId"] = order_id
+    elif order_link_id:
+      params["orderLinkId"] = order_link_id
+
+    try:
+      # Пробуем найти в активных ордерах
+      response = await self._request(
+        "GET",
+        BybitAPIPaths.GET_OPEN_ORDERS,
+        params,
+        authenticated=True
+      )
+
+      orders_list = response.get("result", {}).get("list", [])
+
+      if orders_list:
+        # Найден активный ордер
+        logger.debug(f"Ордер найден в активных: {orders_list[0].get('orderId')}")
+        return orders_list[0]
+
+      # Если не найден в активных, ищем в истории
+      logger.debug("Ордер не найден в активных, ищем в истории...")
+
+      response = await self._request(
+        "GET",
+        BybitAPIPaths.GET_ORDER_HISTORY,
+        params,
+        authenticated=True
+      )
+
+      orders_list = response.get("result", {}).get("list", [])
+
+      if orders_list:
+        # Найден в истории
+        logger.debug(f"Ордер найден в истории: {orders_list[0].get('orderId')}")
+        return orders_list[0]
+
+      # Ордер не найден нигде
+      logger.warning(
+        f"Ордер не найден: symbol={symbol}, "
+        f"order_id={order_id}, order_link_id={order_link_id}"
+      )
+      return None
+
+    except Exception as e:
+      logger.error(f"Ошибка получения информации об ордере: {e}")
+      # Возвращаем None вместо выброса исключения
+      # так как ордер может быть просто не найден
+      return None
+
+  @retry_async(max_attempts=3, delay=1.0)
+  async def get_order_history(
+      self,
+      symbol: Optional[str] = None,
+      limit: int = 50
+  ) -> Dict:
+    """
+    Получение истории ордеров.
+
+    Args:
+        symbol: Торговая пара (опционально)
+        limit: Количество ордеров (макс 50)
+
+    Returns:
+        Dict: История ордеров
+
+    Raises:
+        ValueError: Если API ключи не настроены
+    """
+    logger.info(f"Запрос истории ордеров{f' для {symbol}' if symbol else ''}")
+
+    # Проверяем наличие API ключей
+    if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
+      error_msg = (
+        "API ключи Bybit не настроены. "
+        "Установите BYBIT_API_KEY и BYBIT_API_SECRET в файле .env"
+      )
+      logger.error(error_msg)
+      raise ValueError(error_msg)
+
+    # Параметры запроса
+    params = {
+      "category": BybitCategory.LINEAR.value,
+      "limit": limit
+    }
+
+    if symbol:
+      params["symbol"] = symbol
+
+    response = await self._request(
+      "GET",
+      BybitAPIPaths.GET_ORDER_HISTORY,
+      params,
+      authenticated=True
+    )
+
+    order_count = len(response.get("result", {}).get("list", []))
+    logger.info(f"Получено {order_count} ордеров из истории")
+    return response
+
   async def get_positions(self, symbol: Optional[str] = None) -> Dict:
     """
     Получение позиций.
@@ -384,8 +530,12 @@ class BybitRESTClient:
       logger.error(error_msg)
       raise ValueError(error_msg)
 
-    # Реальный запрос к API
-    params = {"category": BybitCategory.LINEAR.value}
+    # ИСПРАВЛЕНО: Добавлен параметр settleCoin для категории LINEAR
+    params = {
+      "category": BybitCategory.LINEAR.value,
+      "settleCoin": "USDT"  # ← ОБЯЗАТЕЛЬНЫЙ параметр для LINEAR
+    }
+
     if symbol:
       params["symbol"] = symbol
 

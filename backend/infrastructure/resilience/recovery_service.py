@@ -193,22 +193,39 @@ class RecoveryService:
       logger.info(f"Найдено {len(local_positions)} активных позиций в БД")
 
       # Получаем позиции с биржи
-      exchange_positions = await rest_client.get_positions()
+      try:
+        exchange_response = await rest_client.get_positions()
+
+        # ИСПРАВЛЕНО: Правильная обработка структуры ответа Bybit API v5
+        exchange_positions_list = exchange_response.get("result", {}).get("list", [])
+        logger.info(f"Получено {len(exchange_positions_list)} позиций с биржи")
+
+      except Exception as e:
+        logger.error(f"Ошибка получения позиций с биржи: {e}")
+        # Если не можем получить позиции с биржи, возвращаем пустой результат
+        return result
 
       # Создаем мапу позиций с биржи
-      exchange_map = {
-        pos["symbol"]: pos
-        for pos in exchange_positions
-        if float(pos.get("size", 0)) > 0
-      }
+      # Позиция считается активной если size > 0
+      exchange_map = {}
+      for pos in exchange_positions_list:
+        symbol = pos.get("symbol")
+        size = float(pos.get("size", 0))
 
+        if symbol and size > 0:
+          exchange_map[symbol] = pos
+
+      logger.debug(f"Активных позиций на бирже: {len(exchange_map)}")
+
+      # Сверяем каждую локальную позицию
       for local_pos in local_positions:
         try:
           exchange_pos = exchange_map.get(local_pos.symbol)
 
           if not exchange_pos:
             logger.warning(
-              f"Позиция {local_pos.symbol} не найдена на бирже"
+              f"Позиция {local_pos.symbol} не найдена на бирже "
+              f"(закрыта или size=0)"
             )
             result["discrepancies"] += 1
 
@@ -239,11 +256,13 @@ class RecoveryService:
             result["discrepancies"] += 1
 
           # Обновляем текущую цену
+          # В Bybit API v5 используется markPrice
           current_price = float(exchange_pos.get("markPrice", 0))
-          await position_repository.update_current_price(
-            position_id=str(local_pos.id),
-            current_price=current_price,
-          )
+          if current_price > 0:
+            await position_repository.update_current_price(
+              position_id=str(local_pos.id),
+              current_price=current_price,
+            )
 
           result["synced"] += 1
 

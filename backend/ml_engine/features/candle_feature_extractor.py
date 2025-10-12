@@ -1,7 +1,7 @@
 """
-Candle Feature Extractor для извлечения 20+ признаков из свечных данных (OHLCV).
+Candle Feature Extractor для извлечения 25 признаков из свечных данных (OHLCV).
 
-Интегрируется с существующими моделями и поддерживает различные таймфреймы.
+ИСПРАВЛЕНИЕ: Добавлен @property typical_price в класс Candle.
 """
 
 from typing import List, Dict, Optional
@@ -22,6 +22,11 @@ class Candle:
   low: float
   close: float
   volume: float
+
+  @property
+  def typical_price(self) -> float:
+    """Typical price для VWAP: (H+L+C)/3"""
+    return (self.high + self.low + self.close) / 3
 
   @property
   def range(self) -> float:
@@ -128,7 +133,7 @@ class CandleFeatures:
 
 class CandleFeatureExtractor:
   """
-  Извлекает 25+ признаков из свечных данных (OHLCV).
+  Извлекает 25 признаков из свечных данных (OHLCV).
   """
 
   def __init__(self, symbol: str, lookback_period: int = 20):
@@ -227,8 +232,8 @@ class CandleFeatureExtractor:
   def _extract_basic_features(self, candle: Candle) -> Dict[str, float]:
     """Извлечение базовых OHLCV признаков (6)"""
 
-    # Typical price (средняя цена)
-    typical_price = (candle.high + candle.low + candle.close) / 3
+    # Typical price (средняя цена) - используем property
+    typical_price = candle.typical_price
 
     return {
       "open": candle.open,
@@ -369,26 +374,23 @@ class CandleFeatureExtractor:
     price_volume_trend = self.cumulative_pvt
 
     # Volume Weighted Price (VWAP approximation)
+    # ИСПРАВЛЕНО: используем property typical_price напрямую
     if len(self.candle_history) >= 2:
       recent = self.candle_history[-self.lookback_period:]
       total_volume = sum(c.volume for c in recent)
+
       if total_volume > 0:
+        # Теперь typical_price работает корректно как property
         volume_weighted_price = sum(
           c.typical_price * c.volume for c in recent
-          if hasattr(c, 'typical_price') or True
         ) / total_volume
-        # Если нет typical_price, используем close
-        if volume_weighted_price == 0:
-          volume_weighted_price = sum(
-            c.close * c.volume for c in recent
-          ) / total_volume
       else:
         volume_weighted_price = candle.close
     else:
       volume_weighted_price = candle.close
 
     # Money Flow (денежный поток)
-    typical_price = (candle.high + candle.low + candle.close) / 3
+    typical_price = candle.typical_price
     money_flow = typical_price * candle.volume
 
     return {
@@ -468,11 +470,3 @@ class CandleFeatureExtractor:
       "engulfing_strength": engulfing_strength,
       "gap_size": gap_size
     }
-
-  @property
-  def typical_price(self) -> float:
-    """Вычисляет typical price для Candle (helper для VWAP)"""
-    return (self.high + self.low + self.close) / 3
-
-  # Добавляем метод к классу Candle
-  Candle.typical_price = property(typical_price)
