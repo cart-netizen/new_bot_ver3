@@ -214,7 +214,8 @@ class BybitRESTClient:
       price: Optional[float] = None,
       time_in_force: str = "GTC",
       stop_loss: Optional[float] = None,
-      take_profit: Optional[float] = None
+      take_profit: Optional[float] = None,
+      client_order_id: Optional[str] = None,
   ) -> Dict:
     """
     Размещение ордера.
@@ -235,6 +236,9 @@ class BybitRESTClient:
     Raises:
         ValueError: Если API ключи не настроены
     """
+    if client_order_id:
+      logger.info(f"Client Order ID: {client_order_id}")
+
     logger.info(
       f"Размещение ордера: {symbol} {side} {order_type} "
       f"qty={quantity} price={price} SL={stop_loss} TP={take_profit}"
@@ -267,6 +271,10 @@ class BybitRESTClient:
 
     if take_profit:
       params["takeProfit"] = str(take_profit)
+
+    if client_order_id:
+      params["orderLinkId"] = client_order_id
+      logger.debug(f"Установлен orderLinkId: {client_order_id}")
 
     response = await self._request(
       "POST",

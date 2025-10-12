@@ -254,14 +254,57 @@ class ExecutionManager:
       price: Optional[float],
       client_order_id: str
   ) -> Optional[dict]:
-    """Внутренний метод размещения на бирже."""
-    return await rest_client.place_order(
-      symbol=symbol,
-      side=side,
-      quantity=quantity,
-      price=price,
-      client_order_id=client_order_id
+    """
+    Внутренний метод размещения на бирже.
+
+    Args:
+        symbol: Торговая пара
+        side: Сторона (Buy/Sell)
+        quantity: Количество
+        price: Цена (для лимитных ордеров, None для рыночных)
+        client_order_id: Client Order ID для отслеживания
+
+    Returns:
+        Optional[dict]: Результат размещения или None при ошибке
+    """
+    # Определяем тип ордера
+    order_type = "Limit" if price else "Market"
+
+    logger.debug(
+      f"Размещение на бирже: {symbol} {side} {order_type} "
+      f"qty={quantity} price={price} client_id={client_order_id}"
     )
+
+    try:
+      # Передаем все необходимые параметры, включая order_type
+      response = await rest_client.place_order(
+        symbol=symbol,
+        side=side,
+        order_type=order_type,
+        quantity=quantity,
+        price=price,
+        client_order_id=client_order_id
+      )
+
+      # Извлекаем результат из ответа
+      result = response.get("result", {})
+
+      # Проверка успешности размещения
+      if not result or "orderId" not in result:
+        logger.error(f"Некорректный ответ от биржи: {response}")
+        return None
+
+      logger.info(
+        f"✓ Ордер успешно размещен на бирже: "
+        f"exchange_order_id={result['orderId']} "
+        f"client_order_id={result.get('orderLinkId', 'N/A')}"
+      )
+
+      return result
+
+    except Exception as e:
+      logger.error(f"Ошибка размещения ордера на бирже: {e}", exc_info=True)
+      return None
 
   async def start(self):
     """Запуск менеджера исполнения."""

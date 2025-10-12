@@ -101,19 +101,45 @@ class RecoveryService:
 
       for local_order in local_orders:
         try:
-          # Проверяем статус на бирже
-          exchange_order = await rest_client.get_order_info(
-            symbol=local_order.symbol,
-            order_id=local_order.exchange_order_id,
-          )
+          # Сначала пытаемся найти по client_order_id (orderLinkId)
+          exchange_order = None
+
+          # Вариант 1: Используем client_order_id (orderLinkId)
+          if local_order.client_order_id:
+            logger.debug(
+              f"Поиск ордера по client_order_id: {local_order.client_order_id}"
+            )
+            exchange_order = await rest_client.get_order_info(
+              symbol=local_order.symbol,
+              order_link_id=local_order.client_order_id,  # ← ИЗМЕНЕНО
+            )
+
+          # Вариант 2: Если не найден и есть exchange_order_id, пробуем по нему
+          if not exchange_order and local_order.exchange_order_id:
+            logger.debug(
+              f"Поиск ордера по exchange_order_id: {local_order.exchange_order_id}"
+            )
+            exchange_order = await rest_client.get_order_info(
+              symbol=local_order.symbol,
+              order_id=local_order.exchange_order_id,
+            )
 
           if not exchange_order:
             logger.warning(
-              f"Ордер {local_order.client_order_id} не найден на бирже"
+              f"Ордер {local_order.client_order_id} не найден на бирже "
+              f"(exchange_id: {local_order.exchange_order_id or 'None'})"
             )
             result["discrepancies"] += 1
 
-            # Помечаем как неизвестный
+            # Проверяем статус ордера перед пометкой как FAILED
+            if local_order.status == OrderStatus.PENDING:
+              logger.info(
+                f"Ордер {local_order.client_order_id} в статусе PENDING, "
+                f"пропускаем (возможно не был размещен)"
+              )
+              continue
+
+            # Помечаем как неизвестный только если он был PLACED или выше
             await order_repository.update_status(
               client_order_id=local_order.client_order_id,
               new_status=OrderStatus.FAILED,
@@ -141,10 +167,19 @@ class RecoveryService:
             )
             result["discrepancies"] += 1
 
+            # Обновляем exchange_order_id если его не было
+            exchange_order_id = exchange_order.get("orderId")
+            if not local_order.exchange_order_id and exchange_order_id:
+              logger.info(
+                f"Обновление exchange_order_id для {local_order.client_order_id}: "
+                f"{exchange_order_id}"
+              )
+
             # Обновляем локальный статус
             await order_repository.update_status(
               client_order_id=local_order.client_order_id,
               new_status=exchange_status,
+              exchange_order_id=exchange_order_id,  # ← ДОБАВЛЕНО
               filled_quantity=float(exchange_order.get("cumExecQty", 0)),
               average_fill_price=float(exchange_order.get("avgPrice", 0)),
             )
@@ -163,7 +198,8 @@ class RecoveryService:
 
         except Exception as e:
           logger.error(
-            f"Ошибка сверки ордера {local_order.client_order_id}: {e}"
+            f"Ошибка сверки ордера {local_order.client_order_id}: {e}",
+            exc_info=True  # ← ДОБАВЛЕНО
           )
 
       logger.info(f"✓ Сверка ордеров завершена: {result}")
