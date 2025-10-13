@@ -8,7 +8,12 @@ Comprehensive тесты для Recovery Service.
 - Сверку с биржей
 - Полный цикл восстановления после краша
 """
+import sys
+from pathlib import Path
 
+# Определяем путь к backend директории
+backend_path = Path(__file__).parent / "backend"
+sys.path.insert(0, str(backend_path))
 import pytest
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
