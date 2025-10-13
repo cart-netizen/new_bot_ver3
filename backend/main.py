@@ -552,6 +552,10 @@ class BotController:
   async def _ml_stats_loop(self):
     """
     Периодический вывод статистики сбора ML данных.
+
+    Выводит:
+    - Общую статистику (всего семплов, файлов)
+    - Детальную статистику по каждому символу
     """
     logger.info("Запущен цикл мониторинга ML статистики")
 
@@ -562,18 +566,38 @@ class BotController:
         if self.ml_data_collector:
           stats = self.ml_data_collector.get_statistics()
 
-          for symbol, stat in stats.items():
-            logger.info(
-              f"ML Stats | {symbol}: "
-              f"samples={stat['total_samples']:,}, "
-              f"batches={stat['batches_saved']}, "
-              f"buffer={stat['buffer_size']}/{self.ml_data_collector.max_samples_per_file}"
-            )
+          # ===== ИСПРАВЛЕНИЕ: Выводим общую статистику =====
+          logger.info(
+            f"ML Stats | ОБЩАЯ: "
+            f"всего_семплов={stats['total_samples_collected']:,}, "
+            f"файлов={stats['files_written']}, "
+            f"итераций={stats['iteration_counter']}, "
+            f"интервал={stats['collection_interval']}"
+          )
+
+          # ===== ИСПРАВЛЕНИЕ: Итерируемся по stats["symbols"], а не stats =====
+          symbol_stats = stats.get("symbols", {})
+
+          if not symbol_stats:
+            logger.info("ML Stats | Нет данных по символам")
+          else:
+            for symbol, stat in symbol_stats.items():
+              # ===== ИСПРАВЛЕНИЕ: Используем правильные ключи =====
+              logger.info(
+                f"ML Stats | {symbol}: "
+                f"samples={stat['total_samples']:,}, "
+                f"batch={stat['current_batch']}, "  # ← НЕ 'batches_saved'
+                f"buffer={stat['buffer_size']}/{self.ml_data_collector.max_samples_per_file}"
+              )
 
       except asyncio.CancelledError:
+        logger.info("ML stats loop остановлен (CancelledError)")
         break
       except Exception as e:
         logger.error(f"Ошибка в ML stats loop: {e}")
+        # Логируем полный traceback для диагностики
+        import traceback
+        logger.error(f"Traceback:\n{traceback.format_exc()}")
 
 
 # Глобальный контроллер бота
