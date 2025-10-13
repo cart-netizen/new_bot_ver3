@@ -16,6 +16,7 @@ from core.exceptions import AuthenticationError
 from exchange.rest_client import rest_client
 from infrastructure.resilience.circuit_breaker import circuit_breaker_manager
 from infrastructure.resilience.rate_limiter import rate_limiter
+from main import bot_controller
 from models.user import LoginRequest, LoginResponse, ChangePasswordRequest
 from config import settings
 from utils.balance_tracker import balance_tracker
@@ -29,6 +30,15 @@ data_router = APIRouter(prefix="/data", tags=["Market Data"])
 trading_router = APIRouter(prefix="/trading", tags=["Trading"])
 
 monitoring_router = APIRouter(prefix="/api/monitoring", tags=["monitoring"])
+
+# ML Router
+ml_router = APIRouter(prefix="/api/ml", tags=["ml"])
+
+# Detection Router
+detection_router = APIRouter(prefix="/api/detection", tags=["detection"])
+
+# Strategies Router
+strategies_router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 
 # ===== МОДЕЛИ ОТВЕТОВ =====
 
@@ -874,3 +884,94 @@ async def reset_circuit_breaker(
 
   breaker.reset()
   return {"status": "reset", "breaker": name}
+
+# ==================== ML INFRASTRUCTURE ====================
+
+@ml_router.get("/status")
+async def get_ml_status():
+  """Статус ML компонентов."""
+  return {
+    "ml_validator": bot_controller.ml_validator.get_statistics(),
+    "spoofing_detector": bot_controller.spoofing_detector.get_statistics(),
+    "layering_detector": bot_controller.layering_detector.get_statistics(),
+    "sr_detector": bot_controller.sr_detector.get_statistics(),
+    "drift_detector": bot_controller.drift_detector.get_drift_report()
+  }
+
+
+# ==================== DETECTION SYSTEMS ====================
+
+@detection_router.get("/status/{symbol}")
+async def get_detection_status(symbol: str):
+  """Статус детекторов для символа."""
+  spoofing_active = bot_controller.spoofing_detector.is_spoofing_active(symbol)
+  layering_active = bot_controller.layering_detector.is_layering_active(symbol)
+
+  spoofing_patterns = bot_controller.spoofing_detector.get_recent_patterns(symbol)
+  layering_patterns = bot_controller.layering_detector.get_recent_patterns(symbol)
+
+  return {
+    "symbol": symbol,
+    "spoofing": {
+      "active": spoofing_active,
+      "patterns": [
+        {
+          "side": p.side,
+          "confidence": p.confidence,
+          "reason": p.reason
+        }
+        for p in spoofing_patterns
+      ]
+    },
+    "layering": {
+      "active": layering_active,
+      "patterns": [
+        {
+          "side": p.side,
+          "confidence": p.confidence,
+          "layers": len(p.layers),
+          "reason": p.reason
+        }
+        for p in layering_patterns
+      ]
+    }
+  }
+
+
+@detection_router.get("/sr-levels/{symbol}")
+async def get_sr_levels(symbol: str):
+  """S/R уровни для символа."""
+  levels = bot_controller.sr_detector.levels.get(symbol, [])
+
+  return {
+    "symbol": symbol,
+    "levels": [
+      {
+        "price": level.price,
+        "type": level.level_type,
+        "strength": level.strength,
+        "touch_count": level.touch_count,
+        "is_broken": level.is_broken,
+        "age_hours": level.age_hours(int(datetime.now().timestamp() * 1000))
+      }
+      for level in levels
+    ]
+  }
+
+
+# ==================== STRATEGY MANAGER ====================
+
+@strategies_router.get("/status")
+async def get_strategies_status():
+  """Статус всех стратегий."""
+  return bot_controller.strategy_manager.get_statistics()
+
+
+@strategies_router.get("/{strategy_name}/stats")
+async def get_strategy_stats(strategy_name: str):
+  """Статистика конкретной стратегии."""
+  if strategy_name not in bot_controller.strategy_manager.strategies:
+    raise HTTPException(status_code=404, detail="Strategy not found")
+
+  strategy = bot_controller.strategy_manager.strategies[strategy_name]
+  return strategy.get_statistics()

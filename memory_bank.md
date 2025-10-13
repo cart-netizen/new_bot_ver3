@@ -1613,3 +1613,563 @@ y_movement = [l["future_movement_10s"] for l in labels]    # ✅ Все запо
 
 # Обучаем модель
 model.fit(features, y_direction)
+
+ ML Infrastructure (6 компонентов)
+
+Hybrid CNN-LSTM Model - Multi-task learning модель
+Data Loader - Загрузка и подготовка данных
+Model Trainer - Обучение с early stopping
+Model Server - REST API для inference
+Drift Detector - Мониторинг деградации модели
+ML Signal Validator - Гибридная валидация сигналов
+
+✅ Detection Systems (3 детектора)
+
+Spoofing Detector - Обнаружение манипуляций с крупными ордерами
+Layering Detector - Детекция множественных ордеров
+S/R Level Detector - Динамические уровни поддержки/сопротивления
+
+✅ Advanced Strategies (4 стратегии + менеджер)
+
+Momentum Strategy - Торговля на основе силы тренда
+SAR Wave Strategy - Parabolic SAR + волновой анализ
+SuperTrend Strategy - ATR-based тренд следование
+Volume Profile Strategy - Торговля на основе профиля объема
+Strategy Manager - Consensus и объединение стратегий
+
+
+🏗️ Архитектура Системы
+┌─────────────────────────────────────────────────────────────────────┐
+│                         MAIN APPLICATION                             │
+│                           (main.py)                                  │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+        ┌───────────────────────────┼───────────────────────────┐
+        │                           │                           │
+        ▼                           ▼                           ▼
+┌──────────────────┐      ┌──────────────────┐      ┌──────────────────┐
+│  Market Data     │      │  ML Engine       │      │  Strategy Layer  │
+│  Layer           │      │                  │      │                  │
+├──────────────────┤      ├──────────────────┤      ├──────────────────┤
+│ • WebSocket      │      │ • Model Server   │      │ • Strategy Mgr   │
+│ • OrderBook Mgr  │      │ • ML Validator   │      │ • Momentum       │
+│ • Candle Mgr     │      │ • Drift Detector │      │ • SAR Wave       │
+│ • Market Analyzer│      │ • Feature Pipeline│     │ • SuperTrend     │
+└──────────────────┘      └──────────────────┘      │ • Volume Profile │
+                                                     └──────────────────┘
+        │                           │                           │
+        └───────────────────────────┼───────────────────────────┘
+                                    │
+                                    ▼
+                    ┌───────────────────────────┐
+                    │   Detection Layer         │
+                    ├───────────────────────────┤
+                    │ • Spoofing Detector       │
+                    │ • Layering Detector       │
+                    │ • S/R Level Detector      │
+                    └───────────────────────────┘
+                                    │
+                                    ▼
+                    ┌───────────────────────────┐
+                    │   Execution Layer         │
+                    ├───────────────────────────┤
+                    │ • Risk Manager            │
+                    │ • Execution Manager       │
+                    │ • Position Manager        │
+                    └───────────────────────────┘
+
+
+
+Шаг 1: Запустить ML Model Server
+bash# В отдельном терминале
+cd backend
+python -m ml_engine.inference.model_server
+
+# Должен запуститься на http://localhost:8001
+
+Шаг 3: Проверка Работы
+bash# Проверка здоровья ML сервера
+curl http://localhost:8001/health
+
+# Статус ML компонентов
+curl http://localhost:8000/ml/status
+
+# Статус детекторов
+curl http://localhost:8000/detection/status/BTCUSDT
+
+# S/R уровни
+curl http://localhost:8000/detection/sr-levels/BTCUSDT
+
+# Статус стратегий
+curl http://localhost:8000/strategies/status
+
+📊 Мониторинг
+Ключевые Логи
+bash# Все ML-related логи
+tail -f logs/bot.log | grep "ML\|CONSENSUS\|DRIFT"
+
+# Детекторы манипуляций
+tail -f logs/bot.log | grep "SPOOFING\|LAYERING"
+
+# S/R уровни
+tail -f logs/bot.log | grep "S/R\|ПРОБОЙ"
+
+# Стратегии
+tail -f logs/bot.log | grep "MOMENTUM\|SAR WAVE\|SUPERTREND\|VOLUME PROFILE"
+
+# Финальные сигналы
+tail -f logs/bot.log | grep "ФИНАЛЬНЫЙ СИГНАЛ"
+Dashboard Метрики
+Важные метрики для мониторинга:
+
+ML Validator:
+
+Agreement rate (ML vs Strategy)
+Fallback rate
+Average inference time
+
+
+Strategy Manager:
+
+Consensus rate
+Conflicts resolved
+Per-strategy performance
+
+
+Detectors:
+
+Active manipulations count
+S/R levels tracked
+Breakouts detected
+
+
+Drift Detection:
+
+Feature drift score
+Prediction drift (PSI)
+Accuracy drop
+
+
+
+
+🎯 Ожидаемое Поведение
+Нормальная Операция
+[2025-01-15 10:30:00] 🔄 Запущен продвинутый analysis loop
+[2025-01-15 10:30:00] [BTCUSDT] Обновлены детекторы манипуляций
+[2025-01-15 10:30:00] [BTCUSDT] S/R уровни: support=$49,500, resistance=$50,500
+[2025-01-15 10:30:01] 🎯 MOMENTUM SIGNAL [BTCUSDT]: BUY, confidence=0.75
+[2025-01-15 10:30:01] 📈 SUPERTREND SIGNAL [BTCUSDT]: BUY, confidence=0.70
+[2025-01-15 10:30:01] ✅ CONSENSUS SIGNAL [BTCUSDT]: BUY, confidence=0.73, strategies=['momentum', 'supertrend']
+[2025-01-15 10:30:01] ✅ Consensus сигнал подтвержден ML [BTCUSDT]: BUY, confidence=0.78
+[2025-01-15 10:30:01] 🎯 ФИНАЛЬНЫЙ СИГНАЛ [BTCUSDT]: BUY, confidence=0.78
+Блокировка При Манипуляциях
+[2025-01-15 10:35:00] 🚨 SPOOFING ОБНАРУЖЕН [ETHUSDT]: side=bid, confidence=0.85
+[2025-01-15 10:35:00] ⚠️  МАНИПУЛЯЦИИ [ETHUSDT]: spoofing=True - ТОРГОВЛЯ ЗАБЛОКИРОВАНА
+Drift Detection
+[2025-01-16 10:00:00] ⚠️  MODEL DRIFT ОБНАРУЖЕН:
+   Severity: high
+   Feature drift: 0.1234
+   Prediction drift: 0.2567
+   Accuracy drop: 0.0456
+   Recommendation: Рекомендуется ретренинг модели в ближайшее время
+
+⚠️ Важные Замечания
+1. Производительность
+
+Analysis Loop: Должен выполняться < 500ms на символ
+ML Inference: < 10ms per prediction
+Strategy Consensus: < 50ms для всех стратегий
+
+2. Приоритеты
+При конфликтах:
+
+Блокировка при манипуляциях (высший приоритет)
+ML валидация
+Strategy consensus
+Individual strategy signals
+
+3. Failover
+
+ML Server недоступен → Fallback к стратегиям
+Стратегия ошибается → Пропускается из consensus
+Детектор ошибается → Логируется, продолжается работа
+
+4. Ретренинг Модели
+При обнаружении drift:
+
+Соберите новые данные (минимум 7 дней)
+Запустите train_model.py
+Hot reload модели в Model Server
+Мониторьте улучшение метрик
+
+
+🎓 Best Practices
+1. Тестирование
+bash# Тестируйте на paper trading минимум 30 дней
+# Проверяйте:
+- Consensus rate > 50%
+- ML agreement rate > 60%
+- Drift detection работает
+- Detectors находят манипуляции
+2. Мониторинг
+bash# Настройте alerts на:
+- Model drift detected (severity >= high)
+- Manipulation detection rate > 10%
+- ML server downtime > 5 minutes
+- Consensus rate < 30%
+3. Оптимизация
+bash# Профилирование
+python -m cProfile -o profile.stats main.py
+
+# Анализ
+python -c "import pstats; p = pstats.Stats('profile.stats'); p.sort_stats('cumtime'); p.print_stats(20)"
+
+Troubleshooting
+Проблема: ML Server не отвечает
+bash# Проверить
+curl http://localhost:8001/health
+
+# Перезапустить
+pkill -f model_server
+python -m ml_engine.inference.model_server
+Проблема: Низкий Consensus Rate
+python# Ослабить требования
+MIN_STRATEGIES=1  # вместо 2
+MIN_CONSENSUS_CONFIDENCE=0.5  # вместо 0.6
+Проблема: Слишком Много False Positives
+python# Ужесточить детекторы
+SPOOFING_CANCEL_RATE_THRESHOLD=0.8  # вместо 0.7
+LAYERING_MIN_ORDERS=4  # вместо 3
+
+
+ML Infrastructure
+1. Hybrid CNN-LSTM Model
+Путь: backend/ml_engine/models/hybrid_cnn_lstm.py
+Описание: Multi-task learning модель для предсказания направления, уверенности и доходности
+Ключевые классы:
+
+ModelConfig - конфигурация модели
+CNNBlock - CNN блок для локальных паттернов
+AttentionLayer - attention механизм
+HybridCNNLSTM - основная модель
+create_model() - фабрика моделей
+
+Параметры:
+
+Input: (batch, 60, 110) - 60 timesteps, 110 features
+Output: direction_logits (3 classes), confidence (0-1), expected_return
+
+Использование:
+pythonfrom ml_engine.models.hybrid_cnn_lstm import create_model
+
+model = create_model()
+outputs = model(x)  # x: (batch, 60, 110)
+
+2. Data Loader
+Путь: backend/ml_engine/training/data_loader.py
+Описание: Загрузка и подготовка данных для обучения
+Ключевые классы:
+
+DataConfig - конфигурация загрузки
+TradingDataset - PyTorch Dataset
+HistoricalDataLoader - основной загрузчик
+
+Функционал:
+
+Загрузка из .npy и .json файлов
+Создание временных последовательностей (60 timesteps)
+Walk-forward validation split
+PyTorch DataLoader integration
+
+Использование:
+pythonfrom ml_engine.training.data_loader import HistoricalDataLoader, DataConfig
+
+config = DataConfig(storage_path="data/ml_training", sequence_length=60)
+loader = HistoricalDataLoader(config)
+result = loader.load_and_prepare(["BTCUSDT", "ETHUSDT"])
+dataloaders = result['dataloaders']
+
+3. Model Trainer
+Путь: backend/ml_engine/training/model_trainer.py
+Описание: Обучение моделей с early stopping и checkpoint management
+Ключевые классы:
+
+TrainerConfig - конфигурация обучения
+MultiTaskLoss - комбинированный loss
+EarlyStopping - early stopping
+ModelTrainer - основной trainer
+
+Функционал:
+
+Multi-task learning (direction + confidence + return)
+Early stopping с patience
+Learning rate scheduling
+Gradient clipping
+Checkpoint сохранение
+
+Использование:
+pythonfrom ml_engine.training.model_trainer import ModelTrainer, TrainerConfig
+
+trainer_config = TrainerConfig(epochs=50, learning_rate=0.001)
+trainer = ModelTrainer(model, trainer_config)
+history = trainer.train(train_loader, val_loader)
+
+4. Model Server
+Путь: backend/ml_engine/inference/model_server.py
+Описание: FastAPI REST API для real-time ML inference
+Ключевые классы:
+
+ModelRegistry - версионирование моделей
+MLModelServer - основной сервер
+FastAPI app с endpoints
+
+Endpoints:
+
+POST /predict - одиночное предсказание
+POST /predict/batch - batch предсказания
+GET /models - список моделей
+POST /models/{version}/reload - hot reload
+
+Запуск:
+bashpython -m ml_engine.inference.model_server
+# Сервер на http://localhost:8001
+
+5. Drift Detector
+Путь: backend/ml_engine/monitoring/drift_detector.py
+Описание: Мониторинг деградации модели
+Ключевые классы:
+
+DriftMetrics - метрики drift
+DriftDetector - основной детектор
+
+Методы детекции:
+
+Data drift (Kolmogorov-Smirnov test)
+Concept drift (Population Stability Index)
+Performance drift (accuracy drop)
+
+Использование:
+pythonfrom ml_engine.monitoring.drift_detector import DriftDetector
+
+detector = DriftDetector(window_size=10000, baseline_window_size=50000)
+detector.set_baseline(features, predictions, labels)
+detector.add_observation(features, prediction, label)
+metrics = detector.check_drift()
+
+6. ML Signal Validator
+Путь: backend/ml_engine/integration/ml_signal_validator.py
+Описание: Гибридная валидация торговых сигналов
+Ключевые классы:
+
+ValidationConfig - конфигурация валидатора
+ValidationResult - результат валидации
+MLSignalValidator - основной валидатор
+
+Логика:
+
+Запрос предсказания от ML Server
+Сравнение с сигналом стратегии
+Гибридное принятие решения (ML + Strategy)
+Fallback при недоступности ML
+
+Использование:
+pythonfrom ml_engine.integration.ml_signal_validator import MLSignalValidator
+
+validator = MLSignalValidator(config)
+await validator.initialize()
+result = await validator.validate_signal(signal, feature_vector)
+
+🔍 Detection Systems
+7. Spoofing Detector
+Путь: backend/ml_engine/detection/spoofing_detector.py
+Описание: Обнаружение spoofing манипуляций
+Ключевые классы:
+
+SpoofingConfig - конфигурация
+OrderEvent - событие с ордером
+SpoofingPattern - обнаруженный паттерн
+LevelHistory - история уровня стакана
+SpoofingDetector - основной детектор
+
+Признаки spoofing:
+
+Крупные ордера (>$50k)
+Короткий TTL (<10 секунд)
+Высокая отмена (>70%)
+Быстрое размещение и отмена
+
+Использование:
+pythonfrom ml_engine.detection.spoofing_detector import SpoofingDetector
+
+detector = SpoofingDetector(config)
+detector.update(orderbook_snapshot)
+is_active = detector.is_spoofing_active("BTCUSDT")
+patterns = detector.get_recent_patterns("BTCUSDT")
+
+8. Layering Detector
+Путь: backend/ml_engine/detection/layering_detector.py
+Описание: Обнаружение layering манипуляций
+Ключевые классы:
+
+LayeringConfig - конфигурация
+OrderLayer - слой ордеров
+LayeringPattern - обнаруженный паттерн
+OrderTracker - отслеживание ордеров
+LayeringDetector - основной детектор
+
+Признаки layering:
+
+Множественные ордера (≥3) на близких уровнях
+Быстрое размещение (<30 секунд)
+Похожие объемы ордеров
+Быстрая отмена всех ордеров
+
+Использование:
+pythonfrom ml_engine.detection.layering_detector import LayeringDetector
+
+detector = LayeringDetector(config)
+detector.update(orderbook_snapshot)
+is_active = detector.is_layering_active("BTCUSDT")
+
+9. S/R Level Detector
+Путь: backend/ml_engine/detection/sr_level_detector.py
+Описание: Динамическое обнаружение уровней поддержки/сопротивления
+Ключевые классы:
+
+SRLevelConfig - конфигурация
+SRLevel - уровень S/R
+VolumeProfileAnalyzer - анализатор профиля
+SRLevelDetector - основной детектор
+
+Функционал:
+
+DBSCAN кластеризация swing points
+Динамический расчет силы уровней
+Детекция breakouts
+Volume-based validation
+
+Использование:
+pythonfrom ml_engine.detection.sr_level_detector import SRLevelDetector
+
+detector = SRLevelDetector(config)
+detector.update_candles("BTCUSDT", candles)
+levels = detector.detect_levels("BTCUSDT")
+nearest = detector.get_nearest_levels("BTCUSDT", current_price)
+
+📊 Advanced Strategies
+10. Momentum Strategy
+Путь: backend/strategies/momentum_strategy.py
+Описание: Торговля на основе силы тренда
+Ключевые классы:
+
+MomentumConfig - конфигурация
+MomentumIndicators - индикаторы (ROC, RSI)
+MomentumStrategy - основная стратегия
+
+Индикаторы:
+
+Rate of Change (ROC) - измерение momentum
+RSI - фильтр перекупленности
+Volume confirmation
+Momentum strength calculation
+
+Использование:
+pythonfrom strategies.momentum_strategy import MomentumStrategy
+
+strategy = MomentumStrategy(config)
+signal = strategy.analyze("BTCUSDT", candles, current_price)
+should_exit, reason = strategy.should_exit("BTCUSDT", candles, entry_price, "long")
+
+11. SAR Wave Strategy
+Путь: backend/strategies/sar_wave_strategy.py
+Описание: Торговля на основе Parabolic SAR и волнового анализа
+Ключевые классы:
+
+SARWaveConfig - конфигурация
+SwingPoint, Wave - структуры волн
+ParabolicSAR - индикатор SAR
+ADXIndicator - измерение силы тренда
+SARWaveStrategy - основная стратегия
+
+Методология:
+
+Parabolic SAR для тренда
+Wave detection (swing points)
+ADX фильтр (>25 = сильный тренд)
+Fibonacci retracement для входов
+
+Использование:
+pythonfrom strategies.sar_wave_strategy import SARWaveStrategy
+
+strategy = SARWaveStrategy(config)
+signal = strategy.analyze("BTCUSDT", candles, current_price)
+
+12. SuperTrend Strategy
+Путь: backend/strategies/supertrend_strategy.py
+Описание: ATR-based тренд следование
+Ключевые классы:
+
+SuperTrendConfig - конфигурация
+SuperTrendIndicator - индикатор SuperTrend
+SuperTrendStrategy - основная стратегия
+
+Функционал:
+
+SuperTrend (ATR × multiplier)
+Momentum и volume фильтры
+Adaptive stops на основе ATR
+Trailing stop для защиты прибыли
+
+Использование:
+pythonfrom strategies.supertrend_strategy import SuperTrendStrategy
+
+strategy = SuperTrendStrategy(config)
+signal = strategy.analyze("BTCUSDT", candles, current_price)
+stop_loss = strategy.get_stop_loss_price("BTCUSDT", entry_price, "long")
+
+13. Volume Profile Strategy
+Путь: backend/strategies/volume_profile_strategy.py
+Описание: Торговля на основе профиля объема
+Ключевые классы:
+
+VolumeProfileConfig - конфигурация
+VolumeNode, VolumeProfile - структуры профиля
+VolumeProfileAnalyzer - анализатор
+VolumeProfileStrategy - основная стратегия
+
+Концепции:
+
+Point of Control (POC) - макс объем
+Value Area (VA) - зона 70% объема
+High Volume Nodes (HVN) - поддержка/сопротивление
+Low Volume Nodes (LVN) - зоны пробоя
+
+Использование:
+pythonfrom strategies.volume_profile_strategy import VolumeProfileStrategy
+
+strategy = VolumeProfileStrategy(config)
+signal = strategy.analyze("BTCUSDT", candles, current_price)
+targets = strategy.get_value_area_targets("BTCUSDT", "long")
+
+14. Strategy Manager
+Путь: backend/strategies/strategy_manager.py
+Описание: Объединение всех стратегий и consensus
+Ключевые классы:
+
+StrategyManagerConfig - конфигурация
+StrategyResult - результат от стратегии
+ConsensusSignal - объединенный сигнал
+StrategyManager - основной менеджер
+
+Режимы consensus:
+
+majority - большинство голосов
+weighted - взвешенное голосование
+unanimous - единогласие
+
+Использование:
+pythonfrom strategies.strategy_manager import StrategyManager
+
+manager = StrategyManager(config)
+consensus = manager.analyze_with_consensus("BTCUSDT", candles, current_price)
+

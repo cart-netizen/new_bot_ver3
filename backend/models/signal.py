@@ -29,6 +29,8 @@ class SignalSource(str, Enum):
   VOLUME = "VOLUME"  # Анализ объемов
   SPREAD = "SPREAD"  # Анализ спреда
   COMBINED = "COMBINED"  # Комбинированный анализ
+  ML_VALIDATED = "ml_validated"
+  STRATEGY = "strategy"
 
 
 @dataclass

@@ -428,22 +428,40 @@ class MultiSymbolFeaturePipeline:
         tasks.append(task)
         symbols_order.append(symbol)
 
-    # Выполняем параллельно
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # Выполняем все задачи параллельно
+    results = await asyncio.gather(*tasks, return_exceptions=False)
 
     # Собираем результаты
-    feature_vectors = {}
-    for symbol, result in zip(symbols_order, results):
-      if isinstance(result, Exception):
-        logger.error(f"{symbol} | Ошибка извлечения признаков: {result}")
-      else:
+    feature_vectors: Dict[str, FeatureVector] = {}
+    for symbol, result in zip(data.keys(), results):
+      if result is not None:
         feature_vectors[symbol] = result
 
-    logger.info(
-      f"Batch extraction завершен: {len(feature_vectors)}/{len(data)} успешно"
-    )
-
     return feature_vectors
+
+  async def extract_features_single(
+        self,
+        symbol: str,
+        orderbook_snapshot: OrderBookSnapshot,
+        candles: List[Candle]
+    ) -> Optional[FeatureVector]:
+      """
+      Извлечь признаки для одного символа.
+
+      Args:
+          symbol: Торговая пара
+          orderbook_snapshot: Snapshot стакана
+          candles: История свечей
+
+      Returns:
+          FeatureVector или None если символ не найден
+      """
+      if symbol not in self.pipelines:
+        logger.warning(f"Pipeline для {symbol} не найден")
+        return None
+
+      pipeline = self.pipelines[symbol]
+      return await pipeline.extract_features(orderbook_snapshot, candles)
 
   def get_pipeline(self, symbol: str) -> Optional[FeaturePipeline]:
     """Возвращает pipeline для конкретного символа"""
