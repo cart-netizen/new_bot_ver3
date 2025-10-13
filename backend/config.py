@@ -104,6 +104,33 @@ class Settings(BaseSettings):
   RATE_LIMIT_REST_TRADE: int = 100
   RATE_LIMIT_ORDER_PLACEMENT: int = 50
 
+  # ==================== RECOVERY SERVICE ====================
+
+  # Таймаут для обнаружения зависших ордеров (в минутах)
+  # Если ордер находится в статусе PENDING или PLACED дольше этого времени,
+  # он считается зависшим
+  HANGING_ORDER_TIMEOUT_MINUTES = int(os.getenv("HANGING_ORDER_TIMEOUT_MINUTES", "30"))
+
+  # Включить автоматическое восстановление после краша
+  # Если True - система автоматически выполнит recover_from_crash() при старте
+  ENABLE_AUTO_RECOVERY = os.getenv("ENABLE_AUTO_RECOVERY", "true").lower() == "true"
+
+  # Включить проверку зависших ордеров при каждой сверке состояния
+  ENABLE_HANGING_ORDER_CHECK = os.getenv("ENABLE_HANGING_ORDER_CHECK", "true").lower() == "true"
+
+  # Автоматически восстанавливать FSM при старте
+  # Если True - все активные ордера и позиции получат FSM при старте системы
+  ENABLE_FSM_AUTO_RESTORE = os.getenv("ENABLE_FSM_AUTO_RESTORE", "true").lower() == "true"
+
+  # Максимальное количество попыток получить данные с биржи при сверке
+  MAX_RECONCILIATION_RETRIES = int(os.getenv("MAX_RECONCILIATION_RETRIES", "3"))
+
+  # Задержка между попытками сверки (в секундах)
+  RECONCILIATION_RETRY_DELAY = int(os.getenv("RECONCILIATION_RETRY_DELAY", "2"))
+
+  # Логировать детальную информацию о каждом зависшем ордере
+  DETAILED_HANGING_ORDER_LOGGING = os.getenv("DETAILED_HANGING_ORDER_LOGGING", "true").lower() == "true"
+
 
   model_config = SettingsConfigDict(
     env_file=".env",

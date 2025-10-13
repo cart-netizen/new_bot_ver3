@@ -18,6 +18,7 @@ from core.logger import setup_logging, get_logger
 from core.exceptions import log_exception, OrderBookSyncError, OrderBookError
 from core.trace_context import trace_operation
 from database.connection import db_manager
+from domain.services.fsm_registry import fsm_registry
 from exchange.rest_client import rest_client
 from exchange.websocket_manager import BybitWebSocketManager
 from infrastructure.resilience.recovery_service import recovery_service
@@ -283,6 +284,10 @@ class BotController:
         self._analysis_loop_ml_enhanced()
       )
       logger.info("✓ Цикл анализа (ML-Enhanced) запущен")
+
+      # Запускаем background task для очистки FSM
+      asyncio.create_task(fsm_cleanup_task())
+      logger.info("✓ FSM Cleanup Task запланирован")
 
       self.status = BotStatus.RUNNING
       logger.info("=" * 80)
@@ -764,6 +769,42 @@ class BotController:
 bot_controller: Optional[BotController] = None
 
 
+async def fsm_cleanup_task():
+  """
+  Background task для периодической очистки терминальных FSM.
+  Освобождает память от завершенных FSM.
+  """
+  logger.info("FSM Cleanup Task запущен")
+
+  while True:
+    try:
+      # Ждем 30 минут
+      await asyncio.sleep(1800)
+
+      logger.info("Запуск очистки терминальных FSM...")
+
+      # Очищаем терминальные FSM
+      cleared = fsm_registry.clear_terminal_fsms()
+
+      logger.info(
+        f"Очистка завершена: "
+        f"ордеров - {cleared['orders_cleared']}, "
+        f"позиций - {cleared['positions_cleared']}"
+      )
+
+      # Логируем статистику
+      stats = fsm_registry.get_stats()
+      logger.info(
+        f"FSM Registry статистика: "
+        f"ордеров - {stats['total_order_fsms']}, "
+        f"позиций - {stats['total_position_fsms']}"
+      )
+
+    except Exception as e:
+      logger.error(f"Ошибка в FSM cleanup task: {e}", exc_info=True)
+      # Продолжаем работу даже при ошибке
+      await asyncio.sleep(60)
+
 @asynccontextmanager
 async def lifespan(app):
   """
@@ -785,10 +826,32 @@ async def lifespan(app):
       logger.info("✓ База данных подключена")
 
       # 2. Recovery & Reconciliation (если включено)
-      if settings.AUTO_RECONCILE_ON_STARTUP:
-        logger.info("→ Запуск state reconciliation...")
-        reconcile_result = await recovery_service.reconcile_state()
-        logger.info(f"✓ Reconciliation завершен: {reconcile_result}")
+      if settings.ENABLE_AUTO_RECOVERY:
+        logger.info("Запуск автоматического восстановления...")
+
+        recovery_result = await recovery_service.recover_from_crash()
+
+        if recovery_result["recovered"]:
+          logger.info("✓ Автоматическое восстановление завершено успешно")
+
+          # Логируем детали
+          if recovery_result["hanging_orders"]:
+            logger.warning(
+              f"⚠ Обнаружено {len(recovery_result['hanging_orders'])} "
+              f"зависших ордеров - требуется внимание!"
+            )
+
+          logger.info(
+            f"FSM восстановлено: "
+            f"{recovery_result['fsm_restored']['orders']} ордеров, "
+            f"{recovery_result['fsm_restored']['positions']} позиций"
+          )
+        else:
+          logger.error("✗ Ошибка автоматического восстановления")
+          if "error" in recovery_result:
+            logger.error(f"Детали: {recovery_result['error']}")
+      else:
+        logger.info("Автоматическое восстановление отключено в конфигурации")
 
       # Создаем и инициализируем контроллер
       bot_controller = BotController()

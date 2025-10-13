@@ -2173,3 +2173,335 @@ pythonfrom strategies.strategy_manager import StrategyManager
 manager = StrategyManager(config)
 consensus = manager.analyze_with_consensus("BTCUSDT", candles, current_price)
 
+
+НОВАЯ РЕАЛИЗАЦИЯ (Добавлено)
+FSM Registry (Domain Service)
+backend/domain/services/
+└── fsm_registry.py                    ✅ НОВЫЙ - Глобальный реестр FSM
+Возможности:
+
+Централизованное хранение FSM в памяти
+Регистрация/получение/удаление FSM для ордеров и позиций
+Фильтрация FSM по статусам
+Автоматическая очистка терминальных FSM
+Статистика активных state machines
+Thread-safe операции
+
+Ключевые методы:
+python# Ордера
+fsm_registry.register_order_fsm(client_order_id, fsm)
+fsm_registry.get_order_fsm(client_order_id)
+fsm_registry.unregister_order_fsm(client_order_id)
+fsm_registry.get_order_ids_by_status(["Pending", "Placed"])
+
+# Позиции
+fsm_registry.register_position_fsm(position_id, fsm)
+fsm_registry.get_position_fsm(position_id)
+fsm_registry.get_active_position_ids()
+
+# Утилиты
+fsm_registry.get_stats()
+fsm_registry.clear_terminal_fsms()
+fsm_registry.clear_all()
+
+Recovery Service - Полная Реализация
+Обновлен файл:
+backend/infrastructure/resilience/
+└── recovery_service.py                ✅ ПОЛНОСТЬЮ РЕАЛИЗОВАН
+Что реализовано:
+1. Проверка Зависших Ордеров (_check_hanging_orders)
+Критерии обнаружения зависших ордеров:
+
+Status Mismatch - Локально активен, но на бирже в финальном статусе (Filled/Cancelled/Rejected)
+
+python   # Локально: PLACED
+   # Биржа: FILLED
+   # → Обнаружено расхождение!
+
+Not Found on Exchange - Локально активен, но не найден на бирже (ни в активных, ни в истории)
+
+python   # Локально: PLACED
+   # Биржа: Не найден
+   # → Возможно отменен вручную через UI
+
+Timeout in Status - Слишком долго в промежуточном статусе (PENDING/PLACED)
+
+python   # Время в статусе: 45 минут
+   # Порог: 30 минут
+   # → Ордер завис!
+Алгоритм работы:
+
+Получить все активные ордера из БД
+Получить активные ордера с биржи для всех символов
+Создать map для быстрого поиска по orderLinkId
+Для каждого локального ордера:
+
+Проверить наличие в активных на бирже
+Если нет - проверить в истории
+Проверить время в текущем статусе
+
+
+Логировать обнаруженные проблемы в audit
+Вернуть список зависших ордеров с деталями
+
+Формат результата:
+python[
+    {
+        "order_id": "uuid",
+        "client_order_id": "ORDER_123",
+        "symbol": "BTCUSDT",
+        "local_status": "Placed",
+        "issue": {
+            "type": "status_mismatch",
+            "reason": "Ордер локально активен, но на бирже завершен",
+            "exchange_status": "Filled",
+            "exchange_data": {...}
+        }
+    }
+]
+2. Восстановление FSM (_restore_fsm_states)
+Цель: Восстановление всех FSM после рестарта/краша системы
+Алгоритм:
+
+Получить все активные ордера из БД
+Для каждого ордера:
+
+Создать OrderStateMachine с current_status
+Восстановить transition_history из metadata (если есть)
+Зарегистрировать в FSM Registry
+
+
+Получить все активные позиции из БД
+Для каждой позиции:
+
+Создать PositionStateMachine с current_status
+Восстановить transition_history из metadata
+Зарегистрировать в FSM Registry
+
+
+Логировать статистику восстановления
+Записать в audit результаты
+
+Результат:
+python{
+    "orders": 15,      # Количество восстановленных FSM ордеров
+    "positions": 3     # Количество восстановленных FSM позиций
+}
+3. Полное Восстановление (recover_from_crash)
+Workflow восстановления после краша:
+1. Сверка состояния (reconcile_state)
+   ├── Сверка ордеров с биржей
+   └── Сверка позиций с биржей
+
+2. Проверка зависших ордеров (_check_hanging_orders)
+   ├── Обнаружение расхождений
+   └── Логирование проблем
+
+3. Восстановление FSM (_restore_fsm_states)
+   ├── Восстановление FSM ордеров
+   ├── Восстановление FSM позиций
+   └── Регистрация в FSM Registry
+Результат восстановления:
+python{
+    "recovered": True,
+    "actions_taken": [
+        "State reconciliation completed",
+        "Found 2 hanging orders",
+        "FSM states restored: 15 orders, 3 positions"
+    ],
+    "hanging_orders": [...],
+    "fsm_restored": {
+        "orders": 15,
+        "positions": 3
+    }
+}
+
+Конфигурационные Параметры
+Добавлено в config.py:
+python# Recovery Service настройки
+HANGING_ORDER_TIMEOUT_MINUTES = 30
+ENABLE_AUTO_RECOVERY = True
+ENABLE_HANGING_ORDER_CHECK = True
+ENABLE_FSM_AUTO_RESTORE = True
+MAX_RECONCILIATION_RETRIES = 3
+RECONCILIATION_RETRY_DELAY = 2
+DETAILED_HANGING_ORDER_LOGGING = True
+Параметры в .env:
+bashHANGING_ORDER_TIMEOUT_MINUTES=30
+ENABLE_AUTO_RECOVERY=true
+ENABLE_HANGING_ORDER_CHECK=true
+ENABLE_FSM_AUTO_RESTORE=true
+MAX_RECONCILIATION_RETRIES=3
+RECONCILIATION_RETRY_DELAY=2
+DETAILED_HANGING_ORDER_LOGGING=true
+
+Comprehensive Тесты
+Новый файл тестов:
+backend/tests/
+└── test_recovery_service.py           ✅ НОВЫЙ - Полное покрытие
+Покрытие тестами:
+
+FSM Registry Tests:
+
+✅ Инициализация реестра
+✅ Регистрация FSM ордеров
+✅ Регистрация FSM позиций
+✅ Получение FSM по ID
+✅ Удаление FSM
+✅ Фильтрация по статусам
+✅ Получение активных позиций
+✅ Очистка терминальных FSM
+✅ Статистика реестра
+
+
+Recovery Service Tests:
+
+✅ Обнаружение зависшего ордера по таймауту
+✅ Обнаружение ордера не найденного на бирже
+✅ Обнаружение расхождения статусов
+✅ Сценарий без зависших ордеров
+✅ Восстановление FSM для ордеров
+✅ Восстановление FSM для позиций
+✅ Восстановление FSM с историей переходов
+✅ Полный цикл восстановления после краша
+
+
+Integration Tests (заглушки):
+
+📝 Полный workflow восстановления
+📝 Реальный сценарий обнаружения зависших ордеров
+
+
+
+
+🔄 ОБНОВЛЕННЫЕ WORKFLOW
+Startup Workflow (main.py)
+pythonasync def startup_event():
+    # 1. Инициализация БД
+    await db_manager.initialize()
+    
+    # 2. Инициализация REST клиента
+    await rest_client.initialize()
+    
+    # 3. АВТОМАТИЧЕСКОЕ ВОССТАНОВЛЕНИЕ (НОВОЕ!)
+    if settings.ENABLE_AUTO_RECOVERY:
+        recovery_result = await recovery_service.recover_from_crash()
+        
+        if recovery_result["recovered"]:
+            logger.info("✓ Восстановление завершено")
+            
+            # Предупреждение о зависших ордерах
+            if recovery_result["hanging_orders"]:
+                logger.warning(
+                    f"⚠ Обнаружено {len(recovery_result['hanging_orders'])} "
+                    f"зависших ордеров!"
+                )
+    
+    # 4. Остальная инициализация
+    logger.info("✓ Бот готов к работе")
+Order Lifecycle с FSM Registry
+1. Создание ордера
+   ├── order_repository.create(...)
+   ├── OrderStateMachine(order_id, PENDING)
+   └── fsm_registry.register_order_fsm(...)
+
+2. Размещение на бирже
+   ├── rest_client.place_order(...)
+   ├── fsm.update_status(PLACED)
+   └── order_repository.update_status(...)
+
+3. Обновление статуса
+   ├── fsm = fsm_registry.get_order_fsm(...)
+   ├── if fsm.can_transition_to(new_status)
+   └── fsm.update_status(new_status)
+
+4. Завершение ордера (FILLED/CANCELLED)
+   ├── fsm.update_status(FILLED)
+   └── fsm_registry.unregister_order_fsm(...)
+
+📊 МОНИТОРИНГ И НАБЛЮДАЕМОСТЬ
+Логирование
+Ключевые события логируются:
+
+⚠️ Обнаружение зависшего ордера (ERROR level)
+✅ Восстановление FSM (INFO level)
+📊 Статистика сверки (INFO level)
+❌ Ошибки восстановления (ERROR level с exc_info)
+
+Поиск в логах:
+bash# Зависшие ордера
+grep "ЗАВИСШИЙ ОРДЕР ОБНАРУЖЕН" logs/bot_*.log
+
+# Восстановление FSM
+grep "ВОССТАНОВЛЕНИЕ FSM" logs/bot_*.log
+
+# Проблемы сверки
+grep "Расхождение статуса" logs/bot_*.log
+Audit Logs
+Записываются в БД:
+
+Все обнаруженные зависшие ордера
+Результаты восстановления FSM
+Расхождения при сверке состояния
+
+SQL запросы:
+sql-- Последние операции восстановления
+SELECT * FROM audit_logs 
+WHERE entity_id IN ('recovery', 'fsm_recovery')
+ORDER BY created_at DESC LIMIT 10;
+
+-- Зависшие ордера за последние 24 часа
+SELECT * FROM audit_logs
+WHERE reason LIKE '%Hanging order detected%'
+AND created_at > NOW() - INTERVAL '24 hours';
+API Endpoints для Мониторинга
+python# GET /api/monitoring/recovery/status
+{
+    "fsm_registry": {
+        "total_order_fsms": 15,
+        "total_position_fsms": 3,
+        "order_fsms_by_status": {
+            "Placed": 10,
+            "Partially_Filled": 5
+        }
+    },
+    "hanging_orders_count": 2,
+    "recovery_enabled": true
+}
+
+# POST /api/monitoring/recovery/trigger
+# Ручной запуск восстановления
+
+🎯 ИНТЕГРАЦИЯ В СУЩЕСТВУЮЩИЙ КОД
+Order Service
+До:
+pythonasync def place_order(self, request):
+    order = await order_repository.create(...)
+    response = await rest_client.place_order(...)
+    return order
+После:
+pythonasync def place_order(self, request):
+    # 1. Создаем ордер
+    order = await order_repository.create(...)
+    
+    # 2. Создаем и регистрируем FSM
+    order_fsm = OrderStateMachine(order.client_order_id, OrderStatus.PENDING)
+    fsm_registry.register_order_fsm(order.client_order_id, order_fsm)
+    
+    # 3. Размещаем на бирже
+    response = await rest_client.place_order(...)
+    
+    # 4. Обновляем через FSM
+    order_fsm.update_status(OrderStatus.PLACED)
+    
+    return order
+Position Service
+pythonasync def open_position(self, request):
+    # Создаем позицию
+    position = await position_repository.create(...)
+    
+    # Создаем и регистрируем FSM
+    position_fsm = PositionStateMachine(str(position.id), PositionStatus.OPENING)
+    fsm_registry.register_position_fsm(str(position.id), position_fsm)
+    
+    return position
