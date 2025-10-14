@@ -188,13 +188,10 @@ class TestRecoveryService:
         mock_order.status = OrderStatus.PLACED
         mock_order.updated_at = datetime.utcnow() - timedelta(minutes=45)
 
-        # ✅ ИСПРАВЛЕНО: Патчим через экземпляр order_repository
-        with patch.object(
-            recovery_service,
-            '_get_active_orders_from_db',
-            return_value=[mock_order]
-        ) as mock_get_orders:
-            with patch('exchange.rest_client.rest_client.get_open_orders') as mock_exchange:
+        # ✅ ИСПРАВЛЕНО: Патчим глобальный экземпляр order_repository
+        with patch('infrastructure.repositories.order_repository.order_repository.get_active_orders',
+                   new_callable=AsyncMock, return_value=[mock_order]):
+            with patch('exchange.rest_client.rest_client.get_open_orders', new_callable=AsyncMock) as mock_exchange:
                 mock_exchange.return_value = {
                     "result": {
                         "list": [{
@@ -216,17 +213,14 @@ class TestRecoveryService:
         """Тест обнаружения ордера отсутствующего на бирже."""
         mock_order.status = OrderStatus.PLACED
 
-        with patch.object(
-            recovery_service,
-            '_get_active_orders_from_db',
-            return_value=[mock_order]
-        ):
-            with patch('exchange.rest_client.rest_client.get_open_orders') as mock_exchange:
+        with patch('infrastructure.repositories.order_repository.order_repository.get_active_orders',
+                   new_callable=AsyncMock, return_value=[mock_order]):
+            with patch('exchange.rest_client.rest_client.get_open_orders', new_callable=AsyncMock) as mock_exchange:
                 mock_exchange.return_value = {
                     "result": {"list": []}
                 }
 
-                with patch('exchange.rest_client.rest_client.get_order_info') as mock_order_info:
+                with patch('exchange.rest_client.rest_client.get_order_info', new_callable=AsyncMock) as mock_order_info:
                     mock_order_info.return_value = None
 
                     hanging = await recovery_service._check_hanging_orders()
@@ -239,17 +233,14 @@ class TestRecoveryService:
         """Тест обнаружения расхождения статусов."""
         mock_order.status = OrderStatus.PLACED
 
-        with patch.object(
-            recovery_service,
-            '_get_active_orders_from_db',
-            return_value=[mock_order]
-        ):
-            with patch('exchange.rest_client.rest_client.get_open_orders') as mock_exchange:
+        with patch('infrastructure.repositories.order_repository.order_repository.get_active_orders',
+                   new_callable=AsyncMock, return_value=[mock_order]):
+            with patch('exchange.rest_client.rest_client.get_open_orders', new_callable=AsyncMock) as mock_exchange:
                 mock_exchange.return_value = {
                     "result": {"list": []}
                 }
 
-                with patch('exchange.rest_client.rest_client.get_order_info') as mock_order_info:
+                with patch('exchange.rest_client.rest_client.get_order_info', new_callable=AsyncMock) as mock_order_info:
                     mock_order_info.return_value = {
                         "orderLinkId": mock_order.client_order_id,
                         "orderId": mock_order.exchange_order_id,
@@ -271,12 +262,9 @@ class TestRecoveryService:
         mock_order.status = OrderStatus.PLACED
         mock_order.updated_at = datetime.utcnow() - timedelta(minutes=5)
 
-        with patch.object(
-            recovery_service,
-            '_get_active_orders_from_db',
-            return_value=[mock_order]
-        ):
-            with patch('exchange.rest_client.rest_client.get_open_orders') as mock_exchange:
+        with patch('infrastructure.repositories.order_repository.order_repository.get_active_orders',
+                   new_callable=AsyncMock, return_value=[mock_order]):
+            with patch('exchange.rest_client.rest_client.get_open_orders', new_callable=AsyncMock) as mock_exchange:
                 mock_exchange.return_value = {
                     "result": {
                         "list": [{
@@ -293,16 +281,10 @@ class TestRecoveryService:
     @pytest.mark.asyncio
     async def test_restore_fsm_states_orders(self, mock_order, clean_fsm_registry):
         """Тест восстановления FSM для ордеров."""
-        with patch.object(
-            recovery_service,
-            '_get_active_orders_from_db',
-            return_value=[mock_order]
-        ):
-            with patch.object(
-                recovery_service,
-                '_get_active_positions_from_db',
-                return_value=[]
-            ):
+        with patch('infrastructure.repositories.order_repository.order_repository.get_active_orders',
+                   new_callable=AsyncMock, return_value=[mock_order]):
+            with patch('infrastructure.repositories.position_repository.position_repository.get_active_positions',
+                       new_callable=AsyncMock, return_value=[]):
                 result = await recovery_service._restore_fsm_states()
 
                 assert result["orders"] == 1
@@ -315,16 +297,10 @@ class TestRecoveryService:
     @pytest.mark.asyncio
     async def test_restore_fsm_states_positions(self, mock_position, clean_fsm_registry):
         """Тест восстановления FSM для позиций."""
-        with patch.object(
-            recovery_service,
-            '_get_active_orders_from_db',
-            return_value=[]
-        ):
-            with patch.object(
-                recovery_service,
-                '_get_active_positions_from_db',
-                return_value=[mock_position]
-            ):
+        with patch('infrastructure.repositories.order_repository.order_repository.get_active_orders',
+                   new_callable=AsyncMock, return_value=[]):
+            with patch('infrastructure.repositories.position_repository.position_repository.get_active_positions',
+                       new_callable=AsyncMock, return_value=[mock_position]):
                 result = await recovery_service._restore_fsm_states()
 
                 assert result["orders"] == 0
@@ -343,16 +319,10 @@ class TestRecoveryService:
             ]
         }
 
-        with patch.object(
-            recovery_service,
-            '_get_active_orders_from_db',
-            return_value=[mock_order]
-        ):
-            with patch.object(
-                recovery_service,
-                '_get_active_positions_from_db',
-                return_value=[]
-            ):
+        with patch('infrastructure.repositories.order_repository.order_repository.get_active_orders',
+                   new_callable=AsyncMock, return_value=[mock_order]):
+            with patch('infrastructure.repositories.position_repository.position_repository.get_active_positions',
+                       new_callable=AsyncMock, return_value=[]):
                 result = await recovery_service._restore_fsm_states()
 
                 fsm = clean_fsm_registry.get_order_fsm(mock_order.client_order_id)
@@ -367,27 +337,22 @@ class TestRecoveryService:
         clean_fsm_registry
     ):
         """Тест полного цикла восстановления после краша."""
-        with patch.object(
-            recovery_service,
-            '_get_active_orders_from_db',
-            return_value=[mock_order]
-        ):
-            with patch.object(
-                recovery_service,
-                '_get_active_positions_from_db',
-                return_value=[mock_position]
-            ):
-                with patch('exchange.rest_client.rest_client.get_open_orders') as mock_exchange_orders:
+        with patch('infrastructure.repositories.order_repository.order_repository.get_active_orders',
+                   new_callable=AsyncMock, return_value=[mock_order]):
+            with patch('infrastructure.repositories.position_repository.position_repository.get_active_positions',
+                       new_callable=AsyncMock, return_value=[mock_position]):
+                with patch('exchange.rest_client.rest_client.get_open_orders', new_callable=AsyncMock) as mock_exchange_orders:
                     mock_exchange_orders.return_value = {
                         "result": {"list": []}
                     }
 
-                    with patch('exchange.rest_client.rest_client.get_positions') as mock_exchange_positions:
+                    with patch('exchange.rest_client.rest_client.get_positions', new_callable=AsyncMock) as mock_exchange_positions:
                         mock_exchange_positions.return_value = {
                             "result": {"list": []}
                         }
 
-                        with patch('infrastructure.repositories.audit_repository.audit_repository.log') as mock_audit:
+                        with patch('infrastructure.repositories.audit_repository.audit_repository.log',
+                                   new_callable=AsyncMock) as mock_audit:
                             mock_audit.return_value = None
 
                             result = await recovery_service.recover_from_crash()

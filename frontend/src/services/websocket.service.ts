@@ -1,256 +1,242 @@
 // frontend/src/services/websocket.service.ts
-
-import { APP_CONFIG } from '../config/app.config';
-import type { OrderBook, OrderBookMetrics } from '../types/orderbook.types';
-import type { TradingSignal } from '../types/signal.types';
-
 /**
- * Типы WebSocket сообщений от бэкенда.
+ * WebSocket сервис для real-time коммуникации с сервером.
+ *
+ * ИСПРАВЛЕНО:
+ * - Правильная типизация MessageHandlers
+ * - Убраны старые обработчики (onOrderBookUpdate, onMetricsUpdate, onSignalUpdate)
+ * - Используется только onMessage для всех типов сообщений
  */
-type WSMessageType =
-  | 'bot_status'
-  | 'orderbook_update'
-  | 'metrics_update'
-  | 'trading_signal'
-  | 'execution_update'
-  | 'error';
-
-interface WSMessage {
-  type: WSMessageType;
-  symbol?: string;
-  orderbook?: OrderBook;
-  metrics?: OrderBookMetrics;
-  signal?: TradingSignal;
-  execution?: ExecutionData;
-  message?: string;
-  status?: string;
-  details?: Record<string, unknown>;
-}
 
 /**
- * Данные статуса бота.
- */
-interface BotStatusData {
-  status: string;
-  details?: Record<string, unknown>;
-}
-
-/**
- * Данные исполнения ордера.
- */
-interface ExecutionData {
-  order_id: string;
-  symbol: string;
-  side: string;
-  quantity: number;
-  price: number;
-  status: string;
-  timestamp: number;
-}
-
-/**
- * Обработчики для различных типов сообщений.
+ * Обработчики WebSocket событий.
  */
 interface MessageHandlers {
-  onBotStatus?: (data: BotStatusData) => void;
-  onOrderBookUpdate?: (symbol: string, orderbook: OrderBook) => void;
-  onMetricsUpdate?: (symbol: string, metrics: OrderBookMetrics) => void;
-  onTradingSignal?: (signal: TradingSignal) => void;
-  onExecutionUpdate?: (data: ExecutionData) => void;
-  onError?: (error: string) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
+  onError?: (error: Event) => void;
+  onMessage?: (event: MessageEvent) => void; // Главный обработчик всех сообщений
 }
 
 /**
- * Сервис для управления WebSocket соединением.
- * Обеспечивает надежное подключение с автоматическим переподключением.
+ * Конфигурация переподключения.
  */
-export class WebSocketService {
+interface ReconnectConfig {
+  maxAttempts: number;
+  delay: number;
+  backoffMultiplier: number;
+}
+
+/**
+ * WebSocket Service для управления соединением.
+ */
+class WebSocketService {
   private ws: WebSocket | null = null;
   private handlers: MessageHandlers = {};
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
-  private isConnecting = false;
-  private shouldReconnect = true;
-  private pingInterval: ReturnType<typeof setInterval> | null = null;
-
-  /**
-   * Подключение к WebSocket серверу.
-   */
-  connect(token: string, handlers: MessageHandlers): void {
-    if (this.ws?.readyState === WebSocket.OPEN || this.isConnecting) {
-      console.log('[WS] Already connected or connecting');
-      return;
-    }
-
-    this.isConnecting = true;
-    this.handlers = handlers;
-    this.shouldReconnect = true;
-
-    console.log('[WS] Connecting to:', APP_CONFIG.wsUrl);
-
-    try {
-      this.ws = new WebSocket(APP_CONFIG.wsUrl);
-
-      this.ws.onopen = () => {
-        console.log('[WS] Connected');
-        this.isConnecting = false;
-        this.reconnectAttempts = 0;
-
-        // ИСПРАВЛЕНИЕ: Отправляем 'authenticate' вместо 'auth'
-        this.send({ type: 'authenticate', token });
-
-        // Запускаем ping для поддержания соединения
-        this.startPing();
-
-        handlers.onConnect?.();
-      };
-
-      this.ws.onmessage = (event) => {
-        try {
-          const message: WSMessage = JSON.parse(event.data);
-          this.handleMessage(message);
-        } catch (error) {
-          console.error('[WS] Failed to parse message:', error);
-        }
-      };
-
-      this.ws.onerror = (error) => {
-        console.error('[WS] Error:', error);
-        this.isConnecting = false;
-      };
-
-      this.ws.onclose = (event) => {
-        console.log('[WS] Disconnected:', event.code, event.reason);
-        this.isConnecting = false;
-        this.stopPing();
-
-        handlers.onDisconnect?.();
-
-        // Автоматическое переподключение
-        if (this.shouldReconnect && this.reconnectAttempts < this.maxReconnectAttempts) {
-          this.reconnectAttempts++;
-          const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
-
-          console.log(`[WS] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
-
-          setTimeout(() => {
-            this.connect(token, handlers);
-          }, delay);
-        }
-      };
-    } catch (error) {
-      console.error('[WS] Connection failed:', error);
-      this.isConnecting = false;
-    }
-  }
-
-  /**
-   * Обработка входящих сообщений.
-   */
-  private handleMessage(message: WSMessage): void {
-    console.log('[WS] Message received:', message.type);
-
-    switch (message.type) {
-      case 'bot_status':
-        if (message.status) {
-          this.handlers.onBotStatus?.({
-            status: message.status,
-            details: message.details,
-          });
-        }
-        break;
-
-      case 'orderbook_update':
-        if (message.symbol && message.orderbook) {
-          this.handlers.onOrderBookUpdate?.(message.symbol, message.orderbook);
-        }
-        break;
-
-      case 'metrics_update':
-        if (message.symbol && message.metrics) {
-          this.handlers.onMetricsUpdate?.(message.symbol, message.metrics);
-        }
-        break;
-
-      case 'trading_signal':
-        if (message.signal) {
-          this.handlers.onTradingSignal?.(message.signal);
-        }
-        break;
-
-      case 'execution_update':
-        if (message.execution) {
-          this.handlers.onExecutionUpdate?.(message.execution);
-        }
-        break;
-
-      case 'error':
-        if (message.message) {
-          console.error('[WS] Server error:', message.message);
-          this.handlers.onError?.(message.message);
-        }
-        break;
-
-      default:
-        console.warn('[WS] Unknown message type:', message.type);
-    }
-  }
-
-  /**
-   * Отправка сообщения на сервер.
-   */
-  private send(data: { type: string; token?: string }): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(data));
-    } else {
-      console.warn('[WS] Cannot send message: not connected');
-    }
-  }
-
-  /**
-   * Запуск периодического ping для поддержания соединения.
-   */
-  private startPing(): void {
-    this.stopPing();
-    this.pingInterval = setInterval(() => {
-      this.send({ type: 'ping' });
-    }, 30000); // Каждые 30 секунд
-  }
-
-  /**
-   * Остановка ping.
-   */
-  private stopPing(): void {
-    if (this.pingInterval) {
-      clearInterval(this.pingInterval);
-      this.pingInterval = null;
-    }
-  }
-
-  /**
-   * Отключение от WebSocket.
-   */
-  disconnect(): void {
-    console.log('[WS] Disconnecting...');
-    this.shouldReconnect = false;
-    this.stopPing();
-
-    if (this.ws) {
-      this.ws.close(1000, 'Client disconnect');
-      this.ws = null;
-    }
-  }
+  private reconnectBackoff = 1.5;
+  private reconnectTimeoutId: number | null = null;
+  private token: string | null = null;
+  private isManualDisconnect = false;
 
   /**
    * Проверка состояния подключения.
    */
   isConnected(): boolean {
-    return this.ws?.readyState === WebSocket.OPEN;
+    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+  }
+
+  /**
+   * Подключение к WebSocket серверу.
+   */
+  connect(token: string, handlers: MessageHandlers, config?: Partial<ReconnectConfig>) {
+    // Сохраняем токен и обработчики
+    this.token = token;
+    this.handlers = handlers;
+
+    // Применяем конфигурацию переподключения
+    if (config) {
+      if (config.maxAttempts) this.maxReconnectAttempts = config.maxAttempts;
+      if (config.delay) this.reconnectDelay = config.delay;
+      if (config.backoffMultiplier) this.reconnectBackoff = config.backoffMultiplier;
+    }
+
+    this.isManualDisconnect = false;
+    this._connect();
+  }
+
+  /**
+   * Внутренний метод подключения.
+   */
+  private _connect() {
+    try {
+      // Определяем URL WebSocket
+      const wsUrl = this._getWebSocketUrl();
+
+      console.log('[WebSocket] Connecting to:', wsUrl);
+
+      // Создаем новое соединение
+      this.ws = new WebSocket(wsUrl);
+
+      // Обработчик успешного подключения
+      this.ws.onopen = () => {
+        console.log('[WebSocket] Connected successfully');
+        this.reconnectAttempts = 0;
+
+        // Аутентификация через WebSocket (если требуется)
+        if (this.token) {
+          this.send({
+            type: 'auth',
+            token: this.token,
+          });
+        }
+
+        // Вызываем обработчик подключения
+        if (this.handlers.onConnect) {
+          this.handlers.onConnect();
+        }
+      };
+
+      // Обработчик входящих сообщений
+      this.ws.onmessage = (event: MessageEvent) => {
+        // Передаем событие в главный обработчик
+        if (this.handlers.onMessage) {
+          this.handlers.onMessage(event);
+        }
+      };
+
+      // Обработчик ошибок
+      this.ws.onerror = (error: Event) => {
+        console.error('[WebSocket] Error:', error);
+
+        if (this.handlers.onError) {
+          this.handlers.onError(error);
+        }
+      };
+
+      // Обработчик закрытия соединения
+      this.ws.onclose = (event: CloseEvent) => {
+        console.log('[WebSocket] Connection closed:', event.code, event.reason);
+
+        this.ws = null;
+
+        if (this.handlers.onDisconnect) {
+          this.handlers.onDisconnect();
+        }
+
+        // Автоматическое переподключение (если не ручное отключение)
+        if (!this.isManualDisconnect) {
+          this._scheduleReconnect();
+        }
+      };
+    } catch (error) {
+      console.error('[WebSocket] Connection error:', error);
+
+      if (this.handlers.onError) {
+        this.handlers.onError(error as Event);
+      }
+
+      // Пытаемся переподключиться
+      if (!this.isManualDisconnect) {
+        this._scheduleReconnect();
+      }
+    }
+  }
+
+  /**
+   * Планирование переподключения.
+   */
+  private _scheduleReconnect() {
+    // Проверяем лимит попыток
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.error('[WebSocket] Max reconnect attempts reached');
+      return;
+    }
+
+    // Увеличиваем счетчик попыток
+    this.reconnectAttempts++;
+
+    // Рассчитываем задержку с экспоненциальным backoff
+    const delay = this.reconnectDelay * Math.pow(this.reconnectBackoff, this.reconnectAttempts - 1);
+
+    console.log(`[WebSocket] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+
+    // Планируем переподключение
+    this.reconnectTimeoutId = window.setTimeout(() => {
+      this._connect();
+    }, delay);
+  }
+
+  /**
+   * Отправка сообщения на сервер.
+   */
+  send(data: any) {
+    if (!this.isConnected()) {
+      console.warn('[WebSocket] Cannot send message - not connected');
+      return false;
+    }
+
+    try {
+      const message = typeof data === 'string' ? data : JSON.stringify(data);
+      this.ws!.send(message);
+      return true;
+    } catch (error) {
+      console.error('[WebSocket] Error sending message:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Отключение от сервера.
+   */
+  disconnect() {
+    console.log('[WebSocket] Disconnecting...');
+
+    this.isManualDisconnect = true;
+
+    // Отменяем запланированное переподключение
+    if (this.reconnectTimeoutId !== null) {
+      clearTimeout(this.reconnectTimeoutId);
+      this.reconnectTimeoutId = null;
+    }
+
+    // Закрываем соединение
+    if (this.ws) {
+      this.ws.close(1000, 'Manual disconnect');
+      this.ws = null;
+    }
+
+    this.reconnectAttempts = 0;
+  }
+
+  /**
+   * Получение URL WebSocket сервера.
+   */
+  private _getWebSocketUrl(): string {
+    // Определяем протокол (ws или wss)
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+
+    // Определяем хост
+    const host = import.meta.env.VITE_WS_URL ||
+                 import.meta.env.VITE_API_URL?.replace(/^https?:\/\//, '') ||
+                 'localhost:8000';
+
+    // Формируем полный URL
+    return `${protocol}//${host}/ws`;
+  }
+
+  /**
+   * Отправка ping для поддержания соединения.
+   */
+  ping() {
+    return this.send({
+      type: 'ping',
+      timestamp: Date.now(),
+    });
   }
 }
 
-// Singleton instance
+// Экспортируем единственный экземпляр сервиса
 export const wsService = new WebSocketService();

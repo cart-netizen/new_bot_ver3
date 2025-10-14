@@ -2,18 +2,23 @@
 API маршруты.
 Определение всех REST API эндпоинтов для взаимодействия с фронтендом.
 """
+import time
 from datetime import datetime
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
-
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from pydantic import BaseModel, Field
+from fastapi import WebSocket
+from api.app import app
+from api.websocket import websocket_endpoint
 from core.logger import get_logger
 from core.auth import (
   AuthService,
   require_auth
 )
 from core.exceptions import AuthenticationError
-from exchange.rest_client import rest_client
+from domain.state_machines.order_fsm import OrderStateMachine
+from exchange.rest_client import rest_client, BybitRESTClient
+from infrastructure.repositories.order_repository import OrderRepository
 from infrastructure.resilience.circuit_breaker import circuit_breaker_manager
 from infrastructure.resilience.rate_limiter import rate_limiter
 from main import bot_controller
@@ -40,7 +45,144 @@ detection_router = APIRouter(prefix="/api/detection", tags=["detection"])
 # Strategies Router
 strategies_router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 
+screener_router = APIRouter(prefix="/api/screener", tags=["screener"])
+
+orders_router = APIRouter(prefix="/api/trading/orders", tags=["orders"])
+
+
+class OrderResponse(BaseModel):
+  """Модель ответа с данными ордера."""
+  order_id: str
+  client_order_id: str
+  exchange_order_id: Optional[str] = None
+  symbol: str
+  side: str  # BUY или SELL
+  order_type: str
+  quantity: float
+  price: Optional[float]
+  filled_quantity: float
+  average_price: float
+  take_profit: Optional[float]
+  stop_loss: Optional[float]
+  leverage: int
+  status: str
+  created_at: str
+  updated_at: str
+  filled_at: Optional[str] = None
+  strategy: Optional[str] = None
+  signal_id: Optional[str] = None
+  notes: Optional[str] = None
+
+  class Config:
+    json_schema_extra = {
+      "example": {
+        "order_id": "uuid-123",
+        "client_order_id": "ORDER_123",
+        "symbol": "BTCUSDT",
+        "side": "BUY",
+        "order_type": "LIMIT",
+        "quantity": 0.01,
+        "price": 50000.0,
+        "filled_quantity": 0.0,
+        "average_price": 0.0,
+        "take_profit": 51000.0,
+        "stop_loss": 49000.0,
+        "leverage": 10,
+        "status": "PLACED",
+        "created_at": "2025-10-14T10:00:00Z",
+        "updated_at": "2025-10-14T10:00:00Z",
+      }
+    }
+
+
+class OrderDetailResponse(BaseModel):
+  """Модель детального ответа с расчетом PnL."""
+  order_id: str
+  client_order_id: str
+  exchange_order_id: Optional[str]
+  symbol: str
+  side: str
+  order_type: str
+  quantity: float
+  price: Optional[float]
+  filled_quantity: float
+  average_price: float
+  take_profit: Optional[float]
+  stop_loss: Optional[float]
+  leverage: int
+  status: str
+  created_at: str
+  updated_at: str
+  filled_at: Optional[str]
+  strategy: Optional[str]
+  signal_id: Optional[str]
+
+  # Дополнительные поля для детального просмотра
+  current_pnl: float = Field(..., description="Текущий PnL в USDT")
+  current_pnl_percent: float = Field(..., description="Текущий PnL в процентах")
+  current_price: float = Field(..., description="Текущая цена актива")
+  entry_price: float = Field(..., description="Цена входа")
+  position_value: float = Field(..., description="Стоимость позиции")
+  margin_used: float = Field(..., description="Использованная маржа")
+  liquidation_price: Optional[float] = Field(None, description="Цена ликвидации")
+  fees: float = Field(default=0.0, description="Комиссии")
+
+
+class OrdersListResponse(BaseModel):
+  """Модель ответа со списком ордеров."""
+  orders: List[OrderResponse]
+  total: int
+  active: int
+  timestamp: int
+
+
+class CloseOrderRequest(BaseModel):
+  """Модель запроса на закрытие ордера."""
+  reason: Optional[str] = Field(None, description="Причина закрытия")
+
+
+class CloseOrderResponse(BaseModel):
+  """Модель ответа при закрытии ордера."""
+  success: bool
+  order_id: str
+  closed_at: str
+  final_pnl: float
+  message: str
+
 # ===== МОДЕЛИ ОТВЕТОВ =====
+class ScreenerPairResponse(BaseModel):
+  """Модель ответа с данными торговой пары для скринера."""
+  symbol: str = Field(..., description="Символ торговой пары")
+  lastPrice: float = Field(..., description="Последняя цена")
+  price24hPcnt: float = Field(..., description="Изменение цены за 24ч в процентах")
+  volume24h: float = Field(..., description="Объем торгов за 24ч в USDT")
+  highPrice24h: float = Field(..., description="Максимальная цена за 24ч")
+  lowPrice24h: float = Field(..., description="Минимальная цена за 24ч")
+  prevPrice24h: float = Field(..., description="Цена 24 часа назад")
+  turnover24h: float = Field(..., description="Оборот за 24ч")
+
+  class Config:
+    json_schema_extra = {
+      "example": {
+        "symbol": "BTCUSDT",
+        "lastPrice": 50000.0,
+        "price24hPcnt": 2.5,
+        "volume24h": 5000000.0,
+        "highPrice24h": 51000.0,
+        "lowPrice24h": 49000.0,
+        "prevPrice24h": 48000.0,
+        "turnover24h": 250000000.0
+      }
+    }
+
+
+class ScreenerDataResponse(BaseModel):
+  """Полный ответ со всеми парами скринера."""
+  pairs: List[ScreenerPairResponse] = Field(..., description="Список торговых пар")
+  total: int = Field(..., description="Общее количество пар")
+  timestamp: int = Field(..., description="Временная метка данных")
+  min_volume: float = Field(default=4_000_000, description="Минимальный объем для фильтрации")
+
 
 class StatusResponse(BaseModel):
   """Модель ответа статуса."""
@@ -975,3 +1117,489 @@ async def get_strategy_stats(strategy_name: str):
 
   strategy = bot_controller.strategy_manager.strategies[strategy_name]
   return strategy.get_statistics()
+
+
+@screener_router.get(
+  "/pairs",
+  response_model=ScreenerDataResponse,
+  summary="Получение данных всех пар для скринера",
+  description="""
+    Возвращает данные всех торговых пар с фильтрацией по минимальному объему.
+
+    **Фильтрация:**
+    - Только USDT perpetual futures
+    - Объем за 24ч > 4,000,000 USDT
+    - Только активные пары
+
+    **Данные включают:**
+    - Текущую цену
+    - Изменение за 24 часа
+    - Объем торгов
+    - High/Low за 24 часа
+    """
+)
+async def get_screener_pairs(
+    min_volume: float = 4_000_000,
+    current_user: dict = Depends(require_auth)
+) -> ScreenerDataResponse:
+  """
+  Получение данных торговых пар для скринера.
+
+  Args:
+      min_volume: Минимальный объем за 24ч для фильтрации (default: 4M USDT)
+      current_user: Авторизованный пользователь
+
+  Returns:
+      ScreenerDataResponse с данными всех подходящих пар
+
+  Raises:
+      HTTPException: При ошибке получения данных от биржи
+  """
+  try:
+    logger.info(f"Запрос данных скринера с min_volume={min_volume}")
+
+    # Создаем клиент Bybit API
+    rest_client = BybitRESTClient()
+
+    # Получаем тикеры всех пар
+    tickers_response = await rest_client.get_tickers(category="linear")
+
+    if not tickers_response or "result" not in tickers_response:
+      raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Не удалось получить данные от Bybit API"
+      )
+
+    tickers_list = tickers_response["result"].get("list", [])
+
+    # Фильтруем и форматируем данные
+    filtered_pairs: List[ScreenerPairResponse] = []
+
+    for ticker in tickers_list:
+      try:
+        symbol = ticker.get("symbol", "")
+
+        # Фильтр 1: Только USDT пары
+        if not symbol.endswith("USDT"):
+          continue
+
+        # Парсим числовые значения
+        last_price = float(ticker.get("lastPrice", 0))
+        volume_24h = float(ticker.get("volume24h", 0))
+        turnover_24h = float(ticker.get("turnover24h", 0))
+        price_24h_pcnt = float(ticker.get("price24hPcnt", 0)) * 100  # Конвертируем в проценты
+        high_price_24h = float(ticker.get("highPrice24h", 0))
+        low_price_24h = float(ticker.get("lowPrice24h", 0))
+        prev_price_24h = float(ticker.get("prevPrice24h", 0))
+
+        # Фильтр 2: Минимальный объем
+        # Используем turnover_24h (оборот в USDT), а не volume_24h (объем в монетах)
+        if turnover_24h < min_volume:
+          continue
+
+        # Фильтр 3: Валидные данные
+        if last_price <= 0 or high_price_24h <= 0 or low_price_24h <= 0:
+          continue
+
+        # Добавляем пару в результат
+        pair_data = ScreenerPairResponse(
+          symbol=symbol,
+          lastPrice=last_price,
+          price24hPcnt=price_24h_pcnt,
+          volume24h=turnover_24h,  # Используем turnover как volume в USDT
+          highPrice24h=high_price_24h,
+          lowPrice24h=low_price_24h,
+          prevPrice24h=prev_price_24h,
+          turnover24h=turnover_24h
+        )
+
+        filtered_pairs.append(pair_data)
+
+      except (ValueError, KeyError) as e:
+        logger.warning(f"Ошибка парсинга тикера {ticker.get('symbol', 'unknown')}: {e}")
+        continue
+
+    # Сортируем по объему (по убыванию)
+    filtered_pairs.sort(key=lambda x: x.volume24h, reverse=True)
+
+    logger.info(
+      f"Успешно обработано {len(filtered_pairs)} пар из {len(tickers_list)} "
+      f"(фильтр: volume > {min_volume:,.0f} USDT)"
+    )
+
+    # Формируем ответ
+    response = ScreenerDataResponse(
+      pairs=filtered_pairs,
+      total=len(filtered_pairs),
+      timestamp=int(time.time() * 1000),
+      min_volume=min_volume
+    )
+
+    return response
+
+  except HTTPException:
+    raise
+  except Exception as e:
+    logger.error(f"Ошибка получения данных скринера: {e}", exc_info=True)
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=f"Внутренняя ошибка сервера: {str(e)}"
+    )
+
+
+@screener_router.get(
+  "/pairs/{symbol}",
+  response_model=ScreenerPairResponse,
+  summary="Получение данных конкретной пары",
+  description="Возвращает детальные данные для указанной торговой пары"
+)
+async def get_screener_pair(
+    symbol: str,
+    current_user: dict = Depends(require_auth)
+) -> ScreenerPairResponse:
+  """
+  Получение данных конкретной торговой пары.
+
+  Args:
+      symbol: Символ торговой пары (например, BTCUSDT)
+      current_user: Авторизованный пользователь
+
+  Returns:
+      ScreenerPairResponse с данными пары
+
+  Raises:
+      HTTPException: При ошибке или если пара не найдена
+  """
+  try:
+    logger.info(f"Запрос данных пары {symbol} для скринера")
+
+    rest_client = BybitRESTClient()
+
+    # Получаем тикер конкретной пары
+    ticker_response = await rest_client.get_tickers(
+      category="linear",
+      symbol=symbol
+    )
+
+    if not ticker_response or "result" not in ticker_response:
+      raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Пара {symbol} не найдена"
+      )
+
+    ticker = ticker_response["result"].get("list", [{}])[0]
+
+    if not ticker:
+      raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Данные для пары {symbol} отсутствуют"
+      )
+
+    # Парсим данные
+    pair_data = ScreenerPairResponse(
+      symbol=ticker.get("symbol", symbol),
+      lastPrice=float(ticker.get("lastPrice", 0)),
+      price24hPcnt=float(ticker.get("price24hPcnt", 0)) * 100,
+      volume24h=float(ticker.get("turnover24h", 0)),
+      highPrice24h=float(ticker.get("highPrice24h", 0)),
+      lowPrice24h=float(ticker.get("lowPrice24h", 0)),
+      prevPrice24h=float(ticker.get("prevPrice24h", 0)),
+      turnover24h=float(ticker.get("turnover24h", 0))
+    )
+
+    logger.info(f"Успешно получены данные для {symbol}")
+
+    return pair_data
+
+  except HTTPException:
+    raise
+  except Exception as e:
+    logger.error(f"Ошибка получения данных для {symbol}: {e}", exc_info=True)
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=f"Ошибка получения данных: {str(e)}"
+    )
+
+@app.websocket("/ws")
+async def websocket_route(websocket: WebSocket):
+    await websocket_endpoint(websocket)
+
+
+@orders_router.get(
+  "",
+  response_model=OrdersListResponse,
+  summary="Получение списка ордеров",
+  description="""
+    Возвращает список ордеров с возможностью фильтрации.
+
+    **Фильтры:**
+    - status: фильтр по статусу (active, filled, cancelled, all)
+    - symbol: фильтр по торговой паре
+    - strategy: фильтр по стратегии
+    """
+)
+async def get_orders(
+    status: Optional[str] = Query("active", description="Фильтр по статусу"),
+    symbol: Optional[str] = Query(None, description="Фильтр по символу"),
+    strategy: Optional[str] = Query(None, description="Фильтр по стратегии"),
+    current_user: dict = Depends(require_auth)
+):
+  """
+  Получение списка ордеров.
+  """
+  try:
+    logger.info(f"Запрос списка ордеров: status={status}, symbol={symbol}, strategy={strategy}")
+
+    # Получаем репозиторий
+    order_repo = OrderRepository()
+
+    # Определяем статусы для фильтрации
+    if status == "active":
+      filter_statuses = ["Pending", "Placed", "PartiallyFilled"]
+    elif status == "filled":
+      filter_statuses = ["Filled"]
+    elif status == "cancelled":
+      filter_statuses = ["Cancelled"]
+    else:
+      filter_statuses = None
+
+    # Получаем ордера из БД
+    orders = await order_repo.find_orders(
+      symbol=symbol,
+      statuses=filter_statuses,
+      strategy=strategy
+    )
+
+    # Конвертируем в response модели
+    order_responses = []
+    active_count = 0
+
+    for order in orders:
+      order_response = OrderResponse(
+        order_id=order.order_id,
+        client_order_id=order.client_order_id,
+        exchange_order_id=order.exchange_order_id,
+        symbol=order.symbol,
+        side=order.side,
+        order_type=order.order_type,
+        quantity=order.quantity,
+        price=order.price,
+        filled_quantity=order.filled_quantity,
+        average_price=order.average_price,
+        take_profit=order.take_profit,
+        stop_loss=order.stop_loss,
+        leverage=order.leverage,
+        status=order.status,
+        created_at=order.created_at.isoformat(),
+        updated_at=order.updated_at.isoformat(),
+        filled_at=order.filled_at.isoformat() if order.filled_at else None,
+        strategy=order.strategy,
+        signal_id=order.signal_id,
+        notes=order.notes
+      )
+
+      order_responses.append(order_response)
+
+      if order.status in ["Pending", "Placed", "PartiallyFilled"]:
+        active_count += 1
+
+    logger.info(f"Найдено {len(order_responses)} ордеров ({active_count} активных)")
+
+    return OrdersListResponse(
+      orders=order_responses,
+      total=len(order_responses),
+      active=active_count,
+      timestamp=int(datetime.now().timestamp() * 1000)
+    )
+
+  except Exception as e:
+    logger.error(f"Ошибка получения списка ордеров: {e}", exc_info=True)
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=f"Ошибка получения списка ордеров: {str(e)}"
+    )
+
+
+@orders_router.get(
+  "/{order_id}",
+  response_model=OrderDetailResponse,
+  summary="Получение детальной информации об ордере",
+  description="Возвращает детальную информацию об ордере с расчетом PnL"
+)
+async def get_order_detail(
+    order_id: str,
+    current_user: dict = Depends(require_auth)
+):
+  """
+  Получение детальной информации об ордере.
+  """
+  try:
+    logger.info(f"Запрос деталей для ордера {order_id}")
+
+    # Получаем репозиторий
+    order_repo = OrderRepository()
+
+    # Получаем ордер из БД
+    order = await order_repo.get_by_id(order_id)
+
+    if not order:
+      raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Ордер {order_id} не найден"
+      )
+
+    # Получаем текущую цену актива
+    rest_client = BybitRESTClient()
+    ticker = await rest_client.get_ticker(category="linear", symbol=order.symbol)
+
+    current_price = float(ticker["result"]["list"][0]["lastPrice"])
+    entry_price = order.price or order.average_price
+
+    # Расчет PnL
+    position_value = order.quantity * entry_price
+    margin_used = position_value / order.leverage
+
+    if order.side == "BUY":
+      pnl = (current_price - entry_price) * order.quantity
+    else:  # SELL
+      pnl = (entry_price - current_price) * order.quantity
+
+    pnl_percent = (pnl / position_value) * 100 if position_value > 0 else 0
+
+    # Расчет цены ликвидации (упрощенный)
+    if order.side == "BUY":
+      liquidation_price = entry_price * (1 - 1 / order.leverage)
+    else:
+      liquidation_price = entry_price * (1 + 1 / order.leverage)
+
+    # Комиссии (0.1% maker/taker)
+    fees = position_value * 0.001
+
+    logger.info(f"Детали ордера {order_id}: PnL={pnl:.2f}, Price={current_price}")
+
+    return OrderDetailResponse(
+      order_id=order.order_id,
+      client_order_id=order.client_order_id,
+      exchange_order_id=order.exchange_order_id,
+      symbol=order.symbol,
+      side=order.side,
+      order_type=order.order_type,
+      quantity=order.quantity,
+      price=order.price,
+      filled_quantity=order.filled_quantity,
+      average_price=order.average_price,
+      take_profit=order.take_profit,
+      stop_loss=order.stop_loss,
+      leverage=order.leverage,
+      status=order.status,
+      created_at=order.created_at.isoformat(),
+      updated_at=order.updated_at.isoformat(),
+      filled_at=order.filled_at.isoformat() if order.filled_at else None,
+      strategy=order.strategy,
+      signal_id=order.signal_id,
+      current_pnl=pnl,
+      current_pnl_percent=pnl_percent,
+      current_price=current_price,
+      entry_price=entry_price,
+      position_value=position_value,
+      margin_used=margin_used,
+      liquidation_price=liquidation_price,
+      fees=fees
+    )
+
+  except HTTPException:
+    raise
+  except Exception as e:
+    logger.error(f"Ошибка получения деталей ордера {order_id}: {e}", exc_info=True)
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=f"Ошибка получения деталей ордера: {str(e)}"
+    )
+
+
+@orders_router.post(
+  "/{order_id}/close",
+  response_model=CloseOrderResponse,
+  summary="Закрытие ордера",
+  description="Закрывает открытый ордер с расчетом финального PnL"
+)
+async def close_order(
+    order_id: str,
+    request: CloseOrderRequest,
+    current_user: dict = Depends(require_auth)
+):
+  """
+  Закрытие ордера.
+  """
+  try:
+    logger.info(f"Запрос на закрытие ордера {order_id}, причина: {request.reason}")
+
+    # Получаем репозиторий
+    order_repo = OrderRepository()
+
+    # Получаем ордер из БД
+    order = await order_repo.get_by_id(order_id)
+
+    if not order:
+      raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Ордер {order_id} не найден"
+      )
+
+    # Проверяем, что ордер активен
+    if order.status not in ["Pending", "Placed", "PartiallyFilled"]:
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Ордер в статусе {order.status} не может быть закрыт"
+      )
+
+    # Отменяем ордер на бирже
+    rest_client = BybitRESTClient()
+
+    try:
+      cancel_result = await rest_client.cancel_order(
+        category="linear",
+        symbol=order.symbol,
+        orderLinkId=order.client_order_id
+      )
+
+      logger.info(f"Ордер {order_id} отменен на бирже: {cancel_result}")
+    except Exception as e:
+      logger.error(f"Ошибка отмены ордера на бирже: {e}")
+      # Продолжаем даже если не удалось отменить на бирже
+
+    # Получаем текущую цену для расчета PnL
+    ticker = await rest_client.get_ticker(category="linear", symbol=order.symbol)
+    current_price = float(ticker["result"]["list"][0]["lastPrice"])
+    entry_price = order.price or order.average_price
+
+    # Расчет финального PnL
+    if order.side == "BUY":
+      final_pnl = (current_price - entry_price) * order.filled_quantity
+    else:
+      final_pnl = (entry_price - current_price) * order.filled_quantity
+
+    # Обновляем статус ордера в БД через FSM
+    fsm = OrderStateMachine(order)
+    fsm.cancel()
+
+    await order_repo.update(order)
+
+    logger.info(f"Ордер {order_id} успешно закрыт, PnL={final_pnl:.2f}")
+
+    return CloseOrderResponse(
+      success=True,
+      order_id=order_id,
+      closed_at=datetime.now().isoformat(),
+      final_pnl=final_pnl,
+      message=f"Ордер успешно закрыт. PnL: {final_pnl:.2f} USDT"
+    )
+
+  except HTTPException:
+    raise
+  except Exception as e:
+    logger.error(f"Ошибка закрытия ордера {order_id}: {e}", exc_info=True)
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=f"Ошибка закрытия ордера: {str(e)}"
+    )

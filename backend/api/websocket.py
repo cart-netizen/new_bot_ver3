@@ -50,6 +50,30 @@ class ConnectionManager:
     self.authenticated_connections.pop(websocket, None)
     logger.info(f"WebSocket отключен. Осталось: {len(self.active_connections)}")
 
+  async def broadcast_screener_update(self, symbol: str, data: dict):
+    """
+    Broadcast обновления данных скринера.
+
+    Args:
+        symbol: Символ торговой пары
+        data: Данные тикера от Bybit
+    """
+    message = {
+      'type': 'screener_update',
+      'data': {
+        'symbol': symbol,
+        'lastPrice': float(data.get('lastPrice', 0)),
+        'volume24h': float(data.get('turnover24h', 0)),
+        'price24hPcnt': float(data.get('price24hPcnt', 0)) * 100,
+        'highPrice24h': float(data.get('highPrice24h', 0)),
+        'lowPrice24h': float(data.get('lowPrice24h', 0)),
+        'prevPrice24h': float(data.get('prevPrice24h', 0)),
+        'timestamp': int(datetime.now().timestamp() * 1000)
+      }
+    }
+
+    await self.broadcast(message)
+
   def authenticate(self, websocket: WebSocket, user_id: str):
     """
     Аутентификация соединения.
@@ -86,6 +110,8 @@ class ConnectionManager:
     except Exception as e:
       logger.error(f"Ошибка отправки сообщения: {e}")
       self.disconnect(websocket)
+
+
 
   async def broadcast(self, message: dict, authenticated_only: bool = True):
     """
@@ -309,3 +335,60 @@ async def broadcast_error(error_message: str, error_type: str = "general"):
     "message": error_message
   }
   await manager.broadcast(message)
+
+connection_manager = ConnectionManager()
+
+async def websocket_endpoint(websocket: WebSocket):
+    """
+    Основной WebSocket эндпоинт для клиентов.
+
+    Args:
+        websocket: WebSocket соединение
+    """
+    await connection_manager.connect(websocket)
+
+    try:
+      # Отправляем приветственное сообщение
+      await connection_manager.send_personal_message(
+        {
+          'type': 'connected',
+          'message': 'WebSocket connection established',
+          'timestamp': int(datetime.now().timestamp() * 1000)
+        },
+        websocket
+      )
+
+      # Основной цикл получения сообщений от клиента
+      while True:
+        try:
+          # Ожидаем сообщения от клиента
+          data = await websocket.receive_text()
+
+          # Парсим JSON
+          try:
+            message = json.loads(data)
+
+            # Обрабатываем ping/pong
+            if message.get('type') == 'ping':
+              await connection_manager.send_personal_message(
+                {
+                  'type': 'pong',
+                  'timestamp': int(datetime.now().timestamp() * 1000)
+                },
+                websocket
+              )
+
+            # Можно добавить другие типы сообщений от клиента
+
+          except json.JSONDecodeError:
+            logger.warning(f"Invalid JSON received: {data}")
+
+        except WebSocketDisconnect:
+          logger.info("Client disconnected normally")
+          break
+        except Exception as e:
+          logger.error(f"Error in WebSocket loop: {e}")
+          break
+
+    finally:
+      connection_manager.disconnect(websocket)

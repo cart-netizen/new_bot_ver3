@@ -1,85 +1,163 @@
-// import { useState } from 'react'
-// import reactLogo from './assets/react.svg'
-// import viteLogo from '/vite.svg'
-// import './App.css'
-//
-// function App() {
-//   const [count, setCount] = useState(0)
-//
-//   return (
-//     <>
-//       <div>
-//         <a href="https://vite.dev" target="_blank">
-//           <img src={viteLogo} className="logo" alt="Vite logo" />
-//         </a>
-//         <a href="https://react.dev" target="_blank">
-//           <img src={reactLogo} className="logo react" alt="React logo" />
-//         </a>
-//       </div>
-//       <h1>Vite + React</h1>
-//       <div className="card">
-//         <button onClick={() => setCount((count) => count + 1)}>
-//           count is {count}
-//         </button>
-//         <p>
-//           Edit <code>src/App.tsx</code> and save to test HMR
-//         </p>
-//       </div>
-//       <p className="read-the-docs">
-//         Click on the Vite and React logos to learn more
-//       </p>
-//     </>
-//   )
-// }
-//
-// export default App
+// frontend/src/App.tsx
+/**
+ * Главный компонент приложения с маршрутизацией.
+ *
+ * ОБНОВЛЕНО:
+ * - Добавлены новые маршруты: /charts, /orders, /screener, /strategies
+ * - Lazy loading для оптимизации производительности
+ * - Сохранена существующая структура
+ */
+
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
+import { lazy, Suspense } from 'react';
+
+// Существующие компоненты
 import { Layout } from './components/layout/Layout';
-import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { LoginPage } from './pages/LoginPage';
-import { DashboardPage } from './pages/DashboardPage';
-import { MarketPage } from './pages/MarketPage';
-import { TradingPage } from './pages/TradingPage';
-import {AccountPage} from '@/pages/AccountPage';
+import { ProtectedRoute } from './components/auth/ProtectedRoute';
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 5000,
-      refetchOnWindowFocus: false,
-    },
-  },
-});
+// Lazy loading страниц
+const AccountPage = lazy(() => import('./pages/AccountPage').then(m => ({ default: m.AccountPage })));
+const DashboardPage = lazy(() => import('./pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
+const MarketPage = lazy(() => import('./pages/MarketPage').then(m => ({ default: m.MarketPage })));
+const TradingPage = lazy(() => import('./pages/TradingPage').then(m => ({ default: m.TradingPage })));
 
-export default function App() {
+// ==================== НОВЫЕ СТРАНИЦЫ ====================
+const ChartsPage = lazy(() => import('./pages/ChartsPage').then(m => ({ default: m.ChartsPage })));
+const OrdersPage = lazy(() => import('./pages/OrdersPage').then(m => ({ default: m.OrdersPage })));
+const ScreenerPage = lazy(() => import('./pages/ScreenerPage').then(m => ({ default: m.ScreenerPage })));
+const StrategiesPage = lazy(() => import('./pages/StrategiesPage').then(m => ({ default: m.StrategiesPage })));
+
+/**
+ * Компонент загрузки для Suspense.
+ */
+function PageLoader() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
-                <Layout />
-              </ProtectedRoute>
-            }
-          >
-            <Route index element={<Navigate to="/dashboard" replace />} />
-            <Route path="account" element={<AccountPage />} />
-
-            <Route path="dashboard" element={<DashboardPage />} />
-            <Route path="market" element={<MarketPage />} />
-            <Route path="trading" element={<TradingPage />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-
-      <Toaster position="top-right" />
-    </QueryClientProvider>
+    <div className="flex items-center justify-center min-h-screen">
+      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+    </div>
   );
 }
 
+/**
+ * Главный компонент приложения.
+ */
+export function App() {
+  return (
+    <BrowserRouter>
+      {/* Toast notifications */}
+      <Toaster
+        position="top-right"
+        richColors
+        closeButton
+        theme="dark"
+      />
+
+      <Routes>
+        {/* Публичный маршрут - Логин */}
+        <Route path="/login" element={<LoginPage />} />
+
+        {/* Защищенные маршруты */}
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <Layout />
+            </ProtectedRoute>
+          }
+        >
+          {/* Редирект с корня на dashboard */}
+          <Route index element={<Navigate to="/dashboard" replace />} />
+
+          {/* Существующие страницы */}
+          <Route
+            path="account"
+            element={
+              <Suspense fallback={<PageLoader />}>
+                <AccountPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="dashboard"
+            element={
+              <Suspense fallback={<PageLoader />}>
+                <DashboardPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="market"
+            element={
+              <Suspense fallback={<PageLoader />}>
+                <MarketPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="trading"
+            element={
+              <Suspense fallback={<PageLoader />}>
+                <TradingPage />
+              </Suspense>
+            }
+          />
+
+          {/* ==================== НОВЫЕ МАРШРУТЫ ==================== */}
+          <Route
+            path="charts"
+            element={
+              <Suspense fallback={<PageLoader />}>
+                <ChartsPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="orders"
+            element={
+              <Suspense fallback={<PageLoader />}>
+                <OrdersPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="screener"
+            element={
+              <Suspense fallback={<PageLoader />}>
+                <ScreenerPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="strategies"
+            element={
+              <Suspense fallback={<PageLoader />}>
+                <StrategiesPage />
+              </Suspense>
+            }
+          />
+
+          {/* 404 - Not Found */}
+          <Route
+            path="*"
+            element={
+              <div className="flex items-center justify-center min-h-screen">
+                <div className="text-center">
+                  <h1 className="text-4xl font-bold text-white mb-4">404</h1>
+                  <p className="text-gray-400 mb-6">Страница не найдена</p>
+                  <a
+                    href="/dashboard"
+                    className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors"
+                  >
+                    Вернуться на главную
+                  </a>
+                </div>
+              </div>
+            }
+          />
+        </Route>
+      </Routes>
+    </BrowserRouter>
+  );
+}
