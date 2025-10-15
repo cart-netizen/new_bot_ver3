@@ -272,9 +272,9 @@ async def broadcast_metrics_update(symbol: str, metrics: dict):
   message = {
     "type": "metrics_update",
     "symbol": symbol,
-    "metrics": metrics
+    "data": metrics  # ✅ Важно: "data", а не "metrics"
   }
-  await manager.broadcast(message)
+  await manager.broadcast(message, authenticated_only=False)  # ✅ authenticated_only=False
 
 
 async def broadcast_signal(signal: dict):
@@ -302,9 +302,9 @@ async def broadcast_orderbook_update(symbol: str, orderbook: dict):
   message = {
     "type": "orderbook_update",
     "symbol": symbol,
-    "orderbook": orderbook
+    "data": orderbook  # ✅ Важно: "data", а не "orderbook"
   }
-  await manager.broadcast(message)
+  await manager.broadcast(message, authenticated_only=False)  # ✅ authenticated_only=False
 
 
 async def broadcast_execution_update(execution: dict):

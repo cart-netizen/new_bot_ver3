@@ -158,7 +158,7 @@ class BybitTickerWebSocket:
       while self.is_running and self.ws:
         await asyncio.sleep(self.ping_interval)
 
-        if self.ws and not self.ws.closed:
+        if self.ws and self.ws.open:
           ping_message = {"op": "ping"}
           await self.ws.send(json.dumps(ping_message))
           logger.debug("Отправлен ping")
@@ -232,7 +232,7 @@ class BybitTickerWebSocket:
     """
     return {
       "is_running": self.is_running,
-      "is_connected": self.ws is not None and not self.ws.close,
+      "is_connected": self.ws is not None and not self.ws.closed,
       "messages_received": self.messages_received,
       "tickers_processed": self.tickers_processed,
       "errors_count": self.errors_count,

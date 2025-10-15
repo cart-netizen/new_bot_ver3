@@ -105,6 +105,9 @@ class BotController:
 
     self.ml_stats_task: Optional[asyncio.Task] = None
 
+    self.metrics_broadcast_task: Optional[asyncio.Task] = None
+    self._last_metrics_log: float = 0.0
+
     # ML Signal Validator
     ml_validator_config = ValidationConfig(
       model_server_url=os.getenv('ML_SERVER_URL', 'http://localhost:8001'),
@@ -272,6 +275,10 @@ class BotController:
         self.websocket_manager.start()
       )
       logger.info("✓ WebSocket соединения запущены")
+
+      # ✅ ДОБАВИТЬ: Задача периодического broadcast метрик
+      self.metrics_broadcast_task = asyncio.create_task(self._metrics_broadcast_loop())
+      logger.info("✓ Metrics broadcast задача запущена")
 
       # ===== НОВОЕ: Запускаем задачу обновления свечей =====
       self.candle_update_task = asyncio.create_task(
@@ -596,6 +603,9 @@ class BotController:
       if self.websocket_task:
         tasks_to_cancel.append(self.websocket_task)
 
+      if self.metrics_broadcast_task:
+        tasks_to_cancel.append(self.metrics_broadcast_task)
+
       for task in tasks_to_cancel:
         task.cancel()
         try:
@@ -670,6 +680,12 @@ class BotController:
               f"{len(manager.bids)} bids, {len(manager.asks)} asks"
             )
 
+            # ✅ ДОБАВИТЬ: Broadcast snapshot на фронтенд
+            from api.websocket import broadcast_orderbook_update
+            orderbook_dict = manager.get_snapshot().to_dict()
+            await broadcast_orderbook_update(symbol, orderbook_dict)
+            logger.debug(f"{symbol} | Orderbook snapshot broadcast на фронтенд")
+
           elif message_type == "delta":
             if not manager.snapshot_received:
               logger.debug(
@@ -679,8 +695,26 @@ class BotController:
 
             manager.apply_delta(message_data)
             logger.debug(f"{symbol} | Delta применена")
+
+            # ✅ ДОБАВИТЬ: Broadcast delta на фронтенд
+            from api.websocket import broadcast_orderbook_update
+            orderbook_dict = manager.get_snapshot().to_dict()
+            await broadcast_orderbook_update(symbol, orderbook_dict)
+
           else:
             logger.warning(f"{symbol} | Неизвестный тип сообщения: {message_type}")
+
+          # ✅ ДОБАВИТЬ: После обновления стакана — рассчитать и broadcast метрики
+          if self.market_analyzer and manager.snapshot_received:
+            try:
+              # Получаем метрики через анализатор
+              metrics = self.market_analyzer.get_latest_metrics(symbol)
+              if metrics:
+                from api.websocket import broadcast_metrics_update
+                await broadcast_metrics_update(symbol, metrics.to_dict())
+                logger.debug(f"{symbol} | Метрики broadcast на фронтенд")
+            except Exception as e:
+              logger.error(f"{symbol} | Ошибка broadcast метрик: {e}")
 
     except Exception as e:
       logger.error(f"Ошибка обработки сообщения стакана: {e}")
@@ -767,6 +801,51 @@ class BotController:
         # Логируем полный traceback для диагностики
         import traceback
         logger.error(f"Traceback:\n{traceback.format_exc()}")
+
+  async def _metrics_broadcast_loop(self):
+    """
+    Периодический broadcast метрик на фронтенд.
+    Выполняется каждые 1-2 секунды для всех активных символов.
+    """
+    logger.info("Запуск metrics broadcast loop")
+
+    while self.status == BotStatus.RUNNING:
+      try:
+        await asyncio.sleep(2.0)  # Интервал 2 секунды
+
+        if not self.market_analyzer:
+          continue
+
+        # Получаем метрики для всех символов
+        all_metrics = self.market_analyzer.get_all_metrics()
+
+        if not all_metrics:
+          continue
+
+        # Broadcast метрики на фронтенд
+        from api.websocket import broadcast_metrics_update
+
+        for symbol, metrics in all_metrics.items():
+          try:
+            await broadcast_metrics_update(symbol, metrics.to_dict())
+          except Exception as e:
+            logger.error(f"{symbol} | Ошибка broadcast метрик: {e}")
+
+        # Логируем статистику каждые 30 секунд
+        if hasattr(self, '_last_metrics_log'):
+          if time.time() - self._last_metrics_log > 30:
+            logger.info(f"Метрики broadcast для {len(all_metrics)} символов")
+            self._last_metrics_log = time.time()
+        else:
+          self._last_metrics_log = time.time()
+
+      except asyncio.CancelledError:
+        break
+      except Exception as e:
+        logger.error(f"Ошибка в metrics broadcast loop: {e}")
+        await asyncio.sleep(5.0)  # Задержка при ошибке
+
+    logger.info("Metrics broadcast loop остановлен")
 
 
 # Глобальный контроллер бота
