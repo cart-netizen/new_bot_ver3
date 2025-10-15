@@ -326,21 +326,73 @@ class BybitRESTClient:
     logger.info(f"Ордер размещен успешно: order_id={response['result']['orderId']}")
     return response
 
-  async def cancel_order(self, symbol: str, order_id: str) -> Dict:
+  # async def cancel_order(self, symbol: str, order_id: str) -> Dict:
+  #   """
+  #   Отмена ордера.
+  #
+  #   Args:
+  #       symbol: Торговая пара
+  #       order_id: ID ордера
+  #
+  #   Returns:
+  #       Dict: Результат отмены
+  #
+  #   Raises:
+  #       ValueError: Если API ключи не настроены
+  #   """
+  #   logger.info(f"Отмена ордера: {symbol} order_id={order_id}")
+  #
+  #   # Проверяем наличие API ключей
+  #   if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
+  #     error_msg = (
+  #       "API ключи Bybit не настроены. "
+  #       "Установите BYBIT_API_KEY и BYBIT_API_SECRET в файле .env"
+  #     )
+  #     logger.error(error_msg)
+  #     raise ValueError(error_msg)
+  #
+  #   # Реальный запрос к API
+  #   params = {
+  #     "category": BybitCategory.LINEAR.value,
+  #     "symbol": symbol,
+  #     "orderId": order_id
+  #   }
+  #
+  #   response = await self._request(
+  #     "POST",
+  #     BybitAPIPaths.CANCEL_ORDER,
+  #     params,
+  #     authenticated=True
+  #   )
+  #
+  #   logger.info(f"Ордер отменен успешно: order_id={order_id}")
+  #   return response
+
+  async def cancel_order(
+      self,
+      symbol: str,
+      order_id: Optional[str] = None,
+      order_link_id: Optional[str] = None
+  ) -> Dict:
     """
     Отмена ордера.
 
     Args:
         symbol: Торговая пара
-        order_id: ID ордера
+        order_id: ID ордера от биржи (опционально)
+        order_link_id: Client Order ID (опционально)
 
     Returns:
         Dict: Результат отмены
 
     Raises:
-        ValueError: Если API ключи не настроены
+        ValueError: Если API ключи не настроены или не указан ни один ID
     """
-    logger.info(f"Отмена ордера: {symbol} order_id={order_id}")
+    # Должен быть указан хотя бы один ID
+    if not order_id and not order_link_id:
+      raise ValueError("Необходимо указать order_id или order_link_id")
+
+    logger.info(f"Отмена ордера: {symbol} order_id={order_id} order_link_id={order_link_id}")
 
     # Проверяем наличие API ключей
     if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
@@ -355,8 +407,13 @@ class BybitRESTClient:
     params = {
       "category": BybitCategory.LINEAR.value,
       "symbol": symbol,
-      "orderId": order_id
     }
+
+    # Используем либо orderId, либо orderLinkId
+    if order_id:
+      params["orderId"] = order_id
+    else:
+      params["orderLinkId"] = order_link_id
 
     response = await self._request(
       "POST",
@@ -365,7 +422,7 @@ class BybitRESTClient:
       authenticated=True
     )
 
-    logger.info(f"Ордер отменен успешно: order_id={order_id}")
+    logger.info(f"Ордер отменен успешно")
     return response
 
   async def get_open_orders(self, symbol: Optional[str] = None) -> Dict:

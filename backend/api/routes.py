@@ -5,8 +5,8 @@ API маршруты.
 import time
 from datetime import datetime
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import status as http_status
 from pydantic import BaseModel, Field
 from fastapi import WebSocket
 from api.app import app
@@ -17,12 +17,13 @@ from core.auth import (
   require_auth
 )
 from core.exceptions import AuthenticationError
+from database.models import OrderStatus
 from domain.state_machines.order_fsm import OrderStateMachine
 from exchange.rest_client import rest_client, BybitRESTClient
 from infrastructure.repositories.order_repository import OrderRepository
 from infrastructure.resilience.circuit_breaker import circuit_breaker_manager
 from infrastructure.resilience.rate_limiter import rate_limiter
-from main import bot_controller
+# from main import bot_controller
 from models.user import LoginRequest, LoginResponse, ChangePasswordRequest
 from config import settings
 from utils.balance_tracker import balance_tracker
@@ -223,7 +224,7 @@ async def login(request: LoginRequest):
   except AuthenticationError as e:
     logger.warning(f"Неудачная попытка входа: {e}")
     raise HTTPException(
-      status_code=status.HTTP_401_UNAUTHORIZED,
+      status_code=http_status.HTTP_401_UNAUTHORIZED,
       detail=str(e)
     )
 
@@ -252,12 +253,12 @@ async def change_password(
     )
   except AuthenticationError as e:
     raise HTTPException(
-      status_code=status.HTTP_401_UNAUTHORIZED,
+      status_code=http_status.HTTP_401_UNAUTHORIZED,
       detail=str(e)
     )
   except ValueError as e:
     raise HTTPException(
-      status_code=status.HTTP_400_BAD_REQUEST,
+      status_code=http_status.HTTP_400_BAD_REQUEST,
       detail=str(e)
     )
 
@@ -319,7 +320,7 @@ async def start_bot(current_user: dict = Depends(require_auth)):
 
   if not bot_controller:
     raise HTTPException(
-      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Бот не инициализирован"
     )
 
@@ -333,7 +334,7 @@ async def start_bot(current_user: dict = Depends(require_auth)):
   except Exception as e:
     logger.error(f"Ошибка запуска бота: {e}")
     raise HTTPException(
-      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
       detail=str(e)
     )
 
@@ -353,7 +354,7 @@ async def stop_bot(current_user: dict = Depends(require_auth)):
 
   if not bot_controller:
     raise HTTPException(
-      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Бот не инициализирован"
     )
 
@@ -367,7 +368,7 @@ async def stop_bot(current_user: dict = Depends(require_auth)):
   except Exception as e:
     logger.error(f"Ошибка остановки бота: {e}")
     raise HTTPException(
-      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
       detail=str(e)
     )
 
@@ -432,21 +433,21 @@ async def get_orderbook(
 
   if not bot_controller or not bot_controller.orderbook_managers:
     raise HTTPException(
-      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Данные стакана недоступны"
     )
 
   manager = bot_controller.orderbook_managers.get(symbol)
   if not manager:
     raise HTTPException(
-      status_code=status.HTTP_404_NOT_FOUND,
+      status_code=http_status.HTTP_404_NOT_FOUND,
       detail=f"Стакан для {symbol} не найден"
     )
 
   snapshot = manager.get_snapshot()
   if not snapshot:
     raise HTTPException(
-      status_code=status.HTTP_404_NOT_FOUND,
+      status_code=http_status.HTTP_404_NOT_FOUND,
       detail=f"Нет данных стакана для {symbol}"
     )
 
@@ -472,14 +473,14 @@ async def get_metrics(
 
   if not bot_controller or not bot_controller.market_analyzer:
     raise HTTPException(
-      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Анализатор недоступен"
     )
 
   metrics = bot_controller.market_analyzer.get_latest_metrics(symbol)
   if not metrics:
     raise HTTPException(
-      status_code=status.HTTP_404_NOT_FOUND,
+      status_code=http_status.HTTP_404_NOT_FOUND,
       detail=f"Метрики для {symbol} не найдены"
     )
 
@@ -501,7 +502,7 @@ async def get_all_metrics(current_user: dict = Depends(require_auth)):
 
   if not bot_controller or not bot_controller.market_analyzer:
     raise HTTPException(
-      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Анализатор недоступен"
     )
 
@@ -539,7 +540,7 @@ async def get_signals(
 
   if not bot_controller or not bot_controller.strategy_engine:
     raise HTTPException(
-      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Стратегия недоступна"
     )
 
@@ -736,7 +737,7 @@ async def get_balance_history(
     valid_periods = ['1h', '24h', '7d', '30d']
     if period not in valid_periods:
       raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
+        status_code=http_status.HTTP_400_BAD_REQUEST,
         detail=f"Неверный период. Используйте: {', '.join(valid_periods)}"
       )
 
@@ -865,7 +866,7 @@ async def get_positions(current_user: dict = Depends(require_auth)):
 
   if not bot_controller or not bot_controller.risk_manager:
     raise HTTPException(
-      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Риск-менеджер недоступен"
     )
 
@@ -891,7 +892,7 @@ async def get_risk_status(current_user: dict = Depends(require_auth)):
 
   if not bot_controller or not bot_controller.risk_manager:
     raise HTTPException(
-      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Риск-менеджер недоступен"
     )
 
@@ -913,7 +914,7 @@ async def get_execution_stats(current_user: dict = Depends(require_auth)):
 
   if not bot_controller or not bot_controller.execution_manager:
     raise HTTPException(
-      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Менеджер исполнения недоступен"
     )
 
@@ -945,7 +946,7 @@ async def get_candles(
     # Валидация параметров
     if limit < 1 or limit > 200:
       raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
+        status_code=http_status.HTTP_400_BAD_REQUEST,
         detail="Limit должен быть от 1 до 200"
       )
 
@@ -953,7 +954,7 @@ async def get_candles(
     valid_intervals = ["1", "3", "5", "15", "30", "60", "120", "240", "360", "720", "D", "W", "M"]
     if interval not in valid_intervals:
       raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
+        status_code=http_status.HTTP_400_BAD_REQUEST,
         detail=f"Неверный интервал. Допустимые: {', '.join(valid_intervals)}"
       )
 
@@ -998,7 +999,7 @@ async def get_candles(
   except Exception as e:
     logger.error(f"Ошибка получения свечей для {symbol}: {e}", exc_info=True)
     raise HTTPException(
-      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
       detail=f"Ошибка получения свечей: {str(e)}"
     )
 
@@ -1033,6 +1034,9 @@ async def reset_circuit_breaker(
 @ml_router.get("/status")
 async def get_ml_status():
   """Статус ML компонентов."""
+
+  from main import bot_controller
+
   return {
     "ml_validator": bot_controller.ml_validator.get_statistics(),
     "spoofing_detector": bot_controller.spoofing_detector.get_statistics(),
@@ -1047,6 +1051,8 @@ async def get_ml_status():
 @detection_router.get("/status/{symbol}")
 async def get_detection_status(symbol: str):
   """Статус детекторов для символа."""
+  from main import bot_controller
+
   spoofing_active = bot_controller.spoofing_detector.is_spoofing_active(symbol)
   layering_active = bot_controller.layering_detector.is_layering_active(symbol)
 
@@ -1084,6 +1090,8 @@ async def get_detection_status(symbol: str):
 @detection_router.get("/sr-levels/{symbol}")
 async def get_sr_levels(symbol: str):
   """S/R уровни для символа."""
+  from main import bot_controller
+
   levels = bot_controller.sr_detector.levels.get(symbol, [])
 
   return {
@@ -1107,12 +1115,17 @@ async def get_sr_levels(symbol: str):
 @strategies_router.get("/status")
 async def get_strategies_status():
   """Статус всех стратегий."""
+  from main import bot_controller
+
   return bot_controller.strategy_manager.get_statistics()
 
 
 @strategies_router.get("/{strategy_name}/stats")
 async def get_strategy_stats(strategy_name: str):
   """Статистика конкретной стратегии."""
+
+  from main import bot_controller
+
   if strategy_name not in bot_controller.strategy_manager.strategies:
     raise HTTPException(status_code=404, detail="Strategy not found")
 
@@ -1160,18 +1173,17 @@ async def get_screener_pairs(
     logger.info(f"Запрос данных скринера с min_volume={min_volume}")
 
     # Создаем клиент Bybit API
-    rest_client = BybitRESTClient()
+    client = BybitRESTClient()
+    await client.initialize()
 
     # Получаем тикеры всех пар
-    tickers_response = await rest_client.get_tickers(category="linear")
+    tickers_list = await client.get_tickers()  # Уже возвращает список!
 
-    if not tickers_response or "result" not in tickers_response:
+    if not tickers_list:
       raise HTTPException(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
         detail="Не удалось получить данные от Bybit API"
       )
-
-    tickers_list = tickers_response["result"].get("list", [])
 
     # Фильтруем и форматируем данные
     filtered_pairs: List[ScreenerPairResponse] = []
@@ -1243,7 +1255,7 @@ async def get_screener_pairs(
   except Exception as e:
     logger.error(f"Ошибка получения данных скринера: {e}", exc_info=True)
     raise HTTPException(
-      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
       detail=f"Внутренняя ошибка сервера: {str(e)}"
     )
 
@@ -1274,25 +1286,23 @@ async def get_screener_pair(
   try:
     logger.info(f"Запрос данных пары {symbol} для скринера")
 
-    rest_client = BybitRESTClient()
+    client = BybitRESTClient()
+    await client.initialize()
 
     # Получаем тикер конкретной пары
-    ticker_response = await rest_client.get_tickers(
-      category="linear",
-      symbol=symbol
-    )
+    tickers_list = await client.get_tickers(symbol=symbol)  # Возвращает список!
 
-    if not ticker_response or "result" not in ticker_response:
+    if not tickers_list:
       raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
+        status_code=http_status.HTTP_404_NOT_FOUND,
         detail=f"Пара {symbol} не найдена"
       )
 
-    ticker = ticker_response["result"].get("list", [{}])[0]
+    ticker = tickers_list[0]
 
     if not ticker:
       raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
+        status_code=http_status.HTTP_404_NOT_FOUND,
         detail=f"Данные для пары {symbol} отсутствуют"
       )
 
@@ -1317,7 +1327,7 @@ async def get_screener_pair(
   except Exception as e:
     logger.error(f"Ошибка получения данных для {symbol}: {e}", exc_info=True)
     raise HTTPException(
-      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
       detail=f"Ошибка получения данных: {str(e)}"
     )
 
@@ -1354,53 +1364,71 @@ async def get_orders(
     # Получаем репозиторий
     order_repo = OrderRepository()
 
-    # Определяем статусы для фильтрации
+    # Получаем все недавние ордера
+    all_orders = await order_repo.get_recent_orders(symbol=symbol, limit=500)
+
+    # Определяем допустимые статусы для фильтрации
     if status == "active":
-      filter_statuses = ["Pending", "Placed", "PartiallyFilled"]
+      allowed_statuses = {"Pending", "Placed", "PartiallyFilled"}
     elif status == "filled":
-      filter_statuses = ["Filled"]
+      allowed_statuses = {"Filled"}
     elif status == "cancelled":
-      filter_statuses = ["Cancelled"]
+      allowed_statuses = {"Cancelled"}
     else:
-      filter_statuses = None
+      allowed_statuses = None  # Все статусы
 
-    # Получаем ордера из БД
-    orders = await order_repo.find_orders(
-      symbol=symbol,
-      statuses=filter_statuses,
-      strategy=strategy
-    )
-
-    # Конвертируем в response модели
+    # Конвертируем в response модели с фильтрацией
     order_responses = []
     active_count = 0
 
-    for order in orders:
+    for order in all_orders:
+      # Фильтр по статусу
+      if allowed_statuses and order.status not in allowed_statuses:
+        continue
+
+      # Извлекаем данные из JSONB полей
+      signal_data = order.signal_data or {}
+      metadata = order.metadata_json or {}
+
+      # Извлекаем strategy из signal_data или metadata
+      order_strategy = signal_data.get("strategy") or metadata.get("strategy")
+
+      # Фильтр по стратегии
+      if strategy and order_strategy != strategy:
+        continue
+
+      # Извлекаем signal_id из signal_data
+      order_signal_id = signal_data.get("signal_id") or signal_data.get("id")
+
+      # Извлекаем leverage из metadata (по умолчанию 1)
+      order_leverage = metadata.get("leverage", 1)
+
       order_response = OrderResponse(
-        order_id=order.order_id,
+        order_id=str(order.id),  # ← id, не order_id
         client_order_id=order.client_order_id,
         exchange_order_id=order.exchange_order_id,
         symbol=order.symbol,
-        side=order.side,
-        order_type=order.order_type,
+        side=order.side.value,  # Преобразуем enum в строку
+        order_type=order.order_type.value,  # Преобразуем enum в строку
         quantity=order.quantity,
         price=order.price,
         filled_quantity=order.filled_quantity,
-        average_price=order.average_price,
+        average_price=order.average_fill_price or 0.0,  # ← average_fill_price
         take_profit=order.take_profit,
         stop_loss=order.stop_loss,
-        leverage=order.leverage,
-        status=order.status,
+        leverage=order_leverage,  # ← Из metadata
+        status=order.status.value,  # Преобразуем enum в строку
         created_at=order.created_at.isoformat(),
         updated_at=order.updated_at.isoformat(),
         filled_at=order.filled_at.isoformat() if order.filled_at else None,
-        strategy=order.strategy,
-        signal_id=order.signal_id,
-        notes=order.notes
+        strategy=order_strategy,  # ← Из signal_data/metadata
+        signal_id=order_signal_id,  # ← Из signal_data
+        notes=order.reason  # ← reason, не notes
       )
 
       order_responses.append(order_response)
 
+      # Считаем активные ордера
       if order.status in ["Pending", "Placed", "PartiallyFilled"]:
         active_count += 1
 
@@ -1416,7 +1444,7 @@ async def get_orders(
   except Exception as e:
     logger.error(f"Ошибка получения списка ордеров: {e}", exc_info=True)
     raise HTTPException(
-      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
       detail=f"Ошибка получения списка ордеров: {str(e)}"
     )
 
@@ -1445,33 +1473,48 @@ async def get_order_detail(
 
     if not order:
       raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
+        status_code=http_status.HTTP_404_NOT_FOUND,
         detail=f"Ордер {order_id} не найден"
       )
 
     # Получаем текущую цену актива
-    rest_client = BybitRESTClient()
-    ticker = await rest_client.get_tickers(category="linear", symbol=order.symbol)
+    client = BybitRESTClient()
+    await client.initialize()
+    tickers_list = await client.get_tickers(symbol=order.symbol)
 
-    current_price = float(ticker["result"]["list"][0]["lastPrice"])
-    entry_price = order.price or order.average_price
+    if not tickers_list:
+      raise HTTPException(
+        status_code=http_status.HTTP_404_NOT_FOUND,
+        detail=f"Тикер для {order.symbol} не найден"
+      )
+
+    current_price = float(tickers_list[0]["lastPrice"])
+    entry_price = order.price or order.average_fill_price or 0.0
+
+    # Извлекаем данные из JSONB полей
+    metadata = order.metadata_json or {}
+    signal_data = order.signal_data or {}
+
+    order_leverage = metadata.get("leverage", 1)
+    order_strategy = signal_data.get("strategy") or metadata.get("strategy")
+    order_signal_id = signal_data.get("signal_id") or signal_data.get("id")
 
     # Расчет PnL
     position_value = order.quantity * entry_price
-    margin_used = position_value / order.leverage
+    margin_used = position_value / order_leverage if order_leverage > 0 else position_value
 
-    if order.side == "BUY":
+    if order.side.value == "Buy":
       pnl = (current_price - entry_price) * order.quantity
-    else:  # SELL
+    else:  # Sell
       pnl = (entry_price - current_price) * order.quantity
 
     pnl_percent = (pnl / position_value) * 100 if position_value > 0 else 0
 
     # Расчет цены ликвидации (упрощенный)
-    if order.side == "BUY":
-      liquidation_price = entry_price * (1 - 1 / order.leverage)
+    if order.side.value == "Buy":
+      liquidation_price = entry_price * (1 - 1 / order_leverage) if order_leverage > 0 else 0
     else:
-      liquidation_price = entry_price * (1 + 1 / order.leverage)
+      liquidation_price = entry_price * (1 + 1 / order_leverage) if order_leverage > 0 else 0
 
     # Комиссии (0.1% maker/taker)
     fees = position_value * 0.001
@@ -1479,25 +1522,25 @@ async def get_order_detail(
     logger.info(f"Детали ордера {order_id}: PnL={pnl:.2f}, Price={current_price}")
 
     return OrderDetailResponse(
-      order_id=order.order_id,
+      order_id=str(order.id),  # ← id
       client_order_id=order.client_order_id,
       exchange_order_id=order.exchange_order_id,
       symbol=order.symbol,
-      side=order.side,
-      order_type=order.order_type,
+      side=order.side.value,
+      order_type=order.order_type.value,
       quantity=order.quantity,
       price=order.price,
       filled_quantity=order.filled_quantity,
-      average_price=order.average_price,
+      average_price=order.average_fill_price or 0.0,  # ← average_fill_price
       take_profit=order.take_profit,
       stop_loss=order.stop_loss,
-      leverage=order.leverage,
-      status=order.status,
+      leverage=order_leverage,  # ← Из metadata
+      status=order.status.value,
       created_at=order.created_at.isoformat(),
       updated_at=order.updated_at.isoformat(),
       filled_at=order.filled_at.isoformat() if order.filled_at else None,
-      strategy=order.strategy,
-      signal_id=order.signal_id,
+      strategy=order_strategy,  # ← Из signal_data
+      signal_id=order_signal_id,  # ← Из signal_data
       current_pnl=pnl,
       current_pnl_percent=pnl_percent,
       current_price=current_price,
@@ -1513,7 +1556,7 @@ async def get_order_detail(
   except Exception as e:
     logger.error(f"Ошибка получения деталей ордера {order_id}: {e}", exc_info=True)
     raise HTTPException(
-      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
       detail=f"Ошибка получения деталей ордера: {str(e)}"
     )
 
@@ -1543,52 +1586,80 @@ async def close_order(
 
     if not order:
       raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
+        status_code=http_status.HTTP_404_NOT_FOUND,
         detail=f"Ордер {order_id} не найден"
       )
 
     # Проверяем, что ордер активен
-    if order.status not in ["Pending", "Placed", "PartiallyFilled"]:
+    if order.status not in [OrderStatus.PENDING, OrderStatus.PLACED, OrderStatus.PARTIALLY_FILLED]:
       raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail=f"Ордер в статусе {order.status} не может быть закрыт"
+        status_code=http_status.HTTP_400_BAD_REQUEST,
+        detail=f"Ордер в статусе {order.status.value} не может быть закрыт"
       )
 
     # Отменяем ордер на бирже
-    rest_client = BybitRESTClient()
+    client = BybitRESTClient()
+    await client.initialize()
 
     try:
-      cancel_result = await rest_client.cancel_order(
-        category="linear",
+      # Используем расширенный метод cancel_order (который вы добавили ранее)
+      cancel_result = await client.cancel_order(
         symbol=order.symbol,
-        orderLinkId=order.client_order_id
+        order_id=order.exchange_order_id,
+        order_link_id=order.client_order_id if not order.exchange_order_id else None
       )
-
       logger.info(f"Ордер {order_id} отменен на бирже: {cancel_result}")
     except Exception as e:
       logger.error(f"Ошибка отмены ордера на бирже: {e}")
       # Продолжаем даже если не удалось отменить на бирже
 
     # Получаем текущую цену для расчета PnL
-    ticker = await rest_client.get_tickers(category="linear", symbol=order.symbol)
-    ticker_result = ticker.get("result", {})
-    ticker_list = ticker_result.get("list", [])
-    if not ticker_list:
+    tickers_list = await client.get_tickers(symbol=order.symbol)
+    if not tickers_list:
       raise HTTPException(status_code=404, detail="Ticker not found")
-    current_price = float(ticker_list[0].get("lastPrice", 0))
-    entry_price = order.price or order.average_price
+
+    current_price = float(tickers_list[0].get("lastPrice", 0))
+    entry_price = order.price or order.average_fill_price or 0.0
 
     # Расчет финального PnL
-    if order.side == "BUY":
+    if order.side.value == "Buy":
       final_pnl = (current_price - entry_price) * order.filled_quantity
-    else:
+    else:  # Sell
       final_pnl = (entry_price - current_price) * order.filled_quantity
 
-    # Обновляем статус ордера в БД через FSM
-    fsm = OrderStateMachine(order)
-    fsm.cancel()
+    # Обновляем статус ордера через FSM
+    # 1. Создаем FSM с order_id (строка) и текущим статусом
+    fsm = OrderStateMachine(
+      order_id=order.client_order_id,
+      initial_state=order.status
+    )
 
-    await order_repo.update(order)
+    # 2. Используем публичный метод update_status вместо прямого вызова триггера
+    try:
+      success = fsm.update_status(
+        new_status=OrderStatus.CANCELLED,
+        raise_on_invalid=False  # Не бросаем исключение, просто логируем
+      )
+
+      if success:
+        logger.info(f"FSM: Ордер {order_id} успешно переведен в статус CANCELLED")
+      else:
+        logger.warning(f"FSM: Не удалось перевести ордер {order_id} через FSM, используем прямое обновление")
+    except Exception as e:
+      logger.warning(f"FSM transition failed: {e}, продолжаем с прямым обновлением")
+
+    # 3. Обновляем в БД через update_status
+    update_success = await order_repo.update_status(
+      client_order_id=order.client_order_id,
+      new_status=OrderStatus.CANCELLED
+    )
+
+    if not update_success:
+      logger.error(f"Не удалось обновить статус ордера {order_id} в БД")
+      raise HTTPException(
+        status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Не удалось обновить статус ордера в БД"
+      )
 
     logger.info(f"Ордер {order_id} успешно закрыт, PnL={final_pnl:.2f}")
 
@@ -1605,6 +1676,6 @@ async def close_order(
   except Exception as e:
     logger.error(f"Ошибка закрытия ордера {order_id}: {e}", exc_info=True)
     raise HTTPException(
-      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
       detail=f"Ошибка закрытия ордера: {str(e)}"
     )
