@@ -10,14 +10,14 @@
  * - Закрытие ордеров с подтверждением
  */
 
-import { useEffect, useState } from 'react';
+import {useCallback, useEffect, useState} from 'react';
 import { OrdersTable } from '../components/orders/OrdersTable';
 import { OrderDetailModal } from '../components/orders/OrderDetailModal';
 import { useOrdersStore } from '../store/ordersStore';
 import { apiService } from '../services/api.service';
 import { toast } from 'sonner';
 import { FileText, TrendingUp, TrendingDown, Activity, AlertCircle, RefreshCw } from 'lucide-react';
-import type { Order, OrderDetail, OrderStatus, OrderSide } from '../types/orders.types';
+import type { Order, OrderStatus, OrderSide } from '../types/orders.types';
 
 /**
  * Компонент страницы ордеров.
@@ -44,32 +44,36 @@ export function OrdersPage() {
   /**
    * Загрузка списка ордеров.
    */
-  const loadOrders = async () => {
-    try {
-      setLoading(true);
-      console.log('[OrdersPage] Загрузка ордеров...');
+  const loadOrders = useCallback(async () => {
+  try {
+    setLoading(true);
+    console.log('[OrdersPage] Загрузка ордеров...');
 
-      const response = await apiService.get('/api/trading/orders', {
-        params: {
-          status: 'active', // Только активные ордера
-        },
-      });
+    const response = await apiService.get('/api/trading/orders', {
+      params: {
+        status: 'active',
+      },
+    });
 
-      if (response && response.orders) {
-        setOrders(response.orders);
-        console.log(`[OrdersPage] Загружено ${response.orders.length} ордеров`);
-      }
-    } catch (error: any) {
-      console.error('[OrdersPage] Ошибка загрузки ордеров:', error);
-
-      const errorMessage = error.response?.data?.detail || error.message || 'Ошибка загрузки ордеров';
-      toast.error('Ошибка загрузки ордеров', {
-        description: errorMessage,
-      });
-    } finally {
-      setLoading(false);
+    if (response && response.orders) {
+      setOrders(response.orders);
+      console.log(`[OrdersPage] Загружено ${response.orders.length} ордеров`);
     }
-  };
+  } catch (error: unknown) {
+    console.error('[OrdersPage] Ошибка загрузки ордеров:', error);
+
+    const errorMessage =
+      error instanceof Error
+        ? error.message
+        : 'Ошибка загрузки ордеров';
+
+    toast.error('Ошибка загрузки ордеров', {
+      description: errorMessage,
+    });
+  } finally {
+    setLoading(false);
+  }
+}, [setLoading, setOrders]);  // Добавить зависимости из store
 
   /**
    * Загрузка детальной информации об ордере.
@@ -84,16 +88,31 @@ export function OrdersPage() {
       if (response && response.order) {
         setSelectedOrderDetail(response.order);
       }
-    } catch (error: any) {
-      console.error('[OrdersPage] Ошибка загрузки деталей ордера:', error);
+    } catch (error: unknown) {
+  console.error('[OrdersPage] Ошибка загрузки ордеров:', error);
 
-      const errorMessage = error.response?.data?.detail || error.message || 'Ошибка загрузки деталей';
-      setDetailError(errorMessage);
+  const errorMessage =
+    error instanceof Error
+      ? error.message
+      : 'Ошибка загрузки ордеров';
 
-      toast.error('Ошибка загрузки деталей ордера', {
-        description: errorMessage,
-      });
-    }
+  const detailMessage =
+    typeof error === 'object' &&
+    error !== null &&
+    'response' in error &&
+    typeof error.response === 'object' &&
+    error.response !== null &&
+    'data' in error.response &&
+    typeof error.response.data === 'object' &&
+    error.response.data !== null &&
+    'detail' in error.response.data
+      ? String(error.response.data.detail)
+      : errorMessage;
+
+  toast.error('Ошибка загрузки ордеров', {
+    description: detailMessage,
+  });
+}
   };
 
   /**
@@ -119,18 +138,31 @@ export function OrdersPage() {
         // Закрываем модальное окно
         setSelectedOrderDetail(null);
       }
-    } catch (error: any) {
-      console.error('[OrdersPage] Ошибка закрытия ордера:', error);
+    } catch (error: unknown) {
+  console.error('[OrdersPage] Ошибка загрузки ордеров:', error);
 
-      const errorMessage = error.response?.data?.detail || error.message || 'Ошибка закрытия ордера';
-      toast.error('Ошибка закрытия ордера', {
-        description: errorMessage,
-      });
+  const errorMessage =
+    error instanceof Error
+      ? error.message
+      : 'Ошибка загрузки ордеров';
 
-      throw error; // Пробрасываем ошибку для обработки в модальном окне
-    } finally {
-      setClosing(false);
-    }
+  const detailMessage =
+    typeof error === 'object' &&
+    error !== null &&
+    'response' in error &&
+    typeof error.response === 'object' &&
+    error.response !== null &&
+    'data' in error.response &&
+    typeof error.response.data === 'object' &&
+    error.response.data !== null &&
+    'detail' in error.response.data
+      ? String(error.response.data.detail)
+      : errorMessage;
+
+  toast.error('Ошибка загрузки ордеров', {
+    description: detailMessage,
+  });
+}
   };
 
   /**
@@ -162,17 +194,16 @@ export function OrdersPage() {
    * Начальная загрузка при монтировании.
    */
   useEffect(() => {
+  loadOrders();
+
+  const intervalId = setInterval(() => {
     loadOrders();
+  }, 30 * 1000);
 
-    // Автообновление каждые 30 секунд
-    const intervalId = setInterval(() => {
-      loadOrders();
-    }, 30 * 1000);
-
-    return () => {
-      clearInterval(intervalId);
-    };
-  }, []);
+  return () => {
+    clearInterval(intervalId);
+  };
+}, [loadOrders]);  // Теперь ESLint доволен
 
   /**
    * Получение статистики.
@@ -345,6 +376,7 @@ export function OrdersPage() {
       {selectedOrderDetail && (
         <OrderDetailModal
           orderDetail={selectedOrderDetail}
+          error={detailError}
           onClose={handleCloseModal}
           onCloseOrder={closeOrder}
           isClosing={isClosing}

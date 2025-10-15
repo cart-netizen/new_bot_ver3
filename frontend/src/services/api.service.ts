@@ -1,4 +1,7 @@
-import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
+// frontend/src/services/api.service.ts
+
+import axios from 'axios';
+import type { AxiosInstance, AxiosRequestConfig } from 'axios'; // ✅ type-only import
 
 class ApiService {
   private api: AxiosInstance;
@@ -9,7 +12,6 @@ class ApiService {
       timeout: 30000,
     });
 
-    // Добавляем токен аутентификации к каждому запросу
     this.api.interceptors.request.use((config) => {
       const token = localStorage.getItem('auth_token');
       if (token) {
@@ -24,12 +26,13 @@ class ApiService {
     return response.data;
   }
 
-  async post(url: string, data?: any, config?: AxiosRequestConfig) {
+  // ✅ Убрали any, используем unknown
+  async post(url: string, data?: unknown, config?: AxiosRequestConfig) {
     const response = await this.api.post(url, data, config);
     return response.data;
   }
 
-  async put(url: string, data?: any, config?: AxiosRequestConfig) {
+  async put(url: string, data?: unknown, config?: AxiosRequestConfig) {
     const response = await this.api.put(url, data, config);
     return response.data;
   }

@@ -11,7 +11,7 @@
  */
 
 import { create } from 'zustand';
-import type { Order, OrderDetail, OrderFilters, OrdersStats, OrderStatus, OrderSide } from '../types/orders.types';
+import type { Order, OrderDetail, OrderFilters, OrdersStats } from '../types/orders.types';
 
 /**
  * Параметры сортировки.

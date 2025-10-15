@@ -25,7 +25,7 @@ export function ChartsPage() {
     selectedSymbols,
     toggleSymbol,
     canAddMoreCharts,
-    reset
+
   } = useChartsStore();
 
   /**

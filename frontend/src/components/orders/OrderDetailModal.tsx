@@ -9,8 +9,8 @@
  * - Кнопка закрытия ордера с подтверждением
  */
 
-import { useState, useEffect } from 'react';
-import { X, TrendingUp, TrendingDown, AlertTriangle, Loader2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import {X, TrendingUp, TrendingDown, AlertTriangle, Loader2, AlertCircle} from 'lucide-react';
 import { cn } from '../../utils/helpers';
 import type { OrderDetail } from '../../types/orders.types';
 import { PriceChart } from '../market/PriceChart';
@@ -63,6 +63,11 @@ interface OrderDetailModalProps {
   orderDetail: OrderDetail;
 
   /**
+   * Ошибка загрузки деталей (опциональная).
+   */
+  error?: string | null;  // ← ДОБАВИТЬ ЭТУ СТРОКУ
+
+  /**
    * Callback при закрытии модального окна.
    */
   onClose: () => void;
@@ -83,13 +88,14 @@ interface OrderDetailModalProps {
  */
 export function OrderDetailModal({
   orderDetail,
+  error,
   onClose,
   onCloseOrder,
   isClosing = false
 }: OrderDetailModalProps) {
   const [showConfirmClose, setShowConfirmClose] = useState(false);
-  const [currentPnl, setCurrentPnl] = useState(orderDetail.current_pnl);
-  const [currentPnlPercent, setCurrentPnlPercent] = useState(orderDetail.current_pnl_percent);
+  const [currentPnl] = useState(orderDetail.current_pnl);
+  const [currentPnlPercent] = useState(orderDetail.current_pnl_percent);
 
   const isBuy = orderDetail.side === 'BUY';
   const isActive = ['PENDING', 'PLACED', 'PARTIALLY_FILLED'].includes(orderDetail.status);
@@ -229,6 +235,23 @@ export function OrderDetailModal({
               <X className="h-6 w-6 text-gray-400 hover:text-white" />
             </button>
           </div>
+
+          {/* Блок ошибки */}
+          {error && (
+            <div className="mx-4 mt-4">
+              <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+                  <div>
+                    <h3 className="text-sm font-semibold text-destructive mb-1">
+                      Ошибка загрузки деталей
+                    </h3>
+                    <p className="text-sm text-gray-400">{error}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Контент */}
           <div className="p-6 space-y-6">

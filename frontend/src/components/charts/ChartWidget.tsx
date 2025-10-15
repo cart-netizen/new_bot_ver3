@@ -13,7 +13,8 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { createChart, IChartApi, ISeriesApi, CandlestickData } from 'lightweight-charts';
+import { createChart, CandlestickSeries } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 import { X, TrendingUp, Loader2, AlertCircle } from 'lucide-react';
 import { cn } from '../../utils/helpers';
 import type { Candle } from '../../store/chartsStore';
@@ -117,7 +118,7 @@ export function ChartWidget({
     });
 
     // Создаем серию свечей
-    const candlestickSeries = chart.addCandlestickSeries({
+    const candlestickSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#10B981',
       downColor: '#EF4444',
       borderUpColor: '#10B981',
@@ -127,8 +128,8 @@ export function ChartWidget({
     });
 
     // Конвертируем данные в формат Lightweight Charts
-    const chartData: CandlestickData[] = candles.map(candle => ({
-      time: candle.time as any, // Lightweight Charts принимает number или string
+    const chartData = candles.map(candle => ({
+      time: candle.time as UTCTimestamp,
       open: candle.open,
       high: candle.high,
       low: candle.low,
@@ -187,8 +188,8 @@ export function ChartWidget({
    */
   useEffect(() => {
     if (seriesRef.current && candles.length > 0) {
-      const chartData: CandlestickData[] = candles.map(candle => ({
-        time: candle.time as any,
+      const chartData = candles.map(candle => ({
+        time: candle.time as UTCTimestamp,
         open: candle.open,
         high: candle.high,
         low: candle.low,

@@ -32,7 +32,7 @@ export function DashboardPage() {
     currentMetrics,
     selectedSymbol: storeSelectedSymbol,
     isConnected,
-    setSelectedSymbol: setStoreSelectedSymbol,
+    // setSelectedSymbol: _setStoreSelectedSymbol,
     memoryStats,
   } = useMarketStore();
   const { signals } = useTradingStore();

@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+
 from pydantic import BaseModel, Field
 from fastapi import WebSocket
 from api.app import app
@@ -1440,7 +1441,7 @@ async def get_order_detail(
     order_repo = OrderRepository()
 
     # Получаем ордер из БД
-    order = await order_repo.get_by_id(order_id)
+    order = await order_repo.get_by_client_order_id(order_id)
 
     if not order:
       raise HTTPException(
@@ -1450,7 +1451,7 @@ async def get_order_detail(
 
     # Получаем текущую цену актива
     rest_client = BybitRESTClient()
-    ticker = await rest_client.get_ticker(category="linear", symbol=order.symbol)
+    ticker = await rest_client.get_tickers(category="linear", symbol=order.symbol)
 
     current_price = float(ticker["result"]["list"][0]["lastPrice"])
     entry_price = order.price or order.average_price
@@ -1538,7 +1539,7 @@ async def close_order(
     order_repo = OrderRepository()
 
     # Получаем ордер из БД
-    order = await order_repo.get_by_id(order_id)
+    order = await order_repo.get_by_client_order_id(order_id)
 
     if not order:
       raise HTTPException(
@@ -1569,8 +1570,12 @@ async def close_order(
       # Продолжаем даже если не удалось отменить на бирже
 
     # Получаем текущую цену для расчета PnL
-    ticker = await rest_client.get_ticker(category="linear", symbol=order.symbol)
-    current_price = float(ticker["result"]["list"][0]["lastPrice"])
+    ticker = await rest_client.get_tickers(category="linear", symbol=order.symbol)
+    ticker_result = ticker.get("result", {})
+    ticker_list = ticker_result.get("list", [])
+    if not ticker_list:
+      raise HTTPException(status_code=404, detail="Ticker not found")
+    current_price = float(ticker_list[0].get("lastPrice", 0))
     entry_price = order.price or order.average_price
 
     # Расчет финального PnL

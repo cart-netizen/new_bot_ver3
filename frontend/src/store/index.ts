@@ -13,3 +13,6 @@ export { useOrdersStore } from './ordersStore'; // ДОБАВИТЬ
 
 // Экспорт типов
 export type { OrderSortField } from './ordersStore';
+
+// Экспорт типов
+export type { SortField, SortDirection } from './screenerStore';
