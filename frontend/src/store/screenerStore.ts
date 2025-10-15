@@ -7,11 +7,9 @@
  * - Расчет динамики по таймфреймам (1m, 3m, 5m, 15m)
  * - Сортировка по различным параметрам
  * - Оптимизированное управление памятью
+ * - REST API fallback для начальной загрузки
  *
- * Архитектура:
- * - Использует MEMORY_CONFIG для предотвращения переполнения
- * - Автоматическая очистка старых данных
- * - WebSocket интеграция для real-time обновлений
+ * Обновлено: Добавлена загрузка через REST API
  */
 
 import { create } from 'zustand';
@@ -27,7 +25,7 @@ const SCREENER_MEMORY_CONFIG = {
   MIN_VOLUME_24H: 4_000_000,
 
   // Количество исторических снапшотов для расчета динамики
-  MAX_PRICE_HISTORY: 100, // Для расчета изменений по таймфреймам
+  MAX_PRICE_HISTORY: 100,
 
   // Интервал очистки неактивных данных (мс)
   CLEANUP_INTERVAL: 60 * 1000, // 1 минута
@@ -89,337 +87,425 @@ export type SortField = 'symbol' | 'lastPrice' | 'price24hPcnt' | 'volume24h';
 export type SortDirection = 'asc' | 'desc';
 
 /**
- * Состояние Store для скринера.
+ * Статистика памяти скринера.
  */
-interface ScreenerState {
-  // Данные пар (только те, что проходят фильтр по volume)
-  pairs: Record<string, ScreenerPairData>;
-
-  // Фильтрация и сортировка
-  filterText: string;
-  sortField: SortField;
-  sortDirection: SortDirection;
-
-  // Статус подключения
-  isConnected: boolean;
-
-  // Статистика памяти
-  memoryStats: {
-    totalPairs: number;
-    activePairs: number;
-    totalPricePoints: number;
-    lastCleanup: number;
-  };
-
-  // Actions
-  updatePairData: (symbol: string, data: Partial<ScreenerPairData>) => void;
-  updatePairPrice: (symbol: string, price: number) => void;
-  setFilterText: (text: string) => void;
-  setSorting: (field: SortField, direction: SortDirection) => void;
-  setConnected: (connected: boolean) => void;
-  cleanupMemory: () => void;
-  reset: () => void;
-
-  // Selectors
-  getFilteredPairs: () => ScreenerPairData[];
-  getSortedPairs: () => ScreenerPairData[];
+interface ScreenerMemoryStats {
+  totalPairs: number;
+  activePairs: number;
+  totalPricePoints: number;
+  lastCleanup: number;
 }
 
 /**
- * Расчет изменения цены за таймфрейм.
+ * Формат данных пары из REST API.
  */
-function calculatePriceChange(
-  currentPrice: number,
+interface ScreenerPairApiResponse {
+  symbol: string;
+  lastPrice: number;
+  price24hPcnt: number;
+  volume24h: number;
+  highPrice24h: number;
+  lowPrice24h: number;
+  prevPrice24h: number;
+  turnover24h?: number;
+}
+
+/**
+ * Формат ответа REST API /api/screener/pairs.
+ */
+interface ScreenerApiResponse {
+  pairs: ScreenerPairApiResponse[];
+  total: number;
+  timestamp: number;
+  min_volume: number;
+}
+
+/**
+ * Состояние Store для скринера.
+ */
+interface ScreenerStore {
+  // Данные
+  pairs: Record<string, ScreenerPairData>;
+  isConnected: boolean;
+  isLoading: boolean;
+
+  // Сортировка
+  sortField: SortField;
+  sortDirection: SortDirection;
+
+  // Статистика памяти
+  memoryStats: ScreenerMemoryStats;
+
+  // Методы управления данными
+  updatePairData: (symbol: string, data: Partial<ScreenerPairData>) => void;
+  updatePairPrice: (symbol: string, price: number) => void;
+  removePair: (symbol: string) => void;
+  clearAllPairs: () => void;
+
+  // Методы управления состоянием
+  setConnected: (connected: boolean) => void;
+  setLoading: (loading: boolean) => void;
+
+  // Сортировка
+  setSorting: (field: SortField, direction: SortDirection) => void;
+
+  // Получение отсортированных данных
+  getSortedPairs: () => ScreenerPairData[];
+
+  // Управление памятью
+  cleanupMemory: () => void;
+
+  // REST API загрузка
+  loadInitialData: () => Promise<void>;
+}
+
+/**
+ * Расчет изменения цены по таймфрейму.
+ */
+function calculateTimeframeChange(
   priceHistory: PricePoint[],
+  currentPrice: number,
   timeframeMinutes: number
 ): PriceChange | null {
-  const now = Date.now();
-  const timeframeMs = timeframeMinutes * 60 * 1000;
-  const targetTimestamp = now - timeframeMs;
+  if (priceHistory.length === 0) return null;
 
-  // Находим ближайшую цену к таргетному времени
-  let previousPrice: number | null = null;
-  let minTimeDiff = Infinity;
+  const now = Date.now();
+  const targetTime = now - timeframeMinutes * 60 * 1000;
+
+  // Ищем ближайшую цену к целевому времени
+  let closestPoint: PricePoint | null = null;
+  let minDiff = Infinity;
 
   for (const point of priceHistory) {
-    const timeDiff = Math.abs(point.timestamp - targetTimestamp);
-
-    // Допуск ±10% от таймфрейма
-    if (timeDiff < timeframeMs * 0.1 && timeDiff < minTimeDiff) {
-      minTimeDiff = timeDiff;
-      previousPrice = point.price;
+    const diff = Math.abs(point.timestamp - targetTime);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closestPoint = point;
     }
   }
 
-  if (previousPrice === null) {
-    return null;
-  }
+  if (!closestPoint) return null;
 
-  const changePercent = ((currentPrice - previousPrice) / previousPrice) * 100;
+  const changePercent = ((currentPrice - closestPoint.price) / closestPoint.price) * 100;
 
   return {
     timeframe: `${timeframeMinutes}m`,
     change_percent: changePercent,
-    previous_price: previousPrice,
+    previous_price: closestPoint.price,
     current_price: currentPrice,
   };
 }
 
 /**
- * Zustand Store для скринера с оптимизированным управлением памятью.
+ * Store для управления данными скринера.
  */
-export const useScreenerStore = create<ScreenerState>((set, get) => {
-  // Периодическая очистка памяти
-  setInterval(() => {
-    get().cleanupMemory();
-  }, SCREENER_MEMORY_CONFIG.CLEANUP_INTERVAL);
+export const useScreenerStore = create<ScreenerStore>((set, get) => ({
+  // ==================== НАЧАЛЬНОЕ СОСТОЯНИЕ ====================
+  pairs: {},
+  isConnected: false,
+  isLoading: false,
+  sortField: 'volume24h',
+  sortDirection: 'desc',
+  memoryStats: {
+    totalPairs: 0,
+    activePairs: 0,
+    totalPricePoints: 0,
+    lastCleanup: Date.now(),
+  },
 
-  return {
-    // Initial state
-    pairs: {},
-    filterText: '',
-    sortField: 'volume24h',
-    sortDirection: 'desc',
-    isConnected: false,
-    memoryStats: {
-      totalPairs: 0,
-      activePairs: 0,
-      totalPricePoints: 0,
-      lastCleanup: Date.now(),
-    },
+  // ==================== УПРАВЛЕНИЕ ДАННЫМИ ====================
 
-    /**
-     * Обновление данных торговой пары.
-     */
-    updatePairData: (symbol, data) => set((state) => {
-      const existingPair = state.pairs[symbol];
-      const now = Date.now();
+  /**
+   * Обновление данных торговой пары.
+   */
+  updatePairData: (symbol: string, data: Partial<ScreenerPairData>) => {
+    const state = get();
+    const now = Date.now();
 
-      // Создаем или обновляем данные пары
-      const updatedPair: ScreenerPairData = {
-        symbol,
-        lastPrice: data.lastPrice ?? existingPair?.lastPrice ?? 0,
-        price24hPcnt: data.price24hPcnt ?? existingPair?.price24hPcnt ?? 0,
-        volume24h: data.volume24h ?? existingPair?.volume24h ?? 0,
-        highPrice24h: data.highPrice24h ?? existingPair?.highPrice24h ?? 0,
-        lowPrice24h: data.lowPrice24h ?? existingPair?.lowPrice24h ?? 0,
-        prevPrice24h: data.prevPrice24h ?? existingPair?.prevPrice24h ?? 0,
-        changes: existingPair?.changes ?? {
-          '1m': null,
-          '3m': null,
-          '5m': null,
-          '15m': null,
-        },
-        priceHistory: existingPair?.priceHistory ?? [],
-        lastUpdate: now,
-        isActive: true,
-      };
+    // Проверка лимита пар
+    if (!state.pairs[symbol] && Object.keys(state.pairs).length >= SCREENER_MEMORY_CONFIG.MAX_SYMBOLS) {
+      console.warn(`[ScreenerStore] Достигнут лимит пар (${SCREENER_MEMORY_CONFIG.MAX_SYMBOLS})`);
+      return;
+    }
 
-      // Фильтр по минимальному объему
-      if (updatedPair.volume24h < SCREENER_MEMORY_CONFIG.MIN_VOLUME_24H) {
-        // Не добавляем пару, если объем слишком мал
-        return state;
+    // Фильтр по объему
+    if (data.volume24h !== undefined && data.volume24h < SCREENER_MEMORY_CONFIG.MIN_VOLUME_24H) {
+      // Удаляем если объем стал меньше минимума
+      if (state.pairs[symbol]) {
+        const newPairs = { ...state.pairs };
+        delete newPairs[symbol];
+        set({ pairs: newPairs });
       }
+      return;
+    }
 
-      // Обновляем историю цен при изменении цены
-      if (data.lastPrice && data.lastPrice !== existingPair?.lastPrice) {
-        updatedPair.priceHistory = [
-          ...updatedPair.priceHistory,
-          { price: data.lastPrice, timestamp: now },
-        ].slice(-SCREENER_MEMORY_CONFIG.MAX_PRICE_HISTORY); // Ограничиваем размер
+    const existingPair = state.pairs[symbol];
 
-        // Пересчитываем динамику по таймфреймам
-        updatedPair.changes = {
-          '1m': calculatePriceChange(data.lastPrice, updatedPair.priceHistory, 1),
-          '3m': calculatePriceChange(data.lastPrice, updatedPair.priceHistory, 3),
-          '5m': calculatePriceChange(data.lastPrice, updatedPair.priceHistory, 5),
-          '15m': calculatePriceChange(data.lastPrice, updatedPair.priceHistory, 15),
-        };
-      }
-
-      // Проверка лимита количества пар
-      const currentPairsCount = Object.keys(state.pairs).length;
-      if (currentPairsCount >= SCREENER_MEMORY_CONFIG.MAX_SYMBOLS && !existingPair) {
-        console.warn(`[ScreenerStore] Достигнут лимит пар (${SCREENER_MEMORY_CONFIG.MAX_SYMBOLS})`);
-        return state;
-      }
-
-      return {
-        pairs: {
-          ...state.pairs,
-          [symbol]: updatedPair,
-        },
-      };
-    }),
-
-    /**
-     * Быстрое обновление только цены (для WebSocket тиков).
-     */
-    updatePairPrice: (symbol, price) => set((state) => {
-      const pair = state.pairs[symbol];
-      if (!pair) return state;
-
-      const now = Date.now();
-
-      // Обновляем историю цен
-      const updatedHistory = [
-        ...pair.priceHistory,
-        { price, timestamp: now },
-      ].slice(-SCREENER_MEMORY_CONFIG.MAX_PRICE_HISTORY);
-
-      // Пересчитываем динамику
-      const updatedChanges = {
-        '1m': calculatePriceChange(price, updatedHistory, 1),
-        '3m': calculatePriceChange(price, updatedHistory, 3),
-        '5m': calculatePriceChange(price, updatedHistory, 5),
-        '15m': calculatePriceChange(price, updatedHistory, 15),
-      };
-
-      return {
-        pairs: {
-          ...state.pairs,
-          [symbol]: {
-            ...pair,
-            lastPrice: price,
-            priceHistory: updatedHistory,
-            changes: updatedChanges,
-            lastUpdate: now,
-          },
-        },
-      };
-    }),
-
-    /**
-     * Установка текста фильтра.
-     */
-    setFilterText: (text) => set({ filterText: text }),
-
-    /**
-     * Установка параметров сортировки.
-     */
-    setSorting: (field, direction) => set({
-      sortField: field,
-      sortDirection: direction
-    }),
-
-    /**
-     * Установка статуса подключения.
-     */
-    setConnected: (connected) => set({ isConnected: connected }),
-
-    /**
-     * Очистка памяти от неактивных пар.
-     */
-    cleanupMemory: () => set((state) => {
-      const now = Date.now();
-      const updatedPairs: Record<string, ScreenerPairData> = {};
-
-      let removedCount = 0;
-
-      for (const [symbol, pair] of Object.entries(state.pairs)) {
-        const inactiveTime = now - pair.lastUpdate;
-
-        // Удаляем пару, если она неактивна слишком долго
-        if (inactiveTime > SCREENER_MEMORY_CONFIG.INACTIVE_TTL) {
-          removedCount++;
-          continue;
-        }
-
-        // Удаляем пару, если объем упал ниже минимума
-        if (pair.volume24h < SCREENER_MEMORY_CONFIG.MIN_VOLUME_24H) {
-          removedCount++;
-          continue;
-        }
-
-        updatedPairs[symbol] = pair;
-      }
-
-      if (removedCount > 0) {
-        console.log(`[ScreenerStore] Очищено ${removedCount} неактивных пар`);
-      }
-
-      // Подсчет статистики
-      const activePairs = Object.values(updatedPairs).filter(p => p.isActive).length;
-      const totalPricePoints = Object.values(updatedPairs).reduce(
-        (sum, p) => sum + p.priceHistory.length,
-        0
-      );
-
-      return {
-        pairs: updatedPairs,
-        memoryStats: {
-          totalPairs: Object.keys(updatedPairs).length,
-          activePairs,
-          totalPricePoints,
-          lastCleanup: now,
-        },
-      };
-    }),
-
-    /**
-     * Полный сброс состояния.
-     */
-    reset: () => set({
-      pairs: {},
-      filterText: '',
-      sortField: 'volume24h',
-      sortDirection: 'desc',
-      isConnected: false,
-      memoryStats: {
-        totalPairs: 0,
-        activePairs: 0,
-        totalPricePoints: 0,
-        lastCleanup: Date.now(),
+    // Обновляем или создаем пару
+    const updatedPair: ScreenerPairData = {
+      symbol,
+      lastPrice: data.lastPrice ?? existingPair?.lastPrice ?? 0,
+      price24hPcnt: data.price24hPcnt ?? existingPair?.price24hPcnt ?? 0,
+      volume24h: data.volume24h ?? existingPair?.volume24h ?? 0,
+      highPrice24h: data.highPrice24h ?? existingPair?.highPrice24h ?? 0,
+      lowPrice24h: data.lowPrice24h ?? existingPair?.lowPrice24h ?? 0,
+      prevPrice24h: data.prevPrice24h ?? existingPair?.prevPrice24h ?? 0,
+      changes: existingPair?.changes ?? {
+        '1m': null,
+        '3m': null,
+        '5m': null,
+        '15m': null,
       },
-    }),
+      priceHistory: existingPair?.priceHistory ?? [],
+      lastUpdate: now,
+      isActive: true,
+    };
 
-    /**
-     * Получение отфильтрованных пар.
-     */
-    getFilteredPairs: () => {
-      const state = get();
-      const pairs = Object.values(state.pairs);
+    // Добавляем точку в историю цен (если цена обновилась)
+    if (data.lastPrice !== undefined && data.lastPrice > 0) {
+      updatedPair.priceHistory.push({
+        price: data.lastPrice,
+        timestamp: now,
+      });
 
-      if (!state.filterText) {
-        return pairs;
+      // Ограничиваем размер истории
+      if (updatedPair.priceHistory.length > SCREENER_MEMORY_CONFIG.MAX_PRICE_HISTORY) {
+        updatedPair.priceHistory = updatedPair.priceHistory.slice(-SCREENER_MEMORY_CONFIG.MAX_PRICE_HISTORY);
       }
 
-      const filterLower = state.filterText.toLowerCase();
-      return pairs.filter(pair =>
-        pair.symbol.toLowerCase().includes(filterLower)
-      );
-    },
+      // Рассчитываем изменения по таймфреймам
+      updatedPair.changes = {
+        '1m': calculateTimeframeChange(updatedPair.priceHistory, updatedPair.lastPrice, 1),
+        '3m': calculateTimeframeChange(updatedPair.priceHistory, updatedPair.lastPrice, 3),
+        '5m': calculateTimeframeChange(updatedPair.priceHistory, updatedPair.lastPrice, 5),
+        '15m': calculateTimeframeChange(updatedPair.priceHistory, updatedPair.lastPrice, 15),
+      };
+    }
 
-    /**
-     * Получение отсортированных пар.
-     */
-    getSortedPairs: () => {
-      const state = get();
-      const filteredPairs = state.getFilteredPairs();
+    // Обновляем store
+    set({
+      pairs: {
+        ...state.pairs,
+        [symbol]: updatedPair,
+      },
+    });
+  },
 
-      return [...filteredPairs].sort((a, b) => {
-        const field = state.sortField;
-        const direction = state.sortDirection === 'asc' ? 1 : -1;
+  /**
+   * Обновление только цены пары (быстрое обновление).
+   */
+  updatePairPrice: (symbol: string, price: number) => {
+    const state = get();
+    const pair = state.pairs[symbol];
 
-        let compareResult = 0;
+    if (!pair) return;
 
-        switch (field) {
-          case 'symbol':
-            compareResult = a.symbol.localeCompare(b.symbol);
-            break;
-          case 'lastPrice':
-            compareResult = a.lastPrice - b.lastPrice;
-            break;
-          case 'price24hPcnt':
-            compareResult = a.price24hPcnt - b.price24hPcnt;
-            break;
-          case 'volume24h':
-            compareResult = a.volume24h - b.volume24h;
-            break;
-        }
+    get().updatePairData(symbol, { lastPrice: price });
+  },
 
-        return compareResult * direction;
+  /**
+   * Удаление пары.
+   */
+  removePair: (symbol: string) => {
+    const state = get();
+    const newPairs = { ...state.pairs };
+    delete newPairs[symbol];
+    set({ pairs: newPairs });
+  },
+
+  /**
+   * Очистка всех пар.
+   */
+  clearAllPairs: () => {
+    set({ pairs: {} });
+  },
+
+  // ==================== УПРАВЛЕНИЕ СОСТОЯНИЕМ ====================
+
+  /**
+   * Установка статуса подключения.
+   */
+  setConnected: (connected: boolean) => {
+    set({ isConnected: connected });
+  },
+
+  /**
+   * Установка статуса загрузки.
+   */
+  setLoading: (loading: boolean) => {
+    set({ isLoading: loading });
+  },
+
+  // ==================== СОРТИРОВКА ====================
+
+  /**
+   * Установка параметров сортировки.
+   */
+  setSorting: (field: SortField, direction: SortDirection) => {
+    set({ sortField: field, sortDirection: direction });
+  },
+
+  /**
+   * Получение отсортированного списка пар.
+   */
+  getSortedPairs: () => {
+    const state = get();
+    const pairsArray = Object.values(state.pairs);
+
+    return pairsArray.sort((a, b) => {
+      let aValue: number | string;
+      let bValue: number | string;
+
+      switch (state.sortField) {
+        case 'symbol':
+          aValue = a.symbol;
+          bValue = b.symbol;
+          break;
+        case 'lastPrice':
+          aValue = a.lastPrice;
+          bValue = b.lastPrice;
+          break;
+        case 'price24hPcnt':
+          aValue = a.price24hPcnt;
+          bValue = b.price24hPcnt;
+          break;
+        case 'volume24h':
+          aValue = a.volume24h;
+          bValue = b.volume24h;
+          break;
+        default:
+          aValue = 0;
+          bValue = 0;
+      }
+
+      if (typeof aValue === 'string' && typeof bValue === 'string') {
+        return state.sortDirection === 'asc'
+          ? aValue.localeCompare(bValue)
+          : bValue.localeCompare(aValue);
+      }
+
+      return state.sortDirection === 'asc'
+        ? (aValue as number) - (bValue as number)
+        : (bValue as number) - (aValue as number);
+    });
+  },
+
+  // ==================== УПРАВЛЕНИЕ ПАМЯТЬЮ ====================
+
+  /**
+   * Очистка неактивных пар и оптимизация памяти.
+   */
+  cleanupMemory: () => {
+    const state = get();
+    const now = Date.now();
+
+    console.log('[ScreenerStore] Running memory cleanup...');
+
+    // Находим неактивные пары
+    const activePairs: Record<string, ScreenerPairData> = {};
+    let removedCount = 0;
+
+    Object.entries(state.pairs).forEach(([symbol, pair]) => {
+      const timeSinceUpdate = now - pair.lastUpdate;
+
+      if (timeSinceUpdate < SCREENER_MEMORY_CONFIG.INACTIVE_TTL) {
+        activePairs[symbol] = pair;
+      } else {
+        removedCount++;
+      }
+    });
+
+    // Подсчитываем статистику
+    const totalPricePoints = Object.values(activePairs).reduce(
+      (sum, pair) => sum + pair.priceHistory.length,
+      0
+    );
+
+    const memoryStats: ScreenerMemoryStats = {
+      totalPairs: Object.keys(activePairs).length,
+      activePairs: Object.values(activePairs).filter(p => p.isActive).length,
+      totalPricePoints,
+      lastCleanup: now,
+    };
+
+    if (removedCount > 0) {
+      console.log(`[ScreenerStore] Removed ${removedCount} inactive pairs`);
+    }
+
+    console.log(`[ScreenerStore] Memory stats:`, memoryStats);
+
+    set({
+      pairs: activePairs,
+      memoryStats,
+    });
+  },
+
+  // ==================== REST API ЗАГРУЗКА ====================
+
+  /**
+   * Загрузка начальных данных через REST API.
+   *
+   * Используется как fallback при старте приложения
+   * или если WebSocket медленно подключается.
+   */
+  loadInitialData: async () => {
+    const state = get();
+
+    console.log('[ScreenerStore] Loading initial data via REST API...');
+    state.setLoading(true);
+
+    try {
+      // Получаем токен
+      const token = localStorage.getItem('auth_token');
+
+      if (!token) {
+        console.warn('[ScreenerStore] No auth token found, skipping initial load');
+        state.setLoading(false);
+        return;
+      }
+
+      // Запрос к API
+      const response = await fetch('http://localhost:8000/api/screener/pairs', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
       });
-    },
-  };
-});
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data: ScreenerApiResponse = await response.json();
+
+      console.log(`[ScreenerStore] Loaded ${data.pairs?.length || 0} pairs via REST`);
+
+      // Обновляем store
+      if (data.pairs && Array.isArray(data.pairs)) {
+        data.pairs.forEach((pair: ScreenerPairApiResponse) => {
+          state.updatePairData(pair.symbol, {
+            lastPrice: pair.lastPrice,
+            volume24h: pair.volume24h,
+            price24hPcnt: pair.price24hPcnt,
+            highPrice24h: pair.highPrice24h,
+            lowPrice24h: pair.lowPrice24h,
+            prevPrice24h: pair.prevPrice24h,
+          });
+        });
+
+        // Устанавливаем статус подключения
+        state.setConnected(true);
+
+        console.log('[ScreenerStore] Initial data loaded successfully');
+      }
+
+    } catch (error) {
+      console.error('[ScreenerStore] Failed to load initial data:', error);
+
+      // НЕ устанавливаем connected=false, чтобы дать шанс WebSocket
+      // state.setConnected(false);
+    } finally {
+      state.setLoading(false);
+    }
+  },
+}));

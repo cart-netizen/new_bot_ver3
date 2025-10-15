@@ -21,6 +21,154 @@ import { toast } from 'sonner';
 import { MemoryMonitor } from '../dev/MemoryMonitor';
 
 /**
+ * Базовый тип WebSocket сообщения.
+ */
+interface WebSocketMessage {
+  type: string;
+  timestamp?: string | number;
+}
+
+/**
+ * Данные пары для скринера из WebSocket.
+ */
+interface ScreenerPairWebSocketData {
+  symbol: string;
+  lastPrice: number;
+  volume24h: number;
+  price24hPcnt: number;
+  highPrice24h: number;
+  lowPrice24h: number;
+  prevPrice24h: number;
+}
+
+/**
+ * Сообщение с полными данными скринера.
+ */
+interface ScreenerDataMessage extends WebSocketMessage {
+  type: 'screener_data';
+  pairs: ScreenerPairWebSocketData[];
+  total: number;
+  min_volume: number;
+}
+
+/**
+ * Сообщение с обновлением одной пары скринера.
+ */
+interface ScreenerUpdateMessage extends WebSocketMessage {
+  type: 'screener_update';
+  data: ScreenerPairWebSocketData;
+}
+
+/**
+ * Сообщение с тикером (только цена).
+ */
+interface TickerMessage extends WebSocketMessage {
+  type: 'ticker';
+  data: {
+    symbol: string;
+    lastPrice: number;
+  };
+}
+
+/**
+ * Сообщение с обновлением orderbook.
+ */
+interface OrderBookUpdateMessage extends WebSocketMessage {
+  type: 'orderbook_update';
+  data: {
+    symbol: string;
+    bids: unknown;
+    asks: unknown;
+    timestamp?: number;
+  };
+}
+
+/**
+ * Сообщение с обновлением метрик.
+ */
+interface MetricsUpdateMessage extends WebSocketMessage {
+  type: 'metrics_update';
+  data: {
+    symbol: string;
+    timestamp: number;
+    [key: string]: unknown;
+  };
+}
+
+/**
+ * Сообщение с торговым сигналом.
+ */
+interface SignalUpdateMessage extends WebSocketMessage {
+  type: 'signal_update';
+  data: {
+    symbol: string;
+    type: string;
+    [key: string]: unknown;
+  };
+}
+
+/**
+ * Сообщение с обновлением ордера.
+ */
+interface OrderUpdateMessage extends WebSocketMessage {
+  type: 'order_update';
+  data: {
+    order_id: string;
+    [key: string]: unknown;
+  };
+}
+
+/**
+ * Сообщение с обновлением позиции.
+ */
+interface PositionUpdateMessage extends WebSocketMessage {
+  type: 'position_update';
+  data: {
+    symbol: string;
+    [key: string]: unknown;
+  };
+}
+
+/**
+ * Сообщение об ошибке.
+ */
+interface ErrorMessage extends WebSocketMessage {
+  type: 'error';
+  message: string;
+}
+
+/**
+ * Сообщение о подключении.
+ */
+interface ConnectedMessage extends WebSocketMessage {
+  type: 'connected';
+  message: string;
+}
+
+/**
+ * Pong ответ.
+ */
+interface PongMessage extends WebSocketMessage {
+  type: 'pong';
+}
+
+/**
+ * Объединенный тип всех WebSocket сообщений.
+ */
+type WebSocketMessageType =
+  | ScreenerDataMessage
+  | ScreenerUpdateMessage
+  | TickerMessage
+  | OrderBookUpdateMessage
+  | MetricsUpdateMessage
+  | SignalUpdateMessage
+  | OrderUpdateMessage
+  | PositionUpdateMessage
+  | ErrorMessage
+  | ConnectedMessage
+  | PongMessage;
+
+/**
  * Главный Layout компонент.
  */
 export function Layout() {
@@ -93,95 +241,143 @@ export function Layout() {
        * WebSocket отправляет данные как строку (JSON), которую нужно парсить.
        */
       onMessage: (event: MessageEvent) => {
-        try {
-          // Парсим JSON из строки
-          const message = JSON.parse(event.data);
+  try {
+    // Парсим JSON из строки
+    const message = JSON.parse(event.data);
 
-          console.log('[Layout] WebSocket message:', message.type);
+    console.log('[Layout] WebSocket message type:', message.type);
 
-          // Обработка по типу сообщения
-          switch (message.type) {
-            // ==================== OrderBook Updates ====================
-            case 'orderbook_update': {
-              const data = message.data;
-              if (data?.symbol && data?.bids && data?.asks) {
-                updateOrderBook(data.symbol, data);
-              }
-              break;
-            }
+    // Обработка по типу сообщения
+    switch (message.type) {
+      // ==================== Screener Full Data (NEW) ====================
+      case 'screener_data': {
+        const pairs = message.pairs || [];
 
-            // ==================== Metrics Updates ====================
-            case 'metrics_update': {
-              const data = message.data;
-              if (data?.symbol && data?.timestamp) {
-                updateMetrics(data.symbol, data);
-              }
-              break;
-            }
+        console.log(`[Layout] Received screener_data: ${pairs.length} pairs`);
 
-            // ==================== Signal Updates ====================
-            case 'signal_update': {
-              const data = message.data;
-              if (data?.symbol && data?.type) {
-                addSignal(data);
-              }
-              break;
-            }
+        // Обновляем все пары одним пакетом
+        pairs.forEach((pair: any) => {
+          updatePairData(pair.symbol, {
+            lastPrice: pair.lastPrice,
+            volume24h: pair.volume24h,
+            price24hPcnt: pair.price24hPcnt,
+            highPrice24h: pair.highPrice24h,
+            lowPrice24h: pair.lowPrice24h,
+            prevPrice24h: pair.prevPrice24h,
+          });
+        });
 
-            // ==================== Screener Updates ====================
-            case 'screener_update': {
-              const data = message.data;
-              if (data?.symbol && data?.volume24h !== undefined) {
-                updatePairData(data.symbol, {
-                  lastPrice: data.lastPrice,
-                  volume24h: data.volume24h,
-                  price24hPcnt: data.price24hPcnt,
-                  highPrice24h: data.highPrice24h,
-                  lowPrice24h: data.lowPrice24h,
-                  prevPrice24h: data.prevPrice24h,
-                });
-              }
-              break;
-            }
+        // Устанавливаем статус подключения
+        setScreenerConnected(true);
 
-            // ==================== Ticker Updates (Price only) ====================
-            case 'ticker': {
-              const data = message.data;
-              if (data?.symbol && data?.lastPrice !== undefined) {
-                updatePairPrice(data.symbol, data.lastPrice);
-              }
-              break;
-            }
-
-            // ==================== Order Updates ====================
-            case 'order_update': {
-              const data = message.data;
-              console.log('[Layout] Order update received:', data);
-              // Здесь можно добавить обработку через ordersStore
-              // Например: updateOrder(data.order_id, data);
-              break;
-            }
-
-            // ==================== Connected ====================
-            case 'connected': {
-              console.log('[Layout] WebSocket handshake completed');
-              break;
-            }
-
-            // ==================== Pong ====================
-            case 'pong': {
-              // Ответ на ping - ничего не делаем
-              break;
-            }
-
-            default: {
-              console.warn('[Layout] Unknown message type:', message.type);
-            }
-          }
-        } catch (error) {
-          console.error('[Layout] Error parsing WebSocket message:', error);
+        // Логируем только первые 5 раз
+        if (pairs.length > 0) {
+          const firstPair = pairs[0];
+          console.log('[Layout] Sample pair:', firstPair.symbol, '@', firstPair.lastPrice);
         }
-      },
+
+        break;
+      }
+
+      // ==================== OrderBook Updates ====================
+      case 'orderbook_update': {
+        const data = message.data;
+        if (data?.symbol && data?.bids && data?.asks) {
+          updateOrderBook(data.symbol, data);
+        }
+        break;
+      }
+
+      // ==================== Metrics Updates ====================
+      case 'metrics_update': {
+        const data = message.data;
+        if (data?.symbol && data?.timestamp) {
+          updateMetrics(data.symbol, data);
+        }
+        break;
+      }
+
+      // ==================== Signal Updates ====================
+      case 'signal_update': {
+        const data = message.data;
+        if (data?.symbol && data?.type) {
+          addSignal(data);
+        }
+        break;
+      }
+
+      // ==================== Screener Single Update (Legacy) ====================
+      case 'screener_update': {
+        const data = message.data;
+        if (data?.symbol && data?.volume24h !== undefined) {
+          updatePairData(data.symbol, {
+            lastPrice: data.lastPrice,
+            volume24h: data.volume24h,
+            price24hPcnt: data.price24hPcnt,
+            highPrice24h: data.highPrice24h,
+            lowPrice24h: data.lowPrice24h,
+            prevPrice24h: data.prevPrice24h,
+          });
+        }
+        break;
+      }
+
+      // ==================== Ticker Updates (Price only) ====================
+      case 'ticker': {
+        const data = message.data;
+        if (data?.symbol && data?.lastPrice !== undefined) {
+          updatePairPrice(data.symbol, data.lastPrice);
+        }
+        break;
+      }
+
+      // ==================== Order Updates ====================
+      case 'order_update': {
+        const data = message.data;
+        console.log('[Layout] Order update:', data?.order_id);
+        // Обработка обновлений ордеров (если нужно)
+        break;
+      }
+
+      // ==================== Position Updates ====================
+      case 'position_update': {
+        const data = message.data;
+        console.log('[Layout] Position update:', data?.symbol);
+        // Обработка обновлений позиций (если нужно)
+        break;
+      }
+
+      // ==================== Connected Confirmation ====================
+      case 'connected': {
+        console.log('[Layout] WebSocket connected confirmation:', message.message);
+        toast.success('Подключено к серверу');
+        break;
+      }
+
+      // ==================== Pong Response ====================
+      case 'pong': {
+        console.log('[Layout] Pong received');
+        break;
+      }
+
+      // ==================== Error Messages ====================
+      case 'error': {
+        console.error('[Layout] Server error:', message.message);
+        toast.error(`Ошибка сервера: ${message.message}`);
+        break;
+      }
+
+      // ==================== Unknown Message Type ====================
+      default: {
+        console.warn('[Layout] Unknown message type:', message.type);
+        break;
+      }
+    }
+
+  } catch (error) {
+    console.error('[Layout] Error parsing WebSocket message:', error);
+  }
+}
     });
   }, [
     token,

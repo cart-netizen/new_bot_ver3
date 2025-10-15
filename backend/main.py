@@ -6,6 +6,8 @@
 import asyncio
 import os
 import signal
+import time
+import traceback
 from datetime import datetime
 from typing import Dict, Optional, Any
 from contextlib import asynccontextmanager
@@ -16,6 +18,8 @@ from fastapi import WebSocket, WebSocketDisconnect
 from config import settings
 from core.logger import setup_logging, get_logger
 from core.exceptions import log_exception, OrderBookSyncError, OrderBookError
+from core.screener_processor import ScreenerProcessor
+from core.ticker_websocket import ScreenerTickerManager
 from core.trace_context import trace_operation
 from database.connection import db_manager
 from domain.services.fsm_registry import fsm_registry
@@ -813,7 +817,7 @@ async def lifespan(app):
   Args:
       app: FastAPI приложение
   """
-  global bot_controller
+  global bot_controller, screener_processor, screener_ticker_manager
 
   # Startup
   logger.info("Запуск приложения")
@@ -824,6 +828,39 @@ async def lifespan(app):
       logger.info("→ Инициализация базы данных...")
       await db_manager.initialize()
       logger.info("✓ База данных подключена")
+
+      # ===== НОВОЕ: ИНИЦИАЛИЗАЦИЯ SCREENER =====
+      if settings.SCREENER_ENABLED:
+        logger.info("=" * 80)
+        logger.info("ИНИЦИАЛИЗАЦИЯ SCREENER")
+        logger.info("=" * 80)
+
+        # ШАГ 1: Создаем процессор скринера
+        screener_processor = ScreenerProcessor(
+          min_volume=settings.SCREENER_MIN_VOLUME
+        )
+        logger.info("✓ ScreenerProcessor создан")
+
+        # ШАГ 2: Создаем менеджер тикеров
+        screener_ticker_manager = ScreenerTickerManager(screener_processor)
+        logger.info("✓ ScreenerTickerManager создан")
+
+        # ШАГ 3: Запускаем менеджер тикеров (WebSocket подключение)
+        await screener_ticker_manager.start()
+        logger.info("✓ ScreenerTickerManager запущен")
+
+        # ШАГ 4: ТОЛЬКО ТЕПЕРЬ запускаем фоновые задачи
+        asyncio.create_task(screener_broadcast_task())
+        logger.info("✓ Screener broadcast task запущен")
+
+        asyncio.create_task(screener_stats_task())
+        logger.info("✓ Screener stats task запущен")
+
+        logger.info("=" * 80)
+        logger.info("✅ SCREENER ПОЛНОСТЬЮ ИНИЦИАЛИЗИРОВАН")
+        logger.info("=" * 80)
+      else:
+        logger.info("⚠️  Screener отключен в конфигурации")
 
       # 2. Recovery & Reconciliation (если включено)
       if settings.ENABLE_AUTO_RECOVERY:
@@ -881,6 +918,10 @@ async def lifespan(app):
     #   # Закрываем REST клиент
     #   await rest_client.close()
     with trace_operation("app_shutdown"):
+      if screener_ticker_manager:
+        await screener_ticker_manager.stop()
+        logger.info("✓ ScreenerTickerManager остановлен")
+
       if bot_controller:
         await bot_controller.stop()
 
@@ -914,7 +955,7 @@ app.include_router(screener_router)
 
 app.include_router(orders_router)
 # WebSocket эндпоинт
-@app.websocket("/ws")
+# @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
   """
   WebSocket эндпоинт для фронтенда.
@@ -932,6 +973,151 @@ async def websocket_endpoint(websocket: WebSocket):
     logger.error(f"Ошибка WebSocket: {e}")
   finally:
     ws_manager.disconnect(websocket)
+
+@app.websocket("/ws")
+async def websocket_route(websocket: WebSocket):
+    """WebSocket эндпоинт для фронтенда."""
+    await websocket_endpoint(websocket)
+
+
+# ==================== SCREENER COMPONENTS ====================
+
+# Глобальные компоненты скринера
+screener_processor: Optional[ScreenerProcessor] = None
+screener_ticker_manager: Optional[ScreenerTickerManager] = None
+
+
+# ==================== SCREENER BROADCAST TASK ====================
+
+async def screener_broadcast_task():
+  """
+  Фоновая задача для broadcast данных скринера через WebSocket.
+
+  Периодически:
+  - Получает актуальные данные от ScreenerProcessor
+  - Отправляет их всем подключенным клиентам через WebSocket
+  - Логирует статистику
+
+  Интервал обновления настраивается через SCREENER_BROADCAST_INTERVAL.
+  """
+  global screener_processor
+
+  logger.info("=" * 80)
+  logger.info("ЗАПУСК SCREENER BROADCAST TASK")
+  logger.info(f"Интервал: {settings.SCREENER_BROADCAST_INTERVAL} сек")
+  logger.info(f"Min Volume: {settings.SCREENER_MIN_VOLUME:,.0f} USDT")
+  logger.info("=" * 80)
+
+  iteration = 0
+  last_stats_log = 0
+
+  # Ждем инициализации процессора
+  while screener_processor is None:
+    logger.warning("Ожидание инициализации screener_processor...")
+    await asyncio.sleep(1)
+
+  logger.info("✓ screener_processor инициализирован, начинаем broadcast")
+
+  while True:
+    try:
+      iteration += 1
+      current_time = time.time()
+
+      # Проверка на None (на всякий случай)
+      if screener_processor is None:
+        logger.error("screener_processor стал None! Прерываем задачу.")
+        break
+
+      # Получаем данные от процессора
+      screener_data = screener_processor.get_screener_data()
+
+      # Логируем статистику каждые N секунд
+      if current_time - last_stats_log >= settings.SCREENER_STATS_LOG_INTERVAL:
+        stats = screener_processor.get_statistics()
+        logger.info(
+          f"📊 Screener Stats: {stats['total_pairs']} пар, "
+          f"{stats['active_pairs']} активных, "
+          f"broadcast #{iteration}"
+        )
+        last_stats_log = current_time
+
+      # Broadcast через WebSocket
+      from api.websocket import manager
+
+      if manager.active_connections:
+        await manager.broadcast(screener_data, authenticated_only=False)
+
+        # Детальное логирование для первых 5 итераций
+        if iteration <= 5:
+          logger.debug(
+            f"Broadcast #{iteration}: {len(screener_data['pairs'])} пар → "
+            f"{len(manager.active_connections)} клиентов"
+          )
+      else:
+        # Логируем только раз в минуту если нет клиентов
+        if iteration % 30 == 1:
+          logger.debug("Нет активных WebSocket подключений для broadcast")
+
+    except Exception as e:
+      logger.error(f"Ошибка в screener_broadcast_task (итерация {iteration}): {e}")
+      logger.error(traceback.format_exc())
+
+    # Ждем до следующей итерации
+    await asyncio.sleep(settings.SCREENER_BROADCAST_INTERVAL)
+
+
+async def screener_stats_task():
+  """
+  Фоновая задача для периодического логирования статистики скринера.
+
+  Логирует:
+  - Статистику ScreenerProcessor
+  - Статистику ScreenerTickerManager
+  - Статистику WebSocket соединений
+  """
+  global screener_processor, screener_ticker_manager
+
+  logger.info("Запуск screener_stats_task")
+
+  # Ждем инициализации компонентов
+  while screener_processor is None or screener_ticker_manager is None:
+    logger.warning("Ожидание инициализации компонентов screener...")
+    await asyncio.sleep(1)
+
+  logger.info("✓ Компоненты screener инициализированы, начинаем логирование статистики")
+
+  while True:
+    try:
+      await asyncio.sleep(settings.SCREENER_STATS_LOG_INTERVAL)
+
+      # Проверка на None
+      if screener_processor is None or screener_ticker_manager is None:
+        logger.error("Компоненты screener стали None! Прерываем задачу.")
+        break
+
+      # Статистика процессора
+      proc_stats = screener_processor.get_statistics()
+      logger.info(
+        f"ScreenerProcessor: {proc_stats['total_pairs']} всего, "
+        f"{proc_stats['active_pairs']} активных, "
+        f"min_volume={proc_stats['min_volume']:,.0f}"
+      )
+
+      # Статистика менеджера тикеров
+      mgr_stats = screener_ticker_manager.get_statistics()
+
+      if mgr_stats.get('websocket_stats'):
+        ws_stats = mgr_stats['websocket_stats']
+        logger.info(
+          f"TickerWebSocket: {ws_stats['tickers_processed']} тикеров обработано, "
+          f"{ws_stats['messages_received']} сообщений, "
+          f"{ws_stats['errors_count']} ошибок, "
+          f"connected={ws_stats['is_connected']}"
+        )
+
+    except Exception as e:
+      logger.error(f"Ошибка в screener_stats_task: {e}")
+      logger.error(traceback.format_exc())
 
 
 def handle_shutdown_signal(signum, frame):
