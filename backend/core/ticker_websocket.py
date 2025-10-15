@@ -232,7 +232,7 @@ class BybitTickerWebSocket:
     """
     return {
       "is_running": self.is_running,
-      "is_connected": self.ws is not None and not self.ws.closed,
+      "is_connected": self.ws is not None and not self.ws.close,
       "messages_received": self.messages_received,
       "tickers_processed": self.tickers_processed,
       "errors_count": self.errors_count,

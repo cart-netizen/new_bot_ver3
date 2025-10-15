@@ -1,4 +1,3 @@
-// frontend/src/components/layout/Layout.tsx
 /**
  * Главный Layout компонент с WebSocket интеграцией.
  *
@@ -19,6 +18,90 @@ import { useScreenerStore } from '../../store/screenerStore';
 import { wsService } from '../../services/websocket.service';
 import { toast } from 'sonner';
 import { MemoryMonitor } from '../dev/MemoryMonitor';
+
+// Импортируем предоставленные интерфейсы (предполагаем, что они доступны; если нет, добавьте import)
+export interface OrderBookMetrics {
+  symbol: string;
+  timestamp: number;
+  datetime: string;
+
+  // Ценовые метрики
+  prices: {
+    best_bid: number | null;
+    best_ask: number | null;
+    spread: number | null;
+    mid_price: number | null;
+  };
+
+  // Объемные метрики
+  volumes: {
+    total_bid: number;
+    total_ask: number;
+    bid_depth_5: number;
+    ask_depth_5: number;
+    bid_depth_10: number;
+    ask_depth_10: number;
+  };
+
+  // Дисбаланс спроса/предложения
+  imbalance: {
+    overall: number;      // 0.0 (все продажи) - 0.5 (баланс) - 1.0 (все покупки)
+    depth_5: number;
+    depth_10: number;
+  };
+
+  // VWAP метрики
+  vwap: {
+    bid: number | null;
+    ask: number | null;
+    mid: number | null;
+  };
+
+  // Кластеры объема
+  clusters: {
+    largest_bid: {
+      price: number | null;
+      volume: number;
+    };
+    largest_ask: {
+      price: number | null;
+      volume: number;
+    };
+  };
+}
+
+export interface OrderBook {
+  symbol: string;
+  bids: [number, number][];  // [price, quantity]
+  asks: [number, number][];  // [price, quantity]
+  timestamp: number;
+  best_bid: number | null;
+  best_ask: number | null;
+  spread: number | null;
+  mid_price: number | null;
+  update_id?: number;
+  sequence_id?: number;
+}
+
+export interface TradingSignal {
+  symbol: string;
+  signal_type: SignalType;
+  strength: SignalStrength;
+  timestamp: number;
+  price: number;
+  confidence: number;
+  metrics: {
+    imbalance: number | null;
+  };
+  reason: string;
+  status: {
+    is_valid: boolean;
+  };
+}
+
+// Предполагаем, что SignalType и SignalStrength - это enums или строки; определите их здесь, если нужно
+type SignalType = string; // Замените на реальный enum, напр. 'buy' | 'sell'
+type SignalStrength = number | string; // Замените на реальный тип
 
 /**
  * Базовый тип WebSocket сообщения.
@@ -75,12 +158,7 @@ interface TickerMessage extends WebSocketMessage {
  */
 interface OrderBookUpdateMessage extends WebSocketMessage {
   type: 'orderbook_update';
-  data: {
-    symbol: string;
-    bids: unknown;
-    asks: unknown;
-    timestamp?: number;
-  };
+  data: Pick<OrderBook, 'symbol' | 'bids' | 'asks' | 'timestamp'>;
 }
 
 /**
@@ -88,11 +166,7 @@ interface OrderBookUpdateMessage extends WebSocketMessage {
  */
 interface MetricsUpdateMessage extends WebSocketMessage {
   type: 'metrics_update';
-  data: {
-    symbol: string;
-    timestamp: number;
-    [key: string]: unknown;
-  };
+  data: OrderBookMetrics;
 }
 
 /**
@@ -100,11 +174,7 @@ interface MetricsUpdateMessage extends WebSocketMessage {
  */
 interface SignalUpdateMessage extends WebSocketMessage {
   type: 'signal_update';
-  data: {
-    symbol: string;
-    type: string;
-    [key: string]: unknown;
-  };
+  data: Omit<TradingSignal, 'signal_type'> & { type: string };
 }
 
 /**
@@ -229,7 +299,7 @@ export function Layout() {
         isConnectingRef.current = false;
       },
 
-      onError: (error: any) => {
+      onError: (error: Event) => {
         console.error('[Layout] WebSocket error:', error);
         isConnectingRef.current = false;
         toast.error('Ошибка подключения к серверу');
@@ -256,7 +326,7 @@ export function Layout() {
         console.log(`[Layout] Received screener_data: ${pairs.length} pairs`);
 
         // Обновляем все пары одним пакетом
-        pairs.forEach((pair: any) => {
+        pairs.forEach((pair: ScreenerPairWebSocketData) => {
           updatePairData(pair.symbol, {
             lastPrice: pair.lastPrice,
             volume24h: pair.volume24h,

@@ -13,7 +13,7 @@ from typing import Dict, Optional, Any
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import WebSocket, WebSocketDisconnect, FastAPI
 
 from config import settings
 from core.logger import setup_logging, get_logger
@@ -810,7 +810,7 @@ async def fsm_cleanup_task():
       await asyncio.sleep(60)
 
 @asynccontextmanager
-async def lifespan(app):
+async def lifespan(app:FastAPI):
   """
   Управление жизненным циклом приложения.
 
@@ -840,6 +840,22 @@ async def lifespan(app):
           min_volume=settings.SCREENER_MIN_VOLUME
         )
         logger.info("✓ ScreenerProcessor создан")
+
+        logger.info("Загрузка начальных данных через REST API...")
+        try:
+          from exchange.rest_client import rest_client
+
+          tickers_response = await rest_client.get_tickers()
+
+          if tickers_response and "result" in tickers_response:
+            tickers_list = tickers_response["result"].get("list", [])
+
+            for ticker in tickers_list:
+              screener_processor.update_from_ticker(ticker)
+
+            logger.info(f"✓ Загружено {len(tickers_list)} тикеров через REST API")
+        except Exception as e:
+          logger.error(f"Ошибка загрузки через REST API: {e}")
 
         # ШАГ 2: Создаем менеджер тикеров
         screener_ticker_manager = ScreenerTickerManager(screener_processor)
