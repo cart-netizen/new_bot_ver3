@@ -5,11 +5,24 @@ import { useScreenerStore } from '../../store/screenerStore';
 import { ArrowUp, ArrowDown, ArrowUpDown, Plus, Check } from 'lucide-react';
 import type { SortField } from '../../types/screener.types';
 
+interface TradingPairsListProps {
+  /**
+   * Callback при клике на торговую пару.
+   * Вызывается с символом пары для обновления детальной информации.
+   */
+  onPairClick?: (symbol: string) => void;
+
+  /**
+   * Текущая выбранная пара (для подсветки).
+   */
+  selectedSymbol?: string | null;
+}
+
 /**
  * Узкий вертикальный список торговых пар (как sidebar).
  * Отображается между Sidebar и основным контентом.
  */
-export function TradingPairsList() {
+export function TradingPairsList({ onPairClick, selectedSymbol }: TradingPairsListProps) {
   const {
     pairs,
     sortField,
@@ -32,6 +45,15 @@ export function TradingPairsList() {
       setSorting(field, sortOrder === 'asc' ? 'desc' : 'asc');
     } else {
       setSorting(field, 'desc');
+    }
+  };
+
+  /**
+   * Обработчик клика на строку торговой пары.
+   */
+  const handleRowClick = (symbol: string) => {
+    if (onPairClick) {
+      onPairClick(symbol);
     }
   };
 
@@ -140,7 +162,12 @@ export function TradingPairsList() {
               {sortedPairs.map((pair) => (
                 <tr
                   key={pair.symbol}
-                  className="border-b border-gray-800 hover:bg-gray-800/30 transition text-xs"
+                  onClick={() => handleRowClick(pair.symbol)}
+                  className={`border-b border-gray-800 transition cursor-pointer text-xs ${
+                    selectedSymbol === pair.symbol
+                      ? 'bg-primary/20 hover:bg-primary/25'
+                      : 'hover:bg-gray-800/30'
+                  }`}
                 >
                   {/* Пара */}
                   <td className="px-2 py-1.5 font-mono font-medium">
@@ -180,7 +207,10 @@ export function TradingPairsList() {
                   {/* Кнопка */}
                   <td className="px-2 py-1.5 text-center">
                     <button
-                      onClick={() => togglePairSelection(pair.symbol)}
+                      onClick={(e) => {
+                        e.stopPropagation(); // Предотвращаем срабатывание handleRowClick
+                        togglePairSelection(pair.symbol);
+                      }}
                       className={`p-1 rounded transition ${
                         pair.is_selected
                           ? 'bg-primary text-white'

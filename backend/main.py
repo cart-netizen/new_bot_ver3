@@ -138,6 +138,7 @@ class BotController:
     # ===== SCREENER MANAGER (НОВОЕ) =====
     self.screener_manager: Optional[ScreenerManager] = None
     self.screener_broadcast_task: Optional[asyncio.Task] = None
+    self.screener_manager = ScreenerManager()
 
     self.running = False
 
@@ -214,6 +215,7 @@ class BotController:
       logger.info("✓ WebSocket менеджер создан")
 
       # ===== SCREENER MANAGER (НОВОЕ) =====
+
       if settings.SCREENER_ENABLED:
         logger.info("Инициализация Screener Manager...")
         self.screener_manager = ScreenerManager()

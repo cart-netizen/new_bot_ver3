@@ -6,17 +6,17 @@ import { MetricsCard } from '../components/market/MetricsCard';
 import { OrderBookWidget } from '../components/market/OrderBookWidget';
 import { PriceChart } from '../components/market/PriceChart';
 import { SignalsTable } from '../components/market/SignalsTable';
+import { TradingPairsList } from '../components/screener/TradingPairsList';
 import { useBotStore } from '../store/botStore';
 import { useMarketStore } from '../store/marketStore';
 import { useTradingStore } from '../store/tradingStore';
 import { Activity, Wifi, WifiOff } from 'lucide-react';
 import { toast } from 'sonner';
-import {TradingPairsList} from "@/components/screener/TradingPairsList";
 
 /**
  * Главная страница дашборда.
  * Отображает управление ботом, метрики, стакан и сигналы.
- * Список торговых пар находится в Layout (слева).
+ * Layout: TradingPairsList -> Детали + График -> Order Book.
  */
 export function DashboardPage() {
   const { fetchStatus, fetchConfig, symbols } = useBotStore();
@@ -53,9 +53,11 @@ export function DashboardPage() {
   }, [fetchStatus, fetchConfig]);
 
   /**
-   * Выбор пары для детального просмотра.
+   * Обработчик клика на торговую пару.
+   * Устанавливает выбранную пару для детального просмотра.
    */
-  const handleSymbolSelect = (symbol: string) => {
+  const handlePairClick = (symbol: string) => {
+    console.log('[Dashboard] Pair clicked:', symbol);
     setSelectedSymbol(symbol === selectedSymbol ? null : symbol);
   };
 
@@ -76,141 +78,90 @@ export function DashboardPage() {
   }
 
   return (
-      <div className="p-6 space-y-6">
-        {/* Заголовок с индикатором подключения */}
-        <div className="flex items-center justify-between">
-          <h1 className="text-3xl font-bold">Dashboard</h1>
+    <div className="flex h-screen overflow-hidden">
+      {/* 1. TradingPairsList - вертикальный список слева */}
+      <div className="w-[280px] flex-shrink-0">
+        <TradingPairsList
+          onPairClick={handlePairClick}
+          selectedSymbol={selectedSymbol}
+        />
+      </div>
 
-          <div
+      {/* 2-3. Основной контент (Детали + График + Order Book) */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="p-6 space-y-6">
+          {/* Заголовок с индикатором подключения */}
+          <div className="flex items-center justify-between">
+            <h1 className="text-3xl font-bold">Dashboard</h1>
+
+            <div
               className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${
-                  isConnected
-                      ? 'bg-success/10 text-success'
-                      : 'bg-destructive/10 text-destructive'
+                isConnected
+                  ? 'bg-success/10 text-success'
+                  : 'bg-destructive/10 text-destructive'
               }`}
-          >
-            {isConnected ? (
-                <Wifi className="h-4 w-4"/>
-            ) : (
-                <WifiOff className="h-4 w-4"/>
-            )}
-            <span className="text-sm font-medium">
-            {isConnected ? 'Подключено' : 'Отключено'}
-          </span>
+            >
+              {isConnected ? (
+                <Wifi className="h-4 w-4" />
+              ) : (
+                <WifiOff className="h-4 w-4" />
+              )}
+              <span className="text-sm font-medium">
+                {isConnected ? 'Подключено' : 'Отключено'}
+              </span>
+            </div>
+          </div>
+
+          {/* Управление ботом */}
+          <BotControls />
+
+          {/* Детальная информация по выбранной паре */}
+          {currentSymbol && (
+            <div className="flex gap-6">
+              {/* 2. Детали + График (вертикально) */}
+              <div className="flex-1 space-y-6">
+                {/* Заголовок */}
+                <h2 className="text-xl font-semibold">
+                  Детали: {currentSymbol}
+                </h2>
+
+                {/* Метрики */}
+                <div>
+                  <h3 className="text-lg font-medium mb-3">Метрики</h3>
+                  <MetricsCard
+                    metrics={metrics[currentSymbol] || null}
+                    loading={!metrics[currentSymbol]}
+                  />
+                </div>
+
+                {/* График */}
+                <div>
+                  <h3 className="text-lg font-medium mb-3">График цены</h3>
+                  <PriceChart
+                    symbol={currentSymbol}
+                    loading={false}
+                  />
+                </div>
+              </div>
+
+              {/* 3. Order Book (уменьшен на 30%) */}
+              <div className="w-[320px] flex-shrink-0">
+                <h3 className="text-lg font-medium mb-3">Стакан</h3>
+                <OrderBookWidget
+                  orderbook={orderbooks[currentSymbol] || null}
+                  loading={!orderbooks[currentSymbol]}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Таблица торговых сигналов */}
+          <div>
+            <h2 className="text-xl font-semibold mb-4">Торговые Сигналы</h2>
+            <SignalsTable signals={signals} />
           </div>
         </div>
-
-        {/* Управление ботом */}
-        <BotControls/>
-
-        {/* Список торговых пар из symbols */}
-        {symbols.length > 0 && (
-            <div>
-              <h2 className="text-xl font-semibold mb-4">Мониторинг пар</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {symbols.map((symbol) => {
-                  const symbolMetrics = metrics[symbol];
-
-                  return (
-                      <button
-                          key={symbol}
-                          onClick={() => handleSymbolSelect(symbol)}
-                          className={`p-4 rounded-lg border transition-all text-left ${
-                              selectedSymbol === symbol
-                                  ? 'border-primary bg-primary/10'
-                                  : 'border-gray-800 bg-surface hover:border-gray-700'
-                          }`}
-                      >
-                        <div className="flex items-center justify-between mb-2">
-                          <h3 className="font-semibold">{symbol}</h3>
-                          {symbolMetrics && (
-                              <div
-                                  className={`flex items-center gap-1 text-xs ${
-                                      symbolMetrics.imbalance.overall > 0.6
-                                          ? 'text-success'
-                                          : symbolMetrics.imbalance.overall < 0.4
-                                              ? 'text-destructive'
-                                              : 'text-gray-400'
-                                  }`}
-                              >
-                        <span>
-                          {(symbolMetrics.imbalance.overall * 100).toFixed(1)}%
-                        </span>
-                              </div>
-                          )}
-                        </div>
-
-                        {symbolMetrics ? (
-                            <div className="space-y-1 text-sm">
-                              <div className="flex justify-between">
-                                <span className="text-gray-400">Mid Price:</span>
-                                <span className="font-mono">
-                          {symbolMetrics.prices.mid_price
-                              ? symbolMetrics.prices.mid_price.toFixed(2)
-                              : '-'}
-                        </span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-gray-400">Spread:</span>
-                                <span className="font-mono text-xs">
-                          {symbolMetrics.prices.spread
-                              ? symbolMetrics.prices.spread.toFixed(8)
-                              : '-'}
-                        </span>
-                              </div>
-                            </div>
-                        ) : (
-                            <p className="text-sm text-gray-500">Ожидание данных...</p>
-                        )}
-                      </button>
-                  );
-                })}
-              </div>
-            </div>
-        )}
-        <div className="w-[320px] flex-shrink-0">
-          <TradingPairsList/>
-        </div>
-        {/* Детальная информация по выбранной паре */}
-        {currentSymbol && (
-            <div>
-              <h2 className="text-xl font-semibold mb-4">
-                Детали: {currentSymbol}
-              </h2>
-
-              {/* LAYOUT: 3 колонки равной ширины */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-                {/* Колонка 1: Метрики */}
-                <div className="lg:col-span-1">
-                  <MetricsCard
-                      metrics={metrics[currentSymbol] || null}
-                      loading={!metrics[currentSymbol]}
-                  />
-                </div>
-
-                {/* Колонка 2: График */}
-                <div className="lg:col-span-1">
-                  <PriceChart
-                      symbol={currentSymbol}
-                      loading={false}
-                  />
-                </div>
-
-                {/* Колонка 3: Order Book */}
-                <div className="lg:col-span-1">
-                  <OrderBookWidget
-                      orderbook={orderbooks[currentSymbol] || null}
-                      loading={!orderbooks[currentSymbol]}
-                  />
-                </div>
-              </div>
-            </div>
-        )}
-
-        {/* Таблица торговых сигналов */}
-        <div>
-          <h2 className="text-xl font-semibold mb-4">Торговые Сигналы</h2>
-          <SignalsTable signals={signals}/>
-        </div>
       </div>
+    </div>
   );
 }
