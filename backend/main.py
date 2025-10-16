@@ -163,28 +163,39 @@ class BotController:
       server_time = await rest_client.get_server_time()
       logger.info(f"✓ Подключение к Bybit успешно. Серверное время: {server_time}")
 
+      # ===== SCREENER MANAGER - СРАЗУ инициализируем =====
+      if settings.SCREENER_ENABLED:
+        logger.info("Инициализация Screener Manager...")
+        self.screener_manager = ScreenerManager()
+        logger.info("✓ Screener Manager инициализирован")
 
+      # ===== DYNAMIC SYMBOLS - Инициализируем менеджер =====
+      if settings.DYNAMIC_SYMBOLS_ENABLED:
+        logger.info("Инициализация Dynamic Symbols Manager...")
+        self.dynamic_symbols_manager = DynamicSymbolsManager(
+          min_volume=settings.DYNAMIC_MIN_VOLUME,
+          max_volume_pairs=settings.DYNAMIC_MAX_VOLUME_PAIRS,
+          top_gainers=settings.DYNAMIC_TOP_GAINERS,
+          top_losers=settings.DYNAMIC_TOP_LOSERS
+        )
+        logger.info("✓ Dynamic Symbols Manager инициализирован")
 
-      # ===== НОВОЕ: Инициализируем ML Feature Pipeline =====
-      self.ml_feature_pipeline = MultiSymbolFeaturePipeline(
-          symbols=self.symbols,
-          normalize=True,
-          cache_enabled=True
-      )
-      logger.info("✓ ML Feature Pipeline инициализирован")
+      # ===== ВАЖНО: НЕ создаем WebSocket Manager и ML Pipeline здесь! =====
+      # self.symbols пока не определены
+      # Эти компоненты будут созданы в start() после выбора пар
+      # WebSocket Manager - зависит от символов
+      # ML Feature Pipeline - зависит от символов
 
-      # ===== НОВОЕ: Инициализируем ML Data Collector =====
+      # ===== ML DATA COLLECTOR =====
       self.ml_data_collector = MLDataCollector(
-          storage_path="../data/ml_training",
-          max_samples_per_file=10000
+        storage_path="../data/ml_training",
+        max_samples_per_file=10000
       )
       await self.ml_data_collector.initialize()
       logger.info("✓ ML Data Collector инициализирован")
 
-      # Инициализируем анализатор рынка
+      # Инициализируем анализатор рынка (пока без символов)
       self.market_analyzer = MarketAnalyzer()
-      for symbol in self.symbols:
-        self.market_analyzer.add_symbol(symbol)
       logger.info("✓ Анализатор рынка инициализирован")
 
       # Инициализируем стратегию
@@ -199,24 +210,8 @@ class BotController:
       self.execution_manager = ExecutionManager(self.risk_manager)
       logger.info("✓ Менеджер исполнения инициализирован")
 
-      # Создаем WebSocket менеджер
-      self.websocket_manager = BybitWebSocketManager(
-        symbols=self.symbols,
-        on_message=self._handle_orderbook_message
-      )
-      logger.info("✓ WebSocket менеджер создан")
-
-      # ===== SCREENER MANAGER (НОВОЕ) =====
-
-      if settings.SCREENER_ENABLED:
-        logger.info("Инициализация Screener Manager...")
-        self.screener_manager = ScreenerManager()
-        logger.info("✓ Screener Manager инициализирован")
-
-
-
       logger.info("=" * 80)
-      logger.info("ВСЕ КОМПОНЕНТЫ УСПЕШНО ИНИЦИАЛИЗИРОВАНЫ (ML-READY)")
+      logger.info("БАЗОВЫЕ КОМПОНЕНТЫ ИНИЦИАЛИЗИРОВАНЫ (БЕЗ WEBSOCKET)")
       logger.info("=" * 80)
 
     except Exception as e:
@@ -225,7 +220,7 @@ class BotController:
       raise
 
   async def start(self):
-    """Запуск бота."""
+    """Запуск бота с правильной последовательностью инициализации."""
     if self.status == BotStatus.RUNNING:
       logger.warning("Бот уже запущен")
       return
@@ -248,39 +243,7 @@ class BotController:
       await self.ml_validator.initialize()
       logger.info("✅ ML Signal Validator инициализирован")
 
-      # ===== НОВОЕ: Загружаем исторические свечи =====
-      await self._load_historical_candles()
-      logger.info("✓ Исторические свечи загружены")
-
-      # Запускаем WebSocket соединения
-      self.websocket_task = asyncio.create_task(
-        self.websocket_manager.start()
-      )
-      logger.info("✓ WebSocket соединения запущены")
-
-      # ===== НОВОЕ: Запускаем задачу обновления свечей =====
-      self.candle_update_task = asyncio.create_task(
-        self._candle_update_loop()
-      )
-      logger.info("✓ Цикл обновления свечей запущен")
-
-      self.ml_stats_task = asyncio.create_task(
-        self._ml_stats_loop()
-      )
-
-      # Запускаем задачу анализа (теперь с ML)
-      self.analysis_task = asyncio.create_task(
-        self._analysis_loop_ml_enhanced()
-      )
-      logger.info("✓ Цикл анализа (ML-Enhanced) запущен")
-
-      # Запускаем background task для очистки FSM
-      asyncio.create_task(fsm_cleanup_task())
-      logger.info("✓ FSM Cleanup Task запланирован")
-
-
-
-      # ===== SCREENER MANAGER (НОВОЕ) =====
+      # ===== SCREENER MANAGER - Запускаем =====
       if self.screener_manager:
         logger.info("Запуск Screener Manager...")
         await self.screener_manager.start()
@@ -290,21 +253,18 @@ class BotController:
           self._screener_broadcast_loop()
         )
         logger.info("Ожидание первой загрузки пар от screener...")
-        await asyncio.sleep(6)
+        await asyncio.sleep(6)  # Даем время на загрузку данных
 
         logger.info("✓ Screener Manager запущен")
-        # ===== DYNAMIC SYMBOLS (НОВОЕ) =====
-        if settings.DYNAMIC_SYMBOLS_ENABLED:
-          logger.info("Инициализация Dynamic Symbols Manager...")
-          self.dynamic_symbols_manager = DynamicSymbolsManager(
-            min_volume=settings.DYNAMIC_MIN_VOLUME,
-            max_volume_pairs=settings.DYNAMIC_MAX_VOLUME_PAIRS,
-            top_gainers=settings.DYNAMIC_TOP_GAINERS,
-            top_losers=settings.DYNAMIC_TOP_LOSERS
-          )
 
-          # Получаем динамический список
+        # ===== DYNAMIC SYMBOLS - Выбираем финальный список пар =====
+        if settings.DYNAMIC_SYMBOLS_ENABLED and self.dynamic_symbols_manager:
+          logger.info("Динамический отбор торговых пар...")
+
+          # Получаем данные от screener
           screener_pairs = self.screener_manager.get_all_pairs()
+
+          # Отбираем по критериям
           self.symbols = self.dynamic_symbols_manager.select_symbols(screener_pairs)
 
           logger.info(f"✓ Динамически отобрано {len(self.symbols)} пар для мониторинга")
@@ -317,20 +277,76 @@ class BotController:
         self.symbols = settings.get_trading_pairs_list()
         logger.info(f"✓ Screener отключен, статический список: {len(self.symbols)} пар")
 
-      # Создаем менеджеры стакана для каждой пары
+      # ===== КРИТИЧЕСКИ ВАЖНО: СОЗДАЕМ ML Feature Pipeline ЗДЕСЬ =====
+      logger.info("Создание ML Feature Pipeline...")
+      self.ml_feature_pipeline = MultiSymbolFeaturePipeline(
+        symbols=self.symbols,  # ← Правильные динамические символы!
+        normalize=True,
+        cache_enabled=True
+      )
+      logger.info(f"✓ ML Feature Pipeline создан для {len(self.symbols)} символов")
+
+      # ===== Создаем менеджеры стакана для ФИНАЛЬНЫХ пар =====
+      logger.info(f"Создание менеджеров стакана для {len(self.symbols)} пар...")
       for symbol in self.symbols:
         self.orderbook_managers[symbol] = OrderBookManager(symbol)
       logger.info(f"✓ Создано {len(self.orderbook_managers)} менеджеров стакана")
 
-      # ===== НОВОЕ: Создаем менеджеры свечей =====
+      # ===== Создаем менеджеры свечей для ФИНАЛЬНЫХ пар =====
+      logger.info(f"Создание менеджеров свечей для {len(self.symbols)} пар...")
       for symbol in self.symbols:
         self.candle_managers[symbol] = CandleManager(
-            symbol=symbol,
-            timeframe="1m",  # Основной таймфрейм
-            max_candles=200  # Достаточно для индикаторов
+          symbol=symbol,
+          timeframe="1m",
+          max_candles=200
         )
       logger.info(f"✓ Создано {len(self.candle_managers)} менеджеров свечей")
 
+      # ===== Добавляем символы в анализатор =====
+      for symbol in self.symbols:
+        self.market_analyzer.add_symbol(symbol)
+      logger.info(f"✓ {len(self.symbols)} символов добавлено в анализатор")
+
+      # ===== ТЕПЕРЬ создаем WebSocket Manager с ПРАВИЛЬНЫМИ символами =====
+      logger.info("Создание WebSocket Manager...")
+      logger.info(f"Символы для WebSocket: {self.symbols[:5]}..." if len(
+        self.symbols) > 5 else f"Символы для WebSocket: {self.symbols}")
+
+      self.websocket_manager = BybitWebSocketManager(
+        symbols=self.symbols,  # ← Правильные динамические символы!
+        on_message=self._handle_orderbook_message
+      )
+      logger.info("✓ WebSocket менеджер создан с правильными символами")
+
+      # ===== Загружаем исторические свечи =====
+      await self._load_historical_candles()
+      logger.info("✓ Исторические свечи загружены")
+
+      # ===== Запускаем WebSocket соединения =====
+      self.websocket_task = asyncio.create_task(
+        self.websocket_manager.start()
+      )
+      logger.info("✓ WebSocket соединения запущены")
+
+      # ===== Запускаем остальные задачи =====
+      self.candle_update_task = asyncio.create_task(
+        self._candle_update_loop()
+      )
+      logger.info("✓ Цикл обновления свечей запущен")
+
+      self.ml_stats_task = asyncio.create_task(
+        self._ml_stats_loop()
+      )
+
+      self.analysis_task = asyncio.create_task(
+        self._analysis_loop_ml_enhanced()
+      )
+      logger.info("✓ Цикл анализа (ML-Enhanced) запущен")
+
+      asyncio.create_task(fsm_cleanup_task())
+      logger.info("✓ FSM Cleanup Task запланирован")
+
+      # ===== Запускаем задачу обновления списка пар =====
       if settings.DYNAMIC_SYMBOLS_ENABLED and self.dynamic_symbols_manager:
         logger.info("Запуск задачи обновления списка пар...")
         self.symbols_refresh_task = asyncio.create_task(
