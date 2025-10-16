@@ -369,6 +369,10 @@ class BotController:
     9. [OPTIONAL] Drift monitoring
     10. Сбор данных для ML обучения
     """
+    # КРИТИЧНО: Импорты в начале функции для использования во всех блоках
+    from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
+    from datetime import datetime
+
     logger.info("🔄 Запущен продвинутый analysis loop (ML-Enhanced)")
 
     # Проверяем какие компоненты доступны
@@ -462,9 +466,9 @@ class BotController:
               logger.warning(
                 f"⚠️  МАНИПУЛЯЦИИ [{symbol}]: "
                 f"{', '.join(manipulation_details)} - "
-                f"ТОРГОВЛЯ ЗАБЛОКИРОВАНА"
+                f"ТОРГОВЛЯ ЗАБЛОКИРОВАНА (признаки извлекаются)"
               )
-              continue  # Пропускаем этот символ
+              # НЕ делаем continue! Продолжаем извлечение признаков
 
             # ==================== 3. S/R ДЕТЕКТОР (OPTIONAL) ====================
             sr_levels = None
@@ -506,86 +510,90 @@ class BotController:
             signal = None
             consensus_info = None
 
-            # РЕЖИМ 1: Strategy Manager с Consensus (если доступен)
-            if has_strategy_manager:
-              try:
-                consensus = self.strategy_manager.analyze_with_consensus(
-                  symbol,
-                  candles,
-                  current_price
-                )
+            # БЛОКИРОВКА: Пропускаем генерацию сигналов если обнаружены манипуляции
+            if manipulation_detected:
+              logger.debug(
+                f"{symbol} | Генерация сигналов пропущена из-за манипуляций: "
+                f"{', '.join(manipulation_details)}"
+              )
+            else:
+              # РЕЖИМ 1: Strategy Manager с Consensus (если доступен)
+              if has_strategy_manager:
+                try:
+                  consensus = self.strategy_manager.analyze_with_consensus(
+                    symbol,
+                    candles,
+                    current_price
+                  )
 
-                # Проверяем что consensus не None и имеет нужные атрибуты
-                if consensus and hasattr(consensus, 'final_signal') and consensus.final_signal:
-                  # Безопасное получение атрибутов с fallback значениями
-                  contributing_strategies = getattr(consensus, 'contributing_strategies', [])
-                  total_strategies = getattr(consensus, 'total_strategies', len(contributing_strategies))
-                  agreement_count = getattr(consensus, 'agreement_count', len(contributing_strategies))
-                  final_confidence = getattr(consensus, 'final_confidence', 0.7)
+                  # Проверяем что consensus не None и имеет нужные атрибуты
+                  if consensus and hasattr(consensus, 'final_signal') and consensus.final_signal:
+                    # Безопасное получение атрибутов с fallback значениями
+                    contributing_strategies = getattr(consensus, 'contributing_strategies', [])
+                    total_strategies = getattr(consensus, 'total_strategies', len(contributing_strategies))
+                    agreement_count = getattr(consensus, 'agreement_count', len(contributing_strategies))
+                    final_confidence = getattr(consensus, 'final_confidence', 0.7)
 
-                  consensus_info = {
-                    'signal_type': consensus.final_signal,
-                    'strategies': contributing_strategies,
-                    'agreement': f"{agreement_count}/{total_strategies}",
-                    'confidence': final_confidence
-                  }
-
-                  # Создаём сигнал из consensus
-                  from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
-                  from datetime import datetime
-
-                  # final_signal уже должен быть SignalType
-                  signal_type = consensus.final_signal
-
-                  # Если final_signal это строка, конвертируем в SignalType
-                  if isinstance(signal_type, str):
-                    signal_type = SignalType(signal_type)
-
-                  signal = TradingSignal(
-                    symbol=symbol,
-                    signal_type=signal_type,
-                    source=SignalSource.STRATEGY,
-                    strength=(
-                      SignalStrength.STRONG
-                      if final_confidence > 0.7
-                      else SignalStrength.MEDIUM
-                    ),
-                    price=current_price,
-                    confidence=final_confidence,
-                    timestamp=int(datetime.now().timestamp() * 1000),
-                    reason=f"Consensus ({len(contributing_strategies)} strategies)",
-                    metadata={
-                      'consensus_strategies': contributing_strategies,
-                      'consensus_agreement': consensus_info['agreement']
+                    consensus_info = {
+                      'signal_type': consensus.final_signal,
+                      'strategies': contributing_strategies,
+                      'agreement': f"{agreement_count}/{total_strategies}",
+                      'confidence': final_confidence
                     }
+
+                    # Создаём сигнал из consensus (импорты уже в начале функции)
+                    # final_signal уже должен быть SignalType
+                    signal_type = consensus.final_signal
+
+                    # Если final_signal это строка, конвертируем в SignalType
+                    if isinstance(signal_type, str):
+                      signal_type = SignalType(signal_type)
+
+                    signal = TradingSignal(
+                      symbol=symbol,
+                      signal_type=signal_type,
+                      source=SignalSource.STRATEGY,  # Изменится на ML_VALIDATED после валидации
+                      strength=(
+                        SignalStrength.STRONG
+                        if final_confidence > 0.7
+                        else SignalStrength.MEDIUM
+                      ),
+                      price=current_price,
+                      confidence=final_confidence,
+                      timestamp=int(datetime.now().timestamp() * 1000),
+                      reason=f"Consensus ({len(contributing_strategies)} strategies)",
+                      metadata={
+                        'consensus_strategies': contributing_strategies,
+                        'consensus_agreement': consensus_info['agreement']
+                      }
+                    )
+
+                    logger.info(
+                      f"🎯 Strategy Manager Consensus [{symbol}]: "
+                      f"{signal_type.value}, "
+                      f"confidence={final_confidence:.2f}, "
+                      f"strategies={contributing_strategies}"
+                    )
+                except Exception as e:
+                  logger.error(f"{symbol} | Ошибка Strategy Manager: {e}")
+
+              # РЕЖИМ 2: Базовая генерация сигналов (fallback)
+              if not signal:
+                try:
+                  signal = self.strategy_engine.analyze_and_generate_signal(
+                    symbol=symbol,
+                    metrics=metrics,
+                    features=feature_vector
                   )
 
-                  logger.info(
-                    f"🎯 Strategy Manager Consensus [{symbol}]: "
-                    f"{signal_type.value}, "
-                    f"confidence={final_confidence:.2f}, "
-                    f"strategies={contributing_strategies}"
-                  )
-              except Exception as e:
-                logger.error(f"{symbol} | Ошибка Strategy Manager: {e}")
-
-            # РЕЖИМ 2: Базовая генерация сигналов (fallback)
-            if not signal:
-              try:
-                signal = self.strategy_engine.analyze_and_generate_signal(
-                  symbol=symbol,
-                  metrics=metrics,
-                  features=feature_vector
-                )
-
-                if signal:
-                  logger.debug(
-                    f"🎯 Базовый сигнал [{symbol}]: "
-                    f"{signal.signal_type.value}, "
-                    f"confidence={signal.confidence:.2f}"
-                  )
-              except Exception as e:
-                logger.error(f"{symbol} | Ошибка генерации сигнала: {e}")
+                  if signal:
+                    logger.debug(
+                      f"🎯 Базовый сигнал [{symbol}]: "
+                      f"{signal.signal_type.value}, "
+                      f"confidence={signal.confidence:.2f}"
+                    )
+                except Exception as e:
+                  logger.error(f"{symbol} | Ошибка генерации сигнала: {e}")
 
             # Если сигнала нет - пропускаем
             if not signal:
@@ -604,7 +612,7 @@ class BotController:
               continue
 
             # ==================== 7. ML ВАЛИДАЦИЯ (OPTIONAL) ====================
-            if has_ml_validator and feature_vector:
+            if has_ml_validator and feature_vector and signal:
               try:
                 # Передаём весь объект TradingSignal, а не только signal_type
                 validation_result = await self.ml_validator.validate_signal(
@@ -617,20 +625,36 @@ class BotController:
                     f"❌ Сигнал отклонен ML Validator [{symbol}]: "
                     f"{validation_result.reason}"
                   )
-                  continue
+                  signal = None  # Сбрасываем сигнал, но продолжаем обработку
+                else:
+                  # ===== ОБНОВЛЯЕМ СИГНАЛ С ML ВАЛИДАЦИЕЙ =====
+                  # 1. Меняем source на ML_VALIDATED
+                  signal.source = SignalSource.ML_VALIDATED
 
-                # Обновляем confidence с учётом ML
-                signal.confidence = validation_result.final_confidence
-                if not signal.metadata:
-                  signal.metadata = {}
-                signal.metadata['ml_validated'] = True
-                signal.metadata['ml_direction'] = validation_result.ml_direction
-                signal.metadata['ml_confidence'] = validation_result.ml_confidence
+                  # 2. Обновляем confidence и strength
+                  signal.confidence = validation_result.final_confidence
 
-                logger.info(
-                  f"✅ Сигнал подтвержден ML Validator [{symbol}]: "
-                  f"final_confidence={validation_result.final_confidence:.2f}"
-                )
+                  # 3. Пересчитываем strength на основе ML confidence
+                  if validation_result.final_confidence > 0.8:
+                    signal.strength = SignalStrength.STRONG
+                  elif validation_result.final_confidence > 0.6:
+                    signal.strength = SignalStrength.MEDIUM
+                  else:
+                    signal.strength = SignalStrength.WEAK
+
+                  # 4. Добавляем ML метаданные
+                  if not signal.metadata:
+                    signal.metadata = {}
+                  signal.metadata['ml_validated'] = True
+                  signal.metadata['ml_direction'] = validation_result.ml_direction
+                  signal.metadata['ml_confidence'] = validation_result.ml_confidence
+
+                  logger.info(
+                    f"✅ Сигнал подтвержден ML Validator [{symbol}]: "
+                    f"source=ML_VALIDATED, "
+                    f"strength={signal.strength.value}, "
+                    f"final_confidence={validation_result.final_confidence:.2f}"
+                  )
               except Exception as e:
                 logger.error(f"{symbol} | Ошибка ML Validator: {e}")
 
@@ -772,7 +796,6 @@ class BotController:
         logger.error(f"Критическая ошибка в цикле анализа: {e}")
         log_exception(logger, e, "Цикл анализа")
         await asyncio.sleep(1)
-
   async def stop(self):
     """Остановка бота."""
     if self.status == BotStatus.STOPPED:
@@ -922,6 +945,10 @@ class BotController:
   async def _ml_stats_loop(self):
     """
     Периодический вывод статистики сбора ML данных.
+
+    Выводит:
+    - Общую статистику (всего семплов, файлов)
+    - Детальную статистику по каждому символу
     """
     logger.info("Запущен цикл мониторинга ML статистики")
 
@@ -932,18 +959,38 @@ class BotController:
         if self.ml_data_collector:
           stats = self.ml_data_collector.get_statistics()
 
-          for symbol, stat in stats.items():
-            logger.info(
-              f"ML Stats | {symbol}: "
-              f"samples={stat['total_samples']:,}, "
-              f"batches={stat['batches_saved']}, "
-              f"buffer={stat['buffer_size']}/{self.ml_data_collector.max_samples_per_file}"
-            )
+          # ===== ИСПРАВЛЕНИЕ: Выводим общую статистику =====
+          logger.info(
+            f"ML Stats | ОБЩАЯ: "
+            f"всего_семплов={stats['total_samples_collected']:,}, "
+            f"файлов={stats['files_written']}, "
+            f"итераций={stats['iteration_counter']}, "
+            f"интервал={stats['collection_interval']}"
+          )
+
+          # ===== ИСПРАВЛЕНИЕ: Итерируемся по stats["symbols"], а не stats =====
+          symbol_stats = stats.get("symbols", {})
+
+          if not symbol_stats:
+            logger.info("ML Stats | Нет данных по символам")
+          else:
+            for symbol, stat in symbol_stats.items():
+              # ===== ИСПРАВЛЕНИЕ: Используем правильные ключи =====
+              logger.info(
+                f"ML Stats | {symbol}: "
+                f"samples={stat['total_samples']:,}, "
+                f"batch={stat['current_batch']}, "  # ← НЕ 'batches_saved'
+                f"buffer={stat['buffer_size']}/{self.ml_data_collector.max_samples_per_file}"
+              )
 
       except asyncio.CancelledError:
+        logger.info("ML stats loop остановлен (CancelledError)")
         break
       except Exception as e:
         logger.error(f"Ошибка в ML stats loop: {e}")
+        # Логируем полный traceback для диагностики
+        import traceback
+        logger.error(f"Traceback:\n{traceback.format_exc()}")
 
 
 # Глобальный контроллер бота
