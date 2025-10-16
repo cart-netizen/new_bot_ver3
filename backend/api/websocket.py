@@ -309,3 +309,17 @@ async def broadcast_error(error_message: str, error_type: str = "general"):
     "message": error_message
   }
   await manager.broadcast(message)
+
+async def broadcast_screener_update(pairs: list):
+    """
+    Рассылка обновления данных скринера.
+
+    Args:
+        pairs: Список торговых пар с данными
+    """
+    message = {
+      "type": "screener_update",
+      "pairs": pairs,
+      "timestamp": int(datetime.now().timestamp() * 1000)
+    }
+    await manager.broadcast(message, authenticated_only=True)

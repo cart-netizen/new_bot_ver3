@@ -39,6 +39,8 @@ detection_router = APIRouter(prefix="/api/detection", tags=["detection"])
 # Strategies Router
 strategies_router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 
+screener_router = APIRouter(prefix="/screener", tags=["Screener"])
+
 # ===== МОДЕЛИ ОТВЕТОВ =====
 
 class StatusResponse(BaseModel):
@@ -982,3 +984,183 @@ async def get_strategy_stats(strategy_name: str):
 
   strategy = bot_controller.strategy_manager.strategies[strategy_name]
   return strategy.get_statistics()
+
+
+@screener_router.get("/pairs")
+async def get_screener_pairs(
+    min_volume: Optional[float] = None,
+    sort_by: Optional[str] = None,
+    sort_order: Optional[str] = "desc",
+    current_user: dict = Depends(require_auth)
+):
+  """
+  Получение списка торговых пар для скринера.
+
+  Args:
+      min_volume: Минимальный объем (опционально)
+      sort_by: Поле для сортировки (price, volume, change_24h)
+      sort_order: Порядок сортировки (asc/desc)
+      current_user: Текущий пользователь
+
+  Returns:
+      List[dict]: Список торговых пар
+  """
+  try:
+    from main import bot_controller
+
+    if not bot_controller or not hasattr(bot_controller, 'screener_manager'):
+      raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Screener не инициализирован"
+      )
+
+    screener = bot_controller.screener_manager
+    pairs = screener.get_all_pairs()
+
+    # Фильтрация по объему
+    if min_volume is not None:
+      pairs = [p for p in pairs if p['volume_24h'] >= min_volume]
+
+    # Сортировка
+    if sort_by:
+      sort_field_map = {
+        "price": "last_price",
+        "volume": "volume_24h",
+        "change_24h": "price_change_24h_percent"
+      }
+      field = sort_field_map.get(sort_by, "volume_24h")
+      reverse = (sort_order == "desc")
+      pairs.sort(key=lambda x: x.get(field, 0), reverse=reverse)
+
+    logger.info(f"Возвращено {len(pairs)} пар из скринера")
+
+    return {
+      "pairs": pairs,
+      "total": len(pairs),
+      "timestamp": int(datetime.now().timestamp() * 1000)
+    }
+
+  except Exception as e:
+    logger.error(f"Ошибка получения пар скринера: {e}")
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=str(e)
+    )
+
+
+@screener_router.post("/pair/{symbol}/toggle")
+async def toggle_pair_selection(
+    symbol: str,
+    current_user: dict = Depends(require_auth)
+):
+  """
+  Переключение выбора торговой пары для графиков.
+
+  Args:
+      symbol: Торговая пара
+      current_user: Текущий пользователь
+
+  Returns:
+      dict: Результат операции
+  """
+  try:
+    from main import bot_controller
+
+    if not bot_controller or not hasattr(bot_controller, 'screener_manager'):
+      raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Screener не инициализирован"
+      )
+
+    screener = bot_controller.screener_manager
+    success = screener.toggle_selection(symbol.upper())
+
+    if not success:
+      raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Пара {symbol} не найдена в скринере"
+      )
+
+    return {
+      "success": True,
+      "symbol": symbol,
+      "selected_pairs": screener.get_selected_pairs()
+    }
+
+  except HTTPException:
+    raise
+  except Exception as e:
+    logger.error(f"Ошибка переключения выбора пары: {e}")
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=str(e)
+    )
+
+
+@screener_router.get("/selected")
+async def get_selected_pairs(current_user: dict = Depends(require_auth)):
+  """
+  Получение списка выбранных пар для графиков.
+
+  Args:
+      current_user: Текущий пользователь
+
+  Returns:
+      dict: Список выбранных пар
+  """
+  try:
+    from main import bot_controller
+
+    if not bot_controller or not hasattr(bot_controller, 'screener_manager'):
+      raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Screener не инициализирован"
+      )
+
+    screener = bot_controller.screener_manager
+    selected = screener.get_selected_pairs()
+
+    return {
+      "selected_pairs": selected,
+      "count": len(selected)
+    }
+
+  except Exception as e:
+    logger.error(f"Ошибка получения выбранных пар: {e}")
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=str(e)
+    )
+
+
+@screener_router.get("/stats")
+async def get_screener_stats(current_user: dict = Depends(require_auth)):
+  """
+  Получение статистики скринера.
+
+  Args:
+      current_user: Текущий пользователь
+
+  Returns:
+      dict: Статистика скринера
+  """
+  try:
+    from main import bot_controller
+
+    if not bot_controller or not hasattr(bot_controller, 'screener_manager'):
+      raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Screener не инициализирован"
+      )
+
+    screener = bot_controller.screener_manager
+    stats = screener.get_stats()
+
+    return stats
+
+  except Exception as e:
+    logger.error(f"Ошибка получения статистики скринера: {e}")
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=str(e)
+    )

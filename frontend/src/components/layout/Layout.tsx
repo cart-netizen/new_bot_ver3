@@ -10,6 +10,7 @@ import { useMarketStore } from '../../store/marketStore';
 import { useTradingStore } from '../../store/tradingStore';
 import { wsService } from '../../services/websocket.service';
 import { toast } from 'sonner';
+import {useScreenerStore} from "@/store/screenerStore";
 
 /**
  * Главный Layout компонент.
@@ -22,7 +23,7 @@ export function Layout() {
   const { token, isAuthenticated } = useAuthStore();
   const { updateOrderBook, updateMetrics, setConnected } = useMarketStore();
   const { addSignal } = useTradingStore();
-
+  const { updatePairs } = useScreenerStore();
   // КРИТИЧЕСКИ ВАЖНО: Используем ref для предотвращения двойного подключения
   const isConnectingRef = useRef(false);
   const connectionAttemptRef = useRef(0);
@@ -99,6 +100,11 @@ export function Layout() {
       onMetricsUpdate: (symbol, metricsData) => {
         updateMetrics(symbol, metricsData);
       },
+      // НОВЫЙ ОБРАБОТЧИК для screener_update
+      onScreenerUpdate: (data) => {
+        console.log('[Layout] Screener update, pairs:', data.pairs?.length);
+        updatePairs(data.pairs);
+      },
 
       // Новый торговый сигнал
       onTradingSignal: (signal) => {
@@ -123,7 +129,7 @@ export function Layout() {
         }
       },
     });
-  }, [token, setConnected, updateOrderBook, updateMetrics, addSignal]);
+  }, [token, setConnected, updateOrderBook, updateMetrics, addSignal, updatePairs]);
 
   /**
    * Эффект для инициализации WebSocket.

@@ -13,6 +13,7 @@ type WSMessageType =
   | 'metrics_update'
   | 'trading_signal'
   | 'execution_update'
+  | 'screener_update'  // ДОБАВЛЕНО
   | 'error';
 
 interface WSMessage {
@@ -22,6 +23,8 @@ interface WSMessage {
   metrics?: OrderBookMetrics;
   signal?: TradingSignal;
   execution?: ExecutionData;
+  pairs?: any[];        // ДОБАВЛЕНО для screener
+  timestamp?: number;   // ДОБАВЛЕНО для screener
   message?: string;
   status?: string;
   details?: Record<string, unknown>;
@@ -57,6 +60,7 @@ interface MessageHandlers {
   onMetricsUpdate?: (symbol: string, metrics: OrderBookMetrics) => void;
   onTradingSignal?: (signal: TradingSignal) => void;
   onExecutionUpdate?: (data: ExecutionData) => void;
+  onScreenerUpdate?: (data: { pairs: any[]; timestamp: number }) => void;  // ДОБАВЛЕНО
   onError?: (error: string) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
@@ -186,6 +190,15 @@ export class WebSocketService {
           this.handlers.onExecutionUpdate?.(message.execution);
         }
         break;
+
+          case 'screener_update':
+      if (message.pairs) {
+        this.handlers.onScreenerUpdate?.({
+          pairs: message.pairs,
+          timestamp: message.timestamp || Date.now(),
+        });
+      }
+      break;
 
       case 'error':
         if (message.message) {

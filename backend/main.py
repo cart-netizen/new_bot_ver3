@@ -26,6 +26,7 @@ from ml_engine.detection.spoofing_detector import SpoofingConfig, SpoofingDetect
 from ml_engine.detection.sr_level_detector import SRLevelConfig, SRLevelDetector
 from ml_engine.integration.ml_signal_validator import ValidationConfig, MLSignalValidator
 from ml_engine.monitoring.drift_detector import DriftDetector
+from screener.screener_manager import ScreenerManager
 from strategies.strategy_manager import StrategyManagerConfig, StrategyManager
 from strategy.candle_manager import CandleManager
 from strategy.orderbook_manager import OrderBookManager
@@ -134,6 +135,10 @@ class BotController:
     )
     self.strategy_manager = StrategyManager(strategy_manager_config)
 
+    # ===== SCREENER MANAGER (НОВОЕ) =====
+    self.screener_manager: Optional[ScreenerManager] = None
+    self.screener_broadcast_task: Optional[asyncio.Task] = None
+
     self.running = False
 
     logger.info("Инициализирован контроллер бота с ML поддержкой")
@@ -208,6 +213,12 @@ class BotController:
       )
       logger.info("✓ WebSocket менеджер создан")
 
+      # ===== SCREENER MANAGER (НОВОЕ) =====
+      if settings.SCREENER_ENABLED:
+        logger.info("Инициализация Screener Manager...")
+        self.screener_manager = ScreenerManager()
+        logger.info("✓ Screener Manager инициализирован")
+
       logger.info("=" * 80)
       logger.info("ВСЕ КОМПОНЕНТЫ УСПЕШНО ИНИЦИАЛИЗИРОВАНЫ (ML-READY)")
       logger.info("=" * 80)
@@ -275,6 +286,17 @@ class BotController:
       logger.info("=" * 80)
       logger.info("БОТ УСПЕШНО ЗАПУЩЕН (ML-READY)")
       logger.info("=" * 80)
+
+      # ===== SCREENER MANAGER (НОВОЕ) =====
+      if self.screener_manager:
+        logger.info("Запуск Screener Manager...")
+        await self.screener_manager.start()
+
+        # Запускаем broadcast задачу
+        self.screener_broadcast_task = asyncio.create_task(
+          self._screener_broadcast_loop()
+        )
+        logger.info("✓ Screener Manager запущен")
 
       # Уведомляем фронтенд
       from api.websocket import broadcast_bot_status
@@ -811,6 +833,15 @@ class BotController:
       # Останавливаем задачи
       tasks_to_cancel = []
 
+      # ===== SCREENER MANAGER (НОВОЕ) =====
+      if self.screener_broadcast_task:
+        self.screener_broadcast_task.cancel()
+
+      if self.screener_manager:
+        logger.info("Остановка Screener Manager...")
+        await self.screener_manager.stop()
+        logger.info("✓ Screener Manager остановлен")
+
       if self.analysis_task:
         tasks_to_cancel.append(self.analysis_task)
 
@@ -992,6 +1023,30 @@ class BotController:
         import traceback
         logger.error(f"Traceback:\n{traceback.format_exc()}")
 
+  async def _screener_broadcast_loop(self):
+    """
+    Цикл рассылки данных скринера через WebSocket.
+    Отправляет обновления каждые N секунд.
+    """
+    from api.websocket import broadcast_screener_update
+
+    interval = settings.SCREENER_BROADCAST_INTERVAL
+    logger.info(f"Запущен screener broadcast loop (интервал: {interval}s)")
+
+    while self.status == BotStatus.RUNNING:
+      try:
+        if self.screener_manager:
+          pairs = self.screener_manager.get_all_pairs()
+          await broadcast_screener_update(pairs)
+
+        await asyncio.sleep(interval)
+
+      except asyncio.CancelledError:
+        break
+      except Exception as e:
+        logger.error(f"Ошибка в screener broadcast loop: {e}")
+        await asyncio.sleep(interval)
+
 
 # Глобальный контроллер бота
 bot_controller: Optional[BotController] = None
@@ -1125,14 +1180,14 @@ from api.app import app
 app.router.lifespan_context = lifespan
 
 # Регистрируем роутеры
-from api.routes import auth_router, bot_router, data_router, trading_router, monitoring_router
+from api.routes import auth_router, bot_router, data_router, trading_router, monitoring_router, screener_router
 
 app.include_router(auth_router)
 app.include_router(bot_router)
 app.include_router(data_router)
 app.include_router(trading_router)
 app.include_router(monitoring_router)
-
+app.include_router(screener_router)
 
 # WebSocket эндпоинт
 @app.websocket("/ws")
