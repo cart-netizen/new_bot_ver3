@@ -86,13 +86,24 @@ class BotController:
     self.ml_stats_task: Optional[asyncio.Task] = None
 
     # ML Signal Validator
-    ml_validator_config = ValidationConfig(
-      model_server_url=os.getenv('ML_SERVER_URL', 'http://localhost:8001'),
-      min_ml_confidence=float(os.getenv('ML_MIN_CONFIDENCE', '0.6')),
-      ml_weight=float(os.getenv('ML_WEIGHT', '0.6')),
-      strategy_weight=float(os.getenv('STRATEGY_WEIGHT', '0.4'))
+    # ml_validator_config = ValidationConfig(
+    #   model_server_url=os.getenv('ML_SERVER_URL', 'http://localhost:8001'),
+    #   min_ml_confidence=float(os.getenv('ML_MIN_CONFIDENCE', '0.6')),
+    #   ml_weight=float(os.getenv('ML_WEIGHT', '0.6')),
+    #   strategy_weight=float(os.getenv('STRATEGY_WEIGHT', '0.4'))
+    # )
+    # self.ml_validator = MLSignalValidator(ml_validator_config)
+
+    ml_config = ValidationConfig(
+      model_server_url=settings.ML_SERVER_URL,
+      min_ml_confidence=settings.ML_MIN_CONFIDENCE,
+      ml_weight=settings.ML_WEIGHT,
+      strategy_weight=settings.STRATEGY_WEIGHT,
+      health_check_enabled=True,
+      health_check_interval=30,
     )
-    self.ml_validator = MLSignalValidator(ml_validator_config)
+
+    self.ml_validator = MLSignalValidator(config=ml_config)
 
     # Drift Detector
     self.drift_detector = DriftDetector(
@@ -203,7 +214,7 @@ class BotController:
       logger.info("✓ Торговая стратегия инициализирована")
 
       # Инициализируем риск-менеджер
-      self.risk_manager = RiskManager()
+      self.risk_manager = RiskManager(default_leverage=settings.DEFAULT_LEVERAGE)
       logger.info("✓ Риск-менеджер инициализирован")
 
       # Инициализируем менеджер исполнения
@@ -780,7 +791,7 @@ class BotController:
             if has_ml_validator and feature_vector and signal:
               try:
                 # Передаём весь объект TradingSignal, а не только signal_type
-                validation_result = await self.ml_validator.validate_signal(
+                validation_result = await self.ml_validator.validate(
                   signal,
                   feature_vector
                 )

@@ -9,9 +9,35 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, validator, field_validator
 from dotenv import load_dotenv
 
+from core.logger import get_logger
+
+# from core.logger import get_logger
+
+logger = get_logger(__name__)
 # Загрузка переменных окружения из .env файла
 load_dotenv()
 
+def clean_env_value(value: str) -> str:
+  """
+  Очистка значения от комментариев и лишних пробелов.
+
+  Args:
+      value: Исходное значение из .env
+
+  Returns:
+      str: Очищенное значение
+  """
+  if not value:
+    return value
+
+  # Удаляем всё после # (комментарий)
+  if '#' in value:
+    value = value.split('#')[0]
+
+  # Удаляем лишние пробелы
+  value = value.strip()
+
+  return value
 
 class Settings(BaseSettings):
   """Класс настроек приложения с валидацией."""
@@ -59,6 +85,31 @@ class Settings(BaseSettings):
   MIN_ORDER_SIZE_USDT: float = Field(default=5)
   MAX_POSITION_SIZE_USDT: float = 1000.0
   IMBALANCE_THRESHOLD: float = 0.7
+
+  # ===== LEVERAGE CONFIGURATION =====
+  DEFAULT_LEVERAGE: int = Field(
+    default=10,
+    ge=1,
+    le=100,
+    description="Кредитное плечо по умолчанию"
+  )
+  MAX_LEVERAGE: int = Field(
+    default=50,
+    ge=1,
+    le=100,
+    description="Максимальное допустимое кредитное плечо"
+  )
+
+  @field_validator("MAX_LEVERAGE")
+  @classmethod
+  def validate_max_leverage(cls, v, info):
+    """Проверка, что MAX_LEVERAGE >= DEFAULT_LEVERAGE"""
+    default_leverage = info.data.get("DEFAULT_LEVERAGE", 10)
+    if v < default_leverage:
+      raise ValueError(
+        f"MAX_LEVERAGE ({v}) должен быть >= DEFAULT_LEVERAGE ({default_leverage})"
+      )
+    return v
 
   # ===== НАСТРОЙКИ API СЕРВЕРА =====
   API_HOST: str = Field(default="0.0.0.0")
@@ -314,6 +365,72 @@ class Settings(BaseSettings):
           "и BYBIT_API_SECRET"
         )
       return self.BYBIT_API_KEY, self.BYBIT_API_SECRET
+
+  def __init__(self, **kwargs):
+    """Инициализация с дополнительной валидацией."""
+    super().__init__(**kwargs)
+    self._validate_configuration()
+
+  def _validate_configuration(self):
+    """Дополнительная валидация конфигурации после загрузки."""
+
+
+    # Проверка весов ML и Strategy
+    weights_sum = self.ML_WEIGHT + self.STRATEGY_WEIGHT
+    if not (0.99 <= weights_sum <= 1.01):  # Допуск на погрешность округления
+      logger.error(
+        f"❌ Сумма ML_WEIGHT ({self.ML_WEIGHT}) и STRATEGY_WEIGHT "
+        f"({self.STRATEGY_WEIGHT}) должна быть равна 1.0, текущая: {weights_sum}"
+      )
+      raise ValueError(
+        f"ML_WEIGHT + STRATEGY_WEIGHT must equal 1.0, got {weights_sum}"
+      )
+
+    # Проверка MIN_ORDER_SIZE vs MAX_POSITION_SIZE
+    if self.MIN_ORDER_SIZE_USDT > self.MAX_POSITION_SIZE_USDT:
+      logger.error(
+        f"❌ MIN_ORDER_SIZE_USDT ({self.MIN_ORDER_SIZE_USDT}) "
+        f"больше MAX_POSITION_SIZE_USDT ({self.MAX_POSITION_SIZE_USDT})"
+      )
+      raise ValueError(
+        "MIN_ORDER_SIZE_USDT must be <= MAX_POSITION_SIZE_USDT"
+      )
+
+    # Проверка MAX_POSITION_SIZE vs MAX_EXPOSURE
+    if self.MAX_POSITION_SIZE_USDT > self.MAX_EXPOSURE_USDT:
+      logger.warning(
+        f"⚠️ MAX_POSITION_SIZE_USDT ({self.MAX_POSITION_SIZE_USDT}) "
+        f"больше MAX_EXPOSURE_USDT ({self.MAX_EXPOSURE_USDT})"
+      )
+
+    # Валидация ML Server URL
+    if not self.ML_SERVER_URL.startswith(("http://", "https://")):
+      logger.error(
+        f"❌ ML_SERVER_URL должен начинаться с http:// или https://"
+      )
+      raise ValueError(
+        f"Invalid ML_SERVER_URL: {self.ML_SERVER_URL}"
+      )
+
+    logger.info("✅ Конфигурация успешно валидирована")
+    self._log_critical_settings()
+
+  def _log_critical_settings(self):
+    """Логирование критичных настроек при запуске."""
+    logger.info("=" * 60)
+    logger.info("🔧 КРИТИЧНЫЕ НАСТРОЙКИ БОТА:")
+    logger.info(f"  • Mode: {self.BYBIT_MODE}")
+    logger.info(f"  • Trading Pairs: {self.TRADING_PAIRS}")
+    logger.info(f"  • Consensus Mode: {self.CONSENSUS_MODE}")
+    logger.info(f"  • Default Leverage: {self.DEFAULT_LEVERAGE}x")
+    logger.info(f"  • Min Order Size: {self.MIN_ORDER_SIZE_USDT} USDT")
+    logger.info(f"  • Max Position Size: {self.MAX_POSITION_SIZE_USDT} USDT")
+    logger.info(f"  • Max Exposure: {self.MAX_EXPOSURE_USDT} USDT")
+    logger.info(f"  • Max Open Positions: {self.MAX_OPEN_POSITIONS}")
+    logger.info(f"  • ML Server: {self.ML_SERVER_URL}")
+    logger.info(f"  • ML Weight: {self.ML_WEIGHT} / Strategy Weight: {self.STRATEGY_WEIGHT}")
+    logger.info("=" * 60)
+
 
   def get_bybit_api_url(self) -> str:
     """
