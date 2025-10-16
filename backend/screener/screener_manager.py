@@ -1,14 +1,13 @@
 # backend/screener/screener_manager.py
 """
 Менеджер скринера торговых пар.
-Подключается к WebSocket Bybit, получает тикеры всех пар,
-фильтрует по объему и рассылает данные клиентам.
+ИСПРАВЛЕН: Использует REST API вместо WebSocket для получения тикеров.
 """
 
 import asyncio
-import json
-from typing import Dict, List, Optional, Any
-from datetime import datetime, timedelta
+import aiohttp
+from typing import Dict, List, Optional
+from datetime import datetime
 
 from core.logger import get_logger
 from models.screener import ScreenerPairData
@@ -23,21 +22,29 @@ class ScreenerManager:
   def __init__(self):
     """Инициализация менеджера скринера."""
     self.pairs: Dict[str, ScreenerPairData] = {}
-    self.ws_url = settings.BYBIT_WS_URL
+
+    # REST API endpoint для тикеров
+    self.api_url = (
+      "https://api-testnet.bybit.com"
+      if settings.BYBIT_MODE == "testnet"
+      else "https://api.bybit.com"
+    )
+
     self.min_volume = settings.SCREENER_MIN_VOLUME
     self.max_pairs = settings.SCREENER_MAX_PAIRS
 
     self.is_running = False
-    self.ws_connection: Optional[Any] = None  # Тип Any для websocket
+    self.session: Optional[aiohttp.ClientSession] = None
 
     # Задачи
-    self.ws_task: Optional[asyncio.Task] = None
+    self.fetch_task: Optional[asyncio.Task] = None
     self.cleanup_task: Optional[asyncio.Task] = None
 
     logger.info(
       f"Инициализирован ScreenerManager: "
       f"min_volume={self.min_volume:,.0f}, max_pairs={self.max_pairs}"
     )
+    logger.info(f"API URL: {self.api_url}")
 
   async def start(self):
     """Запуск скринера."""
@@ -48,8 +55,11 @@ class ScreenerManager:
     self.is_running = True
     logger.info("Запуск ScreenerManager...")
 
+    # Создаем HTTP сессию
+    self.session = aiohttp.ClientSession()
+
     # Запускаем задачи
-    self.ws_task = asyncio.create_task(self._websocket_loop())
+    self.fetch_task = asyncio.create_task(self._fetch_loop())
     self.cleanup_task = asyncio.create_task(self._cleanup_loop())
 
     logger.info("✓ ScreenerManager запущен")
@@ -63,105 +73,117 @@ class ScreenerManager:
     self.is_running = False
 
     # Отменяем задачи
-    if self.ws_task:
-      self.ws_task.cancel()
+    if self.fetch_task:
+      self.fetch_task.cancel()
     if self.cleanup_task:
       self.cleanup_task.cancel()
 
-    # Закрываем WebSocket
-    if self.ws_connection:
+    # Закрываем HTTP сессию
+    if self.session:
       try:
-        await self.ws_connection.close()
+        await self.session.close()
       except Exception as e:
-        logger.error(f"Ошибка закрытия WebSocket: {e}")
+        logger.error(f"Ошибка закрытия HTTP сессии: {e}")
 
     logger.info("✓ ScreenerManager остановлен")
 
-  async def _websocket_loop(self):
-    """Цикл WebSocket подключения."""
-    # Импортируем websockets здесь, чтобы избежать проблем с типами
-    try:
-      import websockets
-    except ImportError:
-      logger.error("Библиотека websockets не установлена. Установите: pip install websockets")
-      return
+  async def _fetch_loop(self):
+    """Цикл получения данных через REST API."""
+    logger.info("Запуск fetch loop")
 
+    # Первая загрузка сразу
+    await self._fetch_tickers()
+
+    # Затем каждые 5 секунд
     while self.is_running:
       try:
-        logger.info(f"Подключение к WebSocket: {self.ws_url}")
-
-        async with websockets.connect(self.ws_url) as ws:
-          self.ws_connection = ws
-
-          # Подписываемся на все тикеры
-          subscribe_msg = {
-            "op": "subscribe",
-            "args": ["tickers.linear"]  # Все линейные (USDT) фьючерсы
-          }
-          await ws.send(json.dumps(subscribe_msg))
-          logger.info("✓ Подписка на тикеры отправлена")
-
-          # Обрабатываем сообщения
-          async for message in ws:
-            if not self.is_running:
-              break
-
-            await self._handle_message(message)
-
+        await asyncio.sleep(5)
+        await self._fetch_tickers()
+      except asyncio.CancelledError:
+        break
       except Exception as e:
-        logger.error(f"Ошибка WebSocket: {e}")
-        if self.is_running:
-          await asyncio.sleep(5)  # Переподключение через 5 сек
+        logger.error(f"Ошибка в fetch loop: {e}")
+        await asyncio.sleep(5)
 
-  async def _handle_message(self, message: str):
-    """Обработка сообщения от WebSocket."""
+  async def _fetch_tickers(self):
+    """Получение тикеров через REST API."""
+    if not self.session:
+      return
+
     try:
-      data = json.loads(message)
+      url = f"{self.api_url}/v5/market/tickers"
+      params = {"category": "linear"}  # Все USDT фьючерсы
 
-      # Пропускаем служебные сообщения
-      if data.get("op") in ["subscribe", "pong"]:
-        return
-
-      topic = data.get("topic")
-      if not topic or not topic.startswith("tickers"):
-        return
-
-      # Обрабатываем тикеры
-      ticker_data = data.get("data")
-      if not ticker_data:
-        return
-
-      symbol = ticker_data.get("symbol")
-      if not symbol or not symbol.endswith("USDT"):
-        return  # Только USDT пары
-
-      # Проверяем объем
-      volume_24h = float(ticker_data.get("turnover24h", 0))
-      if volume_24h < self.min_volume:
-        return  # Фильтруем по объему
-
-      # Обновляем или создаем пару
-      if symbol in self.pairs:
-        self.pairs[symbol].update_from_ticker(ticker_data)
-      else:
-        # Проверяем лимит пар
-        if len(self.pairs) >= self.max_pairs:
+      async with self.session.get(url, params=params, timeout=10) as response:
+        if response.status != 200:
+          logger.error(f"API вернул статус {response.status}")
           return
 
-        pair = ScreenerPairData(symbol=symbol)
-        pair.update_from_ticker(ticker_data)
-        self.pairs[symbol] = pair
+        data = await response.json()
 
-        logger.debug(
-          f"Добавлена новая пара: {symbol}, "
-          f"объем={volume_24h:,.0f} USDT"
+        if data.get("retCode") != 0:
+          logger.error(f"API ошибка: {data.get('retMsg')}")
+          return
+
+        tickers = data.get("result", {}).get("list", [])
+
+        if not tickers:
+          logger.warning("API вернул пустой список тикеров")
+          return
+
+        # Обрабатываем тикеры
+        processed = 0
+        added = 0
+
+        for ticker in tickers:
+          symbol = ticker.get("symbol", "")
+
+          # Только USDT пары
+          if not symbol.endswith("USDT"):
+            continue
+
+          # Проверяем объем
+          volume_24h = float(ticker.get("turnover24h", 0))
+          if volume_24h < self.min_volume:
+            continue
+
+          # Проверяем лимит пар
+          if symbol not in self.pairs and len(self.pairs) >= self.max_pairs:
+            continue
+
+          # Обновляем или создаем пару
+          if symbol in self.pairs:
+            self.pairs[symbol].update_from_ticker(ticker)
+          else:
+            pair = ScreenerPairData(symbol=symbol)
+            pair.update_from_ticker(ticker)
+            self.pairs[symbol] = pair
+            added += 1
+            logger.debug(
+              f"Добавлена пара: {symbol}, "
+              f"цена={pair.last_price:.2f}, "
+              f"объем={volume_24h:,.0f}"
+            )
+
+          processed += 1
+
+        logger.info(
+          f"Обработано тикеров: {processed}, "
+          f"добавлено новых: {added}, "
+          f"всего пар: {len(self.pairs)}"
         )
 
+    except asyncio.TimeoutError:
+      logger.error("Таймаут при запросе к API")
     except Exception as e:
-      logger.error(f"Ошибка обработки сообщения: {e}")
+      logger.error(f"Ошибка получения тикеров: {e}")
+      import traceback
+      logger.error(f"Traceback:\n{traceback.format_exc()}")
 
   async def _cleanup_loop(self):
     """Цикл очистки неактивных пар."""
+    logger.info("Запуск cleanup loop")
+
     while self.is_running:
       try:
         await asyncio.sleep(settings.SCREENER_CLEANUP_INTERVAL)
@@ -186,6 +208,8 @@ class ScreenerManager:
             f"осталось: {len(self.pairs)}"
           )
 
+      except asyncio.CancelledError:
+        break
       except Exception as e:
         logger.error(f"Ошибка очистки: {e}")
 

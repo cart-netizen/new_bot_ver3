@@ -58,7 +58,9 @@ export function DashboardPage() {
    */
   const handlePairClick = (symbol: string) => {
     console.log('[Dashboard] Pair clicked:', symbol);
-    setSelectedSymbol(symbol === selectedSymbol ? null : symbol);
+    console.log('[Dashboard] Current selectedSymbol:', selectedSymbol);
+    console.log('[Dashboard] New selectedSymbol:', symbol);
+    setSelectedSymbol(symbol);
   };
 
   /**
@@ -80,7 +82,7 @@ export function DashboardPage() {
   return (
     <div className="flex h-screen overflow-hidden">
       {/* 1. TradingPairsList - вертикальный список слева */}
-      <div className="w-[280px] flex-shrink-0">
+      <div className="w-[360px] flex-shrink-0">
         <TradingPairsList
           onPairClick={handlePairClick}
           selectedSymbol={selectedSymbol}
@@ -145,7 +147,7 @@ export function DashboardPage() {
               </div>
 
               {/* 3. Order Book (уменьшен на 30%) */}
-              <div className="w-[320px] flex-shrink-0">
+              <div className="w-[224px] flex-shrink-0">
                 <h3 className="text-lg font-medium mb-3">Стакан</h3>
                 <OrderBookWidget
                   orderbook={orderbooks[currentSymbol] || null}

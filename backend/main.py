@@ -138,7 +138,7 @@ class BotController:
     # ===== SCREENER MANAGER (НОВОЕ) =====
     self.screener_manager: Optional[ScreenerManager] = None
     self.screener_broadcast_task: Optional[asyncio.Task] = None
-    self.screener_manager = ScreenerManager()
+    # self.screener_manager = ScreenerManager()
 
     self.running = False
 

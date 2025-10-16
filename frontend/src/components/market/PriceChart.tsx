@@ -166,12 +166,27 @@ export function PriceChart({ symbol, loading: externalLoading = false }: PriceCh
 
   const isPositive = priceChange.amount >= 0;
 
+
   /**
    * Форматирование цены для отображения.
    */
-  const formatPrice = useCallback((value: number): string => {
-    return value.toFixed(2);
-  }, []);
+  const formatPrice = (value: number): string => {
+    if (value === 0) return '0';
+
+    // Для больших цен (>= 1) - до 2 знаков
+    if (value >= 1) {
+      return value.toLocaleString('en-US', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2
+      });
+    }
+
+    // Для малых цен (< 1) - до 6 знаков, убираем trailing zeros
+    return value.toLocaleString('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 6
+    });
+  };
 
   if (loading || externalLoading) {
     return (
@@ -239,7 +254,7 @@ export function PriceChart({ symbol, loading: externalLoading = false }: PriceCh
               }`}
             >
               {isPositive ? '+' : ''}
-              {priceChange.amount.toFixed(2)}
+              {priceChange.amount.toFixed(4)}
             </div>
             <div
               className={`text-sm ${
@@ -247,7 +262,7 @@ export function PriceChart({ symbol, loading: externalLoading = false }: PriceCh
               }`}
             >
               ({isPositive ? '+' : ''}
-              {priceChange.percentage.toFixed(2)}%)
+              {priceChange.percentage.toFixed(4)}%)
             </div>
           </div>
         </div>

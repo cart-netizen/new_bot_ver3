@@ -46,7 +46,7 @@ export function OrderBookWidget({
    * Форматирование цены.
    */
   const formatPrice = (price: number): string => {
-    return price.toFixed(8);
+    return price.toFixed(2);
   };
 
   /**
@@ -59,7 +59,7 @@ export function OrderBookWidget({
     if (volume >= 1000) {
       return `${(volume / 1000).toFixed(2)}K`;
     }
-    return volume.toFixed(4);
+    return volume.toFixed(2);
   };
 
   /**
@@ -147,11 +147,11 @@ export function OrderBookWidget({
         <span className="text-xs text-gray-400">Спред</span>
         <div className="flex items-center gap-3">
           <span className="text-sm font-mono">
-            {orderbook.spread ? orderbook.spread.toFixed(8) : '-'}
+            {orderbook.spread ? orderbook.spread.toFixed(2) : '-'}
           </span>
           {orderbook.spread && orderbook.best_bid && (
             <span className="text-xs text-gray-500">
-              ({((orderbook.spread / orderbook.best_bid) * 100).toFixed(3)}%)
+              ({((orderbook.spread / orderbook.best_bid) * 100).toFixed(2)}%)
             </span>
           )}
         </div>
