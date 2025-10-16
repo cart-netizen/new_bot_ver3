@@ -104,6 +104,107 @@ class Settings(BaseSettings):
   RATE_LIMIT_REST_TRADE: int = 100
   RATE_LIMIT_ORDER_PLACEMENT: int = 50
 
+  # ==================== RECOVERY SERVICE ====================
+  # ✅ ИСПРАВЛЕНО: Добавлены аннотации типов для всех полей
+
+  # Таймаут для обнаружения зависших ордеров (в минутах)
+  # Если ордер находится в статусе PENDING или PLACED дольше этого времени,
+  # он считается зависшим
+  HANGING_ORDER_TIMEOUT_MINUTES: int = Field(
+    default=30,
+    description="Timeout для обнаружения зависших ордеров (минуты)"
+  )
+
+  # Включить автоматическое восстановление после краша
+  # Если True - система автоматически выполнит recover_from_crash() при старте
+  ENABLE_AUTO_RECOVERY: bool = Field(
+    default=True,
+    description="Автоматическое восстановление при старте"
+  )
+
+  # Включить проверку зависших ордеров при каждой сверке состояния
+  ENABLE_HANGING_ORDER_CHECK: bool = Field(
+    default=True,
+    description="Проверка зависших ордеров"
+  )
+
+  # Автоматически восстанавливать FSM при старте
+  # Если True - все активные ордера и позиции получат FSM при старте системы
+  ENABLE_FSM_AUTO_RESTORE: bool = Field(
+    default=True,
+    description="Автоматическое восстановление FSM"
+  )
+
+  # Максимальное количество попыток получить данные с биржи при сверке
+  MAX_RECONCILIATION_RETRIES: int = Field(
+    default=3,
+    description="Максимум попыток сверки с биржей"
+  )
+
+  # Задержка между попытками сверки (в секундах)
+  RECONCILIATION_RETRY_DELAY: int = Field(
+    default=2,
+    description="Задержка между попытками сверки (секунды)"
+  )
+
+  # Логировать детальную информацию о каждом зависшем ордере
+  DETAILED_HANGING_ORDER_LOGGING: bool = Field(
+    default=True,
+    description="Детальное логирование зависших ордеров"
+  )
+
+  # ==================== SCREENER SETTINGS ====================
+  """
+  Настройки скринера торговых пар.
+  """
+
+  # Bybit WebSocket URL для тикеров (публичный endpoint)
+  BYBIT_WS_URL: str = Field(
+    default="wss://stream.bybit.com/v5/public/linear",
+    description="Bybit WebSocket v5 URL для публичных данных"
+  )
+
+  # Минимальный объем за 24ч для отображения в скринере (USDT)
+  SCREENER_MIN_VOLUME: float = Field(
+    default=4_000_000.0,
+    description="Минимальный объем торгов за 24ч в USDT для фильтрации пар"
+  )
+
+  # Максимальное количество пар в скринере
+  SCREENER_MAX_PAIRS: int = Field(
+    default=200,
+    description="Максимальное количество торговых пар в памяти"
+  )
+
+  # Интервал broadcast данных скринера (секунды)
+  SCREENER_BROADCAST_INTERVAL: float = Field(
+    default=2.0,
+    description="Интервал отправки данных скринера через WebSocket"
+  )
+
+  # Интервал очистки неактивных пар (секунды)
+  SCREENER_CLEANUP_INTERVAL: int = Field(
+    default=60,
+    description="Интервал очистки неактивных пар из памяти"
+  )
+
+  # TTL для неактивных пар (секунды)
+  SCREENER_INACTIVE_TTL: int = Field(
+    default=300,
+    description="Время жизни неактивной пары (без обновлений) перед удалением"
+  )
+
+  # Включение/отключение скринера
+  SCREENER_ENABLED: bool = Field(
+    default=True,
+    description="Включить/отключить функционал скринера"
+  )
+
+  # Логирование статистики скринера (каждые N секунд)
+  SCREENER_STATS_LOG_INTERVAL: int = Field(
+    default=60,
+    description="Интервал логирования статистики скринера"
+  )
 
   model_config = SettingsConfigDict(
     env_file=".env",

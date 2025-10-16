@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import os
 import signal
 from typing import Dict, Optional, Any
 from contextlib import asynccontextmanager
@@ -16,9 +17,16 @@ from core.logger import setup_logging, get_logger
 from core.exceptions import log_exception, OrderBookSyncError, OrderBookError
 from core.trace_context import trace_operation
 from database.connection import db_manager
+from domain.services.fsm_registry import fsm_registry
 from exchange.rest_client import rest_client
 from exchange.websocket_manager import BybitWebSocketManager
 from infrastructure.resilience.recovery_service import recovery_service
+from ml_engine.detection.layering_detector import LayeringConfig, LayeringDetector
+from ml_engine.detection.spoofing_detector import SpoofingConfig, SpoofingDetector
+from ml_engine.detection.sr_level_detector import SRLevelConfig, SRLevelDetector
+from ml_engine.integration.ml_signal_validator import ValidationConfig, MLSignalValidator
+from ml_engine.monitoring.drift_detector import DriftDetector
+from strategies.strategy_manager import StrategyManagerConfig, StrategyManager
 from strategy.candle_manager import CandleManager
 from strategy.orderbook_manager import OrderBookManager
 from strategy.analyzer import MarketAnalyzer
@@ -40,6 +48,7 @@ from ml_engine.data_collection import MLDataCollector  # НОВОЕ
 # Настройка логирования
 setup_logging()
 logger = get_logger(__name__)
+
 
 
 class BotController:
@@ -73,6 +82,60 @@ class BotController:
     self.candle_update_task: Optional[asyncio.Task] = None  # НОВОЕ
 
     self.ml_stats_task: Optional[asyncio.Task] = None
+
+    # ML Signal Validator
+    ml_validator_config = ValidationConfig(
+      model_server_url=os.getenv('ML_SERVER_URL', 'http://localhost:8001'),
+      min_ml_confidence=float(os.getenv('ML_MIN_CONFIDENCE', '0.6')),
+      ml_weight=float(os.getenv('ML_WEIGHT', '0.6')),
+      strategy_weight=float(os.getenv('STRATEGY_WEIGHT', '0.4'))
+    )
+    self.ml_validator = MLSignalValidator(ml_validator_config)
+
+    # Drift Detector
+    self.drift_detector = DriftDetector(
+      window_size=10000,
+      baseline_window_size=50000,
+      drift_threshold=0.1
+    )
+
+    # ==================== DETECTION SYSTEMS ====================
+
+    # Spoofing Detector
+    spoofing_config = SpoofingConfig(
+      large_order_threshold_usdt=50000.0,
+      suspicious_ttl_seconds=10.0,
+      cancel_rate_threshold=0.7
+    )
+    self.spoofing_detector = SpoofingDetector(spoofing_config)
+
+    # Layering Detector
+    layering_config = LayeringConfig(
+      min_orders_in_layer=3,
+      max_price_spread_pct=0.005,
+      min_layer_volume_usdt=30000.0
+    )
+    self.layering_detector = LayeringDetector(layering_config)
+
+    # S/R Level Detector
+    sr_config = SRLevelConfig(
+      min_touches=2,
+      lookback_candles=200,
+      max_age_hours=24
+    )
+    self.sr_detector = SRLevelDetector(sr_config)
+
+    # ==================== STRATEGY MANAGER ====================
+
+    strategy_manager_config = StrategyManagerConfig(
+      consensus_mode=os.getenv('CONSENSUS_MODE', 'weighted'),
+      min_strategies_for_signal=int(os.getenv('MIN_STRATEGIES', '2')),
+      min_consensus_confidence=float(os.getenv('MIN_CONSENSUS_CONFIDENCE', '0.6'))
+    )
+    self.strategy_manager = StrategyManager(strategy_manager_config)
+
+    self.running = False
+
     logger.info("Инициализирован контроллер бота с ML поддержкой")
 
   async def initialize(self):
@@ -174,6 +237,10 @@ class BotController:
       await self.balance_tracker.start()
       logger.info("✓ Трекер баланса запущен")
 
+      # Инициализация ML Validator
+      await self.ml_validator.initialize()
+      logger.info("✅ ML Signal Validator инициализирован")
+
       # ===== НОВОЕ: Загружаем исторические свечи =====
       await self._load_historical_candles()
       logger.info("✓ Исторические свечи загружены")
@@ -199,6 +266,10 @@ class BotController:
         self._analysis_loop_ml_enhanced()
       )
       logger.info("✓ Цикл анализа (ML-Enhanced) запущен")
+
+      # Запускаем background task для очистки FSM
+      asyncio.create_task(fsm_cleanup_task())
+      logger.info("✓ FSM Cleanup Task запланирован")
 
       self.status = BotStatus.RUNNING
       logger.info("=" * 80)
@@ -601,10 +672,32 @@ async def lifespan(app):
       logger.info("✓ База данных подключена")
 
       # 2. Recovery & Reconciliation (если включено)
-      if settings.AUTO_RECONCILE_ON_STARTUP:
-        logger.info("→ Запуск state reconciliation...")
-        reconcile_result = await recovery_service.reconcile_state()
-        logger.info(f"✓ Reconciliation завершен: {reconcile_result}")
+      if settings.ENABLE_AUTO_RECOVERY:
+        logger.info("Запуск автоматического восстановления...")
+
+        recovery_result = await recovery_service.recover_from_crash()
+
+        if recovery_result["recovered"]:
+          logger.info("✓ Автоматическое восстановление завершено успешно")
+
+          # Логируем детали
+          if recovery_result["hanging_orders"]:
+            logger.warning(
+              f"⚠ Обнаружено {len(recovery_result['hanging_orders'])} "
+              f"зависших ордеров - требуется внимание!"
+            )
+
+          logger.info(
+            f"FSM восстановлено: "
+            f"{recovery_result['fsm_restored']['orders']} ордеров, "
+            f"{recovery_result['fsm_restored']['positions']} позиций"
+          )
+        else:
+          logger.error("✗ Ошибка автоматического восстановления")
+          if "error" in recovery_result:
+            logger.error(f"Детали: {recovery_result['error']}")
+      else:
+        logger.info("Автоматическое восстановление отключено в конфигурации")
 
       # Создаем и инициализируем контроллер
       bot_controller = BotController()
@@ -644,6 +737,41 @@ async def lifespan(app):
 
     logger.info("Приложение остановлено")
 
+async def fsm_cleanup_task():
+  """
+  Background task для периодической очистки терминальных FSM.
+  Освобождает память от завершенных FSM.
+  """
+  logger.info("FSM Cleanup Task запущен")
+
+  while True:
+    try:
+      # Ждем 30 минут
+      await asyncio.sleep(1800)
+
+      logger.info("Запуск очистки терминальных FSM...")
+
+      # Очищаем терминальные FSM
+      cleared = fsm_registry.clear_terminal_fsms()
+
+      logger.info(
+        f"Очистка завершена: "
+        f"ордеров - {cleared['orders_cleared']}, "
+        f"позиций - {cleared['positions_cleared']}"
+      )
+
+      # Логируем статистику
+      stats = fsm_registry.get_stats()
+      logger.info(
+        f"FSM Registry статистика: "
+        f"ордеров - {stats['total_order_fsms']}, "
+        f"позиций - {stats['total_position_fsms']}"
+      )
+
+    except Exception as e:
+      logger.error(f"Ошибка в FSM cleanup task: {e}", exc_info=True)
+      # Продолжаем работу даже при ошибке
+      await asyncio.sleep(60)
 
 # Импортируем FastAPI приложение и добавляем lifespan
 from api.app import app
