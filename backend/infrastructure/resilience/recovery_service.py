@@ -1,15 +1,12 @@
 """
-Recovery & State Sync Service - ПОЛНАЯ РЕАЛИЗАЦИЯ.
-
+Recovery & State Sync Service.
 Восстановление состояния бота после сбоев и сверка с биржей.
-Включает обнаружение зависших ордеров и восстановление FSM.
 """
 
-from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from typing import List, Dict, Any
+from datetime import datetime
 
 from core.logger import get_logger
-from config import settings
 from exchange.rest_client import rest_client
 from infrastructure.repositories.order_repository import order_repository
 from infrastructure.repositories.position_repository import position_repository
@@ -17,797 +14,400 @@ from infrastructure.repositories.audit_repository import audit_repository
 from database.models import OrderStatus, PositionStatus, AuditAction
 from domain.state_machines.order_fsm import OrderStateMachine
 from domain.state_machines.position_fsm import PositionStateMachine
-from domain.services.fsm_registry import fsm_registry
 
 logger = get_logger(__name__)
 
 
 class RecoveryService:
+  """
+  Сервис восстановления состояния.
+  Сверяет локальное состояние с биржей при старте.
+  """
+
+  def __init__(self):
+    """Инициализация сервиса восстановления."""
+    logger.info("Recovery Service инициализирован")
+
+  async def reconcile_state(self) -> Dict[str, Any]:
     """
-    Сервис восстановления состояния.
+    Полная сверка состояния с биржей.
 
-    Основные функции:
-    - Сверка локального состояния с биржей
-    - Обнаружение зависших ордеров
-    - Восстановление FSM после рестарта
-    - Синхронизация расхождений
+    Returns:
+        Dict: Результаты сверки
     """
+    logger.info("=" * 80)
+    logger.info("НАЧАЛО СВЕРКИ СОСТОЯНИЯ С БИРЖЕЙ")
+    logger.info("=" * 80)
 
-    def __init__(self):
-        """Инициализация сервиса восстановления."""
-        # Параметры из конфигурации
-        self.hanging_order_timeout_minutes = getattr(
-            settings,
-            'HANGING_ORDER_TIMEOUT_MINUTES',
-            30
-        )
-        self.enable_auto_recovery = getattr(
-            settings,
-            'ENABLE_AUTO_RECOVERY',
-            True
-        )
+    results = {
+      "orders_synced": 0,
+      "positions_synced": 0,
+      "discrepancies_found": 0,
+      "errors": [],
+    }
 
-        logger.info(
-            f"Recovery Service инициализирован | "
-            f"Timeout для зависших ордеров: {self.hanging_order_timeout_minutes} мин | "
-            f"Авто-восстановление: {self.enable_auto_recovery}"
-        )
+    try:
+      # 1. Сверка ордеров
+      orders_result = await self._reconcile_orders()
+      results["orders_synced"] = orders_result["synced"]
+      results["discrepancies_found"] += orders_result["discrepancies"]
 
-    # ==================== ПУБЛИЧНЫЕ МЕТОДЫ ====================
+      # 2. Сверка позиций
+      positions_result = await self._reconcile_positions()
+      results["positions_synced"] = positions_result["synced"]
+      results["discrepancies_found"] += positions_result["discrepancies"]
 
-    async def reconcile_state(self) -> Dict[str, Any]:
-        """
-        Полная сверка состояния с биржей.
+      logger.info("=" * 80)
+      logger.info(f"СВЕРКА ЗАВЕРШЕНА:")
+      logger.info(f"  Ордеров синхронизировано: {results['orders_synced']}")
+      logger.info(f"  Позиций синхронизировано: {results['positions_synced']}")
+      logger.info(f"  Расхождений найдено: {results['discrepancies_found']}")
+      logger.info("=" * 80)
 
-        Returns:
-            Dict: Результаты сверки
-        """
-        logger.info("=" * 80)
-        logger.info("НАЧАЛО СВЕРКИ СОСТОЯНИЯ С БИРЖЕЙ")
-        logger.info("=" * 80)
+      # Записываем в аудит
+      await audit_repository.log(
+        action=AuditAction.CONFIG_CHANGE,
+        entity_type="System",
+        entity_id="recovery",
+        new_value=results,
+        reason="State reconciliation on startup",
+        success=True,
+      )
 
-        results = {
-            "orders_synced": 0,
-            "positions_synced": 0,
-            "discrepancies_found": 0,
-            "errors": [],
-        }
+    except Exception as e:
+      logger.error(f"Ошибка при сверке состояния: {e}")
+      results["errors"].append(str(e))
 
+    return results
+
+  async def _reconcile_orders(self) -> Dict[str, int]:
+    """
+    Сверка ордеров с биржей.
+
+    Returns:
+        Dict: Результаты сверки ордеров
+    """
+    logger.info("Сверка ордеров с биржей...")
+
+    result = {
+      "synced": 0,
+      "discrepancies": 0,
+    }
+
+    try:
+      # Получаем активные ордера из БД
+      local_orders = await order_repository.get_active_orders()
+      logger.info(f"Найдено {len(local_orders)} активных ордеров в БД")
+
+      for local_order in local_orders:
         try:
-            # 1. Сверка ордеров
-            orders_result = await self._reconcile_orders()
-            results["orders_synced"] = orders_result["synced"]
-            results["discrepancies_found"] += orders_result["discrepancies"]
+          # Сначала пытаемся найти по client_order_id (orderLinkId)
+          exchange_order = None
 
-            # 2. Сверка позиций
-            positions_result = await self._reconcile_positions()
-            results["positions_synced"] = positions_result["synced"]
-            results["discrepancies_found"] += positions_result["discrepancies"]
+          # Вариант 1: Используем client_order_id (orderLinkId)
+          if local_order.client_order_id:
+            logger.debug(
+              f"Поиск ордера по client_order_id: {local_order.client_order_id}"
+            )
+            exchange_order = await rest_client.get_order_info(
+              symbol=local_order.symbol,
+              order_link_id=local_order.client_order_id,  # ← ИЗМЕНЕНО
+            )
 
-            logger.info("=" * 80)
-            logger.info(f"СВЕРКА ЗАВЕРШЕНА:")
-            logger.info(f"  Ордеров синхронизировано: {results['orders_synced']}")
-            logger.info(f"  Позиций синхронизировано: {results['positions_synced']}")
-            logger.info(f"  Расхождений найдено: {results['discrepancies_found']}")
-            logger.info("=" * 80)
+          # Вариант 2: Если не найден и есть exchange_order_id, пробуем по нему
+          if not exchange_order and local_order.exchange_order_id:
+            logger.debug(
+              f"Поиск ордера по exchange_order_id: {local_order.exchange_order_id}"
+            )
+            exchange_order = await rest_client.get_order_info(
+              symbol=local_order.symbol,
+              order_id=local_order.exchange_order_id,
+            )
 
-            # Записываем в аудит
+          if not exchange_order:
+            logger.warning(
+              f"Ордер {local_order.client_order_id} не найден на бирже "
+              f"(exchange_id: {local_order.exchange_order_id or 'None'})"
+            )
+            result["discrepancies"] += 1
+
+            # Проверяем статус ордера перед пометкой как FAILED
+            if local_order.status == OrderStatus.PENDING:
+              logger.info(
+                f"Ордер {local_order.client_order_id} в статусе PENDING, "
+                f"пропускаем (возможно не был размещен)"
+              )
+              continue
+
+            # Помечаем как неизвестный только если он был PLACED или выше
+            await order_repository.update_status(
+              client_order_id=local_order.client_order_id,
+              new_status=OrderStatus.FAILED,
+            )
+
             await audit_repository.log(
-                action=AuditAction.CONFIG_CHANGE,
-                entity_type="System",
-                entity_id="recovery",
-                new_value=results,
-                reason="State reconciliation on startup",
-                success=True,
+              action=AuditAction.ORDER_PLACE,
+              entity_type="Order",
+              entity_id=local_order.client_order_id,
+              reason="Order not found on exchange during reconciliation",
+              success=False,
             )
+            continue
 
-        except Exception as e:
-            logger.error(f"Ошибка при сверке состояния: {e}", exc_info=True)
-            results["errors"].append(str(e))
+          # Сравниваем статусы
+          exchange_status = self._map_exchange_order_status(
+            exchange_order.get("orderStatus")
+          )
 
-        return results
-
-    async def recover_from_crash(self) -> Dict[str, Any]:
-        """
-        Восстановление после аварийного завершения.
-
-        Returns:
-            Dict: Результаты восстановления
-        """
-        logger.warning("=" * 80)
-        logger.warning("ОБНАРУЖЕНО АВАРИЙНОЕ ЗАВЕРШЕНИЕ - ВОССТАНОВЛЕНИЕ")
-        logger.warning("=" * 80)
-
-        results = {
-            "recovered": False,
-            "actions_taken": [],
-            "hanging_orders": [],
-            "fsm_restored": {
-                "orders": 0,
-                "positions": 0
-            }
-        }
-
-        try:
-            # 1. Полная сверка состояния
-            reconcile_result = await self.reconcile_state()
-            results["actions_taken"].append("State reconciliation completed")
-            logger.info("✓ Шаг 1/3: Сверка состояния завершена")
-
-            # 2. Проверка зависших ордеров
-            hanging_orders = await self._check_hanging_orders()
-            results["hanging_orders"] = hanging_orders
-
-            if hanging_orders:
-                results["actions_taken"].append(
-                    f"Found {len(hanging_orders)} hanging orders"
-                )
-                logger.warning(f"⚠ Обнаружено {len(hanging_orders)} зависших ордеров")
-            else:
-                logger.info("✓ Зависших ордеров не обнаружено")
-
-            logger.info("✓ Шаг 2/3: Проверка зависших ордеров завершена")
-
-            # 3. Восстановление FSM состояний
-            fsm_result = await self._restore_fsm_states()
-            results["fsm_restored"] = fsm_result
-            results["actions_taken"].append(
-                f"FSM states restored: {fsm_result['orders']} orders, "
-                f"{fsm_result['positions']} positions"
-            )
-            logger.info("✓ Шаг 3/3: FSM состояния восстановлены")
-
-            results["recovered"] = True
-
-            logger.info("=" * 80)
-            logger.info("✓ ВОССТАНОВЛЕНИЕ ЗАВЕРШЕНО УСПЕШНО")
-            logger.info("=" * 80)
-
-        except Exception as e:
-            logger.error(f"Ошибка при восстановлении: {e}", exc_info=True)
-            results["error"] = str(e)
-            results["recovered"] = False
-
-        return results
-
-    # ==================== ПРОВЕРКА ЗАВИСШИХ ОРДЕРОВ ====================
-
-    async def _check_hanging_orders(self) -> List[Dict[str, Any]]:
-        """
-        Проверка зависших ордеров.
-
-        Критерии "зависших" ордеров:
-        1. Локально активен, но на бирже в финальном статусе
-        2. Локально активен, но не найден на бирже
-        3. Слишком долго в промежуточном статусе (> HANGING_ORDER_TIMEOUT)
-
-        Returns:
-            List[Dict]: Список зависших ордеров с деталями проблемы
-        """
-        logger.info("=" * 80)
-        logger.info("НАЧАЛО ПРОВЕРКИ ЗАВИСШИХ ОРДЕРОВ")
-        logger.info("=" * 80)
-
-        hanging_orders = []
-
-        try:
-            # 1. Получаем все активные ордера из БД
-            local_active_orders = await order_repository.get_active_orders()
-            logger.info(f"Найдено {len(local_active_orders)} активных ордеров в БД")
-
-            if not local_active_orders:
-                logger.info("✓ Активных ордеров не найдено, проверка не требуется")
-                return hanging_orders
-
-            # 2. Получаем активные ордера с биржи для всех уникальных символов
-            symbols = list(set(order.symbol for order in local_active_orders))
-            logger.info(f"Проверяем {len(symbols)} уникальных символов: {symbols}")
-
-            exchange_orders_map = {}
-
-            for symbol in symbols:
-                try:
-                    response = await rest_client.get_open_orders(symbol=symbol)
-                    exchange_orders_list = response.get("result", {}).get("list", [])
-
-                    # Создаем мапу для быстрого поиска по orderLinkId
-                    for ex_order in exchange_orders_list:
-                        order_link_id = ex_order.get("orderLinkId")
-                        if order_link_id:
-                            exchange_orders_map[order_link_id] = ex_order
-
-                    logger.debug(
-                        f"Получено {len(exchange_orders_list)} активных ордеров "
-                        f"с биржи для {symbol}"
-                    )
-
-                except Exception as e:
-                    logger.error(
-                        f"Ошибка получения ордеров с биржи для {symbol}: {e}",
-                        exc_info=True
-                    )
-                    # Пропускаем этот символ, но продолжаем проверку остальных
-                    continue
-
-            logger.info(f"Всего активных ордеров на бирже: {len(exchange_orders_map)}")
-
-            # 3. Проверяем каждый локальный ордер
-            current_time = datetime.utcnow()
-            timeout_threshold = timedelta(minutes=self.hanging_order_timeout_minutes)
-
-            for local_order in local_active_orders:
-                issue_detected = None
-
-                # ========================================
-                # ПРОВЕРКА 1: Ордер не найден в активных на бирже
-                # ========================================
-
-                if local_order.client_order_id not in exchange_orders_map:
-                    logger.debug(
-                        f"Ордер {local_order.client_order_id} не найден в активных, "
-                        f"ищем в истории..."
-                    )
-
-                    # Дополнительная проверка: возможно ордер в истории
-                    try:
-                        order_info = await rest_client.get_order_info(
-                            symbol=local_order.symbol,
-                            order_link_id=local_order.client_order_id
-                        )
-
-                        if order_info:
-                            # Ордер найден в истории - проверяем статус
-                            exchange_status_str = order_info.get("orderStatus")
-                            exchange_status = self._map_exchange_status(exchange_status_str)
-
-                            logger.debug(
-                                f"Ордер {local_order.client_order_id} найден в истории | "
-                                f"Статус на бирже: {exchange_status_str}"
-                            )
-
-                            # Если на бирже завершен, а локально активен - это проблема
-                            if exchange_status in [
-                                OrderStatus.FILLED,
-                                OrderStatus.CANCELLED,
-                                OrderStatus.REJECTED,
-                                OrderStatus.FAILED
-                            ]:
-                                issue_detected = {
-                                    "type": "status_mismatch",
-                                    "reason": (
-                                        f"Ордер локально активен ({local_order.status.value}), "
-                                        f"но на бирже завершен ({exchange_status.value})"
-                                    ),
-                                    "local_status": local_order.status.value,
-                                    "exchange_status": exchange_status.value,
-                                    "exchange_data": {
-                                        "orderId": order_info.get("orderId"),
-                                        "cumExecQty": order_info.get("cumExecQty"),
-                                        "avgPrice": order_info.get("avgPrice"),
-                                        "updatedTime": order_info.get("updatedTime")
-                                    }
-                                }
-                        else:
-                            # Ордер вообще не найден на бирже (ни активный, ни в истории)
-                            logger.warning(
-                                f"Ордер {local_order.client_order_id} не найден на бирже!"
-                            )
-
-                            issue_detected = {
-                                "type": "not_found_on_exchange",
-                                "reason": "Ордер не найден на бирже (ни в активных, ни в истории)",
-                                "possible_causes": [
-                                    "Отменен вручную через UI биржи",
-                                    "Системный сбой при размещении",
-                                    "Ордер был отклонен биржей без уведомления"
-                                ],
-                                "local_status": local_order.status.value
-                            }
-
-                    except Exception as e:
-                        logger.warning(
-                            f"Не удалось проверить ордер {local_order.client_order_id} "
-                            f"в истории: {e}"
-                        )
-
-                        issue_detected = {
-                            "type": "verification_failed",
-                            "reason": f"Не удалось проверить статус на бирже: {str(e)}",
-                            "local_status": local_order.status.value
-                        }
-
-                # ========================================
-                # ПРОВЕРКА 2: Ордер слишком долго в промежуточном статусе
-                # ========================================
-
-                if not issue_detected and local_order.status in [
-                    OrderStatus.PENDING,
-                    OrderStatus.PLACED
-                ]:
-                    time_in_status = current_time - local_order.updated_at
-
-                    if time_in_status > timeout_threshold:
-                        minutes_stuck = time_in_status.total_seconds() / 60
-
-                        logger.warning(
-                            f"Ордер {local_order.client_order_id} зависший по таймауту | "
-                            f"Время в статусе {local_order.status.value}: {minutes_stuck:.1f} мин"
-                        )
-
-                        issue_detected = {
-                            "type": "timeout_in_status",
-                            "reason": (
-                                f"Ордер {minutes_stuck:.1f} минут в статусе "
-                                f"{local_order.status.value} (порог: {self.hanging_order_timeout_minutes} мин)"
-                            ),
-                            "minutes_stuck": round(minutes_stuck, 2),
-                            "current_status": local_order.status.value,
-                            "threshold_minutes": self.hanging_order_timeout_minutes,
-                            "updated_at": local_order.updated_at.isoformat()
-                        }
-
-                # ========================================
-                # ЕСЛИ ОБНАРУЖЕНА ПРОБЛЕМА - ДОБАВЛЯЕМ В СПИСОК
-                # ========================================
-
-                if issue_detected:
-                    hanging_order_info = {
-                        "order_id": str(local_order.id),
-                        "client_order_id": local_order.client_order_id,
-                        "exchange_order_id": local_order.exchange_order_id,
-                        "symbol": local_order.symbol,
-                        "side": local_order.side.value,
-                        "order_type": local_order.order_type.value,
-                        "quantity": local_order.quantity,
-                        "price": local_order.price,
-                        "local_status": local_order.status.value,
-                        "created_at": local_order.created_at.isoformat(),
-                        "updated_at": local_order.updated_at.isoformat(),
-                        "issue": issue_detected
-                    }
-
-                    hanging_orders.append(hanging_order_info)
-
-                    logger.error(
-                        f"⚠ ЗАВИСШИЙ ОРДЕР ОБНАРУЖЕН ⚠\n"
-                        f"  Client Order ID: {local_order.client_order_id}\n"
-                        f"  Символ: {local_order.symbol}\n"
-                        f"  Локальный статус: {local_order.status.value}\n"
-                        f"  Тип проблемы: {issue_detected['type']}\n"
-                        f"  Причина: {issue_detected['reason']}"
-                    )
-
-                    # Логируем в audit для последующего анализа
-                    await audit_repository.log(
-                        action=AuditAction.ORDER_MODIFY,
-                        entity_type="Order",
-                        entity_id=local_order.client_order_id,
-                        old_value={"status": local_order.status.value},
-                        new_value={"issue": issue_detected},
-                        reason="Hanging order detected during recovery check",
-                        success=True,
-                        metadata_json=hanging_order_info
-                    )
-
-            # ========================================
-            # ФИНАЛЬНОЕ ЛОГИРОВАНИЕ
-            # ========================================
-
-            logger.info("=" * 80)
-            if hanging_orders:
-                logger.warning(
-                    f"⚠ ПРОВЕРКА ЗАВЕРШЕНА: НАЙДЕНО {len(hanging_orders)} ЗАВИСШИХ ОРДЕРОВ"
-                )
-
-                # Группируем по типам проблем
-                issues_by_type = {}
-                for order in hanging_orders:
-                    issue_type = order["issue"]["type"]
-                    issues_by_type[issue_type] = issues_by_type.get(issue_type, 0) + 1
-
-                logger.warning("Распределение по типам проблем:")
-                for issue_type, count in issues_by_type.items():
-                    logger.warning(f"  - {issue_type}: {count}")
-            else:
-                logger.info("✓ ПРОВЕРКА ЗАВЕРШЕНА: ЗАВИСШИХ ОРДЕРОВ НЕ ОБНАРУЖЕНО")
-
-            logger.info("=" * 80)
-
-            return hanging_orders
-
-        except Exception as e:
-            logger.error(
-                f"Критическая ошибка при проверке зависших ордеров: {e}",
-                exc_info=True
-            )
-            return hanging_orders
-
-    # ==================== ВОССТАНОВЛЕНИЕ FSM ====================
-
-    async def _restore_fsm_states(self) -> Dict[str, int]:
-        """
-        Восстановление состояний FSM для активных ордеров и позиций.
-
-        После рестарта бота FSM существуют только в памяти и требуют
-        восстановления из текущих состояний в БД для корректной валидации
-        будущих переходов.
-
-        Восстанавливаем:
-        1. OrderStateMachine для всех активных ордеров
-        2. PositionStateMachine для всех активных позиций
-
-        Returns:
-            Dict[str, int]: Количество восстановленных FSM по типам
-        """
-        logger.info("=" * 80)
-        logger.info("НАЧАЛО ВОССТАНОВЛЕНИЯ FSM СОСТОЯНИЙ")
-        logger.info("=" * 80)
-
-        restored_orders = 0
-        restored_positions = 0
-
-        try:
-            # ============================================================
-            # 1. ВОССТАНОВЛЕНИЕ FSM ДЛЯ ОРДЕРОВ
-            # ============================================================
-
-            logger.info("Шаг 1/2: Восстановление FSM ордеров...")
-
-            # Получаем все активные ордера из БД
-            active_orders = await order_repository.get_active_orders()
-            logger.info(f"Найдено {len(active_orders)} активных ордеров для восстановления")
-
-            for order in active_orders:
-                try:
-                    # Создаем FSM с текущим состоянием из БД
-                    order_fsm = OrderStateMachine(
-                        order_id=order.client_order_id,
-                        initial_state=order.status
-                    )
-
-                    # Восстанавливаем историю переходов если она сохранена в metadata
-                    if order.metadata_json and "transition_history" in order.metadata_json:
-                        order_fsm.transition_history = order.metadata_json["transition_history"]
-                        logger.debug(
-                            f"Восстановлена история переходов для ордера {order.client_order_id}: "
-                            f"{len(order_fsm.transition_history)} переходов"
-                        )
-
-                    # Регистрируем FSM в глобальном реестре
-                    fsm_registry.register_order_fsm(order.client_order_id, order_fsm)
-
-                    restored_orders += 1
-
-                    logger.debug(
-                        f"✓ FSM восстановлена для ордера {order.client_order_id} | "
-                        f"Символ: {order.symbol} | "
-                        f"Статус: {order.status.value} | "
-                        f"Доступные переходы: {order_fsm.get_available_transitions()}"
-                    )
-
-                except Exception as e:
-                    logger.error(
-                        f"Ошибка восстановления FSM для ордера {order.client_order_id}: {e}",
-                        exc_info=True
-                    )
-                    # Продолжаем с остальными ордерами
-                    continue
-
+          if exchange_status != local_order.status:
             logger.info(
-                f"✓ FSM ордеров восстановлены: {restored_orders}/{len(active_orders)}"
+              f"Расхождение статуса ордера {local_order.client_order_id}: "
+              f"локально={local_order.status}, "
+              f"биржа={exchange_status}"
             )
+            result["discrepancies"] += 1
 
-            # ============================================================
-            # 2. ВОССТАНОВЛЕНИЕ FSM ДЛЯ ПОЗИЦИЙ
-            # ============================================================
+            # Обновляем exchange_order_id если его не было
+            exchange_order_id = exchange_order.get("orderId")
+            if not local_order.exchange_order_id and exchange_order_id:
+              logger.info(
+                f"Обновление exchange_order_id для {local_order.client_order_id}: "
+                f"{exchange_order_id}"
+              )
 
-            logger.info("Шаг 2/2: Восстановление FSM позиций...")
+              # БЕЗОПАСНАЯ конвертация числовых значений
+              # Bybit может возвращать пустые строки "" вместо "0"
+              cum_exec_qty = exchange_order.get("cumExecQty", "0")
+              avg_price = exchange_order.get("avgPrice", "0")
 
-            # Получаем все активные позиции из БД
-            active_positions = await position_repository.get_active_positions()
-            logger.info(f"Найдено {len(active_positions)} активных позиций для восстановления")
+              # Обрабатываем пустые строки
+              try:
+                filled_qty = float(cum_exec_qty) if cum_exec_qty and cum_exec_qty != "" else 0.0
+              except (ValueError, TypeError):
+                logger.warning(f"Некорректное значение cumExecQty: {cum_exec_qty}, используем 0")
+                filled_qty = 0.0
 
-            for position in active_positions:
-                try:
-                    # Создаем FSM с текущим состоянием из БД
-                    position_fsm = PositionStateMachine(
-                        position_id=str(position.id),
-                        initial_state=position.status
-                    )
+              try:
+                avg_price_value = float(avg_price) if avg_price and avg_price != "" else 0.0
+              except (ValueError, TypeError):
+                logger.warning(f"Некорректное значение avgPrice: {avg_price}, используем 0")
+                avg_price_value = 0.0
 
-                    # Восстанавливаем историю переходов если сохранена
-                    if position.metadata_json and "transition_history" in position.metadata_json:
-                        position_fsm.transition_history = position.metadata_json["transition_history"]
-                        logger.debug(
-                            f"Восстановлена история переходов для позиции {position.id}: "
-                            f"{len(position_fsm.transition_history)} переходов"
-                        )
+              # Обновляем локальный статус
+              await order_repository.update_status(
+                client_order_id=local_order.client_order_id,
+                new_status=exchange_status,
+                exchange_order_id=exchange_order_id,
+                filled_quantity=filled_qty,
+                average_fill_price=avg_price_value if avg_price_value > 0 else None,
+              )
 
-                    # Регистрируем FSM в глобальном реестре
-                    fsm_registry.register_position_fsm(str(position.id), position_fsm)
-
-                    restored_positions += 1
-
-                    logger.debug(
-                        f"✓ FSM восстановлена для позиции {position.id} | "
-                        f"Символ: {position.symbol} | "
-                        f"Сторона: {position.side.value} | "
-                        f"Статус: {position.status.value} | "
-                        f"Активна: {position_fsm.is_active()}"
-                    )
-
-                except Exception as e:
-                    logger.error(
-                        f"Ошибка восстановления FSM для позиции {position.id}: {e}",
-                        exc_info=True
-                    )
-                    continue
-
-            logger.info(
-                f"✓ FSM позиций восстановлены: {restored_positions}/{len(active_positions)}"
-            )
-
-            # ============================================================
-            # 3. ФИНАЛЬНОЕ ЛОГИРОВАНИЕ И АУДИТ
-            # ============================================================
-
-            result = {
-                "orders": restored_orders,
-                "positions": restored_positions
-            }
-
-            logger.info("=" * 80)
-            logger.info("ВОССТАНОВЛЕНИЕ FSM ЗАВЕРШЕНО:")
-            logger.info(f"  Ордеров восстановлено: {restored_orders}/{len(active_orders)}")
-            logger.info(f"  Позиций восстановлено: {restored_positions}/{len(active_positions)}")
-            logger.info("=" * 80)
-
-            # Получаем статистику реестра
-            registry_stats = fsm_registry.get_stats()
-            logger.info("Статистика FSM Registry:")
-            logger.info(f"  Всего FSM ордеров: {registry_stats['total_order_fsms']}")
-            logger.info(f"  Всего FSM позиций: {registry_stats['total_position_fsms']}")
-            logger.info(f"  Ордера по статусам: {registry_stats['order_fsms_by_status']}")
-            logger.info(f"  Позиции по статусам: {registry_stats['position_fsms_by_status']}")
-
-            # Логируем в audit
             await audit_repository.log(
-                action=AuditAction.CONFIG_CHANGE,
-                entity_type="System",
-                entity_id="fsm_recovery",
-                new_value={
-                    "orders_restored": restored_orders,
-                    "positions_restored": restored_positions,
-                    "total_active_orders": len(active_orders),
-                    "total_active_positions": len(active_positions),
-                    "registry_stats": registry_stats
-                },
-                reason="FSM state restoration after system restart",
-                success=True
+              action=AuditAction.ORDER_MODIFY,
+              entity_type="Order",
+              entity_id=local_order.client_order_id,
+              old_value={"status": local_order.status.value},
+              new_value={"status": exchange_status.value},
+              reason="Status mismatch fixed during reconciliation",
+              success=True,
             )
 
-            return result
+          result["synced"] += 1
 
         except Exception as e:
-            logger.error(
-                f"Критическая ошибка при восстановлении FSM: {e}",
-                exc_info=True
+          logger.error(
+            f"Ошибка сверки ордера {local_order.client_order_id}: {e}",
+            exc_info=True  # ← ДОБАВЛЕНО
+          )
+
+      logger.info(f"✓ Сверка ордеров завершена: {result}")
+      return result
+
+    except Exception as e:
+      logger.error(f"Критическая ошибка сверки ордеров: {e}")
+      return result
+
+  async def _reconcile_positions(self) -> Dict[str, int]:
+    """
+    Сверка позиций с биржей.
+
+    Returns:
+        Dict: Результаты сверки позиций
+    """
+    logger.info("Сверка позиций с биржей...")
+
+    result = {
+      "synced": 0,
+      "discrepancies": 0,
+    }
+
+    try:
+      # Получаем активные позиции из БД
+      local_positions = await position_repository.get_active_positions()
+      logger.info(f"Найдено {len(local_positions)} активных позиций в БД")
+
+      # Получаем позиции с биржи
+      try:
+        exchange_response = await rest_client.get_positions()
+
+        # ИСПРАВЛЕНО: Правильная обработка структуры ответа Bybit API v5
+        exchange_positions_list = exchange_response.get("result", {}).get("list", [])
+        logger.info(f"Получено {len(exchange_positions_list)} позиций с биржи")
+
+      except Exception as e:
+        logger.error(f"Ошибка получения позиций с биржи: {e}")
+        # Если не можем получить позиции с биржи, возвращаем пустой результат
+        return result
+
+      # Создаем мапу позиций с биржи
+      # Позиция считается активной если size > 0
+      exchange_map = {}
+      for pos in exchange_positions_list:
+        symbol = pos.get("symbol")
+        size = float(pos.get("size", 0))
+
+        if symbol and size > 0:
+          exchange_map[symbol] = pos
+
+      logger.debug(f"Активных позиций на бирже: {len(exchange_map)}")
+
+      # Сверяем каждую локальную позицию
+      for local_pos in local_positions:
+        try:
+          exchange_pos = exchange_map.get(local_pos.symbol)
+
+          if not exchange_pos:
+            logger.warning(
+              f"Позиция {local_pos.symbol} не найдена на бирже "
+              f"(закрыта или size=0)"
+            )
+            result["discrepancies"] += 1
+
+            # Позиция закрыта на бирже, но открыта локально
+            await position_repository.update_status(
+              position_id=str(local_pos.id),
+              new_status=PositionStatus.CLOSED,
+              exit_reason="Position closed on exchange (reconciliation)",
             )
 
-            # Логируем ошибку в audit
             await audit_repository.log(
-                action=AuditAction.CONFIG_CHANGE,
-                entity_type="System",
-                entity_id="fsm_recovery",
-                new_value={
-                    "error": str(e),
-                    "orders_restored": restored_orders,
-                    "positions_restored": restored_positions
-                },
-                reason="FSM restoration failed",
-                success=False
+              action=AuditAction.POSITION_CLOSE,
+              entity_type="Position",
+              entity_id=str(local_pos.id),
+              reason="Position not found on exchange",
+              success=True,
+            )
+            continue
+
+          # Проверяем количество
+          exchange_size = float(exchange_pos.get("size", 0))
+          if abs(exchange_size - local_pos.quantity) > 0.01:
+            logger.warning(
+              f"Расхождение размера позиции {local_pos.symbol}: "
+              f"локально={local_pos.quantity}, "
+              f"биржа={exchange_size}"
+            )
+            result["discrepancies"] += 1
+
+          # Обновляем текущую цену
+          # В Bybit API v5 используется markPrice
+          current_price = float(exchange_pos.get("markPrice", 0))
+          if current_price > 0:
+            await position_repository.update_current_price(
+              position_id=str(local_pos.id),
+              current_price=current_price,
             )
 
-            raise
-
-    # ==================== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
-
-    async def _reconcile_orders(self) -> Dict[str, int]:
-        """
-        Сверка ордеров с биржей.
-
-        Returns:
-            Dict: Результаты сверки ордеров
-        """
-        logger.info("Сверка ордеров с биржей...")
-
-        result = {
-            "synced": 0,
-            "discrepancies": 0,
-        }
-
-        try:
-            # Получаем активные ордера из БД
-            local_orders = await order_repository.get_active_orders()
-            logger.info(f"Найдено {len(local_orders)} активных ордеров в БД")
-
-            if not local_orders:
-                logger.info("Активных ордеров нет, сверка не требуется")
-                return result
-
-            # Получаем ордера с биржи
-            symbols = list(set(order.symbol for order in local_orders))
-
-            for symbol in symbols:
-                try:
-                    response = await rest_client.get_open_orders(symbol=symbol)
-                    exchange_orders = response.get("result", {}).get("list", [])
-
-                    # Создаем мапу для быстрого поиска
-                    exchange_map = {
-                        order.get("orderLinkId"): order
-                        for order in exchange_orders
-                        if order.get("orderLinkId")
-                    }
-
-                    logger.debug(
-                        f"Получено {len(exchange_orders)} ордеров с биржи для {symbol}"
-                    )
-
-                    # Сверяем каждый локальный ордер
-                    for local_order in [o for o in local_orders if o.symbol == symbol]:
-                        exchange_order = exchange_map.get(local_order.client_order_id)
-
-                        if exchange_order:
-                            # Ордер найден - проверяем статус
-                            exchange_status_str = exchange_order.get("orderStatus")
-                            exchange_status = self._map_exchange_status(exchange_status_str)
-
-                            if local_order.status != exchange_status:
-                                # Расхождение обнаружено
-                                result["discrepancies"] += 1
-
-                                logger.warning(
-                                    f"Расхождение статуса ордера {local_order.client_order_id}: "
-                                    f"локально={local_order.status.value}, "
-                                    f"биржа={exchange_status.value}"
-                                )
-
-                                # Обновляем локальный статус
-                                exchange_order_id = exchange_order.get("orderId")
-                                cum_exec_qty = exchange_order.get("cumExecQty", "0")
-                                avg_price = exchange_order.get("avgPrice", "0")
-
-                                try:
-                                    filled_qty = float(cum_exec_qty) if cum_exec_qty and cum_exec_qty != "" else 0.0
-                                except (ValueError, TypeError):
-                                    logger.warning(f"Некорректное значение cumExecQty: {cum_exec_qty}")
-                                    filled_qty = 0.0
-
-                                try:
-                                    avg_price_value = float(avg_price) if avg_price and avg_price != "" else 0.0
-                                except (ValueError, TypeError):
-                                    logger.warning(f"Некорректное значение avgPrice: {avg_price}")
-                                    avg_price_value = 0.0
-
-                                await order_repository.update_status(
-                                    client_order_id=local_order.client_order_id,
-                                    new_status=exchange_status,
-                                    exchange_order_id=exchange_order_id,
-                                    filled_quantity=filled_qty,
-                                    average_fill_price=avg_price_value if avg_price_value > 0 else None,
-                                )
-
-                                await audit_repository.log(
-                                    action=AuditAction.ORDER_MODIFY,
-                                    entity_type="Order",
-                                    entity_id=local_order.client_order_id,
-                                    old_value={"status": local_order.status.value},
-                                    new_value={"status": exchange_status.value},
-                                    reason="Status mismatch fixed during reconciliation",
-                                    success=True,
-                                )
-
-                        result["synced"] += 1
-
-                except Exception as e:
-                    logger.error(f"Ошибка сверки ордеров для {symbol}: {e}", exc_info=True)
-                    continue
-
-            logger.info(f"✓ Сверка ордеров завершена: {result}")
-            return result
+          result["synced"] += 1
 
         except Exception as e:
-            logger.error(f"Критическая ошибка сверки ордеров: {e}", exc_info=True)
-            return result
+          logger.error(
+            f"Ошибка сверки позиции {local_pos.symbol}: {e}"
+          )
 
-    async def _reconcile_positions(self) -> Dict[str, int]:
-        """
-        Сверка позиций с биржей.
+      logger.info(f"✓ Сверка позиций завершена: {result}")
+      return result
 
-        Returns:
-            Dict: Результаты сверки позиций
-        """
-        logger.info("Сверка позиций с биржей...")
+    except Exception as e:
+      logger.error(f"Критическая ошибка сверки позиций: {e}")
+      return result
 
-        result = {
-            "synced": 0,
-            "discrepancies": 0,
-        }
+  def _map_exchange_order_status(self, exchange_status: str) -> OrderStatus:
+    """
+    Преобразование статуса биржи в локальный статус.
 
-        try:
-            # Получаем активные позиции из БД
-            local_positions = await position_repository.get_active_positions()
-            logger.info(f"Найдено {len(local_positions)} активных позиций в БД")
+    Args:
+        exchange_status: Статус с биржи
 
-            # Получаем позиции с биржи
-            try:
-                exchange_response = await rest_client.get_positions()
-                exchange_positions_list = exchange_response.get("result", {}).get("list", [])
-                logger.info(f"Получено {len(exchange_positions_list)} позиций с биржи")
+    Returns:
+        OrderStatus: Локальный статус
+    """
+    status_map = {
+      "New": OrderStatus.PLACED,
+      "PartiallyFilled": OrderStatus.PARTIALLY_FILLED,
+      "Filled": OrderStatus.FILLED,
+      "Cancelled": OrderStatus.CANCELLED,
+      "Rejected": OrderStatus.REJECTED,
+    }
 
-            except Exception as e:
-                logger.error(f"Ошибка получения позиций с биржи: {e}", exc_info=True)
-                return result
+    return status_map.get(exchange_status, OrderStatus.FAILED)
 
-            # Создаем мапу позиций с биржи (только активные с size > 0)
-            exchange_map = {}
-            for pos in exchange_positions_list:
-                symbol = pos.get("symbol")
-                size = float(pos.get("size", 0))
+  async def recover_from_crash(self) -> Dict[str, Any]:
+    """
+    Восстановление после аварийного завершения.
 
-                if symbol and size > 0:
-                    exchange_map[symbol] = pos
+    Returns:
+        Dict: Результаты восстановления
+    """
+    logger.warning("=" * 80)
+    logger.warning("ОБНАРУЖЕНО АВАРИЙНОЕ ЗАВЕРШЕНИЕ - ВОССТАНОВЛЕНИЕ")
+    logger.warning("=" * 80)
 
-            # Сверяем каждую локальную позицию
-            for local_position in local_positions:
-                exchange_position = exchange_map.get(local_position.symbol)
+    results = {
+      "recovered": False,
+      "actions_taken": [],
+    }
 
-                if exchange_position:
-                    # Позиция найдена на бирже
-                    exchange_size = float(exchange_position.get("size", 0))
-                    exchange_side = exchange_position.get("side", "")
+    try:
+      # 1. Полная сверка состояния
+      reconcile_result = await self.reconcile_state()
+      results["actions_taken"].append("State reconciliation completed")
 
-                    # Проверяем расхождения
-                    if abs(local_position.quantity - exchange_size) > 0.001:
-                        result["discrepancies"] += 1
+      # 2. Проверка зависших ордеров
+      hanging_orders = await self._check_hanging_orders()
+      if hanging_orders:
+        results["actions_taken"].append(
+          f"Found {len(hanging_orders)} hanging orders"
+        )
 
-                        logger.warning(
-                            f"Расхождение количества позиции {local_position.symbol}: "
-                            f"локально={local_position.quantity}, "
-                            f"биржа={exchange_size}"
-                        )
+      # 3. Восстановление FSM состояний
+      await self._restore_fsm_states()
+      results["actions_taken"].append("FSM states restored")
 
-                result["synced"] += 1
+      results["recovered"] = True
+      logger.info("✓ Восстановление завершено успешно")
 
-            logger.info(f"✓ Сверка позиций завершена: {result}")
-            return result
+    except Exception as e:
+      logger.error(f"Ошибка при восстановлении: {e}")
+      results["error"] = str(e)
 
-        except Exception as e:
-            logger.error(f"Критическая ошибка сверки позиций: {e}", exc_info=True)
-            return result
+    return results
 
-    def _map_exchange_status(self, exchange_status: str) -> OrderStatus:
-        """
-        Маппинг статуса с биржи на локальный статус.
+  async def _check_hanging_orders(self) -> List:
+    """
+    Проверка зависших ордеров.
 
-        Args:
-            exchange_status: Статус с биржи
+    Returns:
+        List: Список зависших ордеров
+    """
+    # TODO: Реализовать логику проверки зависших ордеров
+    return []
 
-        Returns:
-            OrderStatus: Локальный статус
-        """
-        status_map = {
-            "New": OrderStatus.PLACED,
-            "PartiallyFilled": OrderStatus.PARTIALLY_FILLED,
-            "Filled": OrderStatus.FILLED,
-            "Cancelled": OrderStatus.CANCELLED,
-            "Rejected": OrderStatus.REJECTED,
-        }
-
-        return status_map.get(exchange_status, OrderStatus.FAILED)
+  async def _restore_fsm_states(self):
+    """Восстановление состояний FSM для активных ордеров и позиций."""
+    # TODO: Реализовать восстановление FSM
+    pass
 
 
-# ==================== ГЛОБАЛЬНЫЙ ЭКЗЕМПЛЯР ====================
-
+# Глобальный экземпляр
 recovery_service = RecoveryService()

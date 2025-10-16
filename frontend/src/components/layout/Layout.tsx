@@ -10,7 +10,6 @@ import { useMarketStore } from '../../store/marketStore';
 import { useTradingStore } from '../../store/tradingStore';
 import { wsService } from '../../services/websocket.service';
 import { toast } from 'sonner';
-import {MemoryMonitor} from "../../components/dev/MemoryMonitor";
 
 /**
  * Главный Layout компонент.
@@ -199,8 +198,6 @@ export function Layout() {
           <Outlet />
         </main>
       </div>
-      {/* DEV MODE ONLY: Memory Monitor */}
-      {import.meta.env.DEV && <MemoryMonitor />}
     </div>
   );
 }

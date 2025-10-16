@@ -32,7 +32,6 @@ class SignalSource(str, Enum):
   ML_VALIDATED = "ml_validated"
   STRATEGY = "strategy"
 
-
 @dataclass
 class TradingSignal:
   """Модель торгового сигнала."""

@@ -16,7 +16,7 @@ from core.exceptions import AuthenticationError
 from exchange.rest_client import rest_client
 from infrastructure.resilience.circuit_breaker import circuit_breaker_manager
 from infrastructure.resilience.rate_limiter import rate_limiter
-from main import bot_controller
+
 from models.user import LoginRequest, LoginResponse, ChangePasswordRequest
 from config import settings
 from utils.balance_tracker import balance_tracker
@@ -31,7 +31,6 @@ trading_router = APIRouter(prefix="/trading", tags=["Trading"])
 
 monitoring_router = APIRouter(prefix="/api/monitoring", tags=["monitoring"])
 
-# ML Router
 ml_router = APIRouter(prefix="/api/ml", tags=["ml"])
 
 # Detection Router
@@ -885,11 +884,14 @@ async def reset_circuit_breaker(
   breaker.reset()
   return {"status": "reset", "breaker": name}
 
+
+
 # ==================== ML INFRASTRUCTURE ====================
 
 @ml_router.get("/status")
 async def get_ml_status():
   """Статус ML компонентов."""
+  from main import bot_controller
   return {
     "ml_validator": bot_controller.ml_validator.get_statistics(),
     "spoofing_detector": bot_controller.spoofing_detector.get_statistics(),
@@ -904,6 +906,8 @@ async def get_ml_status():
 @detection_router.get("/status/{symbol}")
 async def get_detection_status(symbol: str):
   """Статус детекторов для символа."""
+  from main import bot_controller
+
   spoofing_active = bot_controller.spoofing_detector.is_spoofing_active(symbol)
   layering_active = bot_controller.layering_detector.is_layering_active(symbol)
 
@@ -941,6 +945,7 @@ async def get_detection_status(symbol: str):
 @detection_router.get("/sr-levels/{symbol}")
 async def get_sr_levels(symbol: str):
   """S/R уровни для символа."""
+  from main import bot_controller
   levels = bot_controller.sr_detector.levels.get(symbol, [])
 
   return {
@@ -964,12 +969,14 @@ async def get_sr_levels(symbol: str):
 @strategies_router.get("/status")
 async def get_strategies_status():
   """Статус всех стратегий."""
+  from main import bot_controller
   return bot_controller.strategy_manager.get_statistics()
 
 
 @strategies_router.get("/{strategy_name}/stats")
 async def get_strategy_stats(strategy_name: str):
   """Статистика конкретной стратегии."""
+  from main import bot_controller
   if strategy_name not in bot_controller.strategy_manager.strategies:
     raise HTTPException(status_code=404, detail="Strategy not found")
 

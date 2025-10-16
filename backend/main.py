@@ -4,9 +4,7 @@
 """
 
 import asyncio
-import os
 import signal
-from datetime import datetime
 from typing import Dict, Optional, Any
 from contextlib import asynccontextmanager
 
@@ -18,11 +16,9 @@ from core.logger import setup_logging, get_logger
 from core.exceptions import log_exception, OrderBookSyncError, OrderBookError
 from core.trace_context import trace_operation
 from database.connection import db_manager
-from domain.services.fsm_registry import fsm_registry
 from exchange.rest_client import rest_client
 from exchange.websocket_manager import BybitWebSocketManager
 from infrastructure.resilience.recovery_service import recovery_service
-from models.signal import TradingSignal, SignalStrength, SignalSource
 from strategy.candle_manager import CandleManager
 from strategy.orderbook_manager import OrderBookManager
 from strategy.analyzer import MarketAnalyzer
@@ -36,33 +32,10 @@ from tasks.cleanup_tasks import cleanup_tasks
 
 # ML FEATURE PIPELINE - НОВОЕ
 from ml_engine.features import (
-
+    MultiSymbolFeaturePipeline,
     FeatureVector
 )
 from ml_engine.data_collection import MLDataCollector  # НОВОЕ
-
-# ==================== ML INFRASTRUCTURE ====================
-from ml_engine.integration.ml_signal_validator import (
-    MLSignalValidator, ValidationConfig
-)
-from ml_engine.monitoring.drift_detector import DriftDetector
-from ml_engine.features import MultiSymbolFeaturePipeline
-
-# ==================== DETECTION SYSTEMS ====================
-from ml_engine.detection.spoofing_detector import (
-    SpoofingDetector, SpoofingConfig
-)
-from ml_engine.detection.layering_detector import (
-    LayeringDetector, LayeringConfig
-)
-from ml_engine.detection.sr_level_detector import (
-    SRLevelDetector, SRLevelConfig
-)
-
-# ==================== ADVANCED STRATEGIES ====================
-from strategies.strategy_manager import (
-    StrategyManager, StrategyManagerConfig
-)
 
 # Настройка логирования
 setup_logging()
@@ -100,60 +73,6 @@ class BotController:
     self.candle_update_task: Optional[asyncio.Task] = None  # НОВОЕ
 
     self.ml_stats_task: Optional[asyncio.Task] = None
-
-    # ML Signal Validator
-    ml_validator_config = ValidationConfig(
-      model_server_url=os.getenv('ML_SERVER_URL', 'http://localhost:8001'),
-      min_ml_confidence=float(os.getenv('ML_MIN_CONFIDENCE', '0.6')),
-      ml_weight=float(os.getenv('ML_WEIGHT', '0.6')),
-      strategy_weight=float(os.getenv('STRATEGY_WEIGHT', '0.4'))
-    )
-    self.ml_validator = MLSignalValidator(ml_validator_config)
-
-    # Drift Detector
-    self.drift_detector = DriftDetector(
-      window_size=10000,
-      baseline_window_size=50000,
-      drift_threshold=0.1
-    )
-
-    # ==================== DETECTION SYSTEMS ====================
-
-    # Spoofing Detector
-    spoofing_config = SpoofingConfig(
-      large_order_threshold_usdt=50000.0,
-      suspicious_ttl_seconds=10.0,
-      cancel_rate_threshold=0.7
-    )
-    self.spoofing_detector = SpoofingDetector(spoofing_config)
-
-    # Layering Detector
-    layering_config = LayeringConfig(
-      min_orders_in_layer=3,
-      max_price_spread_pct=0.005,
-      min_layer_volume_usdt=30000.0
-    )
-    self.layering_detector = LayeringDetector(layering_config)
-
-    # S/R Level Detector
-    sr_config = SRLevelConfig(
-      min_touches=2,
-      lookback_candles=200,
-      max_age_hours=24
-    )
-    self.sr_detector = SRLevelDetector(sr_config)
-
-    # ==================== STRATEGY MANAGER ====================
-
-    strategy_manager_config = StrategyManagerConfig(
-      consensus_mode=os.getenv('CONSENSUS_MODE', 'weighted'),
-      min_strategies_for_signal=int(os.getenv('MIN_STRATEGIES', '2')),
-      min_consensus_confidence=float(os.getenv('MIN_CONSENSUS_CONFIDENCE', '0.6'))
-    )
-    self.strategy_manager = StrategyManager(strategy_manager_config)
-
-    self.running = False
-
     logger.info("Инициализирован контроллер бота с ML поддержкой")
 
   async def initialize(self):
@@ -255,10 +174,6 @@ class BotController:
       await self.balance_tracker.start()
       logger.info("✓ Трекер баланса запущен")
 
-      # Инициализация ML Validator
-      await self.ml_validator.initialize()
-      logger.info("✅ ML Signal Validator инициализирован")
-
       # ===== НОВОЕ: Загружаем исторические свечи =====
       await self._load_historical_candles()
       logger.info("✓ Исторические свечи загружены")
@@ -284,10 +199,6 @@ class BotController:
         self._analysis_loop_ml_enhanced()
       )
       logger.info("✓ Цикл анализа (ML-Enhanced) запущен")
-
-      # Запускаем background task для очистки FSM
-      asyncio.create_task(fsm_cleanup_task())
-      logger.info("✓ FSM Cleanup Task запланирован")
 
       self.status = BotStatus.RUNNING
       logger.info("=" * 80)
@@ -372,201 +283,125 @@ class BotController:
         await asyncio.sleep(10)
 
   async def _analysis_loop_ml_enhanced(self):
-    """
-    Продвинутый цикл анализа с ML, детекторами и мульти-стратегией.
+    """Цикл анализа и генерации сигналов с ML признаками."""
+    logger.info("Запущен цикл анализа (ML-Enhanced)")
 
-    Workflow:
-    1. Получить данные (orderbook, candles)
-    2. Обновить детекторы манипуляций
-    3. Обновить S/R детектор
-    4. Проверить активные манипуляции (блокируем торговлю)
-    5. Извлечь ML признаки
-    6. Запустить Strategy Manager (все стратегии + consensus)
-    7. ML валидация consensus сигнала
-    8. Проверить близость к S/R уровням
-    9. Финальная фильтрация и исполнение
-    10. Обновить drift detector
-    """
-    logger.info("🔄 Запущен продвинутый analysis loop")
+    while self.status == BotStatus.RUNNING:
+      try:
+        # Ждем пока все WebSocket соединения установятся
+        if not self.websocket_manager.is_all_connected():
+          await asyncio.sleep(1)
+          continue
 
-    while self.running:
-        try:
-            for symbol in self.symbols:
-                # ==================== 1. ПОЛУЧЕНИЕ ДАННЫХ ====================
-                orderbook = self.orderbook_managers[symbol].get_snapshot()
-                candles = self.candle_managers[symbol].get_candles()
+        # Анализируем каждую пару
+        for symbol in self.symbols:
+          try:
+            manager = self.orderbook_managers[symbol]
+            candle_manager = self.candle_managers[symbol]
 
-                if not orderbook or len(candles) < 50:
-                    continue
+            # Пропускаем если нет данных
+            if not manager.snapshot_received:
+              continue
 
-                current_price = orderbook.mid_price
-                if not current_price:
-                    continue
+            # ===== 1. ПОЛУЧЕНИЕ ДАННЫХ =====
+            # Получаем snapshot стакана (ПРАВИЛЬНЫЙ МЕТОД)
+            snapshot = manager.get_snapshot()
+            if not snapshot:
+              continue
 
-                # ==================== 2. ДЕТЕКТОРЫ МАНИПУЛЯЦИЙ ====================
-                self.spoofing_detector.update(orderbook)
-                self.layering_detector.update(orderbook)
+            # Отправляем стакан на фронтенд
+            from api.websocket import broadcast_orderbook_update
+            await broadcast_orderbook_update(symbol, snapshot.to_dict())
 
-                # ==================== 3. S/R ДЕТЕКТОР ====================
-                self.sr_detector.update_candles(symbol, candles)
-                sr_levels = self.sr_detector.detect_levels(symbol)
+            # ===== 2. ТРАДИЦИОННЫЙ АНАЛИЗ =====
+            # ПРАВИЛЬНЫЙ МЕТОД: analyze_symbol (не analyze_orderbook)
+            metrics = self.market_analyzer.analyze_symbol(symbol, manager)
 
-                # ==================== 4. ПРОВЕРКА МАНИПУЛЯЦИЙ ====================
-                has_spoofing = self.spoofing_detector.is_spoofing_active(
-                    symbol,
-                    time_window_seconds=60
-                )
-                has_layering = self.layering_detector.is_layering_active(
-                    symbol,
-                    time_window_seconds=60
-                )
+            # Отправляем метрики на фронтенд
+            from api.websocket import broadcast_metrics_update
+            await broadcast_metrics_update(symbol, metrics.to_dict())
 
-                if has_spoofing or has_layering:
-                    logger.warning(
-                        f"⚠️  МАНИПУЛЯЦИИ [{symbol}]: "
-                        f"spoofing={has_spoofing}, layering={has_layering} - "
-                        f"ТОРГОВЛЯ ЗАБЛОКИРОВАНА"
-                    )
-                    continue  # Пропускаем этот символ
+            # ===== 3. ML FEATURE EXTRACTION =====
+            feature_vector = None
 
-                # ==================== 5. ML ПРИЗНАКИ ====================
-                feature_vector = await self.ml_feature_pipeline.extract_features_single(
-                  symbol=symbol,
-                  orderbook_snapshot=orderbook,
+            try:
+              # Получаем свечи для индикаторов
+              candles = candle_manager.get_candles()
+
+              if len(candles) >= 50:  # Достаточно для индикаторов
+                # Извлекаем ML признаки (ПРАВИЛЬНЫЙ ВЫЗОВ)
+                pipeline = self.ml_feature_pipeline.get_pipeline(symbol)
+                feature_vector = await pipeline.extract_features(
+                  orderbook_snapshot=snapshot,
                   candles=candles
                 )
 
-                if not feature_vector:
-                  continue  # Пропускаем если не удалось извлечь признаки
+                # Сохраняем признаки
+                self.latest_features[symbol] = feature_vector
 
-                # ==================== 6. STRATEGY MANAGER (CONSENSUS) ====================
-                consensus = self.strategy_manager.analyze_with_consensus(
-                    symbol,
-                    candles,
-                    current_price
+                logger.debug(
+                  f"{symbol} | ML признаки извлечены: "
+                  f"{feature_vector.feature_count} признаков"
+                )
+              else:
+                logger.debug(
+                  f"{symbol} | Недостаточно свечей для ML: "
+                  f"{len(candles)}/50"
                 )
 
-                if not consensus:
-                    continue  # Нет consensus сигнала
+            except Exception as e:
+              logger.error(f"{symbol} | Ошибка извлечения ML признаков: {e}")
 
-                # ==================== 7. ML ВАЛИДАЦИЯ ====================
-                validation_result = await self.ml_validator.validate_signal(
-                    consensus.final_signal,
-                    feature_vector
-                )
+            # ===== 4. ГЕНЕРАЦИЯ СИГНАЛОВ С ML ПРИЗНАКАМИ =====
+            signal = self.strategy_engine.analyze_and_generate_signal(
+              symbol=symbol,
+              metrics=metrics,
+              features=feature_vector  # ← ПЕРЕДАЕМ ML ПРИЗНАКИ
+            )
 
-                if not validation_result.validated:
-                    logger.info(
-                        f"❌ Consensus сигнал отклонен ML [{symbol}]: "
-                        f"{validation_result.reason}"
-                    )
-                    continue
-
-                logger.info(
-                    f"✅ Consensus сигнал подтвержден ML [{symbol}]: "
-                    f"{validation_result.final_signal_type.value}, "
-                    f"confidence={validation_result.final_confidence:.2f}"
-                )
-
-                # ==================== 8. S/R КОНТЕКСТ ====================
-                nearest_levels = self.sr_detector.get_nearest_levels(
-                    symbol,
-                    current_price,
-                    max_distance_pct=0.02
-                )
-
-                sr_context = []
-                if nearest_levels["support"]:
-                    sr_context.append(
-                        f"Support: ${nearest_levels['support'].price:.2f} "
-                        f"(strength={nearest_levels['support'].strength:.2f})"
-                    )
-
-                if nearest_levels["resistance"]:
-                    sr_context.append(
-                        f"Resistance: ${nearest_levels['resistance'].price:.2f} "
-                        f"(strength={nearest_levels['resistance'].strength:.2f})"
-                    )
-
-                # ==================== 9. ФИНАЛЬНЫЙ СИГНАЛ ====================
-                final_signal = TradingSignal(
+            # ===== 5. СБОР ДАННЫХ ДЛЯ ML ОБУЧЕНИЯ =====
+            if feature_vector and self.ml_data_collector:
+              try:
+                # ✅ ПРАВИЛЬНЫЙ МЕТОД: collect_sample (не add_sample)
+                await self.ml_data_collector.collect_sample(
                   symbol=symbol,
-                  signal_type=validation_result.final_signal_type,
-                  source=SignalSource.ML_VALIDATED,
-                  strength=(
-                    SignalStrength.STRONG
-                    if validation_result.final_confidence > 0.8
-                    else SignalStrength.MEDIUM
-                  ),
-                  price=current_price,
-                  confidence=validation_result.final_confidence,
-                  timestamp=int(datetime.now().timestamp() * 1000),
-                  reason=(
-                        f"Consensus ({len(consensus.contributing_strategies)} strategies) + "
-                        f"ML validated | {validation_result.reason}"
-                    ),
-                    metadata={
-                        'consensus_strategies': consensus.contributing_strategies,
-                        'consensus_agreement': f"{consensus.agreement_count}/{consensus.agreement_count + consensus.disagreement_count}",
-                        'ml_direction': validation_result.ml_direction,
-                        'ml_confidence': validation_result.ml_confidence,
-                        'sr_context': sr_context,
-                        'spoofing_clear': not has_spoofing,
-                        'layering_clear': not has_layering
-                    }
+                  feature_vector=feature_vector,
+                  orderbook_snapshot=snapshot,
+                  market_metrics=metrics,
+                  executed_signal={
+                    "type": signal.signal_type.value,
+                    "confidence": signal.confidence,
+                    "strength": signal.strength.value,
+                    # "signal_type": signal.signal_type.value if signal else None,
+                    # "signal_confidence": signal.confidence if signal else None,
+                    # "signal_strength": signal.strength.value if signal else None,
+                  } if signal else None
                 )
+              except Exception as e:
+                logger.error(f"{symbol} | Ошибка сбора ML данных: {e}")
 
-                # ==================== 10. ИСПОЛНЕНИЕ ====================
-                logger.info(
-                    f"🎯 ФИНАЛЬНЫЙ СИГНАЛ [{symbol}]: "
-                    f"{final_signal.signal_type.value}, "
-                    f"confidence={final_signal.confidence:.2f}, "
-                    f"strategies={consensus.contributing_strategies}, "
-                    f"SR context: {', '.join(sr_context) if sr_context else 'None'}"
-                )
+            # ===== 6. ИСПОЛНЕНИЕ СИГНАЛА =====
+            if signal:
+              await self.execution_manager.submit_signal(signal)
 
-                # Отправляем на исполнение
-                await self.execution_manager.submit_signal(final_signal)
+              # Уведомляем фронтенд
+              from api.websocket import broadcast_signal
+              await broadcast_signal(signal.to_dict())
 
-                # ==================== 11. DRIFT MONITORING ====================
-                # Конвертируем ml_direction в int (BUY=1, HOLD=0, SELL=2)
-                ml_direction_map = {"BUY": 1, "HOLD": 0, "SELL": 2}
-                prediction_int = ml_direction_map.get(
-                  validation_result.ml_direction,
-                  0
-                ) if validation_result.ml_direction else 0
+          except Exception as e:
+            logger.error(f"Ошибка анализа {symbol}: {e}")
+            log_exception(logger, e, f"Анализ {symbol}")
 
-                self.drift_detector.add_observation(
-                  features=feature_vector.to_array(),
-                  prediction=prediction_int,
-                  label=None
-                )
+        # Пауза между циклами
+        await asyncio.sleep(0.5)  # 500ms
 
-                # Периодическая проверка drift (каждые 24 часа)
-                if self.drift_detector.should_check_drift():
-                    drift_metrics = self.drift_detector.check_drift()
-
-                    if drift_metrics and drift_metrics.drift_detected:
-                        logger.warning(
-                            f"⚠️  MODEL DRIFT ОБНАРУЖЕН:\n"
-                            f"   Severity: {drift_metrics.severity}\n"
-                            f"   Feature drift: {drift_metrics.feature_drift_score:.4f}\n"
-                            f"   Prediction drift: {drift_metrics.prediction_drift_score:.4f}\n"
-                            f"   Accuracy drop: {drift_metrics.accuracy_drop:.4f}\n"
-                            f"   Recommendation: {drift_metrics.recommendation}"
-                        )
-
-                        # Сохраняем drift history
-                        self.drift_detector.save_drift_history(
-                            f"logs/drift_history_{symbol}.json"
-                        )
-
-            # Пауза между итерациями
-            await asyncio.sleep(0.5)  # 500ms цикл
-
-        except Exception as e:
-            logger.error(f"Ошибка в analysis loop: {e}", exc_info=True)
-            await asyncio.sleep(1)
+      except asyncio.CancelledError:
+        logger.info("Цикл анализа отменен")
+        break
+      except Exception as e:
+        logger.error(f"Критическая ошибка в цикле анализа: {e}")
+        log_exception(logger, e, "Цикл анализа")
+        await asyncio.sleep(1)
 
   async def stop(self):
     """Остановка бота."""
@@ -717,10 +552,6 @@ class BotController:
   async def _ml_stats_loop(self):
     """
     Периодический вывод статистики сбора ML данных.
-
-    Выводит:
-    - Общую статистику (всего семплов, файлов)
-    - Детальную статистику по каждому символу
     """
     logger.info("Запущен цикл мониторинга ML статистики")
 
@@ -731,79 +562,23 @@ class BotController:
         if self.ml_data_collector:
           stats = self.ml_data_collector.get_statistics()
 
-          # ===== ИСПРАВЛЕНИЕ: Выводим общую статистику =====
-          logger.info(
-            f"ML Stats | ОБЩАЯ: "
-            f"всего_семплов={stats['total_samples_collected']:,}, "
-            f"файлов={stats['files_written']}, "
-            f"итераций={stats['iteration_counter']}, "
-            f"интервал={stats['collection_interval']}"
-          )
-
-          # ===== ИСПРАВЛЕНИЕ: Итерируемся по stats["symbols"], а не stats =====
-          symbol_stats = stats.get("symbols", {})
-
-          if not symbol_stats:
-            logger.info("ML Stats | Нет данных по символам")
-          else:
-            for symbol, stat in symbol_stats.items():
-              # ===== ИСПРАВЛЕНИЕ: Используем правильные ключи =====
-              logger.info(
-                f"ML Stats | {symbol}: "
-                f"samples={stat['total_samples']:,}, "
-                f"batch={stat['current_batch']}, "  # ← НЕ 'batches_saved'
-                f"buffer={stat['buffer_size']}/{self.ml_data_collector.max_samples_per_file}"
-              )
+          for symbol, stat in stats.items():
+            logger.info(
+              f"ML Stats | {symbol}: "
+              f"samples={stat['total_samples']:,}, "
+              f"batches={stat['batches_saved']}, "
+              f"buffer={stat['buffer_size']}/{self.ml_data_collector.max_samples_per_file}"
+            )
 
       except asyncio.CancelledError:
-        logger.info("ML stats loop остановлен (CancelledError)")
         break
       except Exception as e:
         logger.error(f"Ошибка в ML stats loop: {e}")
-        # Логируем полный traceback для диагностики
-        import traceback
-        logger.error(f"Traceback:\n{traceback.format_exc()}")
 
 
 # Глобальный контроллер бота
 bot_controller: Optional[BotController] = None
 
-
-async def fsm_cleanup_task():
-  """
-  Background task для периодической очистки терминальных FSM.
-  Освобождает память от завершенных FSM.
-  """
-  logger.info("FSM Cleanup Task запущен")
-
-  while True:
-    try:
-      # Ждем 30 минут
-      await asyncio.sleep(1800)
-
-      logger.info("Запуск очистки терминальных FSM...")
-
-      # Очищаем терминальные FSM
-      cleared = fsm_registry.clear_terminal_fsms()
-
-      logger.info(
-        f"Очистка завершена: "
-        f"ордеров - {cleared['orders_cleared']}, "
-        f"позиций - {cleared['positions_cleared']}"
-      )
-
-      # Логируем статистику
-      stats = fsm_registry.get_stats()
-      logger.info(
-        f"FSM Registry статистика: "
-        f"ордеров - {stats['total_order_fsms']}, "
-        f"позиций - {stats['total_position_fsms']}"
-      )
-
-    except Exception as e:
-      logger.error(f"Ошибка в FSM cleanup task: {e}", exc_info=True)
-      # Продолжаем работу даже при ошибке
-      await asyncio.sleep(60)
 
 @asynccontextmanager
 async def lifespan(app):
@@ -826,32 +601,10 @@ async def lifespan(app):
       logger.info("✓ База данных подключена")
 
       # 2. Recovery & Reconciliation (если включено)
-      if settings.ENABLE_AUTO_RECOVERY:
-        logger.info("Запуск автоматического восстановления...")
-
-        recovery_result = await recovery_service.recover_from_crash()
-
-        if recovery_result["recovered"]:
-          logger.info("✓ Автоматическое восстановление завершено успешно")
-
-          # Логируем детали
-          if recovery_result["hanging_orders"]:
-            logger.warning(
-              f"⚠ Обнаружено {len(recovery_result['hanging_orders'])} "
-              f"зависших ордеров - требуется внимание!"
-            )
-
-          logger.info(
-            f"FSM восстановлено: "
-            f"{recovery_result['fsm_restored']['orders']} ордеров, "
-            f"{recovery_result['fsm_restored']['positions']} позиций"
-          )
-        else:
-          logger.error("✗ Ошибка автоматического восстановления")
-          if "error" in recovery_result:
-            logger.error(f"Детали: {recovery_result['error']}")
-      else:
-        logger.info("Автоматическое восстановление отключено в конфигурации")
+      if settings.AUTO_RECONCILE_ON_STARTUP:
+        logger.info("→ Запуск state reconciliation...")
+        reconcile_result = await recovery_service.reconcile_state()
+        logger.info(f"✓ Reconciliation завершен: {reconcile_result}")
 
       # Создаем и инициализируем контроллер
       bot_controller = BotController()
@@ -898,17 +651,14 @@ from api.app import app
 app.router.lifespan_context = lifespan
 
 # Регистрируем роутеры
-from api.routes import auth_router, bot_router, data_router, trading_router, monitoring_router, ml_router, \
-  detection_router, strategies_router
+from api.routes import auth_router, bot_router, data_router, trading_router, monitoring_router
 
 app.include_router(auth_router)
 app.include_router(bot_router)
 app.include_router(data_router)
 app.include_router(trading_router)
 app.include_router(monitoring_router)
-app.include_router(ml_router)
-app.include_router(detection_router)
-app.include_router(strategies_router)
+
 
 # WebSocket эндпоинт
 @app.websocket("/ws")
