@@ -1,16 +1,28 @@
 // frontend/src/components/layout/Sidebar.tsx
 
 import { Link, useLocation } from 'react-router-dom';
-import { User, Home, BarChart3, TrendingUp } from 'lucide-react';
+import { User, Home, BarChart3, TrendingUp, LineChart, FileText, Search, Layers } from 'lucide-react';
 import { cn } from '../../utils/helpers';
 
+/**
+ * Конфигурация элементов навигации.
+ * Добавлены новые пункты: Графики, Ордера, Скринер, Стратегии
+ */
 const NAV_ITEMS = [
   { path: '/account', label: 'Личный Кабинет', icon: User },
   { path: '/dashboard', label: 'Dashboard', icon: Home },
   { path: '/market', label: 'Рынок', icon: BarChart3 },
   { path: '/trading', label: 'Торговля', icon: TrendingUp },
+  { path: '/charts', label: 'Графики', icon: LineChart },
+  { path: '/orders', label: 'Ордера', icon: FileText },
+  { path: '/screener', label: 'Скринер', icon: Search },
+  { path: '/strategies', label: 'Стратегии', icon: Layers },
 ];
 
+/**
+ * Компонент боковой навигации.
+ * Отображает вертикальное меню с навигацией по разделам приложения.
+ */
 export function Sidebar() {
   const location = useLocation();
 

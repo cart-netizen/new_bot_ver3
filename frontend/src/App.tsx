@@ -1,38 +1,5 @@
-// import { useState } from 'react'
-// import reactLogo from './assets/react.svg'
-// import viteLogo from '/vite.svg'
-// import './App.css'
-//
-// function App() {
-//   const [count, setCount] = useState(0)
-//
-//   return (
-//     <>
-//       <div>
-//         <a href="https://vite.dev" target="_blank">
-//           <img src={viteLogo} className="logo" alt="Vite logo" />
-//         </a>
-//         <a href="https://react.dev" target="_blank">
-//           <img src={reactLogo} className="logo react" alt="React logo" />
-//         </a>
-//       </div>
-//       <h1>Vite + React</h1>
-//       <div className="card">
-//         <button onClick={() => setCount((count) => count + 1)}>
-//           count is {count}
-//         </button>
-//         <p>
-//           Edit <code>src/App.tsx</code> and save to test HMR
-//         </p>
-//       </div>
-//       <p className="read-the-docs">
-//         Click on the Vite and React logos to learn more
-//       </p>
-//     </>
-//   )
-// }
-//
-// export default App
+// frontend/src/App.tsx
+
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
@@ -42,7 +9,11 @@ import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { MarketPage } from './pages/MarketPage';
 import { TradingPage } from './pages/TradingPage';
-import {AccountPage} from '@/pages/AccountPage';
+import { AccountPage } from './pages/AccountPage';
+import { ChartsPage } from './pages/ChartsPage';
+import { OrdersPage } from './pages/OrdersPage';
+import { ScreenerPage } from './pages/ScreenerPage';
+import { StrategiesPage } from './pages/StrategiesPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -53,13 +24,19 @@ const queryClient = new QueryClient({
   },
 });
 
+/**
+ * Главный компонент приложения.
+ * Управляет маршрутизацией и глобальными провайдерами.
+ */
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Routes>
+          {/* Страница входа */}
           <Route path="/login" element={<LoginPage />} />
 
+          {/* Защищенные маршруты */}
           <Route
             path="/"
             element={
@@ -68,18 +45,26 @@ export default function App() {
               </ProtectedRoute>
             }
           >
+            {/* Перенаправление на Dashboard по умолчанию */}
             <Route index element={<Navigate to="/dashboard" replace />} />
+            
+            {/* Существующие страницы */}
             <Route path="account" element={<AccountPage />} />
-
             <Route path="dashboard" element={<DashboardPage />} />
             <Route path="market" element={<MarketPage />} />
             <Route path="trading" element={<TradingPage />} />
+            
+            {/* Новые страницы */}
+            <Route path="charts" element={<ChartsPage />} />
+            <Route path="orders" element={<OrdersPage />} />
+            <Route path="screener" element={<ScreenerPage />} />
+            <Route path="strategies" element={<StrategiesPage />} />
           </Route>
         </Routes>
       </BrowserRouter>
 
+      {/* Глобальные уведомления */}
       <Toaster position="top-right" />
     </QueryClientProvider>
   );
 }
-
