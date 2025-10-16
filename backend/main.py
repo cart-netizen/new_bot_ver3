@@ -6,20 +6,16 @@
 import asyncio
 import os
 import signal
-import time
-import traceback
 from datetime import datetime
 from typing import Dict, Optional, Any
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import WebSocket, WebSocketDisconnect, FastAPI
+from fastapi import WebSocket, WebSocketDisconnect
 
 from config import settings
 from core.logger import setup_logging, get_logger
 from core.exceptions import log_exception, OrderBookSyncError, OrderBookError
-from core.screener_processor import ScreenerProcessor
-from core.ticker_websocket import ScreenerTickerManager
 from core.trace_context import trace_operation
 from database.connection import db_manager
 from domain.services.fsm_registry import fsm_registry
@@ -104,9 +100,6 @@ class BotController:
     self.candle_update_task: Optional[asyncio.Task] = None  # НОВОЕ
 
     self.ml_stats_task: Optional[asyncio.Task] = None
-
-    self.metrics_broadcast_task: Optional[asyncio.Task] = None
-    self._last_metrics_log: float = 0.0
 
     # ML Signal Validator
     ml_validator_config = ValidationConfig(
@@ -275,10 +268,6 @@ class BotController:
         self.websocket_manager.start()
       )
       logger.info("✓ WebSocket соединения запущены")
-
-      # ✅ ДОБАВИТЬ: Задача периодического broadcast метрик
-      self.metrics_broadcast_task = asyncio.create_task(self._metrics_broadcast_loop())
-      logger.info("✓ Metrics broadcast задача запущена")
 
       # ===== НОВОЕ: Запускаем задачу обновления свечей =====
       self.candle_update_task = asyncio.create_task(
@@ -603,9 +592,6 @@ class BotController:
       if self.websocket_task:
         tasks_to_cancel.append(self.websocket_task)
 
-      if self.metrics_broadcast_task:
-        tasks_to_cancel.append(self.metrics_broadcast_task)
-
       for task in tasks_to_cancel:
         task.cancel()
         try:
@@ -680,12 +666,6 @@ class BotController:
               f"{len(manager.bids)} bids, {len(manager.asks)} asks"
             )
 
-            # ✅ ДОБАВИТЬ: Broadcast snapshot на фронтенд
-            from api.websocket import broadcast_orderbook_update
-            orderbook_dict = manager.get_snapshot().to_dict()
-            await broadcast_orderbook_update(symbol, orderbook_dict)
-            logger.debug(f"{symbol} | Orderbook snapshot broadcast на фронтенд")
-
           elif message_type == "delta":
             if not manager.snapshot_received:
               logger.debug(
@@ -695,26 +675,8 @@ class BotController:
 
             manager.apply_delta(message_data)
             logger.debug(f"{symbol} | Delta применена")
-
-            # ✅ ДОБАВИТЬ: Broadcast delta на фронтенд
-            from api.websocket import broadcast_orderbook_update
-            orderbook_dict = manager.get_snapshot().to_dict()
-            await broadcast_orderbook_update(symbol, orderbook_dict)
-
           else:
             logger.warning(f"{symbol} | Неизвестный тип сообщения: {message_type}")
-
-          # ✅ ДОБАВИТЬ: После обновления стакана — рассчитать и broadcast метрики
-          if self.market_analyzer and manager.snapshot_received:
-            try:
-              # Получаем метрики через анализатор
-              metrics = self.market_analyzer.get_latest_metrics(symbol)
-              if metrics:
-                from api.websocket import broadcast_metrics_update
-                await broadcast_metrics_update(symbol, metrics.to_dict())
-                logger.debug(f"{symbol} | Метрики broadcast на фронтенд")
-            except Exception as e:
-              logger.error(f"{symbol} | Ошибка broadcast метрик: {e}")
 
     except Exception as e:
       logger.error(f"Ошибка обработки сообщения стакана: {e}")
@@ -802,51 +764,6 @@ class BotController:
         import traceback
         logger.error(f"Traceback:\n{traceback.format_exc()}")
 
-  async def _metrics_broadcast_loop(self):
-    """
-    Периодический broadcast метрик на фронтенд.
-    Выполняется каждые 1-2 секунды для всех активных символов.
-    """
-    logger.info("Запуск metrics broadcast loop")
-
-    while self.status == BotStatus.RUNNING:
-      try:
-        await asyncio.sleep(2.0)  # Интервал 2 секунды
-
-        if not self.market_analyzer:
-          continue
-
-        # Получаем метрики для всех символов
-        all_metrics = self.market_analyzer.get_all_metrics()
-
-        if not all_metrics:
-          continue
-
-        # Broadcast метрики на фронтенд
-        from api.websocket import broadcast_metrics_update
-
-        for symbol, metrics in all_metrics.items():
-          try:
-            await broadcast_metrics_update(symbol, metrics.to_dict())
-          except Exception as e:
-            logger.error(f"{symbol} | Ошибка broadcast метрик: {e}")
-
-        # Логируем статистику каждые 30 секунд
-        if hasattr(self, '_last_metrics_log'):
-          if time.time() - self._last_metrics_log > 30:
-            logger.info(f"Метрики broadcast для {len(all_metrics)} символов")
-            self._last_metrics_log = time.time()
-        else:
-          self._last_metrics_log = time.time()
-
-      except asyncio.CancelledError:
-        break
-      except Exception as e:
-        logger.error(f"Ошибка в metrics broadcast loop: {e}")
-        await asyncio.sleep(5.0)  # Задержка при ошибке
-
-    logger.info("Metrics broadcast loop остановлен")
-
 
 # Глобальный контроллер бота
 bot_controller: Optional[BotController] = None
@@ -889,14 +806,14 @@ async def fsm_cleanup_task():
       await asyncio.sleep(60)
 
 @asynccontextmanager
-async def lifespan(app:FastAPI):
+async def lifespan(app):
   """
   Управление жизненным циклом приложения.
 
   Args:
       app: FastAPI приложение
   """
-  global bot_controller, screener_processor, screener_ticker_manager
+  global bot_controller
 
   # Startup
   logger.info("Запуск приложения")
@@ -907,55 +824,6 @@ async def lifespan(app:FastAPI):
       logger.info("→ Инициализация базы данных...")
       await db_manager.initialize()
       logger.info("✓ База данных подключена")
-
-      # ===== НОВОЕ: ИНИЦИАЛИЗАЦИЯ SCREENER =====
-      if settings.SCREENER_ENABLED:
-        logger.info("=" * 80)
-        logger.info("ИНИЦИАЛИЗАЦИЯ SCREENER")
-        logger.info("=" * 80)
-
-        # ШАГ 1: Создаем процессор скринера
-        screener_processor = ScreenerProcessor(
-          min_volume=settings.SCREENER_MIN_VOLUME
-        )
-        logger.info("✓ ScreenerProcessor создан")
-
-        logger.info("Загрузка начальных данных через REST API...")
-        try:
-          from exchange.rest_client import rest_client
-
-          tickers_response = await rest_client.get_tickers()
-
-          if tickers_response and "result" in tickers_response:
-            tickers_list = tickers_response["result"].get("list", [])
-
-            for ticker in tickers_list:
-              screener_processor.update_from_ticker(ticker)
-
-            logger.info(f"✓ Загружено {len(tickers_list)} тикеров через REST API")
-        except Exception as e:
-          logger.error(f"Ошибка загрузки через REST API: {e}")
-
-        # ШАГ 2: Создаем менеджер тикеров
-        screener_ticker_manager = ScreenerTickerManager(screener_processor)
-        logger.info("✓ ScreenerTickerManager создан")
-
-        # ШАГ 3: Запускаем менеджер тикеров (WebSocket подключение)
-        await screener_ticker_manager.start()
-        logger.info("✓ ScreenerTickerManager запущен")
-
-        # ШАГ 4: ТОЛЬКО ТЕПЕРЬ запускаем фоновые задачи
-        asyncio.create_task(screener_broadcast_task())
-        logger.info("✓ Screener broadcast task запущен")
-
-        asyncio.create_task(screener_stats_task())
-        logger.info("✓ Screener stats task запущен")
-
-        logger.info("=" * 80)
-        logger.info("✅ SCREENER ПОЛНОСТЬЮ ИНИЦИАЛИЗИРОВАН")
-        logger.info("=" * 80)
-      else:
-        logger.info("⚠️  Screener отключен в конфигурации")
 
       # 2. Recovery & Reconciliation (если включено)
       if settings.ENABLE_AUTO_RECOVERY:
@@ -1013,10 +881,6 @@ async def lifespan(app:FastAPI):
     #   # Закрываем REST клиент
     #   await rest_client.close()
     with trace_operation("app_shutdown"):
-      if screener_ticker_manager:
-        await screener_ticker_manager.stop()
-        logger.info("✓ ScreenerTickerManager остановлен")
-
       if bot_controller:
         await bot_controller.stop()
 
@@ -1035,7 +899,7 @@ app.router.lifespan_context = lifespan
 
 # Регистрируем роутеры
 from api.routes import auth_router, bot_router, data_router, trading_router, monitoring_router, ml_router, \
-  detection_router, strategies_router, screener_router, orders_router
+  detection_router, strategies_router
 
 app.include_router(auth_router)
 app.include_router(bot_router)
@@ -1046,11 +910,8 @@ app.include_router(ml_router)
 app.include_router(detection_router)
 app.include_router(strategies_router)
 
-app.include_router(screener_router)
-
-app.include_router(orders_router)
 # WebSocket эндпоинт
-# @app.websocket("/ws")
+@app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
   """
   WebSocket эндпоинт для фронтенда.
@@ -1068,151 +929,6 @@ async def websocket_endpoint(websocket: WebSocket):
     logger.error(f"Ошибка WebSocket: {e}")
   finally:
     ws_manager.disconnect(websocket)
-
-@app.websocket("/ws")
-async def websocket_route(websocket: WebSocket):
-    """WebSocket эндпоинт для фронтенда."""
-    await websocket_endpoint(websocket)
-
-
-# ==================== SCREENER COMPONENTS ====================
-
-# Глобальные компоненты скринера
-screener_processor: Optional[ScreenerProcessor] = None
-screener_ticker_manager: Optional[ScreenerTickerManager] = None
-
-
-# ==================== SCREENER BROADCAST TASK ====================
-
-async def screener_broadcast_task():
-  """
-  Фоновая задача для broadcast данных скринера через WebSocket.
-
-  Периодически:
-  - Получает актуальные данные от ScreenerProcessor
-  - Отправляет их всем подключенным клиентам через WebSocket
-  - Логирует статистику
-
-  Интервал обновления настраивается через SCREENER_BROADCAST_INTERVAL.
-  """
-  global screener_processor
-
-  logger.info("=" * 80)
-  logger.info("ЗАПУСК SCREENER BROADCAST TASK")
-  logger.info(f"Интервал: {settings.SCREENER_BROADCAST_INTERVAL} сек")
-  logger.info(f"Min Volume: {settings.SCREENER_MIN_VOLUME:,.0f} USDT")
-  logger.info("=" * 80)
-
-  iteration = 0
-  last_stats_log = 0
-
-  # Ждем инициализации процессора
-  while screener_processor is None:
-    logger.warning("Ожидание инициализации screener_processor...")
-    await asyncio.sleep(1)
-
-  logger.info("✓ screener_processor инициализирован, начинаем broadcast")
-
-  while True:
-    try:
-      iteration += 1
-      current_time = time.time()
-
-      # Проверка на None (на всякий случай)
-      if screener_processor is None:
-        logger.error("screener_processor стал None! Прерываем задачу.")
-        break
-
-      # Получаем данные от процессора
-      screener_data = screener_processor.get_screener_data()
-
-      # Логируем статистику каждые N секунд
-      if current_time - last_stats_log >= settings.SCREENER_STATS_LOG_INTERVAL:
-        stats = screener_processor.get_statistics()
-        logger.info(
-          f"📊 Screener Stats: {stats['total_pairs']} пар, "
-          f"{stats['active_pairs']} активных, "
-          f"broadcast #{iteration}"
-        )
-        last_stats_log = current_time
-
-      # Broadcast через WebSocket
-      from api.websocket import manager
-
-      if manager.active_connections:
-        await manager.broadcast(screener_data, authenticated_only=False)
-
-        # Детальное логирование для первых 5 итераций
-        if iteration <= 5:
-          logger.debug(
-            f"Broadcast #{iteration}: {len(screener_data['pairs'])} пар → "
-            f"{len(manager.active_connections)} клиентов"
-          )
-      else:
-        # Логируем только раз в минуту если нет клиентов
-        if iteration % 30 == 1:
-          logger.debug("Нет активных WebSocket подключений для broadcast")
-
-    except Exception as e:
-      logger.error(f"Ошибка в screener_broadcast_task (итерация {iteration}): {e}")
-      logger.error(traceback.format_exc())
-
-    # Ждем до следующей итерации
-    await asyncio.sleep(settings.SCREENER_BROADCAST_INTERVAL)
-
-
-async def screener_stats_task():
-  """
-  Фоновая задача для периодического логирования статистики скринера.
-
-  Логирует:
-  - Статистику ScreenerProcessor
-  - Статистику ScreenerTickerManager
-  - Статистику WebSocket соединений
-  """
-  global screener_processor, screener_ticker_manager
-
-  logger.info("Запуск screener_stats_task")
-
-  # Ждем инициализации компонентов
-  while screener_processor is None or screener_ticker_manager is None:
-    logger.warning("Ожидание инициализации компонентов screener...")
-    await asyncio.sleep(1)
-
-  logger.info("✓ Компоненты screener инициализированы, начинаем логирование статистики")
-
-  while True:
-    try:
-      await asyncio.sleep(settings.SCREENER_STATS_LOG_INTERVAL)
-
-      # Проверка на None
-      if screener_processor is None or screener_ticker_manager is None:
-        logger.error("Компоненты screener стали None! Прерываем задачу.")
-        break
-
-      # Статистика процессора
-      proc_stats = screener_processor.get_statistics()
-      logger.info(
-        f"ScreenerProcessor: {proc_stats['total_pairs']} всего, "
-        f"{proc_stats['active_pairs']} активных, "
-        f"min_volume={proc_stats['min_volume']:,.0f}"
-      )
-
-      # Статистика менеджера тикеров
-      mgr_stats = screener_ticker_manager.get_statistics()
-
-      if mgr_stats.get('websocket_stats'):
-        ws_stats = mgr_stats['websocket_stats']
-        logger.info(
-          f"TickerWebSocket: {ws_stats['tickers_processed']} тикеров обработано, "
-          f"{ws_stats['messages_received']} сообщений, "
-          f"{ws_stats['errors_count']} ошибок, "
-          f"connected={ws_stats['is_connected']}"
-        )
-
-    except Exception as e:
-      logger.error(f"Ошибка в screener_stats_task: {e}")
-      logger.error(traceback.format_exc())
 
 
 def handle_shutdown_signal(signum, frame):

@@ -2,28 +2,21 @@
 API маршруты.
 Определение всех REST API эндпоинтов для взаимодействия с фронтендом.
 """
-import time
 from datetime import datetime
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi import status as http_status
-from pydantic import BaseModel, Field
-from fastapi import WebSocket
-from api.app import app
-from api.websocket import websocket_endpoint
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
+
 from core.logger import get_logger
 from core.auth import (
   AuthService,
   require_auth
 )
 from core.exceptions import AuthenticationError
-from database.models import OrderStatus
-from domain.state_machines.order_fsm import OrderStateMachine
-from exchange.rest_client import rest_client, BybitRESTClient
-from infrastructure.repositories.order_repository import OrderRepository
+from exchange.rest_client import rest_client
 from infrastructure.resilience.circuit_breaker import circuit_breaker_manager
 from infrastructure.resilience.rate_limiter import rate_limiter
-# from main import bot_controller
+from main import bot_controller
 from models.user import LoginRequest, LoginResponse, ChangePasswordRequest
 from config import settings
 from utils.balance_tracker import balance_tracker
@@ -47,144 +40,7 @@ detection_router = APIRouter(prefix="/api/detection", tags=["detection"])
 # Strategies Router
 strategies_router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 
-screener_router = APIRouter(prefix="/api/screener", tags=["screener"])
-
-orders_router = APIRouter(prefix="/api/trading/orders", tags=["orders"])
-
-
-class OrderResponse(BaseModel):
-  """Модель ответа с данными ордера."""
-  order_id: str
-  client_order_id: str
-  exchange_order_id: Optional[str] = None
-  symbol: str
-  side: str  # BUY или SELL
-  order_type: str
-  quantity: float
-  price: Optional[float]
-  filled_quantity: float
-  average_price: float
-  take_profit: Optional[float]
-  stop_loss: Optional[float]
-  leverage: int
-  status: str
-  created_at: str
-  updated_at: str
-  filled_at: Optional[str] = None
-  strategy: Optional[str] = None
-  signal_id: Optional[str] = None
-  notes: Optional[str] = None
-
-  class Config:
-    json_schema_extra = {
-      "example": {
-        "order_id": "uuid-123",
-        "client_order_id": "ORDER_123",
-        "symbol": "BTCUSDT",
-        "side": "BUY",
-        "order_type": "LIMIT",
-        "quantity": 0.01,
-        "price": 50000.0,
-        "filled_quantity": 0.0,
-        "average_price": 0.0,
-        "take_profit": 51000.0,
-        "stop_loss": 49000.0,
-        "leverage": 10,
-        "status": "PLACED",
-        "created_at": "2025-10-14T10:00:00Z",
-        "updated_at": "2025-10-14T10:00:00Z",
-      }
-    }
-
-
-class OrderDetailResponse(BaseModel):
-  """Модель детального ответа с расчетом PnL."""
-  order_id: str
-  client_order_id: str
-  exchange_order_id: Optional[str]
-  symbol: str
-  side: str
-  order_type: str
-  quantity: float
-  price: Optional[float]
-  filled_quantity: float
-  average_price: float
-  take_profit: Optional[float]
-  stop_loss: Optional[float]
-  leverage: int
-  status: str
-  created_at: str
-  updated_at: str
-  filled_at: Optional[str]
-  strategy: Optional[str]
-  signal_id: Optional[str]
-
-  # Дополнительные поля для детального просмотра
-  current_pnl: float = Field(..., description="Текущий PnL в USDT")
-  current_pnl_percent: float = Field(..., description="Текущий PnL в процентах")
-  current_price: float = Field(..., description="Текущая цена актива")
-  entry_price: float = Field(..., description="Цена входа")
-  position_value: float = Field(..., description="Стоимость позиции")
-  margin_used: float = Field(..., description="Использованная маржа")
-  liquidation_price: Optional[float] = Field(None, description="Цена ликвидации")
-  fees: float = Field(default=0.0, description="Комиссии")
-
-
-class OrdersListResponse(BaseModel):
-  """Модель ответа со списком ордеров."""
-  orders: List[OrderResponse]
-  total: int
-  active: int
-  timestamp: int
-
-
-class CloseOrderRequest(BaseModel):
-  """Модель запроса на закрытие ордера."""
-  reason: Optional[str] = Field(None, description="Причина закрытия")
-
-
-class CloseOrderResponse(BaseModel):
-  """Модель ответа при закрытии ордера."""
-  success: bool
-  order_id: str
-  closed_at: str
-  final_pnl: float
-  message: str
-
 # ===== МОДЕЛИ ОТВЕТОВ =====
-class ScreenerPairResponse(BaseModel):
-  """Модель ответа с данными торговой пары для скринера."""
-  symbol: str = Field(..., description="Символ торговой пары")
-  lastPrice: float = Field(..., description="Последняя цена")
-  price24hPcnt: float = Field(..., description="Изменение цены за 24ч в процентах")
-  volume24h: float = Field(..., description="Объем торгов за 24ч в USDT")
-  highPrice24h: float = Field(..., description="Максимальная цена за 24ч")
-  lowPrice24h: float = Field(..., description="Минимальная цена за 24ч")
-  prevPrice24h: float = Field(..., description="Цена 24 часа назад")
-  turnover24h: float = Field(..., description="Оборот за 24ч")
-
-  class Config:
-    json_schema_extra = {
-      "example": {
-        "symbol": "BTCUSDT",
-        "lastPrice": 50000.0,
-        "price24hPcnt": 2.5,
-        "volume24h": 5000000.0,
-        "highPrice24h": 51000.0,
-        "lowPrice24h": 49000.0,
-        "prevPrice24h": 48000.0,
-        "turnover24h": 250000000.0
-      }
-    }
-
-
-class ScreenerDataResponse(BaseModel):
-  """Полный ответ со всеми парами скринера."""
-  pairs: List[ScreenerPairResponse] = Field(..., description="Список торговых пар")
-  total: int = Field(..., description="Общее количество пар")
-  timestamp: int = Field(..., description="Временная метка данных")
-  min_volume: float = Field(default=4_000_000, description="Минимальный объем для фильтрации")
-
 
 class StatusResponse(BaseModel):
   """Модель ответа статуса."""
@@ -224,7 +80,7 @@ async def login(request: LoginRequest):
   except AuthenticationError as e:
     logger.warning(f"Неудачная попытка входа: {e}")
     raise HTTPException(
-      status_code=http_status.HTTP_401_UNAUTHORIZED,
+      status_code=status.HTTP_401_UNAUTHORIZED,
       detail=str(e)
     )
 
@@ -253,12 +109,12 @@ async def change_password(
     )
   except AuthenticationError as e:
     raise HTTPException(
-      status_code=http_status.HTTP_401_UNAUTHORIZED,
+      status_code=status.HTTP_401_UNAUTHORIZED,
       detail=str(e)
     )
   except ValueError as e:
     raise HTTPException(
-      status_code=http_status.HTTP_400_BAD_REQUEST,
+      status_code=status.HTTP_400_BAD_REQUEST,
       detail=str(e)
     )
 
@@ -320,7 +176,7 @@ async def start_bot(current_user: dict = Depends(require_auth)):
 
   if not bot_controller:
     raise HTTPException(
-      status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Бот не инициализирован"
     )
 
@@ -334,7 +190,7 @@ async def start_bot(current_user: dict = Depends(require_auth)):
   except Exception as e:
     logger.error(f"Ошибка запуска бота: {e}")
     raise HTTPException(
-      status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
       detail=str(e)
     )
 
@@ -354,7 +210,7 @@ async def stop_bot(current_user: dict = Depends(require_auth)):
 
   if not bot_controller:
     raise HTTPException(
-      status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Бот не инициализирован"
     )
 
@@ -368,7 +224,7 @@ async def stop_bot(current_user: dict = Depends(require_auth)):
   except Exception as e:
     logger.error(f"Ошибка остановки бота: {e}")
     raise HTTPException(
-      status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
       detail=str(e)
     )
 
@@ -433,21 +289,21 @@ async def get_orderbook(
 
   if not bot_controller or not bot_controller.orderbook_managers:
     raise HTTPException(
-      status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Данные стакана недоступны"
     )
 
   manager = bot_controller.orderbook_managers.get(symbol)
   if not manager:
     raise HTTPException(
-      status_code=http_status.HTTP_404_NOT_FOUND,
+      status_code=status.HTTP_404_NOT_FOUND,
       detail=f"Стакан для {symbol} не найден"
     )
 
   snapshot = manager.get_snapshot()
   if not snapshot:
     raise HTTPException(
-      status_code=http_status.HTTP_404_NOT_FOUND,
+      status_code=status.HTTP_404_NOT_FOUND,
       detail=f"Нет данных стакана для {symbol}"
     )
 
@@ -473,14 +329,14 @@ async def get_metrics(
 
   if not bot_controller or not bot_controller.market_analyzer:
     raise HTTPException(
-      status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Анализатор недоступен"
     )
 
   metrics = bot_controller.market_analyzer.get_latest_metrics(symbol)
   if not metrics:
     raise HTTPException(
-      status_code=http_status.HTTP_404_NOT_FOUND,
+      status_code=status.HTTP_404_NOT_FOUND,
       detail=f"Метрики для {symbol} не найдены"
     )
 
@@ -502,7 +358,7 @@ async def get_all_metrics(current_user: dict = Depends(require_auth)):
 
   if not bot_controller or not bot_controller.market_analyzer:
     raise HTTPException(
-      status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Анализатор недоступен"
     )
 
@@ -540,7 +396,7 @@ async def get_signals(
 
   if not bot_controller or not bot_controller.strategy_engine:
     raise HTTPException(
-      status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Стратегия недоступна"
     )
 
@@ -737,7 +593,7 @@ async def get_balance_history(
     valid_periods = ['1h', '24h', '7d', '30d']
     if period not in valid_periods:
       raise HTTPException(
-        status_code=http_status.HTTP_400_BAD_REQUEST,
+        status_code=status.HTTP_400_BAD_REQUEST,
         detail=f"Неверный период. Используйте: {', '.join(valid_periods)}"
       )
 
@@ -866,7 +722,7 @@ async def get_positions(current_user: dict = Depends(require_auth)):
 
   if not bot_controller or not bot_controller.risk_manager:
     raise HTTPException(
-      status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Риск-менеджер недоступен"
     )
 
@@ -892,7 +748,7 @@ async def get_risk_status(current_user: dict = Depends(require_auth)):
 
   if not bot_controller or not bot_controller.risk_manager:
     raise HTTPException(
-      status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Риск-менеджер недоступен"
     )
 
@@ -914,7 +770,7 @@ async def get_execution_stats(current_user: dict = Depends(require_auth)):
 
   if not bot_controller or not bot_controller.execution_manager:
     raise HTTPException(
-      status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Менеджер исполнения недоступен"
     )
 
@@ -946,7 +802,7 @@ async def get_candles(
     # Валидация параметров
     if limit < 1 or limit > 200:
       raise HTTPException(
-        status_code=http_status.HTTP_400_BAD_REQUEST,
+        status_code=status.HTTP_400_BAD_REQUEST,
         detail="Limit должен быть от 1 до 200"
       )
 
@@ -954,7 +810,7 @@ async def get_candles(
     valid_intervals = ["1", "3", "5", "15", "30", "60", "120", "240", "360", "720", "D", "W", "M"]
     if interval not in valid_intervals:
       raise HTTPException(
-        status_code=http_status.HTTP_400_BAD_REQUEST,
+        status_code=status.HTTP_400_BAD_REQUEST,
         detail=f"Неверный интервал. Допустимые: {', '.join(valid_intervals)}"
       )
 
@@ -999,7 +855,7 @@ async def get_candles(
   except Exception as e:
     logger.error(f"Ошибка получения свечей для {symbol}: {e}", exc_info=True)
     raise HTTPException(
-      status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
       detail=f"Ошибка получения свечей: {str(e)}"
     )
 
@@ -1034,9 +890,6 @@ async def reset_circuit_breaker(
 @ml_router.get("/status")
 async def get_ml_status():
   """Статус ML компонентов."""
-
-  from main import bot_controller
-
   return {
     "ml_validator": bot_controller.ml_validator.get_statistics(),
     "spoofing_detector": bot_controller.spoofing_detector.get_statistics(),
@@ -1051,8 +904,6 @@ async def get_ml_status():
 @detection_router.get("/status/{symbol}")
 async def get_detection_status(symbol: str):
   """Статус детекторов для символа."""
-  from main import bot_controller
-
   spoofing_active = bot_controller.spoofing_detector.is_spoofing_active(symbol)
   layering_active = bot_controller.layering_detector.is_layering_active(symbol)
 
@@ -1090,8 +941,6 @@ async def get_detection_status(symbol: str):
 @detection_router.get("/sr-levels/{symbol}")
 async def get_sr_levels(symbol: str):
   """S/R уровни для символа."""
-  from main import bot_controller
-
   levels = bot_controller.sr_detector.levels.get(symbol, [])
 
   return {
@@ -1115,567 +964,14 @@ async def get_sr_levels(symbol: str):
 @strategies_router.get("/status")
 async def get_strategies_status():
   """Статус всех стратегий."""
-  from main import bot_controller
-
   return bot_controller.strategy_manager.get_statistics()
 
 
 @strategies_router.get("/{strategy_name}/stats")
 async def get_strategy_stats(strategy_name: str):
   """Статистика конкретной стратегии."""
-
-  from main import bot_controller
-
   if strategy_name not in bot_controller.strategy_manager.strategies:
     raise HTTPException(status_code=404, detail="Strategy not found")
 
   strategy = bot_controller.strategy_manager.strategies[strategy_name]
   return strategy.get_statistics()
-
-
-@screener_router.get(
-  "/pairs",
-  response_model=ScreenerDataResponse,
-  summary="Получение данных всех пар для скринера",
-  description="""
-    Возвращает данные всех торговых пар с фильтрацией по минимальному объему.
-
-    **Фильтрация:**
-    - Только USDT perpetual futures
-    - Объем за 24ч > 4,000,000 USDT
-    - Только активные пары
-
-    **Данные включают:**
-    - Текущую цену
-    - Изменение за 24 часа
-    - Объем торгов
-    - High/Low за 24 часа
-    """
-)
-async def get_screener_pairs(
-    min_volume: float = 4_000_000,
-    current_user: dict = Depends(require_auth)
-) -> ScreenerDataResponse:
-  """
-  Получение данных торговых пар для скринера.
-
-  Args:
-      min_volume: Минимальный объем за 24ч для фильтрации (default: 4M USDT)
-      current_user: Авторизованный пользователь
-
-  Returns:
-      ScreenerDataResponse с данными всех подходящих пар
-
-  Raises:
-      HTTPException: При ошибке получения данных от биржи
-  """
-  try:
-    logger.info(f"Запрос данных скринера с min_volume={min_volume}")
-
-    # Создаем клиент Bybit API
-    client = BybitRESTClient()
-    await client.initialize()
-
-    # Получаем тикеры всех пар
-    tickers_list = await client.get_tickers()  # Уже возвращает список!
-
-    if not tickers_list:
-      raise HTTPException(
-        status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail="Не удалось получить данные от Bybit API"
-      )
-
-    # Фильтруем и форматируем данные
-    filtered_pairs: List[ScreenerPairResponse] = []
-
-    for ticker in tickers_list:
-      try:
-        symbol = ticker.get("symbol", "")
-
-        # Фильтр 1: Только USDT пары
-        if not symbol.endswith("USDT"):
-          continue
-
-        # Парсим числовые значения
-        last_price = float(ticker.get("lastPrice", 0))
-        volume_24h = float(ticker.get("volume24h", 0))
-        turnover_24h = float(ticker.get("turnover24h", 0))
-        price_24h_pcnt = float(ticker.get("price24hPcnt", 0)) * 100  # Конвертируем в проценты
-        high_price_24h = float(ticker.get("highPrice24h", 0))
-        low_price_24h = float(ticker.get("lowPrice24h", 0))
-        prev_price_24h = float(ticker.get("prevPrice24h", 0))
-
-        # Фильтр 2: Минимальный объем
-        # Используем turnover_24h (оборот в USDT), а не volume_24h (объем в монетах)
-        if turnover_24h < min_volume:
-          continue
-
-        # Фильтр 3: Валидные данные
-        if last_price <= 0 or high_price_24h <= 0 or low_price_24h <= 0:
-          continue
-
-        # Добавляем пару в результат
-        pair_data = ScreenerPairResponse(
-          symbol=symbol,
-          lastPrice=last_price,
-          price24hPcnt=price_24h_pcnt,
-          volume24h=turnover_24h,  # Используем turnover как volume в USDT
-          highPrice24h=high_price_24h,
-          lowPrice24h=low_price_24h,
-          prevPrice24h=prev_price_24h,
-          turnover24h=turnover_24h
-        )
-
-        filtered_pairs.append(pair_data)
-
-      except (ValueError, KeyError) as e:
-        logger.warning(f"Ошибка парсинга тикера {ticker.get('symbol', 'unknown')}: {e}")
-        continue
-
-    # Сортируем по объему (по убыванию)
-    filtered_pairs.sort(key=lambda x: x.volume24h, reverse=True)
-
-    logger.info(
-      f"Успешно обработано {len(filtered_pairs)} пар из {len(tickers_list)} "
-      f"(фильтр: volume > {min_volume:,.0f} USDT)"
-    )
-
-    # Формируем ответ
-    response = ScreenerDataResponse(
-      pairs=filtered_pairs,
-      total=len(filtered_pairs),
-      timestamp=int(time.time() * 1000),
-      min_volume=min_volume
-    )
-
-    return response
-
-  except HTTPException:
-    raise
-  except Exception as e:
-    logger.error(f"Ошибка получения данных скринера: {e}", exc_info=True)
-    raise HTTPException(
-      status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-      detail=f"Внутренняя ошибка сервера: {str(e)}"
-    )
-
-
-@screener_router.get(
-  "/pairs/{symbol}",
-  response_model=ScreenerPairResponse,
-  summary="Получение данных конкретной пары",
-  description="Возвращает детальные данные для указанной торговой пары"
-)
-async def get_screener_pair(
-    symbol: str,
-    current_user: dict = Depends(require_auth)
-) -> ScreenerPairResponse:
-  """
-  Получение данных конкретной торговой пары.
-
-  Args:
-      symbol: Символ торговой пары (например, BTCUSDT)
-      current_user: Авторизованный пользователь
-
-  Returns:
-      ScreenerPairResponse с данными пары
-
-  Raises:
-      HTTPException: При ошибке или если пара не найдена
-  """
-  try:
-    logger.info(f"Запрос данных пары {symbol} для скринера")
-
-    client = BybitRESTClient()
-    await client.initialize()
-
-    # Получаем тикер конкретной пары
-    tickers_list = await client.get_tickers(symbol=symbol)  # Возвращает список!
-
-    if not tickers_list:
-      raise HTTPException(
-        status_code=http_status.HTTP_404_NOT_FOUND,
-        detail=f"Пара {symbol} не найдена"
-      )
-
-    ticker = tickers_list[0]
-
-    if not ticker:
-      raise HTTPException(
-        status_code=http_status.HTTP_404_NOT_FOUND,
-        detail=f"Данные для пары {symbol} отсутствуют"
-      )
-
-    # Парсим данные
-    pair_data = ScreenerPairResponse(
-      symbol=ticker.get("symbol", symbol),
-      lastPrice=float(ticker.get("lastPrice", 0)),
-      price24hPcnt=float(ticker.get("price24hPcnt", 0)) * 100,
-      volume24h=float(ticker.get("turnover24h", 0)),
-      highPrice24h=float(ticker.get("highPrice24h", 0)),
-      lowPrice24h=float(ticker.get("lowPrice24h", 0)),
-      prevPrice24h=float(ticker.get("prevPrice24h", 0)),
-      turnover24h=float(ticker.get("turnover24h", 0))
-    )
-
-    logger.info(f"Успешно получены данные для {symbol}")
-
-    return pair_data
-
-  except HTTPException:
-    raise
-  except Exception as e:
-    logger.error(f"Ошибка получения данных для {symbol}: {e}", exc_info=True)
-    raise HTTPException(
-      status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-      detail=f"Ошибка получения данных: {str(e)}"
-    )
-
-@app.websocket("/ws")
-async def websocket_route(websocket: WebSocket):
-    await websocket_endpoint(websocket)
-
-
-@orders_router.get(
-  "",
-  response_model=OrdersListResponse,
-  summary="Получение списка ордеров",
-  description="""
-    Возвращает список ордеров с возможностью фильтрации.
-
-    **Фильтры:**
-    - status: фильтр по статусу (active, filled, cancelled, all)
-    - symbol: фильтр по торговой паре
-    - strategy: фильтр по стратегии
-    """
-)
-async def get_orders(
-    status: Optional[str] = Query("active", description="Фильтр по статусу"),
-    symbol: Optional[str] = Query(None, description="Фильтр по символу"),
-    strategy: Optional[str] = Query(None, description="Фильтр по стратегии"),
-    current_user: dict = Depends(require_auth)
-):
-  """
-  Получение списка ордеров.
-  """
-  try:
-    logger.info(f"Запрос списка ордеров: status={status}, symbol={symbol}, strategy={strategy}")
-
-    # Получаем репозиторий
-    order_repo = OrderRepository()
-
-    # Получаем все недавние ордера
-    all_orders = await order_repo.get_recent_orders(symbol=symbol, limit=500)
-
-    # Определяем допустимые статусы для фильтрации
-    if status == "active":
-      allowed_statuses = {"Pending", "Placed", "PartiallyFilled"}
-    elif status == "filled":
-      allowed_statuses = {"Filled"}
-    elif status == "cancelled":
-      allowed_statuses = {"Cancelled"}
-    else:
-      allowed_statuses = None  # Все статусы
-
-    # Конвертируем в response модели с фильтрацией
-    order_responses = []
-    active_count = 0
-
-    for order in all_orders:
-      # Фильтр по статусу
-      if allowed_statuses and order.status not in allowed_statuses:
-        continue
-
-      # Извлекаем данные из JSONB полей
-      signal_data = order.signal_data or {}
-      metadata = order.metadata_json or {}
-
-      # Извлекаем strategy из signal_data или metadata
-      order_strategy = signal_data.get("strategy") or metadata.get("strategy")
-
-      # Фильтр по стратегии
-      if strategy and order_strategy != strategy:
-        continue
-
-      # Извлекаем signal_id из signal_data
-      order_signal_id = signal_data.get("signal_id") or signal_data.get("id")
-
-      # Извлекаем leverage из metadata (по умолчанию 1)
-      order_leverage = metadata.get("leverage", 1)
-
-      order_response = OrderResponse(
-        order_id=str(order.id),  # ← id, не order_id
-        client_order_id=order.client_order_id,
-        exchange_order_id=order.exchange_order_id,
-        symbol=order.symbol,
-        side=order.side.value,  # Преобразуем enum в строку
-        order_type=order.order_type.value,  # Преобразуем enum в строку
-        quantity=order.quantity,
-        price=order.price,
-        filled_quantity=order.filled_quantity,
-        average_price=order.average_fill_price or 0.0,  # ← average_fill_price
-        take_profit=order.take_profit,
-        stop_loss=order.stop_loss,
-        leverage=order_leverage,  # ← Из metadata
-        status=order.status.value,  # Преобразуем enum в строку
-        created_at=order.created_at.isoformat(),
-        updated_at=order.updated_at.isoformat(),
-        filled_at=order.filled_at.isoformat() if order.filled_at else None,
-        strategy=order_strategy,  # ← Из signal_data/metadata
-        signal_id=order_signal_id,  # ← Из signal_data
-        notes=order.reason  # ← reason, не notes
-      )
-
-      order_responses.append(order_response)
-
-      # Считаем активные ордера
-      if order.status in ["Pending", "Placed", "PartiallyFilled"]:
-        active_count += 1
-
-    logger.info(f"Найдено {len(order_responses)} ордеров ({active_count} активных)")
-
-    return OrdersListResponse(
-      orders=order_responses,
-      total=len(order_responses),
-      active=active_count,
-      timestamp=int(datetime.now().timestamp() * 1000)
-    )
-
-  except Exception as e:
-    logger.error(f"Ошибка получения списка ордеров: {e}", exc_info=True)
-    raise HTTPException(
-      status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-      detail=f"Ошибка получения списка ордеров: {str(e)}"
-    )
-
-
-@orders_router.get(
-  "/{order_id}",
-  response_model=OrderDetailResponse,
-  summary="Получение детальной информации об ордере",
-  description="Возвращает детальную информацию об ордере с расчетом PnL"
-)
-async def get_order_detail(
-    order_id: str,
-    current_user: dict = Depends(require_auth)
-):
-  """
-  Получение детальной информации об ордере.
-  """
-  try:
-    logger.info(f"Запрос деталей для ордера {order_id}")
-
-    # Получаем репозиторий
-    order_repo = OrderRepository()
-
-    # Получаем ордер из БД
-    order = await order_repo.get_by_client_order_id(order_id)
-
-    if not order:
-      raise HTTPException(
-        status_code=http_status.HTTP_404_NOT_FOUND,
-        detail=f"Ордер {order_id} не найден"
-      )
-
-    # Получаем текущую цену актива
-    client = BybitRESTClient()
-    await client.initialize()
-    tickers_list = await client.get_tickers(symbol=order.symbol)
-
-    if not tickers_list:
-      raise HTTPException(
-        status_code=http_status.HTTP_404_NOT_FOUND,
-        detail=f"Тикер для {order.symbol} не найден"
-      )
-
-    current_price = float(tickers_list[0]["lastPrice"])
-    entry_price = order.price or order.average_fill_price or 0.0
-
-    # Извлекаем данные из JSONB полей
-    metadata = order.metadata_json or {}
-    signal_data = order.signal_data or {}
-
-    order_leverage = metadata.get("leverage", 1)
-    order_strategy = signal_data.get("strategy") or metadata.get("strategy")
-    order_signal_id = signal_data.get("signal_id") or signal_data.get("id")
-
-    # Расчет PnL
-    position_value = order.quantity * entry_price
-    margin_used = position_value / order_leverage if order_leverage > 0 else position_value
-
-    if order.side.value == "Buy":
-      pnl = (current_price - entry_price) * order.quantity
-    else:  # Sell
-      pnl = (entry_price - current_price) * order.quantity
-
-    pnl_percent = (pnl / position_value) * 100 if position_value > 0 else 0
-
-    # Расчет цены ликвидации (упрощенный)
-    if order.side.value == "Buy":
-      liquidation_price = entry_price * (1 - 1 / order_leverage) if order_leverage > 0 else 0
-    else:
-      liquidation_price = entry_price * (1 + 1 / order_leverage) if order_leverage > 0 else 0
-
-    # Комиссии (0.1% maker/taker)
-    fees = position_value * 0.001
-
-    logger.info(f"Детали ордера {order_id}: PnL={pnl:.2f}, Price={current_price}")
-
-    return OrderDetailResponse(
-      order_id=str(order.id),  # ← id
-      client_order_id=order.client_order_id,
-      exchange_order_id=order.exchange_order_id,
-      symbol=order.symbol,
-      side=order.side.value,
-      order_type=order.order_type.value,
-      quantity=order.quantity,
-      price=order.price,
-      filled_quantity=order.filled_quantity,
-      average_price=order.average_fill_price or 0.0,  # ← average_fill_price
-      take_profit=order.take_profit,
-      stop_loss=order.stop_loss,
-      leverage=order_leverage,  # ← Из metadata
-      status=order.status.value,
-      created_at=order.created_at.isoformat(),
-      updated_at=order.updated_at.isoformat(),
-      filled_at=order.filled_at.isoformat() if order.filled_at else None,
-      strategy=order_strategy,  # ← Из signal_data
-      signal_id=order_signal_id,  # ← Из signal_data
-      current_pnl=pnl,
-      current_pnl_percent=pnl_percent,
-      current_price=current_price,
-      entry_price=entry_price,
-      position_value=position_value,
-      margin_used=margin_used,
-      liquidation_price=liquidation_price,
-      fees=fees
-    )
-
-  except HTTPException:
-    raise
-  except Exception as e:
-    logger.error(f"Ошибка получения деталей ордера {order_id}: {e}", exc_info=True)
-    raise HTTPException(
-      status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-      detail=f"Ошибка получения деталей ордера: {str(e)}"
-    )
-
-
-@orders_router.post(
-  "/{order_id}/close",
-  response_model=CloseOrderResponse,
-  summary="Закрытие ордера",
-  description="Закрывает открытый ордер с расчетом финального PnL"
-)
-async def close_order(
-    order_id: str,
-    request: CloseOrderRequest,
-    current_user: dict = Depends(require_auth)
-):
-  """
-  Закрытие ордера.
-  """
-  try:
-    logger.info(f"Запрос на закрытие ордера {order_id}, причина: {request.reason}")
-
-    # Получаем репозиторий
-    order_repo = OrderRepository()
-
-    # Получаем ордер из БД
-    order = await order_repo.get_by_client_order_id(order_id)
-
-    if not order:
-      raise HTTPException(
-        status_code=http_status.HTTP_404_NOT_FOUND,
-        detail=f"Ордер {order_id} не найден"
-      )
-
-    # Проверяем, что ордер активен
-    if order.status not in [OrderStatus.PENDING, OrderStatus.PLACED, OrderStatus.PARTIALLY_FILLED]:
-      raise HTTPException(
-        status_code=http_status.HTTP_400_BAD_REQUEST,
-        detail=f"Ордер в статусе {order.status.value} не может быть закрыт"
-      )
-
-    # Отменяем ордер на бирже
-    client = BybitRESTClient()
-    await client.initialize()
-
-    try:
-      # Используем расширенный метод cancel_order (который вы добавили ранее)
-      cancel_result = await client.cancel_order(
-        symbol=order.symbol,
-        order_id=order.exchange_order_id,
-        order_link_id=order.client_order_id if not order.exchange_order_id else None
-      )
-      logger.info(f"Ордер {order_id} отменен на бирже: {cancel_result}")
-    except Exception as e:
-      logger.error(f"Ошибка отмены ордера на бирже: {e}")
-      # Продолжаем даже если не удалось отменить на бирже
-
-    # Получаем текущую цену для расчета PnL
-    tickers_list = await client.get_tickers(symbol=order.symbol)
-    if not tickers_list:
-      raise HTTPException(status_code=404, detail="Ticker not found")
-
-    current_price = float(tickers_list[0].get("lastPrice", 0))
-    entry_price = order.price or order.average_fill_price or 0.0
-
-    # Расчет финального PnL
-    if order.side.value == "Buy":
-      final_pnl = (current_price - entry_price) * order.filled_quantity
-    else:  # Sell
-      final_pnl = (entry_price - current_price) * order.filled_quantity
-
-    # Обновляем статус ордера через FSM
-    # 1. Создаем FSM с order_id (строка) и текущим статусом
-    fsm = OrderStateMachine(
-      order_id=order.client_order_id,
-      initial_state=order.status
-    )
-
-    # 2. Используем публичный метод update_status вместо прямого вызова триггера
-    try:
-      success = fsm.update_status(
-        new_status=OrderStatus.CANCELLED,
-        raise_on_invalid=False  # Не бросаем исключение, просто логируем
-      )
-
-      if success:
-        logger.info(f"FSM: Ордер {order_id} успешно переведен в статус CANCELLED")
-      else:
-        logger.warning(f"FSM: Не удалось перевести ордер {order_id} через FSM, используем прямое обновление")
-    except Exception as e:
-      logger.warning(f"FSM transition failed: {e}, продолжаем с прямым обновлением")
-
-    # 3. Обновляем в БД через update_status
-    update_success = await order_repo.update_status(
-      client_order_id=order.client_order_id,
-      new_status=OrderStatus.CANCELLED
-    )
-
-    if not update_success:
-      logger.error(f"Не удалось обновить статус ордера {order_id} в БД")
-      raise HTTPException(
-        status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail="Не удалось обновить статус ордера в БД"
-      )
-
-    logger.info(f"Ордер {order_id} успешно закрыт, PnL={final_pnl:.2f}")
-
-    return CloseOrderResponse(
-      success=True,
-      order_id=order_id,
-      closed_at=datetime.now().isoformat(),
-      final_pnl=final_pnl,
-      message=f"Ордер успешно закрыт. PnL: {final_pnl:.2f} USDT"
-    )
-
-  except HTTPException:
-    raise
-  except Exception as e:
-    logger.error(f"Ошибка закрытия ордера {order_id}: {e}", exc_info=True)
-    raise HTTPException(
-      status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-      detail=f"Ошибка закрытия ордера: {str(e)}"
-    )
