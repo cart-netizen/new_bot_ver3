@@ -206,6 +206,37 @@ class Settings(BaseSettings):
     description="Интервал логирования статистики скринера"
   )
 
+  # ===== DYNAMIC SYMBOLS SETTINGS =====
+  DYNAMIC_SYMBOLS_ENABLED: bool = Field(
+    default=True,
+    description="Включить динамическое управление списком пар"
+  )
+
+  DYNAMIC_MIN_VOLUME: float = Field(
+    default=4_000_000.0,
+    description="Минимальный объем для отбора пар"
+  )
+
+  DYNAMIC_MAX_VOLUME_PAIRS: int = Field(
+    default=200,
+    description="Максимум пар после фильтра по объему"
+  )
+
+  DYNAMIC_TOP_GAINERS: int = Field(
+    default=40,
+    description="Количество растущих пар"
+  )
+
+  DYNAMIC_TOP_LOSERS: int = Field(
+    default=20,
+    description="Количество падающих пар"
+  )
+
+  DYNAMIC_REFRESH_INTERVAL: int = Field(
+    default=300,
+    description="Интервал обновления списка пар (секунды)"
+  )
+
   model_config = SettingsConfigDict(
     env_file=".env",
     env_file_encoding="utf-8",

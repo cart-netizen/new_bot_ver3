@@ -13,6 +13,7 @@ import uvicorn
 from fastapi import WebSocket, WebSocketDisconnect
 
 from config import settings
+from core.dynamic_symbols import DynamicSymbolsManager
 from core.logger import setup_logging, get_logger
 from core.exceptions import log_exception, OrderBookSyncError, OrderBookError
 from core.trace_context import trace_operation
@@ -140,6 +141,9 @@ class BotController:
     self.screener_broadcast_task: Optional[asyncio.Task] = None
     # self.screener_manager = ScreenerManager()
 
+    self.dynamic_symbols_manager: Optional[DynamicSymbolsManager] = None
+    self.symbols_refresh_task: Optional[asyncio.Task] = None
+
     self.running = False
 
     logger.info("Инициализирован контроллер бота с ML поддержкой")
@@ -159,19 +163,7 @@ class BotController:
       server_time = await rest_client.get_server_time()
       logger.info(f"✓ Подключение к Bybit успешно. Серверное время: {server_time}")
 
-      # Создаем менеджеры стакана для каждой пары
-      for symbol in self.symbols:
-        self.orderbook_managers[symbol] = OrderBookManager(symbol)
-      logger.info(f"✓ Создано {len(self.orderbook_managers)} менеджеров стакана")
 
-      # ===== НОВОЕ: Создаем менеджеры свечей =====
-      for symbol in self.symbols:
-        self.candle_managers[symbol] = CandleManager(
-            symbol=symbol,
-            timeframe="1m",  # Основной таймфрейм
-            max_candles=200  # Достаточно для индикаторов
-        )
-      logger.info(f"✓ Создано {len(self.candle_managers)} менеджеров свечей")
 
       # ===== НОВОЕ: Инициализируем ML Feature Pipeline =====
       self.ml_feature_pipeline = MultiSymbolFeaturePipeline(
@@ -220,6 +212,8 @@ class BotController:
         logger.info("Инициализация Screener Manager...")
         self.screener_manager = ScreenerManager()
         logger.info("✓ Screener Manager инициализирован")
+
+
 
       logger.info("=" * 80)
       logger.info("ВСЕ КОМПОНЕНТЫ УСПЕШНО ИНИЦИАЛИЗИРОВАНЫ (ML-READY)")
@@ -284,10 +278,7 @@ class BotController:
       asyncio.create_task(fsm_cleanup_task())
       logger.info("✓ FSM Cleanup Task запланирован")
 
-      self.status = BotStatus.RUNNING
-      logger.info("=" * 80)
-      logger.info("БОТ УСПЕШНО ЗАПУЩЕН (ML-READY)")
-      logger.info("=" * 80)
+
 
       # ===== SCREENER MANAGER (НОВОЕ) =====
       if self.screener_manager:
@@ -298,7 +289,54 @@ class BotController:
         self.screener_broadcast_task = asyncio.create_task(
           self._screener_broadcast_loop()
         )
+        logger.info("Ожидание первой загрузки пар от screener...")
+        await asyncio.sleep(6)
+
         logger.info("✓ Screener Manager запущен")
+        # ===== DYNAMIC SYMBOLS (НОВОЕ) =====
+        if settings.DYNAMIC_SYMBOLS_ENABLED:
+          logger.info("Инициализация Dynamic Symbols Manager...")
+          self.dynamic_symbols_manager = DynamicSymbolsManager(
+            min_volume=settings.DYNAMIC_MIN_VOLUME,
+            max_volume_pairs=settings.DYNAMIC_MAX_VOLUME_PAIRS,
+            top_gainers=settings.DYNAMIC_TOP_GAINERS,
+            top_losers=settings.DYNAMIC_TOP_LOSERS
+          )
+
+          # Получаем динамический список
+          screener_pairs = self.screener_manager.get_all_pairs()
+          self.symbols = self.dynamic_symbols_manager.select_symbols(screener_pairs)
+
+          logger.info(f"✓ Динамически отобрано {len(self.symbols)} пар для мониторинга")
+        else:
+          # Fallback на статический список
+          self.symbols = settings.get_trading_pairs_list()
+          logger.info(f"✓ Используется статический список: {len(self.symbols)} пар")
+      else:
+        # Если screener выключен - статический список
+        self.symbols = settings.get_trading_pairs_list()
+        logger.info(f"✓ Screener отключен, статический список: {len(self.symbols)} пар")
+
+      # Создаем менеджеры стакана для каждой пары
+      for symbol in self.symbols:
+        self.orderbook_managers[symbol] = OrderBookManager(symbol)
+      logger.info(f"✓ Создано {len(self.orderbook_managers)} менеджеров стакана")
+
+      # ===== НОВОЕ: Создаем менеджеры свечей =====
+      for symbol in self.symbols:
+        self.candle_managers[symbol] = CandleManager(
+            symbol=symbol,
+            timeframe="1m",  # Основной таймфрейм
+            max_candles=200  # Достаточно для индикаторов
+        )
+      logger.info(f"✓ Создано {len(self.candle_managers)} менеджеров свечей")
+
+      if settings.DYNAMIC_SYMBOLS_ENABLED and self.dynamic_symbols_manager:
+        logger.info("Запуск задачи обновления списка пар...")
+        self.symbols_refresh_task = asyncio.create_task(
+          self._symbols_refresh_loop()
+        )
+        logger.info("✓ Задача обновления списка пар запущена")
 
       # Уведомляем фронтенд
       from api.websocket import broadcast_bot_status
@@ -308,11 +346,98 @@ class BotController:
         "message": "Бот успешно запущен с ML поддержкой"
       })
 
+      self.status = BotStatus.RUNNING
+      logger.info("=" * 80)
+      logger.info("БОТ УСПЕШНО ЗАПУЩЕН (ML-READY)")
+      logger.info("=" * 80)
+
     except Exception as e:
       self.status = BotStatus.ERROR
       logger.error(f"Ошибка запуска бота: {e}")
       log_exception(logger, e, "Запуск бота")
       raise
+
+  async def _symbols_refresh_loop(self):
+    """
+    Цикл обновления списка торговых пар.
+    Запускается каждые DYNAMIC_REFRESH_INTERVAL секунд.
+    """
+    interval = settings.DYNAMIC_REFRESH_INTERVAL
+    logger.info(f"Запущен symbols refresh loop (интервал: {interval}s)")
+
+    # Даем время на стабилизацию
+    await asyncio.sleep(interval)
+
+    while self.status == BotStatus.RUNNING:
+      try:
+        logger.info("=" * 60)
+        logger.info("ОБНОВЛЕНИЕ СПИСКА ТОРГОВЫХ ПАР")
+
+        # Получаем актуальные данные от screener
+        screener_pairs = self.screener_manager.get_all_pairs()
+
+        # Отбираем по критериям
+        new_symbols = self.dynamic_symbols_manager.select_symbols(screener_pairs)
+
+        # Определяем изменения
+        changes = self.dynamic_symbols_manager.get_changes(new_symbols)
+        added = changes['added']
+        removed = changes['removed']
+
+        if not added and not removed:
+          logger.info("✓ Список пар не изменился")
+        else:
+          logger.info(f"Изменения: +{len(added)} -{len(removed)}")
+
+          # Добавляем новые пары
+          for symbol in added:
+            logger.info(f"  + Добавление пары: {symbol}")
+            self.orderbook_managers[symbol] = OrderBookManager(symbol)
+            self.candle_managers[symbol] = CandleManager(symbol, "1m", 200)
+            self.market_analyzer.add_symbol(symbol)
+
+          # Удаляем старые пары
+          for symbol in removed:
+            logger.info(f"  - Удаление пары: {symbol}")
+            if symbol in self.orderbook_managers:
+              del self.orderbook_managers[symbol]
+            if symbol in self.candle_managers:
+              del self.candle_managers[symbol]
+
+          # Обновляем список
+          self.symbols = new_symbols
+
+          # Пересоздаем WebSocket соединения
+          logger.info("Перезапуск WebSocket с новым списком пар...")
+          if self.websocket_task:
+            self.websocket_task.cancel()
+            try:
+              await self.websocket_task
+            except asyncio.CancelledError:
+              pass
+
+          # Пересоздаем WebSocket менеджер
+          self.websocket_manager = BybitWebSocketManager(
+            symbols=self.symbols,
+            on_message=self._handle_orderbook_message
+          )
+          self.websocket_task = asyncio.create_task(
+            self.websocket_manager.start()
+          )
+          logger.info("✓ WebSocket перезапущен")
+
+        logger.info("=" * 60)
+        await asyncio.sleep(interval)
+
+      except asyncio.CancelledError:
+        logger.info("Symbols refresh loop остановлен")
+        break
+      except Exception as e:
+        logger.error(f"Ошибка в symbols refresh loop: {e}")
+        import traceback
+        logger.error(f"Traceback:\n{traceback.format_exc()}")
+        await asyncio.sleep(interval)
+
 
   async def _load_historical_candles(self):
     """Загрузка исторических свечей для всех символов."""
@@ -820,6 +945,8 @@ class BotController:
         logger.error(f"Критическая ошибка в цикле анализа: {e}")
         log_exception(logger, e, "Цикл анализа")
         await asyncio.sleep(1)
+
+
   async def stop(self):
     """Остановка бота."""
     if self.status == BotStatus.STOPPED:
@@ -877,6 +1004,14 @@ class BotController:
       if self.balance_tracker:
         await self.balance_tracker.stop()
         logger.info("✓ Трекер баланса остановлен")
+
+      if self.symbols_refresh_task:
+        self.symbols_refresh_task.cancel()
+        try:
+          await self.symbols_refresh_task
+        except asyncio.CancelledError:
+          pass
+        logger.info("✓ Symbols refresh task остановлен")
 
       self.status = BotStatus.STOPPED
       logger.info("=" * 80)
