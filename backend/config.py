@@ -9,11 +9,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, validator, field_validator
 from dotenv import load_dotenv
 
-from core.logger import get_logger
+# from core.logger import get_logger
 
 # from core.logger import get_logger
 
-logger = get_logger(__name__)
+# logger = get_logger(__name__)
 # Загрузка переменных окружения из .env файла
 load_dotenv()
 
@@ -85,6 +85,81 @@ class Settings(BaseSettings):
   MIN_ORDER_SIZE_USDT: float = Field(default=5)
   MAX_POSITION_SIZE_USDT: float = 1000.0
   IMBALANCE_THRESHOLD: float = 0.7
+
+  # ===== ML CONFIGURATION =====
+  ML_SERVER_URL: str = Field(
+      default="http://localhost:8001",
+      description="URL ML сервера для валидации сигналов"
+  )
+  ML_MIN_CONFIDENCE: float = Field(
+      default=0.6,
+      ge=0.0,
+      le=1.0,
+      description="Минимальная уверенность ML для валидации"
+  )
+  ML_WEIGHT: float = Field(
+      default=0.6,
+      ge=0.0,
+      le=1.0,
+      description="Вес ML в гибридном решении"
+  )
+  STRATEGY_WEIGHT: float = Field(
+      default=0.4,
+      ge=0.0,
+      le=1.0,
+      description="Вес стратегии в гибридном решении")
+
+  # ===== STRATEGY MANAGER CONFIGURATION =====
+  CONSENSUS_MODE: Literal["weighted", "majority", "unanimous"] = Field(
+      default="weighted",
+      description="Режим консенсуса стратегий"
+  )
+  MIN_STRATEGIES: int = Field(
+      default=2,
+      ge=1,
+      le=10,
+      description="Минимальное количество стратегий для консенсуса"
+  )
+  MIN_CONSENSUS_CONFIDENCE: float = Field(
+      default=0.6,
+      ge=0.0,
+      le=1.0,
+      description="Минимальная уверенность для консенсуса"
+  )
+
+  @field_validator("CONSENSUS_MODE", mode="before")
+  @classmethod
+  def validate_consensus_mode(cls, v):
+      """
+      Валидация и очистка CONSENSUS_MODE.
+      Удаляет комментарии и проверяет допустимые значения.
+      """
+      if not v:
+          print("⚠️ CONSENSUS_MODE не задан, используется значение по умолчанию: weighted")
+          return "weighted"
+
+      # Очистка от комментариев
+      original_value = v
+      v = clean_env_value(str(v))
+
+      if v != original_value:
+          print(f"⚠️ CONSENSUS_MODE содержал комментарий: '{original_value}' -> '{v}'")
+
+      # Проверка допустимых значений
+      valid_modes = ["weighted", "majority", "unanimous"]
+      if v not in valid_modes:
+          error_msg = (
+              f"❌ Неизвестный CONSENSUS_MODE: '{v}'. "
+              f"Допустимые значения: {', '.join(valid_modes)}"
+          )
+          print(error_msg)
+          raise ValueError(
+              f"Invalid CONSENSUS_MODE: '{v}'. "
+              f"Must be one of: {', '.join(valid_modes)}"
+          )
+
+      print(f"✓ CONSENSUS_MODE: {v}")
+      return v
 
   # ===== LEVERAGE CONFIGURATION =====
   DEFAULT_LEVERAGE: int = Field(
@@ -374,63 +449,80 @@ class Settings(BaseSettings):
   def _validate_configuration(self):
     """Дополнительная валидация конфигурации после загрузки."""
 
-
-    # Проверка весов ML и Strategy
-    weights_sum = self.ML_WEIGHT + self.STRATEGY_WEIGHT
-    if not (0.99 <= weights_sum <= 1.01):  # Допуск на погрешность округления
-      logger.error(
-        f"❌ Сумма ML_WEIGHT ({self.ML_WEIGHT}) и STRATEGY_WEIGHT "
-        f"({self.STRATEGY_WEIGHT}) должна быть равна 1.0, текущая: {weights_sum}"
-      )
-      raise ValueError(
-        f"ML_WEIGHT + STRATEGY_WEIGHT must equal 1.0, got {weights_sum}"
-      )
+    # Проверка весов ML и Strategy (с проверкой наличия атрибутов)
+    if hasattr(self, 'ML_WEIGHT') and hasattr(self, 'STRATEGY_WEIGHT'):
+      weights_sum = self.ML_WEIGHT + self.STRATEGY_WEIGHT
+      if not (0.99 <= weights_sum <= 1.01):
+        error_msg = (
+          f"❌ Сумма ML_WEIGHT ({self.ML_WEIGHT}) и STRATEGY_WEIGHT "
+          f"({self.STRATEGY_WEIGHT}) должна быть равна 1.0, текущая: {weights_sum}"
+        )
+        print(error_msg)
+        raise ValueError(
+          f"ML_WEIGHT + STRATEGY_WEIGHT must equal 1.0, got {weights_sum}"
+        )
+    else:
+      print("⚠️ ML_WEIGHT или STRATEGY_WEIGHT не заданы в .env, используются значения по умолчанию")
 
     # Проверка MIN_ORDER_SIZE vs MAX_POSITION_SIZE
-    if self.MIN_ORDER_SIZE_USDT > self.MAX_POSITION_SIZE_USDT:
-      logger.error(
-        f"❌ MIN_ORDER_SIZE_USDT ({self.MIN_ORDER_SIZE_USDT}) "
-        f"больше MAX_POSITION_SIZE_USDT ({self.MAX_POSITION_SIZE_USDT})"
-      )
-      raise ValueError(
-        "MIN_ORDER_SIZE_USDT must be <= MAX_POSITION_SIZE_USDT"
-      )
+    if hasattr(self, 'MIN_ORDER_SIZE_USDT') and hasattr(self, 'MAX_POSITION_SIZE_USDT'):
+      if self.MIN_ORDER_SIZE_USDT > self.MAX_POSITION_SIZE_USDT:
+        error_msg = (
+          f"❌ MIN_ORDER_SIZE_USDT ({self.MIN_ORDER_SIZE_USDT}) "
+          f"больше MAX_POSITION_SIZE_USDT ({self.MAX_POSITION_SIZE_USDT})"
+        )
+        print(error_msg)
+        raise ValueError(
+          "MIN_ORDER_SIZE_USDT must be <= MAX_POSITION_SIZE_USDT"
+        )
 
     # Проверка MAX_POSITION_SIZE vs MAX_EXPOSURE
-    if self.MAX_POSITION_SIZE_USDT > self.MAX_EXPOSURE_USDT:
-      logger.warning(
-        f"⚠️ MAX_POSITION_SIZE_USDT ({self.MAX_POSITION_SIZE_USDT}) "
-        f"больше MAX_EXPOSURE_USDT ({self.MAX_EXPOSURE_USDT})"
-      )
+    if hasattr(self, 'MAX_POSITION_SIZE_USDT') and hasattr(self, 'MAX_EXPOSURE_USDT'):
+      if self.MAX_POSITION_SIZE_USDT > self.MAX_EXPOSURE_USDT:
+        print(
+          f"⚠️ MAX_POSITION_SIZE_USDT ({self.MAX_POSITION_SIZE_USDT}) "
+          f"больше MAX_EXPOSURE_USDT ({self.MAX_EXPOSURE_USDT})"
+        )
 
     # Валидация ML Server URL
-    if not self.ML_SERVER_URL.startswith(("http://", "https://")):
-      logger.error(
-        f"❌ ML_SERVER_URL должен начинаться с http:// или https://"
-      )
-      raise ValueError(
-        f"Invalid ML_SERVER_URL: {self.ML_SERVER_URL}"
-      )
+    if hasattr(self, 'ML_SERVER_URL'):
+      if not self.ML_SERVER_URL.startswith(("http://", "https://")):
+        error_msg = f"❌ ML_SERVER_URL должен начинаться с http:// или https://"
+        print(error_msg)
+        raise ValueError(f"Invalid ML_SERVER_URL: {self.ML_SERVER_URL}")
 
-    logger.info("✅ Конфигурация успешно валидирована")
-    self._log_critical_settings()
+    print("✅ Конфигурация успешно валидирована")
 
-  def _log_critical_settings(self):
-    """Логирование критичных настроек при запуске."""
+    # Логируем критичные настройки ПОСЛЕ валидации
+    # Импортируем logger ВНУТРИ метода, чтобы избежать circular import
+    try:
+      from core.logger import get_logger
+      logger = get_logger(__name__)
+      self._log_critical_settings(logger)
+    except ImportError:
+      # Если logger ещё не доступен, просто выводим в консоль
+      self._log_critical_settings_to_console()
+
+  def _log_critical_settings(self, logger):
+    """Логирование критичных настроек через logger."""
     logger.info("=" * 60)
     logger.info("🔧 КРИТИЧНЫЕ НАСТРОЙКИ БОТА:")
-    logger.info(f"  • Mode: {self.BYBIT_MODE}")
-    logger.info(f"  • Trading Pairs: {self.TRADING_PAIRS}")
-    logger.info(f"  • Consensus Mode: {self.CONSENSUS_MODE}")
-    logger.info(f"  • Default Leverage: {self.DEFAULT_LEVERAGE}x")
-    logger.info(f"  • Min Order Size: {self.MIN_ORDER_SIZE_USDT} USDT")
-    logger.info(f"  • Max Position Size: {self.MAX_POSITION_SIZE_USDT} USDT")
-    logger.info(f"  • Max Exposure: {self.MAX_EXPOSURE_USDT} USDT")
-    logger.info(f"  • Max Open Positions: {self.MAX_OPEN_POSITIONS}")
-    logger.info(f"  • ML Server: {self.ML_SERVER_URL}")
-    logger.info(f"  • ML Weight: {self.ML_WEIGHT} / Strategy Weight: {self.STRATEGY_WEIGHT}")
+    logger.info(f"  • Mode: {getattr(self, 'BYBIT_MODE', 'N/A')}")
+    logger.info(f"  • Trading Pairs: {getattr(self, 'TRADING_PAIRS', 'N/A')}")
+    logger.info(f"  • Consensus Mode: {getattr(self, 'CONSENSUS_MODE', 'N/A')}")
+    logger.info(f"  • Default Leverage: {getattr(self, 'DEFAULT_LEVERAGE', 'N/A')}x")
+    logger.info(f"  • Min Order Size: {getattr(self, 'MIN_ORDER_SIZE_USDT', 'N/A')} USDT")
+    logger.info(f"  • Max Position Size: {getattr(self, 'MAX_POSITION_SIZE_USDT', 'N/A')} USDT")
+    logger.info(f"  • Max Exposure: {getattr(self, 'MAX_EXPOSURE_USDT', 'N/A')} USDT")
+    logger.info(f"  • Max Open Positions: {getattr(self, 'MAX_OPEN_POSITIONS', 'N/A')}")
+    logger.info(f"  • ML Server: {getattr(self, 'ML_SERVER_URL', 'N/A')}")
+    logger.info(
+      f"  • ML Weight: {getattr(self, 'ML_WEIGHT', 'N/A')} / Strategy Weight: {getattr(self, 'STRATEGY_WEIGHT', 'N/A')}")
     logger.info("=" * 60)
 
+  def _log_critical_settings_to_console(self):
+    """Логирование критичных настроек в консоль (fallback)."""
+    print("=" * 60)
 
   def get_bybit_api_url(self) -> str:
     """
@@ -469,7 +561,23 @@ class Settings(BaseSettings):
 try:
   settings = Settings()
 except Exception as e:
-  print(f"КРИТИЧЕСКАЯ ОШИБКА: Не удалось загрузить конфигурацию: {e}")
+  print(f"❌ КРИТИЧЕСКАЯ ОШИБКА ПРИ ЗАГРУЗКЕ КОНФИГУРАЦИИ: {e}")
   print("Проверьте наличие файла .env и корректность всех параметров")
+  import traceback
+
+  traceback.print_exc()
   raise
+  print("🔧 КРИТИЧНЫЕ НАСТРОЙКИ БОТА:")
+  print(f"  • Mode: {getattr(self, 'BYBIT_MODE', 'N/A')}")
+  print(f"  • Trading Pairs: {getattr(self, 'TRADING_PAIRS', 'N/A')}")
+  print(f"  • Consensus Mode: {getattr(self, 'CONSENSUS_MODE', 'N/A')}")
+  print(f"  • Default Leverage: {getattr(self, 'DEFAULT_LEVERAGE', 'N/A')}x")
+  print(f"  • Min Order Size: {getattr(self, 'MIN_ORDER_SIZE_USDT', 'N/A')} USDT")
+  print(f"  • Max Position Size: {getattr(self, 'MAX_POSITION_SIZE_USDT', 'N/A')} USDT")
+  print(f"  • Max Exposure: {getattr(self, 'MAX_EXPOSURE_USDT', 'N/A')} USDT")
+  print(f"  • Max Open Positions: {getattr(self, 'MAX_OPEN_POSITIONS', 'N/A')}")
+  print(f"  • ML Server: {getattr(self, 'ML_SERVER_URL', 'N/A')}")
+  print(
+    f"  • ML Weight: {getattr(self, 'ML_WEIGHT', 'N/A')} / Strategy Weight: {getattr(self, 'STRATEGY_WEIGHT', 'N/A')}")
+  print("=" * 60)
 

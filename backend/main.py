@@ -14,7 +14,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from config import settings
 from core.dynamic_symbols import DynamicSymbolsManager
-from core.logger import setup_logging, get_logger
+from core.logger import get_logger, setup_logging
 from core.exceptions import log_exception, OrderBookSyncError, OrderBookError
 from core.trace_context import trace_operation
 from database.connection import db_manager
