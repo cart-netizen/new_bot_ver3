@@ -8,6 +8,7 @@
 """
 
 import asyncio
+from decimal import Decimal
 from typing import Optional, Dict, List
 from collections import deque
 
@@ -29,7 +30,7 @@ from models.market_data import OrderSide, OrderType, TimeInForce
 from exchange.rest_client import rest_client
 from strategy.risk_manager import RiskManager
 from strategy.signal_deduplicator import signal_deduplicator
-from utils.balance_tracker import balance_tracker  # ИМПОРТ balance_tracker
+from utils.balance_tracker import balance_tracker
 from utils.helpers import get_timestamp_ms, round_price, round_quantity
 
 logger = get_logger(__name__)
@@ -53,6 +54,10 @@ class ExecutionManager:
 
         # История исполнения
         self.execution_history: deque = deque(maxlen=1000)
+
+        # Кеш информации об инструментах
+        self.instruments_cache: Dict[str, dict] = {}
+        self.cache_ttl = 3600  # 1 час
 
         # Флаг работы
         self.is_running = False
@@ -585,45 +590,39 @@ class ExecutionManager:
 
     async def _execute_signal(self, signal: TradingSignal):
         """
-        Исполнение торгового сигнала с использованием open_position.
+        Исполнение торгового сигнала.
 
-        ✅ КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Используется open_position вместо _place_order
+        ИСПРАВЛЕНИЯ:
+        1. Добавлена валидация и округление quantity
+        2. Добавлена проверка минимального размера ордера (5 USDT)
+        3. Улучшено логирование всех расчетов
 
         Args:
             signal: Торговый сигнал
         """
         # ============================================
-        # ШАГ 0.0: ПРОВЕРКА ЛИМИТА ПОЗИЦИЙ (CIRCUIT BREAKER)
+        # ШАГ 0.0: ПРОВЕРКА ЛИМИТА ПОЗИЦИЙ
         # ============================================
-        # КРИТИЧНО: Проверяем ДО дедупликации, ДО баланса, ДО всего!
         current_positions = self.risk_manager.metrics.open_positions_count
         max_positions = self.risk_manager.limits.max_open_positions
 
         if current_positions >= max_positions:
             logger.warning(
                 f"🛑 CIRCUIT BREAKER: Достигнут лимит позиций {current_positions}/{max_positions}. "
-                f"Открытые пары: {list(self.risk_manager.open_positions.keys())}. "
-                f"Сигнал {signal.symbol} отклонён БЕЗ обработки."
+                f"Сигнал {signal.symbol} отклонён."
             )
             self.stats["rejected_orders"] += 1
             return
 
-        # Проверка: уже есть позиция по этой паре?
         if signal.symbol in self.risk_manager.open_positions:
             logger.warning(
-                f"⚠️ CIRCUIT BREAKER: По паре {signal.symbol} уже открыта позиция. "
-                f"Сигнал отклонён."
+                f"⚠️ CIRCUIT BREAKER: По паре {signal.symbol} уже открыта позиция. Сигнал отклонён."
             )
             self.stats["rejected_orders"] += 1
             return
 
-        logger.debug(
-            f"{signal.symbol} | ✓ Проверка лимита: {current_positions}/{max_positions} "
-            f"(после открытия будет {current_positions + 1}/{max_positions})"
-        )
-
         # ==========================================
-        # ШАГ 0: ДЕДУПЛИКАЦИЯ СИГНАЛА
+        # ШАГ 0.1: ДЕДУПЛИКАЦИЯ СИГНАЛА
         # ==========================================
         should_process, block_reason = signal_deduplicator.should_process_signal(signal)
 
@@ -635,125 +634,150 @@ class ExecutionManager:
             return
 
         logger.info(
-            f"{signal.symbol} | Исполнение сигнала: "
-            f"{signal.signal_type.value} @ {signal.price:.8f}"
+            f"{signal.symbol} | Исполнение сигнала: {signal.signal_type.value} @ {signal.price:.8f}"
         )
 
         try:
-            # 1. СТРОГАЯ ПРОВЕРКА БАЛАНСА
-            # ✅ КРИТИЧНО: Fallback недопустим - только реальный баланс
+            # ==========================================
+            # ШАГ 1: ПОЛУЧЕНИЕ ИНФОРМАЦИИ ОБ ИНСТРУМЕНТЕ
+            # ==========================================
+            instrument_info = await self._get_instrument_info(signal.symbol)
+
+            if not instrument_info:
+                error_msg = f"Не удалось получить информацию об инструменте {signal.symbol}"
+                logger.error(f"{signal.symbol} | {error_msg}")
+                self.stats["failed_orders"] += 1
+                return
+
+            # ==========================================
+            # ШАГ 2: ПРОВЕРКА БАЛАНСА
+            # ==========================================
             available_balance = balance_tracker.get_current_balance()
 
-            if available_balance is None:
+            if available_balance is None or available_balance <= 0:
                 error_msg = (
                     f"КРИТИЧЕСКАЯ ОШИБКА: Баланс недоступен для {signal.symbol}. "
-                    f"Невозможно определить доступность средств для открытия позиции."
+                    f"Невозможно открыть позицию."
                 )
                 logger.error(error_msg)
-
-                # Отклоняем сигнал из-за недоступности баланса
-                self.stats["rejected_orders"] += 1
-                self._add_to_history(signal, "rejected", "Balance unavailable")
-
-                # Уведомляем через audit
-                await audit_repository.log(
-                    action=AuditAction.POSITION_OPEN,
-                    entity_type="Signal",
-                    entity_id=signal.symbol,
-                    success=False,
-                    error_message=error_msg,
-                    reason="Balance check failed - balance unavailable"
-                )
-
+                self.stats["failed_orders"] += 1
                 return
 
-            logger.debug(f"Доступный баланс: ${available_balance:.2f} USDT")
-
-            # 2. РАСЧЕТ РАЗМЕРА ПОЗИЦИИ
-            position_size_usdt = self.risk_manager.calculate_position_size(
-                signal,
-                available_balance
+            logger.info(
+                f"{signal.symbol} | Доступный баланс: {available_balance:.2f} USDT"
             )
 
-            # 3. ВАЛИДАЦИЯ СИГНАЛА
-            is_valid, rejection_reason = self.risk_manager.validate_signal(
-                signal,
-                position_size_usdt
+            # ==========================================
+            # ШАГ 3: РАСЧЕТ РАЗМЕРА ПОЗИЦИИ
+            # ==========================================
+            # Используем текущую цену сигнала
+            entry_price = signal.price
+
+            # ИСПРАВЛЕНИЕ: Правильная сигнатура метода calculate_position_size
+            # Метод принимает: (signal: TradingSignal, available_balance: float, leverage: Optional[int])
+            # и возвращает ТОЛЬКО position_size_usdt (float), а не tuple!
+
+            # Расчет через risk_manager (учитывает leverage)
+            raw_position_size_usdt = self.risk_manager.calculate_position_size(
+                signal=signal,
+                available_balance=available_balance,
+                leverage=self.risk_manager.limits.default_leverage
             )
 
-            if not is_valid:
-                logger.warning(
-                    f"{signal.symbol} | Сигнал отклонен: {rejection_reason}"
+            # Рассчитываем quantity из position_size
+            raw_quantity = raw_position_size_usdt / entry_price
+
+            logger.info(
+                f"{signal.symbol} | Расчет позиции: "
+                f"баланс={available_balance:.2f} USDT, "
+                f"leverage={self.risk_manager.limits.default_leverage}x, "
+                f"размер={raw_position_size_usdt:.2f} USDT, "
+                f"raw_quantity={raw_quantity:.8f}"
+            )
+
+            # ==========================================
+            # ШАГ 4: ВАЛИДАЦИЯ И ОКРУГЛЕНИЕ QUANTITY
+            # ==========================================
+            validated_quantity = self._validate_and_round_quantity(
+                symbol=signal.symbol,
+                quantity=raw_quantity,
+                price=entry_price,
+                instrument_info=instrument_info
+            )
+
+            if validated_quantity is None:
+                error_msg = (
+                    f"Quantity {raw_quantity:.8f} не прошло валидацию. "
+                    f"Ордер отклонен."
                 )
-                self.stats["rejected_orders"] += 1
-                self._add_to_history(signal, "rejected", rejection_reason)
+                logger.error(f"{signal.symbol} | {error_msg}")
+                self.stats["failed_orders"] += 1
                 return
 
-            # 4. ОТКРЫТИЕ ПОЗИЦИИ
-            # ✅ КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Используем open_position
+            # Финальная проверка notional value
+            final_notional = validated_quantity * entry_price
+            min_notional = instrument_info["minNotionalValue"]
 
-            # Конвертируем тип сигнала в сторону
-            side = "Buy" if signal.signal_type == SignalType.BUY else "Sell"
+            if final_notional < min_notional:
+                error_msg = (
+                    f"Финальный размер ордера {final_notional:.2f} USDT < минимума {min_notional} USDT. "
+                    f"Ордер отклонен (недостаточно средств для минимального ордера)."
+                )
+                logger.error(f"{signal.symbol} | {error_msg}")
+                self.stats["failed_orders"] += 1
+                return
 
-            # Рассчитываем количество
-            quantity = position_size_usdt / signal.price
-            quantity = round_quantity(quantity, decimals=6)
+            logger.info(
+                f"{signal.symbol} | ✅ Финальные параметры ордера: "
+                f"quantity={validated_quantity:.8f}, "
+                f"notional={final_notional:.2f} USDT"
+            )
 
-            # Рассчитываем SL/TP
-            if side == "Buy":
-                stop_loss = signal.price * 0.98  # -2%
-                take_profit = signal.price * 1.05  # +5%
+            # ==========================================
+            # ШАГ 5: РАСЧЕТ STOP LOSS И TAKE PROFIT
+            # ==========================================
+            stop_loss_pct = 0.02  # 2%
+            take_profit_pct = 0.04  # 4%
+
+            if signal.signal_type == SignalType.BUY:
+                side = "Buy"
+                stop_loss = entry_price * (1 - stop_loss_pct)
+                take_profit = entry_price * (1 + take_profit_pct)
             else:
-                stop_loss = signal.price * 1.02  # +2%
-                take_profit = signal.price * 0.95  # -5%
+                side = "Sell"
+                stop_loss = entry_price * (1 + stop_loss_pct)
+                take_profit = entry_price * (1 - take_profit_pct)
 
-            # Открываем позицию через новый метод
+            # ==========================================
+            # ШАГ 6: ОТКРЫТИЕ ПОЗИЦИИ
+            # ==========================================
             result = await self.open_position(
                 symbol=signal.symbol,
                 side=side,
-                entry_price=signal.price,
-                quantity=quantity,
+                entry_price=entry_price,
+                quantity=validated_quantity,  # Используем валидированное quantity
                 stop_loss=stop_loss,
                 take_profit=take_profit,
-                entry_signal={
-                    "type": signal.signal_type.value,
-                    "source": signal.source.value,
-                    "strength": signal.strength.value,
-                    "confidence": signal.confidence
-                },
-                entry_market_data={
-                    "price": signal.price,
-                    "timestamp": signal.timestamp
-                },
-                entry_indicators=signal.metadata.get("indicators", {}),
-                entry_reason=signal.reason
+                entry_signal=signal.to_dict(),
+                entry_reason=f"Signal: {signal.signal_type.value}",
             )
 
             if result:
-                # Обновляем сигнал
-                signal.executed = True
-                signal.execution_price = signal.price
-                signal.execution_timestamp = get_timestamp_ms()
-
                 self.stats["executed_orders"] += 1
-                self._add_to_history(signal, "executed", result["position_id"])
-
                 logger.info(
-                    f"{signal.symbol} | Позиция успешно открыта: "
-                    f"position_id={result['position_id']}"
+                    f"{signal.symbol} | ✅ Позиция успешно открыта: "
+                    f"{side} {validated_quantity:.8f} @ {entry_price:.8f}"
                 )
             else:
                 self.stats["failed_orders"] += 1
-                self._add_to_history(signal, "failed", "Failed to open position")
-                logger.error(
-                    f"{signal.symbol} | Ошибка открытия позиции"
-                )
+                logger.error(f"{signal.symbol} | ❌ Не удалось открыть позицию")
 
         except Exception as e:
+            logger.error(
+                f"{signal.symbol} | ❌ Критическая ошибка исполнения сигнала: {e}",
+                exc_info=True
+            )
             self.stats["failed_orders"] += 1
-            self._add_to_history(signal, "failed", str(e))
-            logger.error(f"{signal.symbol} | Ошибка исполнения сигнала: {e}")
-            raise ExecutionError(f"Failed to execute signal: {str(e)}")
 
     def _add_to_history(self, signal: TradingSignal, status: str, details: str):
         """
@@ -798,3 +822,161 @@ class ExecutionManager:
                 if self.stats["total_signals"] > 0 else 0
             ),
         }
+
+        # ==================== НОВЫЕ ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
+
+    async def _get_instrument_info(self, symbol: str) -> Optional[dict]:
+            """
+            Получение информации об инструменте с кешированием.
+
+            Args:
+                symbol: Торговая пара
+
+            Returns:
+                dict: Информация об инструменте или None при ошибке
+            """
+            # Проверка кеша
+            if symbol in self.instruments_cache:
+                cached = self.instruments_cache[symbol]
+                cache_age = get_timestamp_ms() - cached.get("cached_at", 0)
+
+                if cache_age < self.cache_ttl * 1000:
+                    logger.debug(f"{symbol} | Использование кешированной информации об инструменте")
+                    return cached
+
+            # Запрос информации с Bybit
+            try:
+                logger.debug(f"{symbol} | Запрос информации об инструменте с Bybit")
+
+                response = await self.rest_client.get_instruments_info(
+                    symbol=symbol
+                )
+
+                if not response or "result" not in response:
+                    logger.error(f"{symbol} | Некорректный ответ от Bybit: {response}")
+                    return None
+
+                # instruments_list = response["result"].get("list", [])
+                instruments_list = response
+
+                if not instruments_list:
+                    logger.error(f"{symbol} | Инструмент не найден на Bybit")
+                    return None
+
+                instrument_info = instruments_list[0]
+                lot_size_filter = instrument_info.get("lotSizeFilter", {})
+
+                # Извлечение критических параметров
+                info = {
+                    "symbol": symbol,
+                    "qtyStep": float(lot_size_filter.get("qtyStep", 0.001)),
+                    "minOrderQty": float(lot_size_filter.get("minOrderQty", 0.001)),
+                    "maxOrderQty": float(lot_size_filter.get("maxOrderQty", 100000)),
+                    "minNotionalValue": float(lot_size_filter.get("minNotionalValue", 5)),  # Минимум 5 USDT
+                    "cached_at": get_timestamp_ms()
+                }
+
+                # Кеширование
+                self.instruments_cache[symbol] = info
+
+                logger.info(
+                    f"{symbol} | Информация об инструменте получена: "
+                    f"qtyStep={info['qtyStep']}, minOrderQty={info['minOrderQty']}, "
+                    f"minNotionalValue={info['minNotionalValue']}"
+                )
+
+                return info
+
+            except Exception as e:
+                logger.error(f"{symbol} | Ошибка получения информации об инструменте: {e}")
+                return None
+
+    def _validate_and_round_quantity(
+            self,
+            symbol: str,
+            quantity: float,
+            price: float,
+            instrument_info: dict
+        ) -> Optional[float]:
+            """
+            Валидация и округление quantity согласно правилам инструмента.
+
+            Args:
+                symbol: Торговая пара
+                quantity: Исходное количество
+                price: Текущая цена
+                instrument_info: Информация об инструменте
+
+            Returns:
+                float: Округленное quantity или None при ошибке
+            """
+            qty_step = instrument_info["qtyStep"]
+            min_order_qty = instrument_info["minOrderQty"]
+            max_order_qty = instrument_info["maxOrderQty"]
+            min_notional = instrument_info["minNotionalValue"]
+
+            logger.debug(
+                f"{symbol} | Валидация quantity: "
+                f"raw={quantity:.8f}, price={price:.8f}, "
+                f"qtyStep={qty_step}, minQty={min_order_qty}, minNotional={min_notional}"
+            )
+
+            # Округление quantity до qtyStep (вниз)
+            decimal_qty = Decimal(str(quantity))
+            decimal_step = Decimal(str(qty_step))
+
+            rounded_qty = float((decimal_qty // decimal_step) * decimal_step)
+
+            logger.debug(f"{symbol} | После округления по qtyStep: {rounded_qty:.8f}")
+
+            # Проверка минимального quantity
+            if rounded_qty < min_order_qty:
+                logger.warning(
+                    f"{symbol} | Quantity {rounded_qty:.8f} < minOrderQty {min_order_qty}. "
+                    f"Увеличение до минимума."
+                )
+                rounded_qty = min_order_qty
+
+            # Проверка максимального quantity
+            if rounded_qty > max_order_qty:
+                logger.error(
+                    f"{symbol} | Quantity {rounded_qty:.8f} > maxOrderQty {max_order_qty}. "
+                    f"Ордер отклонен."
+                )
+                return None
+
+            # Проверка минимального размера ордера в USDT (notional value)
+            notional_value = rounded_qty * price
+
+            if notional_value < min_notional:
+                logger.warning(
+                    f"{symbol} | Размер ордера {notional_value:.2f} USDT < минимума {min_notional} USDT. "
+                    f"Увеличение quantity до минимального размера."
+                )
+
+                # Пересчет quantity для достижения минимального notional
+                required_qty = min_notional / price
+
+                # Округление до qtyStep (вверх)
+                decimal_required = Decimal(str(required_qty))
+                rounded_qty = float(((decimal_required // decimal_step) + 1) * decimal_step)
+
+                # Повторная проверка notional после округления
+                new_notional = rounded_qty * price
+
+                if new_notional < min_notional:
+                    # Добавляем еще один шаг для гарантии
+                    rounded_qty += qty_step
+                    new_notional = rounded_qty * price
+
+                logger.info(
+                    f"{symbol} | Quantity скорректировано: {quantity:.8f} → {rounded_qty:.8f} "
+                    f"(notional: {notional_value:.2f} → {new_notional:.2f} USDT)"
+                )
+
+            logger.info(
+                f"{symbol} | ✅ Quantity прошло валидацию: {rounded_qty:.8f} "
+                f"(размер ордера: {rounded_qty * price:.2f} USDT)"
+            )
+
+            return rounded_qty

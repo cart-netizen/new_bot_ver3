@@ -10,7 +10,7 @@ Strategy Manager - объединение всех торговых страте
 
 Путь: backend/strategies/strategy_manager.py
 """
-
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
@@ -513,66 +513,66 @@ class StrategyManager:
     }
 
 
-# Пример использования
-if __name__ == "__main__":
-  from strategy.candle_manager import Candle
-  from datetime import datetime
-  import random
-
-  # Конфигурация
-  config = StrategyManagerConfig(
-    consensus_mode="weighted",
-    min_strategies_for_signal=2,
-    min_consensus_confidence=0.6
-  )
-
-  manager = StrategyManager(config)
-
-  # Генерируем тестовые свечи
-  base_price = 50000.0
-  candles = []
-
-  for i in range(150):
-    trend = i * 10
-    noise = random.uniform(-100, 100)
-    price = base_price + trend + noise
-
-    candle = Candle(
-      timestamp=int(datetime.now().timestamp() * 1000) + i * 60000,
-      open=price - 5,
-      high=price + abs(random.uniform(20, 50)),
-      low=price - abs(random.uniform(20, 50)),
-      close=price,
-      volume=1000 + random.uniform(-200, 200)
-    )
-    candles.append(candle)
-
-  # Анализируем с consensus
-  consensus = manager.analyze_with_consensus(
-    "BTCUSDT",
-    candles,
-    candles[-1].close
-  )
-
-  if consensus:
-    print(f"\nConsensus Signal:")
-    print(f"  Type: {consensus.final_signal.signal_type.value}")
-    print(f"  Confidence: {consensus.consensus_confidence:.2f}")
-    print(f"  Contributing strategies: {consensus.contributing_strategies}")
-    print(f"  Agreement: {consensus.agreement_count}/{consensus.agreement_count + consensus.disagreement_count}")
-    print(f"  Reason: {consensus.final_signal.reason}")
-  else:
-    print("\nNo consensus achieved")
-
-  # Статистика
-  stats = manager.get_statistics()
-  print(f"\nManager Statistics:")
-  print(f"  Total analyses: {stats['total_analyses']}")
-  print(f"  Signals generated: {stats['signals_generated']}")
-  print(f"  Consensus rate: {stats['consensus_rate']:.2%}")
-
-  print(f"\nStrategy Statistics:")
-  for name, strategy_stats in stats['strategies'].items():
-    print(f"  {name}:")
-    for key, value in strategy_stats.items():
-      print(f"    {key}: {value}")
+# # Пример использования
+# if __name__ == "__main__":
+#   from strategy.candle_manager import Candle
+#   from datetime import datetime
+#   import random
+#
+#   # Конфигурация
+#   config = StrategyManagerConfig(
+#     consensus_mode="weighted",
+#     min_strategies_for_signal=2,
+#     min_consensus_confidence=0.6
+#   )
+#
+#   manager = StrategyManager(config)
+#
+#   # Генерируем тестовые свечи
+#   base_price = 50000.0
+#   candles = []
+#
+#   for i in range(150):
+#     trend = i * 10
+#     noise = random.uniform(-100, 100)
+#     price = base_price + trend + noise
+#
+#     candle = Candle(
+#       timestamp=int(datetime.now().timestamp() * 1000) + i * 60000,
+#       open=price - 5,
+#       high=price + abs(random.uniform(20, 50)),
+#       low=price - abs(random.uniform(20, 50)),
+#       close=price,
+#       volume=1000 + random.uniform(-200, 200)
+#     )
+#     candles.append(candle)
+#
+#   # Анализируем с consensus
+#   consensus = manager.analyze_with_consensus(
+#     "BTCUSDT",
+#     candles,
+#     candles[-1].close
+#   )
+#
+#   if consensus:
+#     print(f"\nConsensus Signal:")
+#     print(f"  Type: {consensus.final_signal.signal_type.value}")
+#     print(f"  Confidence: {consensus.consensus_confidence:.2f}")
+#     print(f"  Contributing strategies: {consensus.contributing_strategies}")
+#     print(f"  Agreement: {consensus.agreement_count}/{consensus.agreement_count + consensus.disagreement_count}")
+#     print(f"  Reason: {consensus.final_signal.reason}")
+#   else:
+#     print("\nNo consensus achieved")
+#
+#   # Статистика
+#   stats = manager.get_statistics()
+#   print(f"\nManager Statistics:")
+#   print(f"  Total analyses: {stats['total_analyses']}")
+#   print(f"  Signals generated: {stats['signals_generated']}")
+#   print(f"  Consensus rate: {stats['consensus_rate']:.2%}")
+#
+#   print(f"\nStrategy Statistics:")
+#   for name, strategy_stats in stats['strategies'].items():
+#     print(f"  {name}:")
+#     for key, value in strategy_stats.items():
+#       print(f"    {key}: {value}")
