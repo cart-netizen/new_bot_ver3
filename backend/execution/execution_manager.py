@@ -159,7 +159,7 @@ class ExecutionManager:
                 # ==========================================
                 # ШАГ 0: ГЕНЕРАЦИЯ CLIENT ORDER ID
                 # ==========================================
-                client_order_id = idempotency_service.generate_idempotency_key(
+                full_client_order_id  = idempotency_service.generate_idempotency_key(
                     operation="place_order",
                     params={
                         "symbol": symbol,
@@ -168,6 +168,7 @@ class ExecutionManager:
                         "timestamp": get_timestamp_ms()
                     }
                 )
+                client_order_id = full_client_order_id[:36]
 
                 # Проверка идемпотентности
                 existing_result = await idempotency_service.check_idempotency(
@@ -852,19 +853,18 @@ class ExecutionManager:
                     symbol=symbol
                 )
 
-                if not response or "result" not in response:
+                if not response or not isinstance(response, list) or len(response) == 0:
                     logger.error(f"{symbol} | Некорректный ответ от Bybit: {response}")
                     return None
 
-                # instruments_list = response["result"].get("list", [])
-                instruments_list = response
+                # response это уже List[Dict], берем первый элемент
+                instrument_info_raw = response[0]
 
-                if not instruments_list:
+                if not instrument_info_raw:
                     logger.error(f"{symbol} | Инструмент не найден на Bybit")
                     return None
 
-                instrument_info = instruments_list[0]
-                lot_size_filter = instrument_info.get("lotSizeFilter", {})
+                lot_size_filter = instrument_info_raw.get("lotSizeFilter", {})
 
                 # Извлечение критических параметров
                 info = {

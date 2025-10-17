@@ -723,16 +723,16 @@ class BotController:
                     }
 
                     # Создаём сигнал из consensus (импорты уже в начале функции)
-                    # final_signal уже должен быть SignalType
-                    signal_type = consensus.final_signal
+                    # ИСПРАВЛЕНИЕ: final_signal это SignalType, не TradingSignal
+                    final_signal_type = consensus.final_signal
 
                     # Если final_signal это строка, конвертируем в SignalType
-                    if isinstance(signal_type, str):
-                      signal_type = SignalType(signal_type)
+                    if isinstance(final_signal_type, str):
+                      final_signal_type = SignalType(final_signal_type)
 
                     signal = TradingSignal(
                       symbol=symbol,
-                      signal_type=signal_type,
+                      signal_type=final_signal_type,  # ИСПРАВЛЕНО: используем final_signal_type
                       source=SignalSource.STRATEGY,  # Изменится на ML_VALIDATED после валидации
                       strength=(
                         SignalStrength.STRONG
@@ -751,12 +751,12 @@ class BotController:
 
                     logger.info(
                       f"🎯 Strategy Manager Consensus [{symbol}]: "
-                      f"{signal_type.value}, "
+                      f"{signal.signal_type.value}, "  # ИСПРАВЛЕНО: signal.signal_type.value
                       f"confidence={final_confidence:.2f}, "
                       f"strategies={contributing_strategies}"
                     )
                 except Exception as e:
-                  logger.error(f"{symbol} | Ошибка Strategy Manager: {e}")
+                  logger.error(f"{symbol} | Ошибка Strategy Manager: {e}", exc_info=True)
 
               # РЕЖИМ 2: Базовая генерация сигналов (fallback)
               if not signal:
@@ -774,7 +774,7 @@ class BotController:
                       f"confidence={signal.confidence:.2f}"
                     )
                 except Exception as e:
-                  logger.error(f"{symbol} | Ошибка генерации сигнала: {e}")
+                  logger.error(f"{symbol} | Ошибка генерации сигнала: {e}", exc_info=True)
 
             # Если сигнала нет - пропускаем
             if not signal:
@@ -837,11 +837,11 @@ class BotController:
                     f"final_confidence={validation_result.final_confidence:.2f}"
                   )
               except Exception as e:
-                logger.error(f"{symbol} | Ошибка ML Validator: {e}")
+                logger.error(f"{symbol} | Ошибка ML Validator: {e}", exc_info=True)
 
             # ==================== 8. S/R КОНТЕКСТ (OPTIONAL) ====================
             sr_context = []
-            if has_sr_detector and sr_levels:
+            if has_sr_detector and sr_levels and signal:
               try:
                 nearest_levels = self.sr_detector.get_nearest_levels(
                   symbol,
@@ -871,38 +871,65 @@ class BotController:
                 logger.error(f"{symbol} | Ошибка S/R context: {e}")
 
             # ==================== 9. ФИНАЛЬНЫЙ ЛОГ И ИСПОЛНЕНИЕ ====================
-            log_parts = [
-              f"🎯 ФИНАЛЬНЫЙ СИГНАЛ [{symbol}]:",
-              f"{signal.signal_type.value}",
-              f"confidence={signal.confidence:.2f}",
-              f"strength={signal.strength.value}"
-            ]
+            # ИСПРАВЛЕНИЕ: Проверяем что signal существует и является TradingSignal
+            if signal:
+              try:
+                # КРИТИЧНО: Проверяем тип объекта signal перед использованием
+                if not isinstance(signal, TradingSignal):
+                  logger.error(
+                    f"{symbol} | КРИТИЧЕСКАЯ ОШИБКА: signal имеет неправильный тип: {type(signal)}. "
+                    f"Ожидается TradingSignal. Пропускаем исполнение."
+                  )
+                  continue
 
-            if consensus_info:
-              log_parts.append(
-                f"strategies={consensus_info['strategies']}"
-              )
+                # Формируем лог с проверками атрибутов
+                log_parts = [
+                  f"🎯 ФИНАЛЬНЫЙ СИГНАЛ [{symbol}]:",
+                  f"{signal.signal_type.value}",
+                  f"confidence={signal.confidence:.2f}",
+                  f"strength={signal.strength.value}"
+                ]
 
-            if signal.metadata.get('ml_validated'):
-              log_parts.append("ML_VALIDATED")
+                if consensus_info:
+                  log_parts.append(
+                    f"strategies={consensus_info['strategies']}"
+                  )
 
-            if sr_context:
-              log_parts.append(f"SR: {', '.join(sr_context)}")
+                if signal.metadata and signal.metadata.get('ml_validated'):
+                  log_parts.append("ML_VALIDATED")
 
-            logger.info(" | ".join(log_parts))
+                if sr_context:
+                  log_parts.append(f"SR: {', '.join(sr_context)}")
 
-            # Отправляем на исполнение
-            await self.execution_manager.submit_signal(signal)
+                logger.info(" | ".join(log_parts))
 
-            # Уведомляем фронтенд
-            try:
-              from api.websocket import broadcast_signal
-              await broadcast_signal(signal.to_dict())
-            except Exception as e:
-              logger.error(f"{symbol} | Ошибка broadcast_signal: {e}")
+                # Отправляем на исполнение
+                await self.execution_manager.submit_signal(signal)
+
+                # Уведомляем фронтенд
+                try:
+                  from api.websocket import broadcast_signal
+                  await broadcast_signal(signal.to_dict())
+                except Exception as e:
+                  logger.error(f"{symbol} | Ошибка broadcast_signal: {e}")
+
+              except AttributeError as e:
+                logger.error(
+                  f"{symbol} | AttributeError при обработке сигнала: {e}. "
+                  f"Тип signal: {type(signal)}, "
+                  f"Атрибуты: {dir(signal) if signal else 'None'}",
+                  exc_info=True
+                )
+                continue
+              except Exception as e:
+                logger.error(
+                  f"{symbol} | Ошибка исполнения сигнала: {e}",
+                  exc_info=True
+                )
+                continue
 
             # ==================== 10. DRIFT MONITORING (OPTIONAL) ====================
-            if has_drift_detector and feature_vector:
+            if has_drift_detector and feature_vector and signal:
               try:
                 # Конвертируем SignalType enum в int для drift detector
                 # SignalType.BUY -> 1, SignalType.SELL -> 2, SignalType.HOLD -> 0
@@ -964,7 +991,7 @@ class BotController:
                 logger.error(f"{symbol} | Ошибка сбора ML данных: {e}")
 
           except Exception as e:
-            logger.error(f"Ошибка анализа {symbol}: {e}")
+            logger.error(f"Ошибка анализа {symbol}: {e}", exc_info=True)
             log_exception(logger, e, f"Анализ {symbol}")
 
         # Пауза между циклами
@@ -974,7 +1001,7 @@ class BotController:
         logger.info("Цикл анализа отменен")
         break
       except Exception as e:
-        logger.error(f"Критическая ошибка в цикле анализа: {e}")
+        logger.error(f"Критическая ошибка в цикле анализа: {e}", exc_info=True)
         log_exception(logger, e, "Цикл анализа")
         await asyncio.sleep(1)
 
