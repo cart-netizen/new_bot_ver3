@@ -80,7 +80,7 @@ class Settings(BaseSettings):
   MIN_CLUSTER_VOLUME: float = Field(default=10000)
 
   # ===== НАСТРОЙКИ РИСК-МЕНЕДЖМЕНТА =====
-  MAX_OPEN_POSITIONS: int = Field(default=5)
+  MAX_OPEN_POSITIONS: int = Field(default=2)
   MAX_EXPOSURE_USDT: float = Field(default=10000)
   MIN_ORDER_SIZE_USDT: float = Field(default=5)
   MAX_POSITION_SIZE_USDT: float = 1000.0
