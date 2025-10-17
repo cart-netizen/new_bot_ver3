@@ -48,6 +48,7 @@ class PositionStatus(str, enum.Enum):
   OPEN = "Open"
   CLOSING = "Closing"
   CLOSED = "Closed"
+  FAILED = "Failed"
 
 
 class AuditAction(str, enum.Enum):

@@ -213,13 +213,12 @@ class BotController:
       self.strategy_engine = StrategyEngine()
       logger.info("✓ Торговая стратегия инициализирована")
 
-      # Инициализируем риск-менеджер
-      self.risk_manager = RiskManager(default_leverage=settings.DEFAULT_LEVERAGE)
-      logger.info("✓ Риск-менеджер инициализирован")
+      # # Инициализируем риск-менеджер
+      # self.risk_manager = RiskManager(default_leverage=settings.DEFAULT_LEVERAGE)
+      # logger.info("✓ Риск-менеджер инициализирован")
 
       # Инициализируем менеджер исполнения
-      self.execution_manager = ExecutionManager(self.risk_manager)
-      logger.info("✓ Менеджер исполнения инициализирован")
+
 
       logger.info("=" * 80)
       logger.info("БАЗОВЫЕ КОМПОНЕНТЫ ИНИЦИАЛИЗИРОВАНЫ (БЕЗ WEBSOCKET)")
@@ -241,6 +240,12 @@ class BotController:
       logger.info("=" * 80)
       logger.info("ЗАПУСК ТОРГОВОГО БОТА (ML-ENHANCED)")
       logger.info("=" * 80)
+
+      # Инициализация риск-менеджера с реальным балансом
+      await self._initialize_risk_manager()
+
+      self.execution_manager = ExecutionManager(self.risk_manager)
+      logger.info("✓ Менеджер исполнения инициализирован")
 
       # Запускаем менеджер исполнения
       await self.execution_manager.start()
@@ -1210,6 +1215,23 @@ class BotController:
       except Exception as e:
         logger.error(f"Ошибка в screener broadcast loop: {e}")
         await asyncio.sleep(interval)
+
+  async def _initialize_risk_manager(self):
+    """Инициализация Risk Manager."""
+    # Создаём без баланса
+    self.risk_manager = RiskManager(default_leverage=settings.DEFAULT_LEVERAGE)
+
+    # Получаем реальный баланс
+    try:
+      balance_data = await rest_client.get_wallet_balance()
+      real_balance = balance_tracker._calculate_total_balance(balance_data)
+
+      # ИСПОЛЬЗУЕМ update_available_balance
+      self.risk_manager.update_available_balance(real_balance)
+
+      logger.info(f"✓ Risk Manager обновлён балансом: {real_balance:.2f} USDT")
+    except Exception as e:
+      logger.error(f"Ошибка получения баланса: {e}")
 
 
 # Глобальный контроллер бота

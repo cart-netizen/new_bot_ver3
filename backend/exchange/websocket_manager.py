@@ -477,7 +477,7 @@ class BybitWebSocketManager:
                 f"topic={data.get('topic')}, type={data.get('type')}, "
                 f"ts={data.get('ts')}"
               )
-            elif data_count % 100 == 0:
+            elif data_count % 10000 == 0:
               # Каждое 100-е сообщение
               logger.info(
                 f"[{connection_id}] 📊 Обработано {data_count} сообщений стакана"

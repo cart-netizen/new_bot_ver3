@@ -363,6 +363,14 @@ class Settings(BaseSettings):
     description="Интервал обновления списка пар (секунды)"
   )
 
+  SIGNAL_COOLDOWN_SECONDS: int = Field(default=60, ge=10, le=300)
+  ALLOW_SAME_DIRECTION_SIGNALS: bool = Field(default=False)
+
+  ALLOW_MULTIPLE_POSITIONS_PER_SYMBOL: bool = Field(
+    default=False,
+    description="Разрешить несколько позиций по одной паре"
+  )
+
   model_config = SettingsConfigDict(
     env_file=".env",
     env_file_encoding="utf-8",

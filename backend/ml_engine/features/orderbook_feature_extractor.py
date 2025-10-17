@@ -12,6 +12,7 @@ import numpy as np
 from numba import jit
 
 from core.logger import get_logger
+from core.periodic_logger import periodic_logger
 from models.orderbook import OrderBookSnapshot, OrderBookMetrics
 from strategy.analyzer import OrderBookAnalyzer
 
@@ -229,11 +230,20 @@ class OrderBookFeatureExtractor:
         **temporal_features
       )
 
-      logger.info(
-        f"{self.symbol} | Извлечено 50 признаков из стакана, "
-        f"mid_price={features.mid_price:.2f}, "
-        f"imbalance={features.imbalance_5:.3f}"
-      )
+      key = f"orderbook_features_{self.symbol}"
+      should_log, count = periodic_logger.should_log(key, every_n=500, first_n=1)
+
+      if should_log:
+        logger.info(
+          f"{self.symbol} | Извлечено 50 признаков из стакана "
+          f"(#{count}), mid_price={features.mid_price:.2f}, imbalance={features.imbalance_5:.3f}"
+        )
+
+      # logger.info(
+      #   f"{self.symbol} | Извлечено 50 признаков из стакана, "
+      #   f"mid_price={features.mid_price:.2f}, "
+      #   f"imbalance={features.imbalance_5:.3f}"
+      # )
 
       return features
 

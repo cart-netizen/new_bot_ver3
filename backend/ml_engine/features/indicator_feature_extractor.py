@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from core.logger import get_logger
+from core.periodic_logger import periodic_logger
 from ml_engine.features.candle_feature_extractor import Candle
 
 logger = get_logger(__name__)
@@ -172,10 +173,19 @@ class IndicatorFeatureExtractor:
         **volume_features
       )
 
-      logger.info(
-        f"{self.symbol} | Извлечено 35 индикаторов, "
-        f"RSI={features.rsi_14:.2f}, MACD={features.macd:.4f}"
-      )
+      key = f"indicator_features_{self.symbol}"
+      should_log, count = periodic_logger.should_log(key, every_n=500, first_n=1)
+
+      if should_log:
+        logger.info(
+          f"{self.symbol} | Извлечено 35 индикаторов "
+          f"(#{count}), RSI={features.rsi_14:.2f}, MACD={features.macd:.4f}"
+        )
+
+      # logger.info(
+      #   f"{self.symbol} | Извлечено 35 индикаторов, "
+      #   f"RSI={features.rsi_14:.2f}, MACD={features.macd:.4f}"
+      # )
 
       return features
 

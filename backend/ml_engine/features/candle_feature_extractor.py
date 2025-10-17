@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from core.logger import get_logger
+from core.periodic_logger import periodic_logger
 
 logger = get_logger(__name__)
 
@@ -218,10 +219,19 @@ class CandleFeatureExtractor:
         **pattern_features
       )
 
-      logger.info(
-        f"{self.symbol} | Извлечено 25 признаков из свечи, "
-        f"close={features.close:.2f}, returns={features.returns:.4f}"
-      )
+      key = f"orderbook_features_{self.symbol}"
+      should_log, count = periodic_logger.should_log(key, every_n=500, first_n=1)
+
+      if should_log:
+        logger.info(
+          f"{self.symbol} | Извлечено 25 признаков из стакана "
+          f"(#{count}), close={features.close:.2f}, returns={features.returns:.4f}"
+        )
+
+      # logger.info(
+      #   f"{self.symbol} | Извлечено 25 признаков из свечи, "
+      #   f"close={features.close:.2f}, returns={features.returns:.4f}"
+      # )
 
       return features
 

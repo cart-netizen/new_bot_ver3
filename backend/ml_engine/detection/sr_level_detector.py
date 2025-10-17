@@ -20,6 +20,7 @@ from scipy.signal import find_peaks
 from sklearn.cluster import DBSCAN
 
 from core.logger import get_logger
+from core.periodic_logger import periodic_logger
 from models.orderbook import OrderBookSnapshot
 from strategy.candle_manager import Candle
 
@@ -200,8 +201,8 @@ class SRLevelDetector:
     low_peaks_array, _ = find_peaks(-lows_prices, distance=5)
 
     # Конвертируем в списки индексов (явное приведение типа)
-    high_peaks: List[int] = [int(idx) for idx in high_peaks_array]
-    low_peaks: List[int] = [int(idx) for idx in low_peaks_array]
+    high_peaks: List[int] = [int(idx) for idx in high_peaks_array]  # type: ignore
+    low_peaks: List[int] = [int(idx) for idx in low_peaks_array]  # type: ignore
 
     # Формируем результаты
     highs = [(idx, float(highs_prices[idx])) for idx in high_peaks]
@@ -382,7 +383,13 @@ class SRLevelDetector:
     self.levels[symbol] = unique_levels[:20]  # Топ 20
 
   def _check_breakouts(self, symbol: str, candles: List[Candle]):
-    """Проверить пробои уровней."""
+    """
+    Проверить пробои уровней.
+
+    Args:
+        symbol: Торговая пара
+        candles: Список свечей
+    """
     if len(candles) < self.config.breakout_confirmation_candles + 1:
       return
 
@@ -411,56 +418,86 @@ class SRLevelDetector:
 
         self.total_breakouts_detected += 1
 
-        logger.info(
-          f"🎯 ПРОБОЙ УРОВНЯ [{symbol}]: "
-          f"price={level.price:.2f}, "
-          f"type={level.level_type}, "
-          f"direction={direction}, "
-          f"strength={level.strength:.2f}"
+        # ============================================
+        # ДЕДУПЛИКАЦИЯ ЛОГОВ ПРОБОЕВ
+        # ============================================
+        # Создаём уникальный ключ для каждого пробоя:
+        # symbol + тип уровня + направление + цена (округлённая)
+        breakout_key = (
+          f"breakout_{symbol}_{level.level_type}_"
+          f"{direction}_{level.price:.2f}"
         )
 
+        # Проверяем нужно ли логировать (cooldown 10 секунд)
+        should_log, time_since = periodic_logger.should_log_with_cooldown(
+          breakout_key,
+          cooldown_seconds=20
+        )
+
+        if should_log:
+          logger.info(
+            f"🎯 ПРОБОЙ УРОВНЯ [{symbol}]: "
+            f"price={level.price:.2f}, "
+            f"type={level.level_type}, "
+            f"direction={direction}, "
+            f"strength={level.strength:.2f}"
+          )
+        else:
+          # Логируем на DEBUG чтобы не терять информацию полностью
+          logger.debug(
+            f"🎯 ПРОБОЙ (дубликат) [{symbol}]: "
+            f"price={level.price:.2f}, type={level.level_type}, "
+            f"direction={direction} "
+            f"(пропущен, последний лог {time_since:.1f}s назад)"
+          )
+
   def _detect_breakout(
-      self,
-      level: SRLevel,
-      candles: List[Candle],
-      avg_volume: float
-  ) -> Optional[Tuple[str, int]]:
-    """
-    Детектировать пробой уровня.
+        self,
+        level: SRLevel,
+        candles: List[Candle],
+        avg_volume: float
+    ) -> Optional[Tuple[str, int]]:
+      """
+      Детектировать пробой уровня.
 
-    Returns:
-        (direction, timestamp) или None
-    """
-    if len(candles) < 2:
+      Args:
+          level: Уровень S/R
+          candles: Последние свечи для проверки
+          avg_volume: Средний объём
+
+      Returns:
+          (direction, timestamp) или None
+      """
+      if len(candles) < 2:
+        return None
+
+      # Последние N свечей для подтверждения
+      confirmation_candles = candles[-self.config.breakout_confirmation_candles:]
+
+      # Проверяем direction
+      if level.level_type == "resistance":
+        # Пробой вверх через сопротивление
+        closes_above = all(c.close > level.price for c in confirmation_candles)
+        high_volume = any(
+          c.volume > avg_volume * self.config.breakout_volume_threshold
+          for c in confirmation_candles
+        )
+
+        if closes_above and high_volume:
+          return ("up", confirmation_candles[-1].timestamp)
+
+      elif level.level_type == "support":
+        # Пробой вниз через поддержку
+        closes_below = all(c.close < level.price for c in confirmation_candles)
+        high_volume = any(
+          c.volume > avg_volume * self.config.breakout_volume_threshold
+          for c in confirmation_candles
+        )
+
+        if closes_below and high_volume:
+          return ("down", confirmation_candles[-1].timestamp)
+
       return None
-
-    # Последние N свечей для подтверждения
-    confirmation_candles = candles[-self.config.breakout_confirmation_candles:]
-
-    # Проверяем direction
-    if level.level_type == "resistance":
-      # Пробой вверх через сопротивление
-      closes_above = all(c.close > level.price for c in confirmation_candles)
-      high_volume = any(
-        c.volume > avg_volume * self.config.breakout_volume_threshold
-        for c in confirmation_candles
-      )
-
-      if closes_above and high_volume:
-        return ("up", confirmation_candles[-1].timestamp)
-
-    elif level.level_type == "support":
-      # Пробой вниз через поддержку
-      closes_below = all(c.close < level.price for c in confirmation_candles)
-      high_volume = any(
-        c.volume > avg_volume * self.config.breakout_volume_threshold
-        for c in confirmation_candles
-      )
-
-      if closes_below and high_volume:
-        return ("down", confirmation_candles[-1].timestamp)
-
-    return None
 
   def get_nearest_levels(
       self,

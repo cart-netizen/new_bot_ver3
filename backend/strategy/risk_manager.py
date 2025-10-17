@@ -61,24 +61,38 @@ class RiskMetrics:
 class RiskManager:
   """Менеджер управления рисками."""
 
-  def __init__(self, default_leverage: int = 10):
+  def __init__(self, default_leverage: int = 10, initial_balance: Optional[float] = None):
     """
     Инициализация риск-менеджера.
 
     Args:
         default_leverage: Кредитное плечо по умолчанию
+        initial_balance: Начальный баланс (если None, будет запрошен позже)
     """
     # Загружаем лимиты из конфигурации
     self.limits = RiskLimits(
       max_open_positions=settings.MAX_OPEN_POSITIONS,
-      max_exposure_usdt=settings.MAX_EXPOSURE_USDT,
+      max_exposure_usdt=settings.MAX_EXPOSURE_USDT,  # Это МАКСИМУМ, не текущий баланс!
       min_order_size_usdt=settings.MIN_ORDER_SIZE_USDT,
       default_leverage=default_leverage
     )
 
-    # Текущие метрики
+    # КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Инициализация с РЕАЛЬНЫМ балансом
+    if initial_balance is not None:
+      actual_available = initial_balance
+    else:
+
+      # Если баланс не передан, используем дефолтное значение ВРЕМЕННО
+      # Он ДОЛЖЕН быть обновлён через update_available_balance()
+      actual_available = 0.0
+      logger.warning(
+        "⚠️ Risk Manager инициализирован БЕЗ баланса! "
+        "Вызовите update_available_balance() перед использованием!"
+      )
+
+    # Текущие метрики с РЕАЛЬНЫМ балансом
     self.metrics = RiskMetrics(
-      available_exposure_usdt=self.limits.max_exposure_usdt
+      available_exposure_usdt=actual_available
     )
 
     # Трекинг открытых позиций
@@ -87,182 +101,249 @@ class RiskManager:
     logger.info(
       f"🛡️ Инициализирован Risk Manager: "
       f"max_positions={self.limits.max_open_positions}, "
-      f"max_exposure={self.limits.max_exposure_usdt} USDT, "
+      f"max_exposure_limit={self.limits.max_exposure_usdt} USDT, "
+      f"current_available={self.metrics.available_exposure_usdt:.2f} USDT, "
       f"min_order_size={self.limits.min_order_size_usdt} USDT, "
       f"default_leverage={self.limits.default_leverage}x"
     )
 
-  def validate_signal(
-      self,
-      signal: TradingSignal,
-      position_size_usdt: float
-  ) -> tuple[bool, Optional[str]]:
+  def update_available_balance(self, new_balance: float):
     """
-    Валидация торгового сигнала перед исполнением.
+    Обновление доступного баланса из реального источника.
+
+    Должен вызываться:
+    - При старте бота (после запроса баланса с биржи)
+    - Периодически из balance_tracker
+    - После закрытия позиций
 
     Args:
-        signal: Торговый сигнал
-        position_size_usdt: Размер позиции в USDT (с учетом leverage)
-
-    Returns:
-        tuple[bool, Optional[str]]: (валидность, причина отклонения)
+        new_balance: Новый доступный баланс в USDT
     """
-    try:
-      # Проверка минимального размера ордера
-      if position_size_usdt < self.limits.min_order_size_usdt:
-        reason = (
-          f"Размер позиции {position_size_usdt:.2f} USDT меньше минимального "
-          f"{self.limits.min_order_size_usdt} USDT"
-        )
-        logger.warning(f"{signal.symbol} | {reason}")
-        return False, reason
+    old_balance = self.metrics.available_exposure_usdt
 
-      # Проверка максимального количества позиций
-      if signal.signal_type in [SignalType.BUY, SignalType.SELL]:
-        if signal.symbol not in self.open_positions:
-          # Новая позиция
-          if self.metrics.open_positions_count >= self.limits.max_open_positions:
-            reason = (
-              f"Достигнут лимит открытых позиций: "
-              f"{self.metrics.open_positions_count}/{self.limits.max_open_positions}"
+    # Вычитаем текущую экспозицию из нового баланса
+    self.metrics.available_exposure_usdt = max(
+      0.0,
+      new_balance - self.metrics.total_exposure_usdt
+    )
+
+    logger.info(
+      f"💰 Баланс обновлён: {old_balance:.2f} → {self.metrics.available_exposure_usdt:.2f} USDT "
+      f"(total_balance={new_balance:.2f}, locked={self.metrics.total_exposure_usdt:.2f})"
+    )
+
+  def validate_signal(
+        self,
+        signal: TradingSignal,
+        position_size_usdt: float,
+        leverage: Optional[int] = None  # ← ДОБАВЛЕН параметр
+    ) -> tuple[bool, Optional[str]]:
+      """
+      Валидация торгового сигнала перед исполнением.
+
+      Args:
+          signal: Торговый сигнал
+          position_size_usdt: Размер позиции в USDT (С УЧЕТОМ leverage!)
+          leverage: Кредитное плечо (опционально)
+
+      Returns:
+          tuple[bool, Optional[str]]: (валидность, причина отклонения)
+      """
+      try:
+        # Используем переданное плечо или дефолтное
+        if leverage is None:
+          leverage = self.limits.default_leverage
+
+        # ============================================
+        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Вычисляем required margin
+        # ============================================
+        required_margin = position_size_usdt / leverage
+
+        # ============================================
+        # ПРОВЕРКА 0: ЖЁСТКИЙ ЛИМИТ ПОЗИЦИЙ (ДВОЙНАЯ ЗАЩИТА)
+        # ============================================
+        if self.metrics.open_positions_count >= self.limits.max_open_positions:
+          reason = (
+            f"🛑 ДОСТИГНУТ ЛИМИТ: {self.metrics.open_positions_count}/"
+            f"{self.limits.max_open_positions} позиций. "
+            f"Открытые: {list(self.open_positions.keys())}"
+          )
+          logger.error(f"{signal.symbol} | {reason}")
+          return False, reason
+
+        # Проверка: уже есть позиция по этой паре?
+        if signal.symbol in self.open_positions:
+          reason = f"Позиция по {signal.symbol} уже открыта"
+          logger.warning(f"{signal.symbol} | {reason}")
+          return False, reason
+
+        logger.debug(
+          f"{signal.symbol} | Валидация: "
+          f"position_size={position_size_usdt:.2f} USDT, "
+          f"leverage={leverage}x, "
+          f"required_margin={required_margin:.2f} USDT, "
+          f"available={self.metrics.available_exposure_usdt:.2f} USDT"
+        )
+
+        # ============================================
+        # ПРОВЕРКА 1: МИНИМАЛЬНЫЙ РАЗМЕР ОРДЕРА
+        # ============================================
+        # Проверяем position_size (с leverage), т.к. это то что идёт на биржу
+        if position_size_usdt < self.limits.min_order_size_usdt:
+          reason = (
+            f"Размер позиции {position_size_usdt:.2f} USDT меньше минимального "
+            f"{self.limits.min_order_size_usdt} USDT"
+          )
+          logger.warning(f"{signal.symbol} | {reason}")
+          return False, reason
+
+        # ============================================
+        # ПРОВЕРКА 2: ДОСТУПНАЯ ЭКСПОЗИЦИЯ (MARGIN)
+        # ============================================
+        # ПРАВИЛЬНО: Сравниваем required_margin с available_exposure
+        if required_margin > self.metrics.available_exposure_usdt:
+          reason = (
+            f"Недостаточно margin: "
+            f"требуется {required_margin:.2f} USDT, "
+            f"доступно {self.metrics.available_exposure_usdt:.2f} USDT "
+            f"(position_size={position_size_usdt:.2f} USDT с leverage {leverage}x)"
+          )
+          logger.warning(f"{signal.symbol} | {reason}")
+          return False, reason
+
+        # ============================================
+        # ПРОВЕРКА 3: МАКСИМАЛЬНОЕ КОЛИЧЕСТВО ПОЗИЦИЙ
+        # ============================================
+        if signal.signal_type in [SignalType.BUY, SignalType.SELL]:
+          # Проверяем только если это НОВАЯ позиция (не закрытие существующей)
+          if signal.symbol not in self.open_positions:
+            current_count = self.metrics.open_positions_count
+            max_count = self.limits.max_open_positions
+
+            if current_count >= max_count:
+              reason = (
+                f"Достигнут лимит открытых позиций: "
+                f"{current_count}/{max_count}. "
+                f"Открытые пары: {list(self.open_positions.keys())}"
+              )
+              logger.warning(f"{signal.symbol} | ⛔ {reason}")
+              return False, reason
+
+            logger.debug(
+              f"{signal.symbol} | Проверка лимита позиций: "
+              f"{current_count + 1}/{max_count} (после открытия)"
             )
-            logger.warning(f"{signal.symbol} | {reason}")
-            return False, reason
 
-      # Проверка максимальной экспозиции
-      if position_size_usdt > self.metrics.available_exposure_usdt:
-        reason = (
-          f"Недостаточно доступной экспозиции: "
-          f"требуется {position_size_usdt:.2f} USDT, "
-          f"доступно {self.metrics.available_exposure_usdt:.2f} USDT"
+        # ============================================
+        # ПРОВЕРКА 4: АКТУАЛЬНОСТЬ СИГНАЛА
+        # ============================================
+        if not signal.is_valid:
+          reason = f"Сигнал устарел (возраст {signal.age_seconds:.1f}с)"
+          logger.warning(f"{signal.symbol} | {reason}")
+          return False, reason
+
+        logger.debug(
+          f"{signal.symbol} | ✓ Сигнал прошел валидацию: "
+          f"position={position_size_usdt:.2f} USDT, "
+          f"margin={required_margin:.2f} USDT"
         )
-        logger.warning(f"{signal.symbol} | {reason}")
-        return False, reason
+        return True, None
 
-      # Проверка актуальности сигнала
-      if not signal.is_valid:
-        reason = f"Сигнал устарел (возраст {signal.age_seconds:.1f}с)"
-        logger.warning(f"{signal.symbol} | {reason}")
-        return False, reason
-
-      logger.debug(
-        f"{signal.symbol} | ✓ Сигнал прошел валидацию: "
-        f"size={position_size_usdt:.2f} USDT"
-      )
-      return True, None
-
-    except Exception as e:
-      logger.error(f"{signal.symbol} | Ошибка валидации сигнала: {e}")
-      raise RiskManagementError(f"Failed to validate signal: {str(e)}")
+      except Exception as e:
+        logger.error(f"{signal.symbol} | Ошибка валидации сигнала: {e}")
+        raise RiskManagementError(f"Failed to validate signal: {str(e)}")
 
   def calculate_position_size(
-      self,
-      signal: TradingSignal,
-      available_balance: float,
-      leverage: Optional[int] = None
-  ) -> float:
-    """
-    Расчет размера позиции на основе риска с учетом кредитного плеча.
+        self,
+        signal: TradingSignal,
+        available_balance: float,  # РЕАЛЬНЫЙ баланс передается явно!
+        leverage: Optional[int] = None
+    ) -> float:
+      """
+      Расчет размера позиции с учетом РЕАЛЬНОГО баланса.
 
-    Логика:
-    1. Рассчитываем базовый размер позиции (% от доступной экспозиции)
-    2. Корректируем на основе силы сигнала
-    3. Применяем кредитное плечо для увеличения позиции
-    4. Проверяем и корректируем до минимального размера если нужно
-    5. Ограничиваем максимумами
+      КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Теперь НЕ используем self.metrics.available_exposure_usdt
+      в расчётах, а используем переданный available_balance!
+      """
+      if leverage is None:
+        leverage = self.limits.default_leverage
 
-    Args:
-        signal: Торговый сигнал
-        available_balance: Доступный баланс в USDT
-        leverage: Кредитное плечо (опционально, используется default)
-
-    Returns:
-        float: Размер позиции в USDT (с учетом leverage)
-    """
-    # Используем переданное плечо или дефолтное
-    if leverage is None:
-      leverage = self.limits.default_leverage
-
-    logger.debug(
-      f"{signal.symbol} | Расчет размера позиции: "
-      f"balance={available_balance:.2f} USDT, "
-      f"leverage={leverage}x"
-    )
-
-    # ШАГ 1: Базовый размер позиции (5% от доступной экспозиции)
-    base_size = self.metrics.available_exposure_usdt * 0.05
-
-    logger.debug(
-      f"{signal.symbol} | Базовый размер (5% от exposure): "
-      f"{base_size:.2f} USDT"
-    )
-
-    # ШАГ 2: Корректируем на основе силы сигнала
-    strength_multiplier = {
-      "STRONG": 1.0,
-      "MEDIUM": 0.7,
-      "WEAK": 0.5
-    }.get(signal.strength.value, 0.5)
-
-    position_size_before_leverage = base_size * strength_multiplier
-
-    logger.debug(
-      f"{signal.symbol} | Размер с учетом силы сигнала "
-      f"({signal.strength.value}): {position_size_before_leverage:.2f} USDT "
-      f"(multiplier={strength_multiplier})"
-    )
-
-    # ШАГ 3: Применяем кредитное плечо
-    # Фактический размер позиции на бирже будет больше за счет плеча
-    position_size_with_leverage = position_size_before_leverage * leverage
-
-    logger.debug(
-      f"{signal.symbol} | Размер с кредитным плечом {leverage}x: "
-      f"{position_size_with_leverage:.2f} USDT"
-    )
-
-    # ШАГ 4: Проверяем минимальный размер и корректируем если нужно
-    if position_size_with_leverage < self.limits.min_order_size_usdt:
-      logger.warning(
-        f"{signal.symbol} | Размер позиции "
-        f"{position_size_with_leverage:.2f} USDT меньше минимального "
-        f"{self.limits.min_order_size_usdt} USDT"
+      logger.debug(
+        f"{signal.symbol} | Расчет размера позиции: "
+        f"real_balance={available_balance:.2f} USDT, "
+        f"leverage={leverage}x"
       )
 
-      # Корректируем до минимального размера
-      position_size_with_leverage = self.limits.min_order_size_usdt
+      # ШАГ 1: Базовый размер - 5% от РЕАЛЬНОГО ДОСТУПНОГО баланса
+      base_size = available_balance * 0.05
 
-      logger.info(
-        f"{signal.symbol} | ✓ Размер позиции увеличен до минимального: "
+      logger.debug(
+        f"{signal.symbol} | Базовый размер (5% от real balance): "
+        f"{base_size:.2f} USDT"
+      )
+
+      # ШАГ 2: Корректируем на основе силы сигнала
+      strength_multiplier = {
+        "STRONG": 1.0,
+        "MEDIUM": 0.7,
+        "WEAK": 0.5
+      }.get(signal.strength.value, 0.5)
+
+      position_size_before_leverage = base_size * strength_multiplier
+
+      logger.debug(
+        f"{signal.symbol} | Размер с учетом силы ({signal.strength.value}): "
+        f"{position_size_before_leverage:.2f} USDT (mult={strength_multiplier})"
+      )
+
+      # ШАГ 3: Применяем кредитное плечо
+      position_size_with_leverage = position_size_before_leverage * leverage
+
+      logger.debug(
+        f"{signal.symbol} | Размер с плечом {leverage}x: "
         f"{position_size_with_leverage:.2f} USDT"
       )
 
-    # ШАГ 5: Ограничиваем максимумами
-    # Не можем открыть позицию больше доступного баланса (с учетом leverage)
-    max_position_by_balance = available_balance * leverage
-    position_size_with_leverage = min(
-      position_size_with_leverage,
-      max_position_by_balance
-    )
+      # ШАГ 4: Проверяем минимальный размер
+      if position_size_with_leverage < self.limits.min_order_size_usdt:
+        logger.warning(
+          f"{signal.symbol} | Размер {position_size_with_leverage:.2f} USDT "
+          f"< минимального {self.limits.min_order_size_usdt} USDT"
+        )
 
-    # Не можем превысить доступную экспозицию
-    position_size_with_leverage = min(
-      position_size_with_leverage,
-      self.metrics.available_exposure_usdt
-    )
+        position_size_with_leverage = self.limits.min_order_size_usdt
 
-    # Расчет фактического используемого маржина (без leverage)
-    actual_margin_used = position_size_with_leverage / leverage
+        logger.info(
+          f"{signal.symbol} | ✓ Размер увеличен до минимального: "
+          f"{position_size_with_leverage:.2f} USDT"
+        )
 
-    logger.info(
-      f"{signal.symbol} | 📊 ФИНАЛЬНЫЙ РАЗМЕР ПОЗИЦИИ: "
-      f"{position_size_with_leverage:.2f} USDT "
-      f"(маржин: {actual_margin_used:.2f} USDT, "
-      f"leverage: {leverage}x, "
-      f"strength: {signal.strength.value})"
-    )
+      # ШАГ 5: Ограничиваем максимумами
+      # Не можем открыть больше реального баланса с плечом
+      max_by_balance = available_balance * leverage
+      position_size_with_leverage = min(position_size_with_leverage, max_by_balance)
 
-    return position_size_with_leverage
+      # Расчет фактического margin
+      actual_margin = position_size_with_leverage / leverage
+
+      # Проверяем что хватает margin
+      if actual_margin > available_balance:
+        logger.error(
+          f"{signal.symbol} | ❌ Недостаточно margin: "
+          f"требуется {actual_margin:.2f} USDT, доступно {available_balance:.2f} USDT"
+        )
+        # Возвращаем максимально возможный размер
+        position_size_with_leverage = available_balance * leverage
+        actual_margin = available_balance
+
+      logger.info(
+        f"{signal.symbol} | 📊 ФИНАЛЬНЫЙ РАЗМЕР: "
+        f"{position_size_with_leverage:.2f} USDT "
+        f"(margin: {actual_margin:.2f} USDT, leverage: {leverage}x, "
+        f"strength: {signal.strength.value})"
+      )
+
+      return position_size_with_leverage
 
   def register_position_opened(
       self,
@@ -285,7 +366,6 @@ class RiskManager:
     if leverage is None:
       leverage = self.limits.default_leverage
 
-    # Фактический используемый маржин
     actual_margin = size_usdt / leverage
 
     self.open_positions[symbol] = {
@@ -297,7 +377,6 @@ class RiskManager:
     }
 
     # Обновляем метрики
-    # В метриках экспозиции учитываем только фактический используемый маржин
     self.metrics.open_positions_count = len(self.open_positions)
     self.metrics.total_exposure_usdt += actual_margin
     self.metrics.available_exposure_usdt = (
@@ -313,9 +392,11 @@ class RiskManager:
       f"(leverage={leverage}x, margin={actual_margin:.2f} USDT)"
     )
     logger.info(
-      f"📈 Текущая экспозиция (margin): {self.metrics.total_exposure_usdt:.2f}/"
-      f"{self.limits.max_exposure_usdt:.2f} USDT "
-      f"({self.metrics.open_positions_count} позиций)"
+      f"📊 Открытые позиции: {self.metrics.open_positions_count}/"
+      f"{self.limits.max_open_positions} | "
+      f"Margin: {self.metrics.total_exposure_usdt:.2f}/"
+      f"{self.limits.max_exposure_usdt:.2f} USDT | "
+      f"Пары: {list(self.open_positions.keys())}"
     )
 
   def register_position_closed(self, symbol: str):
@@ -329,7 +410,7 @@ class RiskManager:
       position = self.open_positions.pop(symbol)
       actual_margin = position["actual_margin"]
 
-      # Обновляем метрики (возвращаем маржин)
+      # Обновляем метрики
       self.metrics.open_positions_count = len(self.open_positions)
       self.metrics.total_exposure_usdt -= actual_margin
       self.metrics.available_exposure_usdt = (
@@ -348,10 +429,45 @@ class RiskManager:
         f"{symbol} | ✓ Позиция закрыта: освобождено {actual_margin:.2f} USDT margin"
       )
       logger.info(
-        f"📉 Текущая экспозиция (margin): {self.metrics.total_exposure_usdt:.2f}/"
-        f"{self.limits.max_exposure_usdt:.2f} USDT "
-        f"({self.metrics.open_positions_count} позиций)"
+        f"📊 Открытые позиции: {self.metrics.open_positions_count}/"
+        f"{self.limits.max_open_positions} | "
+        f"Margin: {self.metrics.total_exposure_usdt:.2f}/"
+        f"{self.limits.max_exposure_usdt:.2f} USDT | "
+        f"Пары: {list(self.open_positions.keys())}"
       )
+    else:
+      logger.warning(
+        f"{symbol} | ⚠️ Попытка закрыть незарегистрированную позицию"
+      )
+
+  def can_open_new_position(self, symbol: str) -> tuple[bool, Optional[str]]:
+    """
+    Проверка возможности открыть новую позицию.
+
+    Args:
+        symbol: Торговая пара
+
+    Returns:
+        tuple[bool, Optional[str]]: (можно_открыть, причина_отказа)
+    """
+    # Проверка 1: Уже есть открытая позиция по этой паре?
+    if symbol in self.open_positions:
+      return False, f"Позиция по {symbol} уже открыта"
+
+    # Проверка 2: Достигнут лимит позиций?
+    if self.metrics.open_positions_count >= self.limits.max_open_positions:
+      return False, (
+        f"Достигнут лимит позиций: "
+        f"{self.metrics.open_positions_count}/{self.limits.max_open_positions}"
+      )
+
+    # Проверка 3: Есть доступный margin?
+    if self.metrics.available_exposure_usdt < self.limits.min_order_size_usdt / self.limits.default_leverage:
+      return False, (
+        f"Недостаточно margin: доступно {self.metrics.available_exposure_usdt:.2f} USDT"
+      )
+
+    return True, None
 
   def get_position(self, symbol: str) -> Optional[Dict]:
     """

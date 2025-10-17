@@ -778,6 +778,52 @@ async def get_execution_stats(current_user: dict = Depends(require_auth)):
   return bot_controller.execution_manager.get_statistics()
 
 
+@trading_router.get("/circuit-breaker/status")
+async def get_circuit_breaker_status(current_user: dict = Depends(require_auth)):
+  """Статус защиты от слива депозита."""
+  from main import bot_controller
+
+  rm = bot_controller.risk_manager
+  current = rm.metrics.open_positions_count
+  max_allowed = rm.limits.max_open_positions
+
+  return {
+    "circuit_breaker_active": current >= max_allowed,
+    "current_positions": current,
+    "max_positions": max_allowed,
+    "remaining_slots": max(0, max_allowed - current),
+    "open_positions": [
+      {
+        "symbol": symbol,
+        "side": pos["side"],
+        "size_usdt": pos["size_usdt"],
+        "margin": pos["actual_margin"]
+      }
+      for symbol, pos in rm.open_positions.items()
+    ],
+    "can_open_new": current < max_allowed,
+    "warning": "CIRCUIT BREAKER ACTIVE" if current >= max_allowed else None
+  }
+
+@trading_router.get("/positions/can-open/{symbol}")
+async def can_open_position(
+    symbol: str,
+    current_user: dict = Depends(require_auth)
+):
+  """Проверка возможности открыть позицию."""
+  from main import bot_controller
+
+  can_open, reason = bot_controller.risk_manager.can_open_new_position(symbol)
+
+  return {
+    "symbol": symbol,
+    "can_open": can_open,
+    "reason": reason,
+    "open_positions_count": bot_controller.risk_manager.metrics.open_positions_count,
+    "max_positions": bot_controller.risk_manager.limits.max_open_positions,
+    "open_positions": list(bot_controller.risk_manager.open_positions.keys())
+  }
+
 @data_router.get("/candles/{symbol}")
 async def get_candles(
     symbol: str,

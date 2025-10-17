@@ -12,6 +12,7 @@ from sklearn.preprocessing import StandardScaler
 import asyncio
 
 from core.logger import get_logger
+from core.periodic_logger import periodic_logger
 from models.orderbook import OrderBookSnapshot
 from ml_engine.features.orderbook_feature_extractor import (
   OrderBookFeatureExtractor,
@@ -230,10 +231,19 @@ class FeaturePipeline:
 
       self._last_feature_vector = feature_vector
 
-      logger.info(
-        f"{self.symbol} | Pipeline завершен: {feature_vector.feature_count} признаков, "
-        f"timestamp={feature_vector.timestamp}"
-      )
+      key = f"orderbook_features_{self.symbol}"
+      should_log, count = periodic_logger.should_log(key, every_n=500, first_n=1)
+
+      if should_log:
+        logger.info(
+          f"{self.symbol} | Pipeline завершен: {feature_vector.feature_count} признаков, "
+          f"timestamp={feature_vector.timestamp}"
+        )
+      #
+      # logger.info(
+      #   f"{self.symbol} | Pipeline завершен: {feature_vector.feature_count} признаков, "
+      #   f"timestamp={feature_vector.timestamp}"
+      # )
 
       return feature_vector
 
