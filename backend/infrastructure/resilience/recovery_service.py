@@ -228,7 +228,10 @@ class RecoveryService:
         """
         Автоматическое исправление зависших ордеров.
 
-        Синхронизирует статусы ордеров с реальным состоянием на бирже.
+        ВЕРСИЯ: 2.0 - ВСЕ ИСПРАВЛЕНИЯ ПРИМЕНЕНЫ
+        - get_order_info() вместо get_order_by_id()
+        - update_status() вместо update()
+        - update_position_link() для связи с позицией
         """
         logger.info("=" * 80)
         logger.info("НАЧАЛО АВТОМАТИЧЕСКОГО ИСПРАВЛЕНИЯ ЗАВИСШИХ ОРДЕРОВ")
@@ -249,9 +252,10 @@ class RecoveryService:
         logger.info(f"Обработка {len(hanging_orders)} зависших ордеров...")
 
         for hanging_order in hanging_orders:
+            client_order_id = hanging_order.get("client_order_id")
+
             try:
                 issue_type = hanging_order["issue"]["type"]
-                client_order_id = hanging_order["client_order_id"]
 
                 logger.info(f"Исправление ордера {client_order_id} (тип: {issue_type})")
 
@@ -263,39 +267,90 @@ class RecoveryService:
                     stats["failed"] += 1
                     continue
 
-                # Обработка по типу проблемы
+                # ========================================
+                # ОБРАБОТКА ПО ТИПУ ПРОБЛЕМЫ
+                # ========================================
+
                 if issue_type == "status_mismatch":
-                    exchange_data = hanging_order["issue"].get("exchange_data", {})
+                    # ИСПРАВЛЕНИЕ: Запрашиваем актуальный статус с биржи
+                    try:
+                        logger.info(f"📡 Запрос актуального статуса с биржи...")
 
-                    if exchange_data.get("status") == "Filled":
-                        await self._sync_filled_order(order, exchange_data)
-                        stats["fixed"] += 1
-                        stats["positions_created"] += 1
-                        logger.info(f"✓ {client_order_id}: Placed → Filled")
+                        # ИСПРАВЛЕНО: get_order_info вместо get_order_by_id
+                        actual_order = await rest_client.get_order_info(
+                            order.symbol,
+                            order_id=order.exchange_order_id
+                        )
 
-                    elif exchange_data.get("status") == "Cancelled":
-                        await self._sync_cancelled_order(order, exchange_data)
-                        stats["fixed"] += 1
-                        stats["orders_cancelled"] += 1
-                        logger.info(f"✓ {client_order_id}: Placed → Cancelled")
+                        if not actual_order:
+                            logger.warning(f"Ордер {client_order_id} не найден на бирже")
+                            await self._handle_missing_order(order)
+                            stats["fixed"] += 1
+                            stats["orders_cancelled"] += 1
+                            logger.info(f"✅ {client_order_id}: отменён (не найден)")
+                            continue
+
+                        actual_status = actual_order.get("orderStatus", "")
+                        logger.info(f"Актуальный статус: {actual_status}")
+
+                        if actual_status == "Filled":
+                            logger.info(f"🔄 Синхронизация: Placed → Filled")
+                            await self._sync_filled_order(order, actual_order)
+                            stats["fixed"] += 1
+                            stats["positions_created"] += 1
+                            logger.info(f"✅ {client_order_id}: Filled, позиция создана")
+
+                        elif actual_status == "Cancelled":
+                            logger.info(f"🔄 Синхронизация: Placed → Cancelled")
+                            await self._sync_cancelled_order(order, actual_order)
+                            stats["fixed"] += 1
+                            stats["orders_cancelled"] += 1
+                            logger.info(f"✅ {client_order_id}: Cancelled")
+
+                        else:
+                            logger.warning(
+                                f"⚠️ Неожиданный статус '{actual_status}' для {client_order_id}"
+                            )
+                            stats["failed"] += 1
+
+                    except Exception as e:
+                        logger.error(
+                            f"❌ Ошибка запроса статуса с биржи для {client_order_id}: {e}",
+                            exc_info=True
+                        )
+                        stats["failed"] += 1
+                        continue
 
                 elif issue_type == "missing_from_exchange":
                     await self._handle_missing_order(order)
                     stats["fixed"] += 1
                     stats["orders_cancelled"] += 1
-                    logger.info(f"✓ {client_order_id}: отменён (не найден)")
+                    logger.info(f"✅ {client_order_id}: отменён (не найден на бирже)")
 
                 elif issue_type == "timeout_in_status":
                     await self._check_and_fix_timeout_order(order)
                     stats["fixed"] += 1
-                    logger.info(f"✓ {client_order_id}: проверен")
+                    logger.info(f"✅ {client_order_id}: проверен (таймаут)")
+
+                else:
+                    logger.warning(f"⚠️ Неизвестный тип проблемы: {issue_type}")
+                    stats["failed"] += 1
 
             except Exception as e:
-                logger.error(f"Ошибка исправления {hanging_order.get('client_order_id')}: {e}", exc_info=True)
+                logger.error(
+                    f"❌ Критическая ошибка исправления {client_order_id}: {e}",
+                    exc_info=True
+                )
                 stats["failed"] += 1
+                continue
 
         logger.info("=" * 80)
-        logger.info(f"ИСПРАВЛЕНИЕ ЗАВЕРШЕНО: {stats['fixed']}/{stats['total']}")
+        logger.info(f"ИСПРАВЛЕНИЕ ЗАВЕРШЕНО:")
+        logger.info(f"  Всего: {stats['total']}")
+        logger.info(f"  ✅ Исправлено: {stats['fixed']}")
+        logger.info(f"  ❌ Ошибок: {stats['failed']}")
+        logger.info(f"  📊 Позиций создано: {stats['positions_created']}")
+        logger.info(f"  🚫 Ордеров отменено: {stats['orders_cancelled']}")
         logger.info("=" * 80)
 
         return stats
@@ -553,20 +608,38 @@ class RecoveryService:
             return hanging_orders
 
     async def _sync_filled_order(self, order, exchange_data: dict):
-        """Синхронизировать исполненный ордер."""
+        """
+        Синхронизировать исполненный ордер.
+
+        ВЕРСИЯ: 3.0 - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ
+        - update_status() вместо update()
+        - get_active_positions() вместо get_by_symbol_and_status()
+        """
         from database.models import Order
 
+        # Обновляем поля ордера
         order.status = OrderStatus.FILLED
         order.filled_quantity = float(exchange_data.get("cumExecQty", 0))
         order.average_fill_price = float(exchange_data.get("avgPrice", 0))
 
+        # Время исполнения
         filled_timestamp = int(exchange_data.get("updatedTime", 0))
         if filled_timestamp > 0:
             order.filled_at = datetime.fromtimestamp(filled_timestamp / 1000)
         else:
             order.filled_at = datetime.now()
 
-        await order_repository.update(order)
+        # ИСПРАВЛЕНИЕ: Используем update_status()
+        success = await order_repository.update_status(
+            client_order_id=order.client_order_id,
+            new_status=OrderStatus.FILLED,
+            filled_quantity=order.filled_quantity,
+            average_fill_price=order.average_fill_price
+        )
+
+        if not success:
+            logger.error(f"Не удалось обновить статус ордера {order.client_order_id}")
+            return
 
         logger.info(
             f"Ордер {order.client_order_id} обновлён: "
@@ -575,15 +648,19 @@ class RecoveryService:
 
         # Создаём позицию если её нет
         if self.auto_create_positions:
-            existing = await position_repository.get_by_symbol_and_status(
-                order.symbol,
-                [PositionStatus.OPENING, PositionStatus.OPEN]
+            # ИСПРАВЛЕНИЕ: Используем get_active_positions()
+            existing_positions = await position_repository.get_active_positions(
+                symbol=order.symbol
             )
 
-            if not existing:
+            if not existing_positions:
+                logger.info(f"Создание позиции для {order.symbol}...")
                 await self._create_position_from_filled_order(order)
             else:
-                logger.warning(f"Позиция по {order.symbol} уже существует")
+                logger.warning(
+                    f"Позиция по {order.symbol} уже существует "
+                    f"(ID: {existing_positions[0].id}), новая позиция не создана"
+                )
 
         # Audit log
         await audit_repository.log(
@@ -601,7 +678,11 @@ class RecoveryService:
         )
 
     async def _create_position_from_filled_order(self, order):
-        """Создать позицию из исполненного ордера."""
+        """
+        Создать позицию из исполненного ордера.
+
+        ИСПРАВЛЕНО: Использует update_position_link() вместо update()
+        """
         from database.models import Position
 
         position = Position(
@@ -620,8 +701,17 @@ class RecoveryService:
 
         saved_position = await position_repository.create(position)
 
-        order.position_id = saved_position.id
-        await order_repository.update(order)
+        # ИСПРАВЛЕНИЕ: Используем update_position_link()
+        success = await order_repository.update_position_link(
+            client_order_id=order.client_order_id,
+            position_id=str(saved_position.id)
+        )
+
+        if not success:
+            logger.warning(
+                f"Не удалось связать ордер {order.client_order_id} "
+                f"с позицией {saved_position.id}"
+            )
 
         logger.info(
             f"✓ Позиция создана: {order.side.value} "
@@ -644,7 +734,11 @@ class RecoveryService:
         return saved_position
 
     async def _sync_cancelled_order(self, order, exchange_data: dict):
-        """Синхронизировать отменённый ордер."""
+        """
+        Синхронизировать отменённый ордер.
+
+        ИСПРАВЛЕНО: Использует update_status() вместо update()
+        """
         order.status = OrderStatus.CANCELLED
 
         cancelled_timestamp = int(exchange_data.get("updatedTime", 0))
@@ -653,7 +747,16 @@ class RecoveryService:
         else:
             order.cancelled_at = datetime.now()
 
-        await order_repository.update(order)
+        # ИСПРАВЛЕНИЕ: Используем update_status()
+        success = await order_repository.update_status(
+            client_order_id=order.client_order_id,
+            new_status=OrderStatus.CANCELLED
+        )
+
+        if not success:
+            logger.error(f"Не удалось обновить статус ордера {order.client_order_id}")
+            return
+
         logger.info(f"Ордер {order.client_order_id} синхронизирован: Cancelled")
 
         await audit_repository.log(
@@ -667,15 +770,24 @@ class RecoveryService:
         )
 
     async def _handle_missing_order(self, order):
-        """Обработать ордер, не найденный на бирже."""
+        """
+        Обработать ордер, не найденный на бирже.
+
+        ИСПРАВЛЕНО: Использует update_status() вместо update()
+        """
         order.status = OrderStatus.CANCELLED
         order.cancelled_at = datetime.now()
 
-        if not order.metadata_json:
-            order.metadata_json = {}
-        order.metadata_json["cancellation_reason"] = "missing_from_exchange"
+        # ИСПРАВЛЕНИЕ: Используем update_status()
+        success = await order_repository.update_status(
+            client_order_id=order.client_order_id,
+            new_status=OrderStatus.CANCELLED
+        )
 
-        await order_repository.update(order)
+        if not success:
+            logger.error(f"Не удалось обновить статус ордера {order.client_order_id}")
+            return
+
         logger.warning(f"Ордер {order.client_order_id} отменён (не найден на бирже)")
 
         await audit_repository.log(
@@ -688,11 +800,16 @@ class RecoveryService:
         )
 
     async def _check_and_fix_timeout_order(self, order):
-        """Проверить и исправить ордер с таймаутом."""
+        """
+        Проверить и исправить ордер с таймаутом.
+
+        ИСПРАВЛЕНО: Использует get_order_info() вместо get_order_by_id()
+        """
         try:
-            exchange_order = await rest_client.get_order_by_id(
+            # ИСПРАВЛЕНИЕ: Используем get_order_info()
+            exchange_order = await rest_client.get_order_info(
                 order.symbol,
-                order.exchange_order_id
+                order_id=order.exchange_order_id
             )
 
             if not exchange_order:
