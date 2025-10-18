@@ -4,7 +4,8 @@
 
 import time
 import asyncio
-from typing import Any, Callable, Optional, TypeVar
+from enum import Enum
+from typing import Any, Callable, Optional, TypeVar, Union
 from functools import wraps
 from datetime import datetime
 
@@ -327,6 +328,33 @@ def sanitize_string(s: str, max_length: int = 100) -> str:
   s = ''.join(char for char in s if char.isprintable())
 
   return s
+
+def safe_enum_value(obj: Union[Enum, str, Any]) -> str:
+    """
+    Безопасное получение строкового значения из Enum или строки.
+
+    Args:
+        obj: Enum или строка
+
+    Returns:
+        str: Строковое значение
+
+    Examples:
+        >>> safe_enum_value(SignalType.BUY)
+        'BUY'
+        >>> safe_enum_value("BUY")
+        'BUY'
+        >>> safe_enum_value(SignalStrength.WEAK)
+        'WEAK'
+    """
+    if isinstance(obj, Enum):
+      return obj.value
+    elif isinstance(obj, str):
+      return obj
+    else:
+      # Для любого другого типа пытаемся преобразовать в строку
+      return str(obj)
+
 
 
 class ExponentialBackoff:

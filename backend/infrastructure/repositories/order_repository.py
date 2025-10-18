@@ -42,22 +42,22 @@ class OrderRepository:
             client_order_id: Уникальный ID клиента
             symbol: Торговая пара
             side: Сторона (Buy/Sell)
-            order_type: Тип ордера
+            order_type: Тип ордера (Market/Limit)
             quantity: Количество
-            price: Цена (для limit)
+            price: Цена (для Limit)
             stop_loss: Stop Loss
             take_profit: Take Profit
             signal_data: Данные сигнала
             market_data: Рыночные данные
-            indicators: Показатели индикаторов
+            indicators: Индикаторы
             reason: Причина создания
-            position_id: ID позиции
+            position_id: ID связанной позиции
 
         Returns:
             Order: Созданный ордер
 
         Raises:
-            DatabaseError: При ошибке создания
+            DatabaseError: При ошибке БД
         """
         try:
             async with db_manager.session() as session:
@@ -69,7 +69,6 @@ class OrderRepository:
                     status=OrderStatus.PENDING,
                     quantity=quantity,
                     price=price,
-                    filled_quantity=0.0,
                     stop_loss=stop_loss,
                     take_profit=take_profit,
                     signal_data=signal_data,
@@ -94,10 +93,10 @@ class OrderRepository:
                 return order
 
         except IntegrityError as e:
-            logger.error(f"Ордер {client_order_id} уже существует: {e}")
-            raise DatabaseError(f"Duplicate order: {client_order_id}")
+            logger.error(f"Duplicate order ID: {client_order_id}")
+            raise DatabaseError(f"Order {client_order_id} already exists") from e
         except Exception as e:
-            logger.error(f"Ошибка создания ордера {client_order_id}: {e}")
+            logger.error(f"Ошибка создания ордера: {e}")
             raise DatabaseError(f"Failed to create order: {str(e)}")
 
     async def get_by_client_order_id(self, client_order_id: str) -> Optional[Order]:
@@ -210,12 +209,81 @@ class OrderRepository:
             logger.error(f"Ошибка обновления статуса ордера {client_order_id}: {e}")
             return False
 
+    async def update_position_link(
+        self,
+        client_order_id: str,
+        position_id: str
+    ) -> bool:
+        """
+        Привязать Order к Position.
+
+        Этот метод связывает существующий ордер с позицией после её создания.
+        Используется в execution_manager.open_position() после создания позиции.
+
+        Args:
+            client_order_id: Client Order ID
+            position_id: Position ID (UUID в строковом формате)
+
+        Returns:
+            bool: True если обновлено успешно
+
+        Raises:
+            DatabaseError: При критической ошибке БД
+        """
+        try:
+            async with db_manager.session() as session:
+                # Проверяем существование ордера
+                order = await self.get_by_client_order_id(client_order_id)
+                if not order:
+                    logger.error(
+                        f"Ордер {client_order_id} не найден для привязки к позиции"
+                    )
+                    return False
+
+                current_version = order.version
+
+                # Обновляем связь с позицией
+                stmt = (
+                    update(Order)
+                    .where(
+                        Order.client_order_id == client_order_id,
+                        Order.version == current_version,
+                    )
+                    .values(
+                        position_id=position_id,
+                        updated_at=datetime.utcnow(),
+                        version=current_version + 1,
+                    )
+                )
+
+                result = await session.execute(stmt)
+                await session.commit()
+
+                if result.rowcount == 0:
+                    logger.warning(
+                        f"Конфликт версий при привязке ордера {client_order_id} "
+                        f"к позиции {position_id}"
+                    )
+                    return False
+
+                logger.info(
+                    f"✓ Ордер {client_order_id} привязан к позиции {position_id}"
+                )
+                return True
+
+        except Exception as e:
+            logger.error(
+                f"Ошибка привязки ордера {client_order_id} к позиции {position_id}: {e}",
+                exc_info=True
+            )
+            return False
+
     async def get_active_orders(self, symbol: Optional[str] = None) -> List[Order]:
         """
         Получение активных ордеров.
 
         Args:
-            symbol: Фильтр по символу (опционально)
+            symbol: Фильтр по символу
 
         Returns:
             List[Order]: Список активных ордеров
@@ -223,11 +291,7 @@ class OrderRepository:
         try:
             async with db_manager.session() as session:
                 stmt = select(Order).where(
-                    Order.status.in_([
-                        OrderStatus.PENDING,
-                        OrderStatus.PLACED,
-                        OrderStatus.PARTIALLY_FILLED,
-                    ])
+                    Order.status.in_([OrderStatus.PENDING, OrderStatus.PLACED])
                 )
 
                 if symbol:

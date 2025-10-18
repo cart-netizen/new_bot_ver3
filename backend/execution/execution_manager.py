@@ -127,116 +127,101 @@ class ExecutionManager:
     async def open_position(
         self,
         symbol: str,
-        side: str,  # "Buy" или "Sell"
-        entry_price: float,
+        side: str,
         quantity: float,
+        entry_price: float,
         stop_loss: Optional[float] = None,
         take_profit: Optional[float] = None,
         entry_signal: Optional[dict] = None,
         entry_market_data: Optional[dict] = None,
         entry_indicators: Optional[dict] = None,
-        entry_reason: Optional[str] = None,
+        entry_reason: Optional[str] = None
     ) -> Optional[dict]:
         """
-        Открытие позиции с РЕАЛЬНЫМ размещением ордера на Bybit.
+        Открытие позиции с полным управлением жизненным циклом.
 
-        КРИТИЧЕСКИЕ ИЗМЕНЕНИЯ:
-        1. Ордер размещается на бирже ПЕРВЫМ шагом
-        2. Только после успешного размещения создаётся запись в БД
-        3. Exchange order_id сохраняется в metadata
-        4. Rollback при ошибке
+        ИЗМЕНЕНИЯ:
+        1. Создаем Position БЕЗ metadata_json
+        2. Привязываем Order к Position через update_position_link()
+        3. Опционально обновляем metadata_json через update_metadata()
+
+        Args:
+            symbol: Торговая пара
+            side: Сторона ("Buy" или "Sell")
+            quantity: Количество
+            entry_price: Цена входа
+            stop_loss: Stop Loss (опционально)
+            take_profit: Take Profit (опционально)
+            entry_signal: Сигнал на вход
+            entry_market_data: Рыночные данные при входе
+            entry_indicators: Индикаторы при входе
+            entry_reason: Причина открытия
+
+        Returns:
+            Optional[dict]: Результат с position_id и exchange_order_id или None
         """
         with trace_operation("open_position", symbol=symbol, side=side):
             logger.info(
-                f"→ Открытие позиции: {symbol} {side} | "
-                f"Количество: {quantity} @ {entry_price}"
+                f"→ Открытие позиции: {symbol} {side} {quantity} @ {entry_price}"
             )
 
             position_id = None
-            exchange_order_id = None
 
             try:
                 # ==========================================
-                # ШАГ 0: ГЕНЕРАЦИЯ CLIENT ORDER ID
+                # ШАГ 1: РАЗМЕЩЕНИЕ ОРДЕРА НА БИРЖЕ
                 # ==========================================
-                full_client_order_id  = idempotency_service.generate_idempotency_key(
-                    operation="place_order",
-                    params={
-                        "symbol": symbol,
-                        "side": side,
-                        "quantity": quantity,
-                        "timestamp": get_timestamp_ms()
-                    }
-                )
-                client_order_id = full_client_order_id[:36]
+                logger.info(f"📡 Размещение ордера на бирже: {symbol} {side}")
 
-                # Проверка идемпотентности
-                existing_result = await idempotency_service.check_idempotency(
-                    operation="place_order",
-                    params={"symbol": symbol, "side": side, "quantity": quantity}
+                # Генерируем client_order_id
+                client_order_id = idempotency_service.generate_client_order_id(
+                    symbol=symbol,
+                    side=side,
+                    quantity=quantity,
+                    price=entry_price
                 )
 
-                if existing_result:
-                    logger.warning(
-                        f"⚠️ Обнаружен дубликат операции: {symbol} {side}"
-                    )
-                    return existing_result
+                logger.debug(f"Client Order ID: {client_order_id}")
 
-                # ==========================================
-                # ШАГ 1: РАЗМЕЩЕНИЕ ОРДЕРА НА BYBIT
-                # ==========================================
-                logger.info(
-                    f"📤 Размещение MARKET ордера на Bybit: {symbol} {side} {quantity}"
-                )
-
+                # Размещаем ордер на бирже
                 try:
-                    # КРИТИЧЕСКИЙ ВЫЗОВ К BYBIT API
-                    bybit_response = await self.rest_client.place_order(
+                    order_response = await rest_client.place_order(
                         symbol=symbol,
                         side=side,
-                        order_type="Market",
+                        order_type="Market",  # или "Limit" в зависимости от стратегии
                         quantity=quantity,
-                        price=None,  # Market order
-                        time_in_force="GTC",
-                        stop_loss=stop_loss,
-                        take_profit=take_profit,
+                        price=entry_price if side == "Limit" else None,
                         client_order_id=client_order_id
                     )
 
-                    # Извлечение данных
-                    result_data = bybit_response.get("result", {})
-                    exchange_order_id = result_data.get("orderId")
-                    order_link_id = result_data.get("orderLinkId")
+                    result = order_response.get("result", {})
+                    exchange_order_id = result.get("orderId")
+                    order_link_id = result.get("orderLinkId")
 
                     if not exchange_order_id:
-                        raise OrderExecutionError(
-                            f"Bybit не вернул orderId: {bybit_response}"
-                        )
+                        raise OrderExecutionError("Exchange не вернул orderId")
 
                     logger.info(
-                        f"✅ Ордер размещён на Bybit: "
-                        f"exchange_order_id={exchange_order_id}, "
-                        f"client_order_id={order_link_id}"
+                        f"✓ Ордер размещен на бирже:\n"
+                        f"  Exchange Order ID: {exchange_order_id}\n"
+                        f"  Order Link ID: {order_link_id}"
                     )
 
-                    # Сохранение для идемпотентности
-                    await idempotency_service.save_operation_result(
-                        operation="place_order",
-                        params={"symbol": symbol, "side": side, "quantity": quantity},
-                        result={
-                            "exchange_order_id": exchange_order_id,
-                            "client_order_id": order_link_id,
-                            "timestamp": get_timestamp_ms()
-                        },
-                        ttl_minutes=60
-                    )
+                    # Проверка корректности orderLinkId
+                    if order_link_id != client_order_id:
+                        logger.warning(
+                            f"⚠ orderLinkId не совпадает с client_order_id!\n"
+                            f"  Ожидалось: {client_order_id}\n"
+                            f"  Получено: {order_link_id}"
+                        )
 
                 except Exception as order_error:
                     logger.error(
-                        f"❌ ОШИБКА размещения ордера на Bybit: {order_error}"
+                        f"❌ Ошибка размещения ордера на бирже: {order_error}",
+                        exc_info=True
                     )
-                    self.stats["failed_orders"] += 1
 
+                    # Аудит неудачного размещения
                     await audit_repository.log(
                         action=AuditAction.POSITION_OPEN,
                         entity_type="Position",
@@ -261,6 +246,7 @@ class ExecutionManager:
 
                 order_side = OrderSide.BUY if side == "Buy" else OrderSide.SELL
 
+                # ✅ ИСПРАВЛЕНО: Убран metadata_json из create()
                 position = await position_repository.create(
                     symbol=symbol,
                     side=order_side,
@@ -271,52 +257,153 @@ class ExecutionManager:
                     entry_signal=entry_signal,
                     entry_market_data=entry_market_data,
                     entry_indicators=entry_indicators,
-                    entry_reason=entry_reason or f"{side} position opened",
-                    # ВАЖНО: Сохраняем exchange_order_id
-                    metadata_json={
-                        "exchange_order_id": exchange_order_id,
-                        "client_order_id": client_order_id,
-                        "order_placed_at": get_timestamp_ms()
-                    }
+                    entry_reason=entry_reason or f"{side} position opened"
+                    # ❌ УБРАНО: metadata_json больше не передается здесь
                 )
 
                 position_id = str(position.id)
 
                 logger.info(
                     f"✓ Позиция создана в БД: {position_id} | "
-                    f"Статус: {position.status.value} | "
-                    f"Exchange Order: {exchange_order_id}"
+                    f"Статус: {position.status.value}"
                 )
 
                 # ==========================================
-                # ШАГ 3-6: FSM, Risk Manager, Audit
+                # ШАГ 2.5: СОЗДАНИЕ ORDER В БД (НОВОЕ!)
                 # ==========================================
-                # ... остальной код без изменений ...
+                logger.info(f"📝 Создание Order в БД")
 
+                try:
+                    order = await order_repository.create(
+                        client_order_id=client_order_id,
+                        symbol=symbol,
+                        side=OrderSide.BUY if side == "Buy" else OrderSide.SELL,
+                        order_type=OrderType.MARKET,  # или LIMIT в зависимости от типа
+                        quantity=quantity,
+                        price=entry_price,
+                        signal_data=entry_signal,
+                        market_data=entry_market_data,
+                        indicators=entry_indicators,
+                        reason=entry_reason or f"{side} market order",
+                        position_id=position_id  # Сразу привязываем к позиции
+                    )
+
+                    # Обновляем статус Order на PLACED (ордер уже на бирже)
+                    await order_repository.update_status(
+                        client_order_id=client_order_id,
+                        new_status=OrderStatus.PLACED,
+                        exchange_order_id=exchange_order_id
+                    )
+
+                    logger.info(
+                        f"✓ Order создан в БД: {client_order_id} | "
+                        f"Exchange ID: {exchange_order_id}"
+                    )
+
+                except Exception as order_create_error:
+                    logger.error(
+                        f"⚠ Ошибка создания Order в БД: {order_create_error}",
+                        exc_info=True
+                    )
+                    # Продолжаем, т.к. позиция уже создана на бирже
+
+                # ==========================================
+                # ШАГ 3: ОБНОВЛЕНИЕ ПРИВЯЗКИ (ЕСЛИ НУЖНО)
+                # ==========================================
+                # Примечание: Order уже создан с position_id в Шаге 2.5
+                # Этот шаг оставлен для совместимости, но может быть пропущен
+                logger.debug(f"🔗 Order уже привязан к Position при создании")
+
+                # Опциональная дополнительная проверка привязки
+                # link_success = await order_repository.update_position_link(
+                #     client_order_id=client_order_id,
+                #     position_id=position_id
+                # )
+                #
+                # if not link_success:
+                #     logger.warning(
+                #         f"⚠ Не удалось обновить привязку Order {client_order_id} "
+                #         f"к Position {position_id}"
+                #     )
+
+                # ==========================================
+                # ШАГ 4: ОБНОВЛЕНИЕ METADATA (ОПЦИОНАЛЬНО)
+                # ==========================================
+                logger.debug(f"📝 Обновление metadata позиции (справочная информация)")
+
+                # ✅ ДОБАВЛЕНО: Опционально сохраняем справочную информацию
+                metadata_success = await position_repository.update_metadata(
+                    position_id=position_id,
+                    metadata={
+                        "exchange_order_id": exchange_order_id,  # Справочно
+                        "client_order_id": client_order_id,  # Справочно
+                        "order_placed_at": get_timestamp_ms(),
+                        "order_link_id": order_link_id
+                    }
+                )
+
+                if not metadata_success:
+                    logger.warning(
+                        f"⚠ Не удалось обновить metadata для позиции {position_id}"
+                    )
+                else:
+                    logger.debug(f"✓ Metadata обновлена для позиции {position_id}")
+
+                # ==========================================
+                # ШАГ 5: FSM ДЛЯ ПОЗИЦИИ
+                # ==========================================
+                logger.info(f"🔄 Инициализация FSM для позиции")
+
+                # Создаем FSM с начальным статусом OPENING
                 position_fsm = PositionStateMachine(
                     position_id=position_id,
                     initial_state=PositionStatus.OPENING
                 )
 
+                # Регистрируем в глобальном реестре
                 fsm_registry.register_position_fsm(position_id, position_fsm)
-                position_fsm.confirm_open()  # type: ignore
+
+                logger.debug(
+                    f"✓ FSM зарегистрирована для позиции {position_id} | "
+                    f"Статус: {position_fsm.current_status.value}"
+                )
+
+                # Переход OPENING -> OPEN через триггер
+                position_fsm.confirm_open()  # type: ignore[attr-defined]
 
                 await position_repository.update_status(
                     position_id=position_id,
                     new_status=PositionStatus.OPEN
                 )
 
+                logger.info(
+                    f"✓ Позиция переведена в OPEN: {position_id} | "
+                    f"FSM статус: {position_fsm.current_status.value}"
+                )
+
+                # ==========================================
+                # ШАГ 6: РЕГИСТРАЦИЯ В RISK MANAGER
+                # ==========================================
+                logger.info(f"📊 Регистрация позиции в RiskManager")
+
                 position_size_usdt = quantity * entry_price
+
+                # ✅ ИСПРАВЛЕНО: Конвертируем str -> SignalType
                 signal_type = SignalType.BUY if side == "Buy" else SignalType.SELL
 
                 self.risk_manager.register_position_opened(
                     symbol=symbol,
-                    side=signal_type,
+                    side=signal_type,  # ✅ Передаем SignalType вместо str
                     size_usdt=position_size_usdt,
                     entry_price=entry_price,
-                    leverage=10
+                    leverage=10  # Опционально: можно добавить в параметры метода
                 )
 
+                logger.info(f"✓ Позиция зарегистрирована в RiskManager")
+
+                # ==========================================
+                # ШАГ 7: АУДИТ УСПЕШНОГО ОТКРЫТИЯ
+                # ==========================================
                 await audit_repository.log(
                     action=AuditAction.POSITION_OPEN,
                     entity_type="Position",
@@ -326,17 +413,14 @@ class ExecutionManager:
                         "side": side,
                         "quantity": quantity,
                         "entry_price": entry_price,
-                        "stop_loss": stop_loss,
-                        "take_profit": take_profit,
-                        "exchange_order_id": exchange_order_id
-                    },
-                    reason=entry_reason or "Position opened",
-                    success=True,
-                    context={
+                        "exchange_order_id": exchange_order_id,
+                        "position_size_usdt": position_size_usdt,
                         "entry_signal": entry_signal,
                         "entry_market_data": entry_market_data,
                         "entry_indicators": entry_indicators
-                    }
+                    },
+                    reason=entry_reason or f"{side} position opened",
+                    success=True
                 )
 
                 logger.info(
@@ -358,7 +442,7 @@ class ExecutionManager:
                 }
 
             except Exception as e:
-                logger.error(f"❌ Критическая ошибка open_position: {e}")
+                logger.error(f"❌ Критическая ошибка open_position: {e}", exc_info=True)
 
                 # Если позиция создана в БД, но что-то пошло не так далее - откатываем
                 if position_id:
@@ -475,94 +559,41 @@ class ExecutionManager:
                     f"FSM статус: {position_fsm.current_status.value}"
                 )
 
-                # 5. УДАЛЕНИЕ FSM ИЗ REGISTRY
-                fsm_registry.unregister_position_fsm(position_id)
+                # 5. РАСЧЕТ REALIZED PNL
+                if position.side == OrderSide.BUY:
+                    realized_pnl = (exit_price - position.entry_price) * position.quantity
+                else:
+                    realized_pnl = (position.entry_price - exit_price) * position.quantity
 
-                logger.debug(f"✓ FSM удалена из Registry для позиции {position_id}")
+                logger.info(f"💰 Realized PnL: {realized_pnl:.2f} USDT")
 
-                # 6. ОБНОВЛЕНИЕ RISK MANAGER
-                self.risk_manager.register_position_closed(position.symbol)
+                # 6. УДАЛЕНИЕ ИЗ RISK MANAGER
+                # ✅ ИСПРАВЛЕНО: Убран аргумент realized_pnl
+                self.risk_manager.register_position_closed(symbol=symbol)
 
-                logger.info(
-                    f"✓ Позиция удалена из Risk Manager: {position.symbol}"
-                )
-
-                # 7. ПОЛУЧЕНИЕ ОБНОВЛЕННОЙ ПОЗИЦИИ ДЛЯ PNL
-                updated_position = await position_repository.get_by_id(position_id)
-
-                realized_pnl = updated_position.realized_pnl or 0.0
-                duration = (
-                    (updated_position.closed_at - updated_position.opened_at).total_seconds()
-                    if updated_position.closed_at and updated_position.opened_at
-                    else 0
-                )
-
-                # 8. AUDIT LOGGING
+                # 7. АУДИТ
                 await audit_repository.log(
                     action=AuditAction.POSITION_CLOSE,
                     entity_type="Position",
                     entity_id=position_id,
                     new_value={
                         "exit_price": exit_price,
-                        "realized_pnl": realized_pnl
+                        "realized_pnl": realized_pnl,
+                        "exit_reason": exit_reason
                     },
-                    reason=exit_reason,
-                    success=True,
-                    context={
-                        "exit_signal": exit_signal,
-                        "exit_market_data": exit_market_data,
-                        "exit_indicators": exit_indicators
-                    }
-                )
-                # ============================================
-                # НОВЫЙ ШАГ: ОЧИСТКА ИСТОРИИ СИГНАЛОВ
-                # ============================================
-                from strategy.signal_deduplicator import signal_deduplicator
-
-                signal_deduplicator.clear_symbol(symbol)
-                logger.info(
-                    f"{symbol} | История сигналов очищена после закрытия позиции"
+                    success=True
                 )
 
-                # 9. ВОЗВРАТ РЕЗУЛЬТАТА
-                result = {
+                logger.info(f"✓✓✓ ПОЗИЦИЯ УСПЕШНО ЗАКРЫТА ✓✓✓")
+
+                return {
                     "position_id": position_id,
-                    "status": PositionStatus.CLOSED.value,
-                    "symbol": updated_position.symbol,
-                    "exit_price": exit_price,
                     "realized_pnl": realized_pnl,
-                    "duration_seconds": duration,
-                    "closed_at": updated_position.closed_at.isoformat() if updated_position.closed_at else None
+                    "status": "success"
                 }
 
-                logger.info(
-                    f"✓✓✓ ПОЗИЦИЯ УСПЕШНО ЗАКРЫТА ✓✓✓\n"
-                    f"  Position ID: {position_id}\n"
-                    f"  Symbol: {updated_position.symbol}\n"
-                    f"  Exit Price: {exit_price}\n"
-                    f"  Realized PnL: {realized_pnl:.2f} USDT\n"
-                    f"  Duration: {duration:.0f}s"
-                )
-
-
-
-                return result
-
             except Exception as e:
-                logger.error(
-                    f"✗ Ошибка закрытия позиции {position_id}: {e}",
-                    exc_info=True
-                )
-
-                await audit_repository.log(
-                    action=AuditAction.POSITION_CLOSE,
-                    entity_type="Position",
-                    entity_id=position_id,
-                    success=False,
-                    error_message=str(e),
-                    reason=f"Failed to close position: {exit_reason}"
-                )
-
+                logger.error(f"❌ Ошибка закрытия позиции: {e}", exc_info=True)
                 return None
 
     # ==================== ПРИВАТНЫЕ МЕТОДЫ ====================
@@ -822,6 +853,7 @@ class ExecutionManager:
                 (self.stats["rejected_orders"] / self.stats["total_signals"] * 100)
                 if self.stats["total_signals"] > 0 else 0
             ),
+
         }
 
         # ==================== НОВЫЕ ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================

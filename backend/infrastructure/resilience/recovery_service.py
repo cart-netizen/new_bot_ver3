@@ -14,7 +14,7 @@ from exchange.rest_client import rest_client
 from infrastructure.repositories.order_repository import order_repository
 from infrastructure.repositories.position_repository import position_repository
 from infrastructure.repositories.audit_repository import audit_repository
-from database.models import OrderStatus, PositionStatus, AuditAction
+from database.models import OrderStatus, PositionStatus, AuditAction, OrderSide
 from domain.state_machines.order_fsm import OrderStateMachine
 from domain.state_machines.position_fsm import PositionStateMachine
 from domain.services.fsm_registry import fsm_registry
@@ -721,9 +721,83 @@ class RecoveryService:
             logger.error(f"Критическая ошибка сверки ордеров: {e}", exc_info=True)
             return result
 
+    # async def _reconcile_positions(self) -> Dict[str, int]:
+    #     """
+    #     Сверка позиций с биржей.
+    #
+    #     Returns:
+    #         Dict: Результаты сверки позиций
+    #     """
+    #     logger.info("Сверка позиций с биржей...")
+    #
+    #     result = {
+    #         "synced": 0,
+    #         "discrepancies": 0,
+    #     }
+    #
+    #     try:
+    #         # Получаем активные позиции из БД
+    #         local_positions = await position_repository.get_active_positions()
+    #         logger.info(f"Найдено {len(local_positions)} активных позиций в БД")
+    #
+    #         # Получаем позиции с биржи
+    #         try:
+    #             exchange_response = await rest_client.get_positions()
+    #             exchange_positions_list = exchange_response.get("result", {}).get("list", [])
+    #             logger.info(f"Получено {len(exchange_positions_list)} позиций с биржи")
+    #
+    #         except Exception as e:
+    #             logger.error(f"Ошибка получения позиций с биржи: {e}", exc_info=True)
+    #             return result
+    #
+    #         # Создаем мапу позиций с биржи (только активные с size > 0)
+    #         exchange_map = {}
+    #         for pos in exchange_positions_list:
+    #             symbol = pos.get("symbol")
+    #             size = float(pos.get("size", 0))
+    #
+    #             if symbol and size > 0:
+    #                 exchange_map[symbol] = pos
+    #
+    #         # Сверяем каждую локальную позицию
+    #         for local_position in local_positions:
+    #             exchange_position = exchange_map.get(local_position.symbol)
+    #
+    #             if exchange_position:
+    #                 # Позиция найдена на бирже
+    #                 exchange_size = float(exchange_position.get("size", 0))
+    #                 exchange_side = exchange_position.get("side", "")
+    #
+    #                 # Проверяем расхождения
+    #                 if abs(local_position.quantity - exchange_size) > 0.001:
+    #                     result["discrepancies"] += 1
+    #
+    #                     logger.warning(
+    #                         f"Расхождение количества позиции {local_position.symbol}: "
+    #                         f"локально={local_position.quantity}, "
+    #                         f"биржа={exchange_size}"
+    #                     )
+    #
+    #             result["synced"] += 1
+    #
+    #         logger.info(f"✓ Сверка позиций завершена: {result}")
+    #         return result
+    #
+    #     except Exception as e:
+    #         logger.error(f"Критическая ошибка сверки позиций: {e}", exc_info=True)
+    #         return result
+
     async def _reconcile_positions(self) -> Dict[str, int]:
         """
         Сверка позиций с биржей.
+
+        ЛОГИКА:
+        1. Получаем активные позиции из БД (статусы: OPENING, OPEN)
+        2. Получаем позиции с биржи (size > 0)
+        3. Сверяем три сценария:
+           - Позиция ЕСТЬ в БД И на бирже → проверяем количество
+           - Позиция ЕСТЬ в БД, но НЕТ на бирже → закрываем (призрак)
+           - Позиция НЕТ в БД, но ЕСТЬ на бирже → импортируем
 
         Returns:
             Dict: Результаты сверки позиций
@@ -733,14 +807,20 @@ class RecoveryService:
         result = {
             "synced": 0,
             "discrepancies": 0,
+            "ghost_positions_closed": 0,
+            "positions_imported": 0,
         }
 
         try:
-            # Получаем активные позиции из БД
+            # ==========================================
+            # ШАГ 1: ПОЛУЧЕНИЕ ЛОКАЛЬНЫХ ПОЗИЦИЙ
+            # ==========================================
             local_positions = await position_repository.get_active_positions()
             logger.info(f"Найдено {len(local_positions)} активных позиций в БД")
 
-            # Получаем позиции с биржи
+            # ==========================================
+            # ШАГ 2: ПОЛУЧЕНИЕ ПОЗИЦИЙ С БИРЖИ
+            # ==========================================
             try:
                 exchange_response = await rest_client.get_positions()
                 exchange_positions_list = exchange_response.get("result", {}).get("list", [])
@@ -748,9 +828,21 @@ class RecoveryService:
 
             except Exception as e:
                 logger.error(f"Ошибка получения позиций с биржи: {e}", exc_info=True)
+
+                # Если не удалось получить позиции с биржи, но есть локальные позиции
+                # считаем это критической ситуацией
+                if local_positions:
+                    logger.error(
+                        f"❌ КРИТИЧНО: Не удалось получить позиции с биржи, "
+                        f"но в БД есть {len(local_positions)} активных позиций!"
+                    )
+
                 return result
 
-            # Создаем мапу позиций с биржи (только активные с size > 0)
+            # ==========================================
+            # ШАГ 3: СОЗДАНИЕ МАПЫ ПОЗИЦИЙ С БИРЖИ
+            # ==========================================
+            # Только активные позиции с size > 0
             exchange_map = {}
             for pos in exchange_positions_list:
                 symbol = pos.get("symbol")
@@ -759,28 +851,305 @@ class RecoveryService:
                 if symbol and size > 0:
                     exchange_map[symbol] = pos
 
-            # Сверяем каждую локальную позицию
+            logger.debug(f"Создана мапа позиций с биржи: {len(exchange_map)} активных")
+
+            # ==========================================
+            # ШАГ 4: СВЕРКА ЛОКАЛЬНЫХ ПОЗИЦИЙ
+            # ==========================================
+            local_symbols = set()  # Множество символов в БД
+
             for local_position in local_positions:
-                exchange_position = exchange_map.get(local_position.symbol)
+                symbol = local_position.symbol
+                position_id = str(local_position.id)
+                local_symbols.add(symbol)  # Запоминаем символ
+
+                exchange_position = exchange_map.get(symbol)
 
                 if exchange_position:
-                    # Позиция найдена на бирже
+                    # ==========================================
+                    # СЦЕНАРИЙ 1: ПОЗИЦИЯ ЕСТЬ НА БИРЖЕ
+                    # ==========================================
                     exchange_size = float(exchange_position.get("size", 0))
                     exchange_side = exchange_position.get("side", "")
 
-                    # Проверяем расхождения
+                    # Проверяем расхождения в количестве
                     if abs(local_position.quantity - exchange_size) > 0.001:
                         result["discrepancies"] += 1
 
                         logger.warning(
-                            f"Расхождение количества позиции {local_position.symbol}: "
-                            f"локально={local_position.quantity}, "
-                            f"биржа={exchange_size}"
+                            f"⚠ Расхождение количества позиции {symbol}: "
+                            f"локально={local_position.quantity:.8f}, "
+                            f"биржа={exchange_size:.8f}"
                         )
 
-                result["synced"] += 1
+                        # ОПЦИОНАЛЬНО: Обновляем количество в БД
+                        # await position_repository.update(
+                        #     position_id=position_id,
+                        #     quantity=exchange_size
+                        # )
 
-            logger.info(f"✓ Сверка позиций завершена: {result}")
+                    result["synced"] += 1
+                    logger.debug(f"✓ Позиция {symbol} синхронизирована")
+
+                else:
+                    # ==========================================
+                    # СЦЕНАРИЙ 2: ПОЗИЦИЯ НЕТ НА БИРЖЕ (ПРИЗРАК)
+                    # ==========================================
+                    result["discrepancies"] += 1
+                    result["ghost_positions_closed"] += 1
+
+                    logger.error(
+                        f"❌ ПРИЗРАЧНАЯ ПОЗИЦИЯ ОБНАРУЖЕНА ❌\n"
+                        f"  Symbol: {symbol}\n"
+                        f"  Position ID: {position_id}\n"
+                        f"  Статус в БД: {local_position.status.value}\n"
+                        f"  Quantity: {local_position.quantity}\n"
+                        f"  Entry Price: {local_position.entry_price}\n"
+                        f"  Opened At: {local_position.opened_at}\n"
+                        f"  ПРОБЛЕМА: Позиция есть в БД, но НЕТ на бирже!"
+                    )
+
+                    # ==========================================
+                    # АВТОМАТИЧЕСКОЕ ЗАКРЫТИЕ ПРИЗРАЧНОЙ ПОЗИЦИИ
+                    # ==========================================
+                    try:
+                        # Получаем FSM для позиции
+                        position_fsm = fsm_registry.get_position_fsm(position_id)
+
+                        if not position_fsm:
+                            # Создаем FSM если не существует
+                            position_fsm = PositionStateMachine(
+                                position_id=position_id,
+                                initial_state=local_position.status
+                            )
+                            fsm_registry.register_position_fsm(position_id, position_fsm)
+
+                        # Закрываем позицию в зависимости от статуса
+                        if local_position.status == PositionStatus.OPENING:
+                            # OPENING -> CLOSED (используем abort)
+                            position_fsm.abort()  # type: ignore[attr-defined]
+
+                            await position_repository.update_status(
+                                position_id=position_id,
+                                new_status=PositionStatus.CLOSED,
+                                exit_reason="Ghost position aborted by RecoveryService (never opened on exchange)"
+                            )
+
+                            logger.info(
+                                f"✓ Призрачная позиция {symbol} прервана: {position_id}"
+                            )
+
+                        elif position_fsm.can_transition_to(PositionStatus.CLOSING):
+                            # OPEN -> CLOSING -> CLOSED
+                            position_fsm.start_close()  # type: ignore[attr-defined]
+
+                            await position_repository.update_status(
+                                position_id=position_id,
+                                new_status=PositionStatus.CLOSING
+                            )
+
+                            position_fsm.confirm_close()  # type: ignore[attr-defined]
+
+                            await position_repository.update_status(
+                                position_id=position_id,
+                                new_status=PositionStatus.CLOSED,
+                                exit_price=local_position.current_price or local_position.entry_price,
+                                exit_reason="Ghost position closed by RecoveryService (not found on exchange)"
+                            )
+
+                            logger.info(
+                                f"✓ Призрачная позиция {symbol} закрыта: {position_id}"
+                            )
+
+                        else:
+                            logger.warning(
+                                f"⚠ Невозможно автоматически закрыть позицию {symbol} | "
+                                f"Статус: {local_position.status.value} | "
+                                f"Требуется ручное вмешательство"
+                            )
+
+                        # Удаляем FSM из registry
+                        fsm_registry.unregister_position_fsm(position_id)
+
+                        # Логируем в audit
+                        await audit_repository.log(
+                            action=AuditAction.POSITION_CLOSE,
+                            entity_type="Position",
+                            entity_id=position_id,
+                            old_value={"status": local_position.status.value},
+                            new_value={"status": "CLOSED"},
+                            reason="Ghost position detected and closed during reconciliation",
+                            success=True,
+                            context={
+                                "symbol": symbol,
+                                "local_quantity": local_position.quantity,
+                                "exchange_found": False
+                            }
+                        )
+
+                    except Exception as close_error:
+                        logger.error(
+                            f"Ошибка закрытия призрачной позиции {symbol}: {close_error}",
+                            exc_info=True
+                        )
+
+                        # Логируем ошибку в audit
+                        await audit_repository.log(
+                            action=AuditAction.POSITION_CLOSE,
+                            entity_type="Position",
+                            entity_id=position_id,
+                            old_value={"status": local_position.status.value},
+                            new_value={"error": str(close_error)},
+                            reason="Failed to close ghost position during reconciliation",
+                            success=False,
+                            error_message=str(close_error)
+                        )
+
+            # ==========================================
+            # ШАГ 5: ИМПОРТ ПОЗИЦИЙ С БИРЖИ (НЕТ В БД)
+            # ==========================================
+            # Находим позиции, которые есть на бирже, но НЕТ в БД
+            exchange_only_symbols = set(exchange_map.keys()) - local_symbols
+
+            if exchange_only_symbols:
+                logger.info(
+                    f"📥 Найдено {len(exchange_only_symbols)} позиций на бирже, "
+                    f"которых НЕТ в БД: {list(exchange_only_symbols)}"
+                )
+
+                for symbol in exchange_only_symbols:
+                    exchange_position = exchange_map[symbol]
+
+                    try:
+                        # Извлекаем данные с биржи
+                        size = float(exchange_position.get("size", 0))
+                        side_str = exchange_position.get("side", "")
+                        entry_price = float(exchange_position.get("avgPrice", 0))
+                        current_price = float(exchange_position.get("markPrice", entry_price))
+                        unrealized_pnl = float(exchange_position.get("unrealisedPnl", 0))
+                        leverage = int(exchange_position.get("leverage", 10))
+
+                        # Конвертируем side
+                        side = OrderSide.BUY if side_str == "Buy" else OrderSide.SELL
+
+                        logger.info(
+                            f"📥 Импорт позиции с биржи:\n"
+                            f"   Symbol: {symbol}\n"
+                            f"   Side: {side_str}\n"
+                            f"   Size: {size}\n"
+                            f"   Entry Price: {entry_price}\n"
+                            f"   Current Price: {current_price}\n"
+                            f"   Unrealized PnL: {unrealized_pnl}\n"
+                            f"   Leverage: {leverage}x"
+                        )
+
+                        # Создаем позицию в БД
+                        imported_position = await position_repository.create(
+                            symbol=symbol,
+                            side=side,
+                            quantity=size,
+                            entry_price=entry_price,
+                            entry_reason=f"Position imported from exchange (manual trade or external system)"
+                        )
+
+                        imported_position_id = str(imported_position.id)
+
+                        # Обновляем текущую цену и PnL
+                        await position_repository.update_price(
+                            position_id=imported_position_id,
+                            current_price=current_price
+                        )
+
+                        # Обновляем статус на OPEN (т.к. позиция уже открыта)
+                        await position_repository.update_status(
+                            position_id=imported_position_id,
+                            new_status=PositionStatus.OPEN
+                        )
+
+                        # Сохраняем метаданные
+                        await position_repository.update_metadata(
+                            position_id=imported_position_id,
+                            metadata={
+                                "imported_from_exchange": True,
+                                "imported_at": datetime.utcnow().isoformat(),
+                                "leverage": leverage,
+                                "unrealized_pnl": unrealized_pnl
+                            }
+                        )
+
+                        # Создаем FSM для импортированной позиции
+                        position_fsm = PositionStateMachine(
+                            position_id=imported_position_id,
+                            initial_state=PositionStatus.OPEN  # Сразу OPEN
+                        )
+                        fsm_registry.register_position_fsm(imported_position_id, position_fsm)
+
+                        # Логируем в audit
+                        await audit_repository.log(
+                            action=AuditAction.POSITION_OPEN,
+                            entity_type="Position",
+                            entity_id=imported_position_id,
+                            new_value={
+                                "symbol": symbol,
+                                "side": side_str,
+                                "quantity": size,
+                                "entry_price": entry_price,
+                                "imported": True
+                            },
+                            reason="Position imported from exchange during reconciliation",
+                            success=True
+                        )
+
+                        result["synced"] += 1
+                        result["positions_imported"] += 1
+
+                        logger.info(
+                            f"✓ Позиция {symbol} импортирована в БД: {imported_position_id}"
+                        )
+
+                    except Exception as import_error:
+                        logger.error(
+                            f"❌ Ошибка импорта позиции {symbol}: {import_error}",
+                            exc_info=True
+                        )
+
+                        # Логируем ошибку в audit
+                        await audit_repository.log(
+                            action=AuditAction.POSITION_OPEN,
+                            entity_type="Position",
+                            entity_id="IMPORT_FAILED",
+                            new_value={
+                                "symbol": symbol,
+                                "error": str(import_error)
+                            },
+                            reason="Failed to import position from exchange",
+                            success=False,
+                            error_message=str(import_error)
+                        )
+
+            # ==========================================
+            # ШАГ 6: ИТОГОВОЕ ЛОГИРОВАНИЕ
+            # ==========================================
+            logger.info(
+                f"✓ Сверка позиций завершена: "
+                f"синхронизировано={result['synced']}, "
+                f"расхождений={result['discrepancies']}, "
+                f"призрачных закрыто={result['ghost_positions_closed']}, "
+                f"импортировано={result['positions_imported']}"
+            )
+
+            if result["ghost_positions_closed"] > 0:
+                logger.warning(
+                    f"⚠⚠⚠ ВНИМАНИЕ: Обнаружено и закрыто {result['ghost_positions_closed']} "
+                    f"призрачных позиций! Проверьте логи!"
+                )
+
+            if result["positions_imported"] > 0:
+                logger.info(
+                    f"📥 Импортировано {result['positions_imported']} позиций с биржи. "
+                    f"Бот теперь управляет ими."
+                )
+
             return result
 
         except Exception as e:

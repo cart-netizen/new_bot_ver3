@@ -27,6 +27,7 @@ from ml_engine.detection.spoofing_detector import SpoofingConfig, SpoofingDetect
 from ml_engine.detection.sr_level_detector import SRLevelConfig, SRLevelDetector
 from ml_engine.integration.ml_signal_validator import ValidationConfig, MLSignalValidator
 from ml_engine.monitoring.drift_detector import DriftDetector
+from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
 from screener.screener_manager import ScreenerManager
 from strategies.strategy_manager import StrategyManagerConfig, StrategyManager
 from strategy.candle_manager import CandleManager
@@ -39,13 +40,28 @@ from utils.balance_tracker import balance_tracker
 from utils.constants import BotStatus
 from api.websocket import manager as ws_manager, handle_websocket_messages
 from tasks.cleanup_tasks import cleanup_tasks
-
+from utils.helpers import safe_enum_value
 # ML FEATURE PIPELINE - НОВОЕ
 from ml_engine.features import (
     MultiSymbolFeaturePipeline,
     FeatureVector
 )
 from ml_engine.data_collection import MLDataCollector  # НОВОЕ
+
+original_post_init = TradingSignal.__post_init__
+
+
+def patched_post_init(self):
+  original_post_init(self)
+  if isinstance(self.signal_type, str):
+    self.signal_type = SignalType(self.signal_type)
+  if isinstance(self.strength, str):
+    self.strength = SignalStrength(self.strength)
+  if isinstance(self.source, str):
+    self.source = SignalSource(self.source)
+
+
+TradingSignal.__post_init__ = patched_post_init
 
 # Настройка логирования
 setup_logging()
@@ -751,7 +767,7 @@ class BotController:
 
                     logger.info(
                       f"🎯 Strategy Manager Consensus [{symbol}]: "
-                      f"{signal.signal_type.value}, "  # ИСПРАВЛЕНО: signal.signal_type.value
+                      f"{safe_enum_value(signal.signal_type)}, "  # ИСПРАВЛЕНО: signal.signal_type.value
                       f"confidence={final_confidence:.2f}, "
                       f"strategies={contributing_strategies}"
                     )
@@ -885,7 +901,7 @@ class BotController:
                 # Формируем лог с проверками атрибутов
                 log_parts = [
                   f"🎯 ФИНАЛЬНЫЙ СИГНАЛ [{symbol}]:",
-                  f"{signal.signal_type.value}",
+                  f"{safe_enum_value(signal.signal_type)}",
                   f"confidence={signal.confidence:.2f}",
                   f"strength={signal.strength.value}"
                 ]

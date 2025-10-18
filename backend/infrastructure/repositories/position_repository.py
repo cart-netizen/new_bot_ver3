@@ -105,91 +105,197 @@ class PositionRepository:
       return None
 
   async def update_status(
+        self,
+        position_id: str,
+        new_status: PositionStatus,
+        exit_price: Optional[float] = None,
+        exit_signal: Optional[dict] = None,
+        exit_market_data: Optional[dict] = None,
+        exit_indicators: Optional[dict] = None,
+        exit_reason: Optional[str] = None,
+    ) -> bool:
+      """
+      Обновление статуса позиции.
+
+      Args:
+          position_id: ID позиции
+          new_status: Новый статус
+          exit_price: Цена выхода
+          exit_signal: Сигнал на выход
+          exit_market_data: Рыночные данные при выходе
+          exit_indicators: Индикаторы при выходе
+          exit_reason: Причина закрытия
+
+      Returns:
+          bool: True если обновлено
+      """
+      try:
+        async with db_manager.session() as session:
+          position = await self.get_by_id(position_id)
+          if not position:
+            return False
+
+          update_data = {
+            "status": new_status,
+            "updated_at": datetime.utcnow(),
+          }
+
+          if exit_price is not None:
+            update_data["exit_price"] = exit_price
+
+          if exit_signal is not None:
+            update_data["exit_signal"] = exit_signal
+
+          if exit_market_data is not None:
+            update_data["exit_market_data"] = exit_market_data
+
+          if exit_indicators is not None:
+            update_data["exit_indicators"] = exit_indicators
+
+          if exit_reason is not None:
+            update_data["exit_reason"] = exit_reason
+
+          if new_status == PositionStatus.CLOSED:
+            update_data["closed_at"] = datetime.utcnow()
+
+            # Расчет realized PnL
+            if exit_price is not None:
+              if position.side == OrderSide.BUY:
+                realized_pnl = (exit_price - position.entry_price) * position.quantity
+              else:
+                realized_pnl = (position.entry_price - exit_price) * position.quantity
+
+              update_data["realized_pnl"] = realized_pnl
+
+          stmt = (
+            update(Position)
+            .where(Position.id == position_id)
+            .values(**update_data)
+          )
+
+          await session.execute(stmt)
+          await session.commit()
+          return True
+
+      except Exception as e:
+        logger.error(f"Ошибка обновления статуса позиции {position_id}: {e}")
+        return False
+
+  async def update_metadata(
       self,
       position_id: str,
-      new_status: PositionStatus,
-      exit_price: Optional[float] = None,
-      exit_signal: Optional[dict] = None,
-      exit_market_data: Optional[dict] = None,
-      exit_indicators: Optional[dict] = None,
-      exit_reason: Optional[str] = None,
+      metadata: dict
   ) -> bool:
     """
-    Обновление статуса позиции.
+    Обновить metadata_json позиции.
+
+    Этот метод используется для сохранения справочной информации,
+    которая НЕ является критичной для работы системы, но полезна
+    для анализа и отладки.
+
+    Примеры данных в metadata:
+    - exchange_order_id (справочно, основной источник - Order.exchange_order_id)
+    - client_order_id (справочно)
+    - order_placed_at (timestamp размещения ордера)
+    - transition_history (история FSM переходов)
+    - debug_info (отладочная информация)
 
     Args:
-        position_id: ID позиции
-        new_status: Новый статус
-        exit_price: Цена выхода
-        exit_signal: Сигнал на выход
-        exit_market_data: Рыночные данные при выходе
-        exit_indicators: Индикаторы при выходе
-        exit_reason: Причина закрытия
+        position_id: Position ID (UUID в строковом формате)
+        metadata: Словарь с метаданными
 
     Returns:
         bool: True если обновлено успешно
+
+    Raises:
+        DatabaseError: При критической ошибке БД
     """
     try:
       async with db_manager.session() as session:
-        # Получаем позицию
+        # Проверяем существование позиции
         position = await self.get_by_id(position_id)
         if not position:
-          logger.error(f"Позиция {position_id} не найдена")
+          logger.error(
+            f"Позиция {position_id} не найдена для обновления metadata"
+          )
           return False
 
-        # Подготавливаем обновление
-        update_data = {
-          "status": new_status,
-          "updated_at": datetime.utcnow(),
-          "version": position.version + 1,
-        }
-
-        if new_status == PositionStatus.CLOSED:
-          update_data["closed_at"] = datetime.utcnow()
-
-          if exit_price:
-            update_data["exit_price"] = exit_price
-
-            # Расчет realized PnL
-            if position.side == OrderSide.BUY:
-              pnl = (exit_price - position.entry_price) * position.quantity
-            else:
-              pnl = (position.entry_price - exit_price) * position.quantity
-
-            update_data["realized_pnl"] = pnl
-
-          if exit_signal:
-            update_data["exit_signal"] = exit_signal
-          if exit_market_data:
-            update_data["exit_market_data"] = exit_market_data
-          if exit_indicators:
-            update_data["exit_indicators"] = exit_indicators
-          if exit_reason:
-            update_data["exit_reason"] = exit_reason
-
-        # Обновляем с проверкой версии
+        # Обновляем metadata
         stmt = (
           update(Position)
-          .where(
-            Position.id == position_id,
-            Position.version == position.version,
+          .where(Position.id == position_id)
+          .values(
+            metadata_json=metadata,
+            updated_at=datetime.utcnow()
           )
-          .values(**update_data)
         )
 
         result = await session.execute(stmt)
         await session.commit()
 
         if result.rowcount == 0:
-          logger.warning(f"Конфликт версий при обновлении позиции {position_id}")
+          logger.warning(
+            f"Не удалось обновить metadata для позиции {position_id}"
+          )
           return False
 
-        logger.info(f"Обновлен статус позиции {position_id}: {new_status.value}")
+        logger.debug(
+          f"✓ Metadata обновлена для позиции {position_id}: "
+          f"{len(metadata)} полей"
+        )
         return True
 
     except Exception as e:
-      logger.error(f"Ошибка обновления позиции {position_id}: {e}")
+      logger.error(
+        f"Ошибка обновления metadata позиции {position_id}: {e}",
+        exc_info=True
+      )
       return False
+
+  async def update_price(
+        self,
+        position_id: str,
+        current_price: float
+    ) -> bool:
+      """
+      Обновление текущей цены позиции.
+
+      Args:
+          position_id: ID позиции
+          current_price: Текущая цена
+
+      Returns:
+          bool: True если обновлено
+      """
+      try:
+        async with db_manager.session() as session:
+          position = await self.get_by_id(position_id)
+          if not position:
+            return False
+
+          # Расчет unrealized PnL
+          if position.side == OrderSide.BUY:
+            unrealized_pnl = (current_price - position.entry_price) * position.quantity
+          else:
+            unrealized_pnl = (position.entry_price - current_price) * position.quantity
+
+          stmt = (
+            update(Position)
+            .where(Position.id == position_id)
+            .values(
+              current_price=current_price,
+              unrealized_pnl=unrealized_pnl,
+              updated_at=datetime.utcnow(),
+            )
+          )
+
+          await session.execute(stmt)
+          await session.commit()
+          return True
+
+      except Exception as e:
+        logger.error(f"Ошибка обновления цены позиции {position_id}: {e}")
+        return False
 
   async def update_current_price(
       self,
