@@ -42,6 +42,9 @@ def clean_env_value(value: str) -> str:
 class Settings(BaseSettings):
   """Класс настроек приложения с валидацией."""
 
+  STOP_LOSS_PERCENT: float = 0.8
+  TAKE_PROFIT_PERCENT: float = 3
+
   # ===== НАСТРОЙКИ ПРИЛОЖЕНИЯ =====
   APP_NAME: str = Field(default="Scalping Trading Bot")
   APP_VERSION: str = Field(default="1.0.0")

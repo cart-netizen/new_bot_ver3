@@ -12,6 +12,7 @@ from decimal import Decimal
 from typing import Optional, Dict, List
 from collections import deque
 
+from config import settings
 from core.logger import get_logger
 from core.exceptions import ExecutionError, OrderExecutionError
 from core.trace_context import trace_operation
@@ -135,7 +136,36 @@ class ExecutionManager:
             logger.debug("🔄 Синхронизация позиций с биржей...")
 
             # Запрашиваем актуальные позиции с биржи
-            exchange_positions = await rest_client.get_positions()
+            response = await rest_client.get_positions()
+
+            # ✅ ДОБАВЛЕНО: Детальное логирование для отладки
+            logger.debug(f"🔍 Тип ответа от get_positions: {type(response)}")
+            logger.debug(f"🔍 Содержимое ответа: {response}")
+
+            # ✅ ИСПРАВЛЕНО: Правильная обработка ответа от Bybit API
+            # Bybit API возвращает: {"result": {"list": [...]}}
+            if not response:
+                logger.debug("Нет открытых позиций на бирже (пустой ответ)")
+                exchange_positions = []
+            elif isinstance(response, dict):
+                # Если response это dict с результатом
+                result = response.get("result", {})
+                if isinstance(result, dict):
+                    exchange_positions = result.get("list", [])
+                elif isinstance(result, list):
+                    exchange_positions = result
+                else:
+                    logger.warning(f"⚠️ Неожиданный формат result: {type(result)}")
+                    exchange_positions = []
+            elif isinstance(response, list):
+                # Если response уже список позиций
+                exchange_positions = response
+            else:
+                logger.warning(f"⚠️ Неожиданный тип ответа: {type(response)}")
+                exchange_positions = []
+
+            # ✅ ДОБАВЛЕНО: Логирование после парсинга
+            logger.debug(f"📊 Распарсено позиций: {len(exchange_positions)}")
 
             if not exchange_positions:
                 logger.debug("Нет открытых позиций на бирже")
@@ -150,14 +180,36 @@ class ExecutionManager:
                     self.risk_manager.metrics.total_exposure_usdt = 0.0
                 return
 
-            # Получаем символы открытых позиций на бирже
-            exchange_symbols = {
-                pos.get("symbol") for pos in exchange_positions
-                if float(pos.get("size", 0)) > 0
-            }
+            # ✅ ИСПРАВЛЕНО: Безопасная обработка позиций с проверкой типов
+            exchange_symbols = set()
+
+            for pos in exchange_positions:
+                # Проверяем что pos это dict
+                if not isinstance(pos, dict):
+                    logger.warning(f"⚠️ Позиция не dict: {type(pos)} = {pos}")
+                    continue
+
+                symbol = pos.get("symbol")
+                size = pos.get("size", "0")
+
+                # Безопасное преобразование size в float
+                try:
+                    size_float = float(size)
+                except (ValueError, TypeError):
+                    logger.warning(f"⚠️ Некорректный size для {symbol}: {size}")
+                    continue
+
+                if size_float > 0:
+                    exchange_symbols.add(symbol)
+                    logger.debug(f"  Позиция на бирже: {symbol}, size={size_float}")
 
             # Получаем символы из локального стейта
             local_symbols = set(self.risk_manager.open_positions.keys())
+
+            logger.info(
+                f"📊 Сравнение: локально={len(local_symbols)}, "
+                f"на бирже={len(exchange_symbols)}"
+            )
 
             # Находим расхождения
             missing_locally = exchange_symbols - local_symbols  # На бирже есть, локально нет
@@ -172,25 +224,35 @@ class ExecutionManager:
 
             # Добавляем позиции которые есть на бирже но нет локально
             for symbol in missing_locally:
+                # Находим данные позиции
                 pos_data = next(
-                    (p for p in exchange_positions if p.get("symbol") == symbol),
+                    (p for p in exchange_positions
+                     if isinstance(p, dict) and p.get("symbol") == symbol),
                     None
                 )
-                if pos_data:
-                    size = float(pos_data.get("size", 0))
-                    entry_price = float(pos_data.get("avgPrice", 0))
-                    side = SignalType.BUY if pos_data.get("side") == "Buy" else SignalType.SELL
 
-                    logger.warning(
-                        f"⚠️ Позиция {symbol} найдена на бирже, добавляем в локальный стейт"
-                    )
-                    self.risk_manager.register_position_opened(
-                        symbol=symbol,
-                        side=side,
-                        size_usdt=size * entry_price,
-                        entry_price=entry_price,
-                        leverage=10
-                    )
+                if pos_data:
+                    try:
+                        size = float(pos_data.get("size", 0))
+                        entry_price = float(pos_data.get("avgPrice", 0))
+                        side_str = pos_data.get("side", "Buy")
+
+                        # Конвертируем side в SignalType
+                        side = SignalType.BUY if side_str == "Buy" else SignalType.SELL
+
+                        logger.warning(
+                            f"⚠️ Позиция {symbol} найдена на бирже, добавляем в локальный стейт"
+                        )
+
+                        self.risk_manager.register_position_opened(
+                            symbol=symbol,
+                            side=side,
+                            size_usdt=size * entry_price,
+                            entry_price=entry_price,
+                            leverage=10
+                        )
+                    except (ValueError, TypeError, KeyError) as e:
+                        logger.error(f"❌ Ошибка добавления позиции {symbol}: {e}")
 
             logger.debug(
                 f"✓ Синхронизация завершена: "
@@ -199,7 +261,7 @@ class ExecutionManager:
             )
 
         except Exception as e:
-            logger.error(f"Ошибка синхронизации позиций: {e}", exc_info=True)
+            logger.error(f"❌ Ошибка синхронизации позиций: {e}", exc_info=True)
             # Не падаем, продолжаем работу с текущим стейтом
 
     # ==================== УПРАВЛЕНИЕ ПОЗИЦИЯМИ ====================
@@ -266,6 +328,14 @@ class ExecutionManager:
                 logger.debug(f"Client Order ID: {client_order_id}")
 
                 # Размещаем ордер на бирже
+                logger.info(
+                    f"📊 Параметры TP/SL для {symbol}:\n"
+                    f"  Entry Price:  {entry_price}\n"
+                    f"  Stop Loss:    {stop_loss}\n"
+                    f"  Take Profit:  {take_profit}"
+                )
+
+
                 try:
                     order_response = await rest_client.place_order(
                         symbol=symbol,
@@ -273,12 +343,21 @@ class ExecutionManager:
                         order_type="Market",  # или "Limit" в зависимости от стратегии
                         quantity=quantity,
                         price=entry_price if side == "Limit" else None,
+                        stop_loss=stop_loss,  # ✅ ДОБАВЛЕНО
+                        take_profit=take_profit,  # ✅ ДОБАВЛЕНО
                         client_order_id=client_order_id
                     )
 
                     result = order_response.get("result", {})
                     exchange_order_id = result.get("orderId")
                     order_link_id = result.get("orderLinkId")
+
+                    logger.info(
+                        f"✓ Ордер размещен на бирже С TP/SL:\n"
+                        f"  Exchange Order ID: {result.get('orderId')}\n"
+                        f"  Stop Loss:   {stop_loss}\n"
+                        f"  Take Profit: {take_profit}"
+                    )
 
                     if not exchange_order_id:
                         raise OrderExecutionError("Exchange не вернул orderId")
@@ -852,8 +931,11 @@ class ExecutionManager:
             # ==========================================
             # ШАГ 5: РАСЧЕТ STOP LOSS И TAKE PROFIT
             # ==========================================
-            stop_loss_pct = 0.02  # 2%
-            take_profit_pct = 0.04  # 4%
+            # stop_loss_pct = 0.002  # 2%
+            # take_profit_pct = 0.005  # 4%
+
+            stop_loss_pct = settings.STOP_LOSS_PERCENT / 100  # Конвертируем % в десятичную дробь
+            take_profit_pct = settings.TAKE_PROFIT_PERCENT / 100
 
             if signal.signal_type == SignalType.BUY:
                 side = "Buy"
