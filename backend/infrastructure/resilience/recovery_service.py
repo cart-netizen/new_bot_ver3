@@ -46,11 +46,24 @@ class RecoveryService:
             'ENABLE_AUTO_RECOVERY',
             True
         )
+        # ===== НОВЫЕ ПАРАМЕТРЫ =====
+        self.auto_fix_hanging_orders = getattr(
+            settings,
+            'AUTO_FIX_HANGING_ORDERS',
+            True
+        )
+        self.auto_create_positions = getattr(
+            settings,
+            'AUTO_CREATE_POSITIONS_FROM_FILLED',
+            True
+        )
 
         logger.info(
             f"Recovery Service инициализирован | "
             f"Timeout для зависших ордеров: {self.hanging_order_timeout_minutes} мин | "
-            f"Авто-восстановление: {self.enable_auto_recovery}"
+            f"Авто-восстановление: {self.enable_auto_recovery} | "
+            f"Авто-исправление зависших: {self.auto_fix_hanging_orders} | "
+            f"Авто-создание позиций: {self.auto_create_positions}"
         )
 
     # ==================== ПУБЛИЧНЫЕ МЕТОДЫ ====================
@@ -109,32 +122,40 @@ class RecoveryService:
 
     async def recover_from_crash(self) -> Dict[str, Any]:
         """
-        Восстановление после аварийного завершения.
+        Полное восстановление после краша/рестарта.
+
+        ОБНОВЛЕНО: Теперь включает автоматическое исправление зависших ордеров!
+
+        Выполняет следующие шаги:
+        1. Сверка состояния с биржей (reconcile_state)
+        2. Проверка зависших ордеров (_check_hanging_orders)
+        3. **НОВОЕ:** Автоматическое исправление зависших ордеров (_fix_hanging_orders)
+        4. Восстановление FSM состояний (_restore_fsm_states)
 
         Returns:
             Dict: Результаты восстановления
         """
-        logger.warning("=" * 80)
-        logger.warning("ОБНАРУЖЕНО АВАРИЙНОЕ ЗАВЕРШЕНИЕ - ВОССТАНОВЛЕНИЕ")
-        logger.warning("=" * 80)
+        logger.info("=" * 80)
+        logger.info("НАЧАЛО ПРОЦЕССА ВОССТАНОВЛЕНИЯ ПОСЛЕ КРАША")
+        logger.info("=" * 80)
 
         results = {
             "recovered": False,
             "actions_taken": [],
             "hanging_orders": [],
-            "fsm_restored": {
-                "orders": 0,
-                "positions": 0
-            }
+            "hanging_orders_fixed": {},  # НОВОЕ
+            "fsm_restored": {"orders": 0, "positions": 0},
+            "error": None
         }
 
         try:
-            # 1. Полная сверка состояния
+            # ==================== 1. СВЕРКА СОСТОЯНИЯ ====================
+            logger.info("Полная сверка состояния с биржей...")
             reconcile_result = await self.reconcile_state()
             results["actions_taken"].append("State reconciliation completed")
-            logger.info("✓ Шаг 1/3: Сверка состояния завершена")
+            logger.info("✓ Шаг 1/4: Сверка состояния завершена")
 
-            # 2. Проверка зависших ордеров
+            # ==================== 2. ПРОВЕРКА ЗАВИСШИХ ОРДЕРОВ ====================
             hanging_orders = await self._check_hanging_orders()
             results["hanging_orders"] = hanging_orders
 
@@ -146,16 +167,49 @@ class RecoveryService:
             else:
                 logger.info("✓ Зависших ордеров не обнаружено")
 
-            logger.info("✓ Шаг 2/3: Проверка зависших ордеров завершена")
+            logger.info("✓ Шаг 2/4: Проверка зависших ордеров завершена")
 
-            # 3. Восстановление FSM состояний
+            # ==================== 3. АВТОМАТИЧЕСКОЕ ИСПРАВЛЕНИЕ (НОВОЕ!) ====================
+            if hanging_orders:
+                if self.auto_fix_hanging_orders:
+                    logger.info("Запуск автоматического исправления зависших ордеров...")
+                    fix_stats = await self._fix_hanging_orders(hanging_orders)
+                    results["hanging_orders_fixed"] = fix_stats
+                    results["actions_taken"].append(
+                        f"Fixed {fix_stats['fixed']} hanging orders, "
+                        f"created {fix_stats['positions_created']} positions"
+                    )
+
+                    if fix_stats["fixed"] > 0:
+                        logger.info(
+                            f"✓ Исправлено {fix_stats['fixed']}/{fix_stats['total']} "
+                            f"зависших ордеров"
+                        )
+                    if fix_stats["failed"] > 0:
+                        logger.warning(
+                            f"⚠ Не удалось исправить {fix_stats['failed']} ордеров"
+                        )
+                else:
+                    logger.warning(
+                        f"⚠ Автоматическое исправление отключено (AUTO_FIX_HANGING_ORDERS=false). "
+                        f"Найдено {len(hanging_orders)} зависших ордеров - требуется ручное исправление!"
+                    )
+                    results["actions_taken"].append(
+                        f"Auto-fix disabled: {len(hanging_orders)} hanging orders require manual attention"
+                    )
+            else:
+                logger.info("✓ Исправление не требуется (нет зависших ордеров)")
+
+            logger.info("✓ Шаг 3/4: Исправление зависших ордеров завершено")
+
+            # ==================== 4. ВОССТАНОВЛЕНИЕ FSM ====================
             fsm_result = await self._restore_fsm_states()
             results["fsm_restored"] = fsm_result
             results["actions_taken"].append(
                 f"FSM states restored: {fsm_result['orders']} orders, "
                 f"{fsm_result['positions']} positions"
             )
-            logger.info("✓ Шаг 3/3: FSM состояния восстановлены")
+            logger.info("✓ Шаг 4/4: FSM состояния восстановлены")
 
             results["recovered"] = True
 
@@ -169,6 +223,82 @@ class RecoveryService:
             results["recovered"] = False
 
         return results
+
+    async def _fix_hanging_orders(self, hanging_orders: List[Dict[str, Any]]) -> Dict[str, int]:
+        """
+        Автоматическое исправление зависших ордеров.
+
+        Синхронизирует статусы ордеров с реальным состоянием на бирже.
+        """
+        logger.info("=" * 80)
+        logger.info("НАЧАЛО АВТОМАТИЧЕСКОГО ИСПРАВЛЕНИЯ ЗАВИСШИХ ОРДЕРОВ")
+        logger.info("=" * 80)
+
+        stats = {
+            "total": len(hanging_orders),
+            "fixed": 0,
+            "failed": 0,
+            "positions_created": 0,
+            "orders_cancelled": 0
+        }
+
+        if not hanging_orders:
+            logger.info("✓ Нет зависших ордеров для исправления")
+            return stats
+
+        logger.info(f"Обработка {len(hanging_orders)} зависших ордеров...")
+
+        for hanging_order in hanging_orders:
+            try:
+                issue_type = hanging_order["issue"]["type"]
+                client_order_id = hanging_order["client_order_id"]
+
+                logger.info(f"Исправление ордера {client_order_id} (тип: {issue_type})")
+
+                # Получаем ордер из БД
+                order = await order_repository.get_by_client_order_id(client_order_id)
+
+                if not order:
+                    logger.error(f"Ордер {client_order_id} не найден в БД")
+                    stats["failed"] += 1
+                    continue
+
+                # Обработка по типу проблемы
+                if issue_type == "status_mismatch":
+                    exchange_data = hanging_order["issue"].get("exchange_data", {})
+
+                    if exchange_data.get("status") == "Filled":
+                        await self._sync_filled_order(order, exchange_data)
+                        stats["fixed"] += 1
+                        stats["positions_created"] += 1
+                        logger.info(f"✓ {client_order_id}: Placed → Filled")
+
+                    elif exchange_data.get("status") == "Cancelled":
+                        await self._sync_cancelled_order(order, exchange_data)
+                        stats["fixed"] += 1
+                        stats["orders_cancelled"] += 1
+                        logger.info(f"✓ {client_order_id}: Placed → Cancelled")
+
+                elif issue_type == "missing_from_exchange":
+                    await self._handle_missing_order(order)
+                    stats["fixed"] += 1
+                    stats["orders_cancelled"] += 1
+                    logger.info(f"✓ {client_order_id}: отменён (не найден)")
+
+                elif issue_type == "timeout_in_status":
+                    await self._check_and_fix_timeout_order(order)
+                    stats["fixed"] += 1
+                    logger.info(f"✓ {client_order_id}: проверен")
+
+            except Exception as e:
+                logger.error(f"Ошибка исправления {hanging_order.get('client_order_id')}: {e}", exc_info=True)
+                stats["failed"] += 1
+
+        logger.info("=" * 80)
+        logger.info(f"ИСПРАВЛЕНИЕ ЗАВЕРШЕНО: {stats['fixed']}/{stats['total']}")
+        logger.info("=" * 80)
+
+        return stats
 
     # ==================== ПРОВЕРКА ЗАВИСШИХ ОРДЕРОВ ====================
 
@@ -421,6 +551,165 @@ class RecoveryService:
                 exc_info=True
             )
             return hanging_orders
+
+    async def _sync_filled_order(self, order, exchange_data: dict):
+        """Синхронизировать исполненный ордер."""
+        from database.models import Order
+
+        order.status = OrderStatus.FILLED
+        order.filled_quantity = float(exchange_data.get("cumExecQty", 0))
+        order.average_fill_price = float(exchange_data.get("avgPrice", 0))
+
+        filled_timestamp = int(exchange_data.get("updatedTime", 0))
+        if filled_timestamp > 0:
+            order.filled_at = datetime.fromtimestamp(filled_timestamp / 1000)
+        else:
+            order.filled_at = datetime.now()
+
+        await order_repository.update(order)
+
+        logger.info(
+            f"Ордер {order.client_order_id} обновлён: "
+            f"qty={order.filled_quantity}, price={order.average_fill_price:.8f}"
+        )
+
+        # Создаём позицию если её нет
+        if self.auto_create_positions:
+            existing = await position_repository.get_by_symbol_and_status(
+                order.symbol,
+                [PositionStatus.OPENING, PositionStatus.OPEN]
+            )
+
+            if not existing:
+                await self._create_position_from_filled_order(order)
+            else:
+                logger.warning(f"Позиция по {order.symbol} уже существует")
+
+        # Audit log
+        await audit_repository.log(
+            action=AuditAction.ORDER_MODIFY,
+            entity_type="Order",
+            entity_id=order.client_order_id,
+            old_value={"status": "Placed"},
+            new_value={
+                "status": "Filled",
+                "filled_quantity": order.filled_quantity,
+                "average_fill_price": order.average_fill_price
+            },
+            reason="Auto-sync hanging order",
+            success=True
+        )
+
+    async def _create_position_from_filled_order(self, order):
+        """Создать позицию из исполненного ордера."""
+        from database.models import Position
+
+        position = Position(
+            symbol=order.symbol,
+            side=order.side,
+            status=PositionStatus.OPEN,
+            quantity=order.filled_quantity,
+            entry_price=order.average_fill_price,
+            current_price=order.average_fill_price,
+            stop_loss=order.stop_loss,
+            take_profit=order.take_profit,
+            opened_at=order.filled_at or datetime.now(),
+            entry_reason=f"Recovery: {order.client_order_id}",
+            entry_signal=order.signal_data
+        )
+
+        saved_position = await position_repository.create(position)
+
+        order.position_id = saved_position.id
+        await order_repository.update(order)
+
+        logger.info(
+            f"✓ Позиция создана: {order.side.value} "
+            f"{order.filled_quantity} @ {order.average_fill_price:.8f}"
+        )
+
+        await audit_repository.log(
+            action=AuditAction.POSITION_OPEN,
+            entity_type="Position",
+            entity_id=str(saved_position.id),
+            new_value={
+                "symbol": position.symbol,
+                "side": position.side.value,
+                "quantity": position.quantity
+            },
+            reason="Auto-created from hanging order",
+            success=True
+        )
+
+        return saved_position
+
+    async def _sync_cancelled_order(self, order, exchange_data: dict):
+        """Синхронизировать отменённый ордер."""
+        order.status = OrderStatus.CANCELLED
+
+        cancelled_timestamp = int(exchange_data.get("updatedTime", 0))
+        if cancelled_timestamp > 0:
+            order.cancelled_at = datetime.fromtimestamp(cancelled_timestamp / 1000)
+        else:
+            order.cancelled_at = datetime.now()
+
+        await order_repository.update(order)
+        logger.info(f"Ордер {order.client_order_id} синхронизирован: Cancelled")
+
+        await audit_repository.log(
+            action=AuditAction.ORDER_MODIFY,
+            entity_type="Order",
+            entity_id=order.client_order_id,
+            old_value={"status": "Placed"},
+            new_value={"status": "Cancelled"},
+            reason="Auto-sync cancelled order",
+            success=True
+        )
+
+    async def _handle_missing_order(self, order):
+        """Обработать ордер, не найденный на бирже."""
+        order.status = OrderStatus.CANCELLED
+        order.cancelled_at = datetime.now()
+
+        if not order.metadata_json:
+            order.metadata_json = {}
+        order.metadata_json["cancellation_reason"] = "missing_from_exchange"
+
+        await order_repository.update(order)
+        logger.warning(f"Ордер {order.client_order_id} отменён (не найден на бирже)")
+
+        await audit_repository.log(
+            action=AuditAction.ORDER_MODIFY,
+            entity_type="Order",
+            entity_id=order.client_order_id,
+            new_value={"status": "Cancelled", "reason": "missing"},
+            reason="Order not found on exchange",
+            success=True
+        )
+
+    async def _check_and_fix_timeout_order(self, order):
+        """Проверить и исправить ордер с таймаутом."""
+        try:
+            exchange_order = await rest_client.get_order_by_id(
+                order.symbol,
+                order.exchange_order_id
+            )
+
+            if not exchange_order:
+                await self._handle_missing_order(order)
+                return
+
+            status = exchange_order.get("orderStatus", "")
+
+            if status == "Filled":
+                await self._sync_filled_order(order, exchange_order)
+            elif status in ["Cancelled", "Rejected"]:
+                await self._sync_cancelled_order(order, exchange_order)
+            else:
+                logger.info(f"Ордер {order.client_order_id} всё ещё активен")
+
+        except Exception as e:
+            logger.error(f"Ошибка проверки таймаут ордера: {e}", exc_info=True)
 
     # ==================== ВОССТАНОВЛЕНИЕ FSM ====================
 

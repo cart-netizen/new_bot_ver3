@@ -254,6 +254,19 @@ class Settings(BaseSettings):
     description="Проверка зависших ордеров"
   )
 
+  # ===== НОВЫЕ НАСТРОЙКИ =====
+  # Автоматическое исправление зависших ордеров
+  AUTO_FIX_HANGING_ORDERS: bool = Field(
+    default=True,
+    description="Автоматически исправлять зависшие ордера при обнаружении"
+  )
+
+  # Автоматическое создание позиций
+  AUTO_CREATE_POSITIONS_FROM_FILLED: bool = Field(
+    default=True,
+    description="Автоматически создавать позиции из исполненных ордеров"
+  )
+
   # Автоматически восстанавливать FSM при старте
   # Если True - все активные ордера и позиции получат FSM при старте системы
   ENABLE_FSM_AUTO_RESTORE: bool = Field(

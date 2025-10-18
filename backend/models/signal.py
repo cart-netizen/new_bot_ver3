@@ -80,12 +80,19 @@ class TradingSignal:
     return self.age_seconds < 60
 
   def to_dict(self) -> dict:
-    """Преобразование в словарь для API."""
+    """
+    Преобразование в словарь для API.
+
+    ИСПРАВЛЕНИЕ:
+    - Безопасная обработка Enum полей (если уже строка, не вызываем .value)
+    - Защита от AttributeError
+    """
     return {
       "symbol": self.symbol,
-      "signal_type": self.signal_type.value,
-      "strength": self.strength.value,
-      "source": self.source.value,
+      # ИСПРАВЛЕНИЕ: Проверяем тип перед вызовом .value
+      "signal_type": self.signal_type.value if hasattr(self.signal_type, 'value') else self.signal_type,
+      "strength": self.strength.value if hasattr(self.strength, 'value') else self.strength,
+      "source": self.source.value if hasattr(self.source, 'value') else self.source,
       "timestamp": self.timestamp,
       "datetime": datetime.fromtimestamp(self.timestamp / 1000).isoformat(),
       "price": self.price,

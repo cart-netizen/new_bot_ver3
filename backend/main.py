@@ -27,7 +27,7 @@ from ml_engine.detection.spoofing_detector import SpoofingConfig, SpoofingDetect
 from ml_engine.detection.sr_level_detector import SRLevelConfig, SRLevelDetector
 from ml_engine.integration.ml_signal_validator import ValidationConfig, MLSignalValidator
 from ml_engine.monitoring.drift_detector import DriftDetector
-from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
+# from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
 from screener.screener_manager import ScreenerManager
 from strategies.strategy_manager import StrategyManagerConfig, StrategyManager
 from strategy.candle_manager import CandleManager
@@ -963,6 +963,20 @@ class BotController:
 
                 # Отправляем на исполнение
                 await self.execution_manager.submit_signal(signal)
+
+                try:
+                  signal_dict = signal.to_dict()
+                  logger.debug(f"{symbol} | signal_dict успешно создан: {type(signal_dict)}")
+                  from api.websocket import broadcast_signal
+                  await broadcast_signal(signal_dict)
+                except Exception as e:
+                  logger.error(
+                    f"{symbol} | Ошибка broadcast_signal: {e}. "
+                    f"signal_type type: {type(signal.signal_type)}, "
+                    f"strength type: {type(signal.strength)}, "
+                    f"source type: {type(signal.source)}",
+                    exc_info=True
+                  )
 
                 # Уведомляем фронтенд
                 try:
