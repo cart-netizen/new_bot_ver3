@@ -18,6 +18,7 @@ from models.signal import (
   SignalStatistics
 )
 from config import settings
+from utils.helpers import safe_enum_value
 
 logger = get_logger(__name__)
 
@@ -88,7 +89,7 @@ class StrategyEngine:
 
           logger.info(
             f"{symbol} | Сгенерирован сигнал: "
-            f"{signal.signal_type.value} "
+            f"{safe_enum_value(signal.signal_type)} "
             f"(strength={signal.strength.value}, "
             f"confidence={signal.confidence:.2f}, "
             f"ml_enhanced={features is not None})"

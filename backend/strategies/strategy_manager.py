@@ -25,6 +25,7 @@ from strategies.momentum_strategy import MomentumStrategy, MomentumConfig
 from strategies.sar_wave_strategy import SARWaveStrategy, SARWaveConfig
 from strategies.supertrend_strategy import SuperTrendStrategy, SuperTrendConfig
 from strategies.volume_profile_strategy import VolumeProfileStrategy, VolumeProfileConfig
+from utils.helpers import safe_enum_value
 
 logger = get_logger(__name__)
 
@@ -175,7 +176,7 @@ class StrategyManager:
 
         if signal:
           logger.debug(
-            f"[{strategy_name}] Signal: {signal.signal_type.value}, "
+            f"[{strategy_name}] Signal: {safe_enum_value(signal.signal_type)}, "
             f"confidence={signal.confidence:.2f}"
           )
 

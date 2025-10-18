@@ -19,6 +19,7 @@ from datetime import datetime
 from core.logger import get_logger
 from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
 from strategy.candle_manager import Candle
+from utils.helpers import safe_enum_value
 
 logger = get_logger(__name__)
 
@@ -462,7 +463,7 @@ if __name__ == "__main__":
   signal = strategy.analyze("BTCUSDT", candles, candles[-1].close)
 
   if signal:
-    print(f"Signal generated: {signal.signal_type.value}")
+    print(f"Signal generated: {safe_enum_value(signal.signal_type)}")
     print(f"Confidence: {signal.confidence:.2f}")
     print(f"Reason: {signal.reason}")
     print(f"Metadata: {signal.metadata}")

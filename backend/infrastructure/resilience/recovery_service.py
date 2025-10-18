@@ -386,7 +386,7 @@ class RecoveryService:
                         new_value={"issue": issue_detected},
                         reason="Hanging order detected during recovery check",
                         success=True,
-                        metadata_json=hanging_order_info
+                        context=hanging_order_info
                     )
 
             # ========================================
@@ -939,27 +939,47 @@ class RecoveryService:
                                 f"✓ Призрачная позиция {symbol} прервана: {position_id}"
                             )
 
-                        elif position_fsm.can_transition_to(PositionStatus.CLOSING):
-                            # OPEN -> CLOSING -> CLOSED
-                            position_fsm.start_close()  # type: ignore[attr-defined]
+                        elif local_position.status == PositionStatus.OPEN:
+                            # ✅ ИСПРАВЛЕНО: Прямой переход OPEN -> CLOSING -> CLOSED
+                            # Проверяем доступность триггера start_close
+                            if hasattr(position_fsm, 'start_close'):
+                                # OPEN -> CLOSING
+                                position_fsm.start_close()  # type: ignore[attr-defined]
 
-                            await position_repository.update_status(
-                                position_id=position_id,
-                                new_status=PositionStatus.CLOSING
-                            )
+                                await position_repository.update_status(
+                                    position_id=position_id,
+                                    new_status=PositionStatus.CLOSING
+                                )
 
-                            position_fsm.confirm_close()  # type: ignore[attr-defined]
+                                # CLOSING -> CLOSED
+                                position_fsm.confirm_close()  # type: ignore[attr-defined]
 
-                            await position_repository.update_status(
-                                position_id=position_id,
-                                new_status=PositionStatus.CLOSED,
-                                exit_price=local_position.current_price or local_position.entry_price,
-                                exit_reason="Ghost position closed by RecoveryService (not found on exchange)"
-                            )
+                                await position_repository.update_status(
+                                    position_id=position_id,
+                                    new_status=PositionStatus.CLOSED,
+                                    exit_price=local_position.current_price or local_position.entry_price,
+                                    exit_reason="Ghost position closed by RecoveryService (not found on exchange)"
+                                )
 
-                            logger.info(
-                                f"✓ Призрачная позиция {symbol} закрыта: {position_id}"
-                            )
+                                logger.info(
+                                    f"✓ Призрачная позиция {symbol} закрыта: {position_id}"
+                                )
+                            else:
+                                # Fallback: Прямое обновление статуса без FSM
+                                logger.warning(
+                                    f"⚠ FSM не поддерживает start_close, обновляем статус напрямую"
+                                )
+
+                                await position_repository.update_status(
+                                    position_id=position_id,
+                                    new_status=PositionStatus.CLOSED,
+                                    exit_price=local_position.current_price or local_position.entry_price,
+                                    exit_reason="Ghost position closed by RecoveryService (not found on exchange, direct update)"
+                                )
+
+                                logger.info(
+                                    f"✓ Призрачная позиция {symbol} закрыта напрямую: {position_id}"
+                                )
 
                         else:
                             logger.warning(

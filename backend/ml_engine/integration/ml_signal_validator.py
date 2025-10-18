@@ -19,6 +19,7 @@ from collections import deque
 from core.logger import get_logger
 from models.signal import TradingSignal, SignalType, SignalStrength
 from ml_engine.features import FeatureVector
+from utils.helpers import safe_enum_value
 
 logger = get_logger(__name__)
 
@@ -348,7 +349,7 @@ class MLSignalValidator:
 
       if self.config.fallback_to_strategy:
         logger.info(
-          f"✓ Сигнал ВАЛИДИРОВАН {signal.symbol}: {signal.signal_type.value}, "
+          f"✓ Сигнал ВАЛИДИРОВАН {signal.symbol}: {safe_enum_value(signal.signal_type)}, "
           f"confidence={signal.confidence:.4f}, "
           f"agreement=False, "
           f"reason=ML unavailable, using strategy signal (fallback)"

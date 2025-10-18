@@ -48,6 +48,48 @@ from ml_engine.features import (
 )
 from ml_engine.data_collection import MLDataCollector  # НОВОЕ
 
+from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
+
+# Сохраняем оригинальный __post_init__
+_original_tradingsignal_post_init = TradingSignal.__post_init__
+
+
+def _patched_tradingsignal_post_init(self):
+  """
+  Патч для TradingSignal который автоматически конвертирует строки в Enum.
+
+  Это исправляет проблему когда signal_type/strength/source приходят как строки,
+  но код ожидает Enum и пытается использовать .value
+  """
+  # Вызываем оригинальный __post_init__
+  _original_tradingsignal_post_init(self)
+
+  # Конвертируем строки в Enum если нужно
+  if isinstance(self.signal_type, str):
+    try:
+      self.signal_type = SignalType(self.signal_type)
+    except (ValueError, KeyError):
+      # Если не можем сконвертировать, оставляем как есть
+      pass
+
+  if isinstance(self.strength, str):
+    try:
+      self.strength = SignalStrength(self.strength)
+    except (ValueError, KeyError):
+      pass
+
+  if isinstance(self.source, str):
+    try:
+      self.source = SignalSource(self.source)
+    except (ValueError, KeyError):
+      pass
+
+
+# Применяем патч
+TradingSignal.__post_init__ = _patched_tradingsignal_post_init
+
+print("✓ TradingSignal патч применен - все .value будут работать корректно")
+
 original_post_init = TradingSignal.__post_init__
 
 
@@ -767,7 +809,7 @@ class BotController:
 
                     logger.info(
                       f"🎯 Strategy Manager Consensus [{symbol}]: "
-                      f"{safe_enum_value(signal.signal_type)}, "  # ИСПРАВЛЕНО: signal.signal_type.value
+                      f"{safe_enum_value(signal.signal_type)}, "  
                       f"confidence={final_confidence:.2f}, "
                       f"strategies={contributing_strategies}"
                     )
@@ -786,7 +828,7 @@ class BotController:
                   if signal:
                     logger.debug(
                       f"🎯 Базовый сигнал [{symbol}]: "
-                      f"{signal.signal_type.value}, "
+                      f"{safe_enum_value(signal.signal_type)}, "
                       f"confidence={signal.confidence:.2f}"
                     )
                 except Exception as e:
@@ -849,7 +891,7 @@ class BotController:
                   logger.info(
                     f"✅ Сигнал подтвержден ML Validator [{symbol}]: "
                     f"source=ML_VALIDATED, "
-                    f"strength={signal.strength.value}, "
+                    f"strength={safe_enum_value(signal.strength)}, "
                     f"final_confidence={validation_result.final_confidence:.2f}"
                   )
               except Exception as e:
@@ -903,7 +945,7 @@ class BotController:
                   f"🎯 ФИНАЛЬНЫЙ СИГНАЛ [{symbol}]:",
                   f"{safe_enum_value(signal.signal_type)}",
                   f"confidence={signal.confidence:.2f}",
-                  f"strength={signal.strength.value}"
+                  f"strength={safe_enum_value(signal.strength)}"
                 ]
 
                 if consensus_info:
@@ -949,7 +991,7 @@ class BotController:
               try:
                 # Конвертируем SignalType enum в int для drift detector
                 # SignalType.BUY -> 1, SignalType.SELL -> 2, SignalType.HOLD -> 0
-                signal_type_value = signal.signal_type.value  # Получаем строку "BUY", "SELL", "HOLD"
+                signal_type_value = safe_enum_value(signal.signal_type)  # Получаем строку "BUY", "SELL", "HOLD"
                 signal_type_map = {
                   "BUY": 1,
                   "SELL": 2,
@@ -998,9 +1040,9 @@ class BotController:
                   orderbook_snapshot=snapshot,
                   market_metrics=metrics,
                   executed_signal={
-                    "type": signal.signal_type.value,  # Получаем строковое значение enum
+                    "type": safe_enum_value(signal.signal_type),  # Получаем строковое значение enum
                     "confidence": signal.confidence,
-                    "strength": signal.strength.value,  # Тоже enum
+                    "strength": safe_enum_value(signal.strength),  # Тоже enum
                   } if signal else None
                 )
               except Exception as e:
