@@ -33,33 +33,52 @@ class IdempotencyService:
     logger.info(f"Idempotency Service инициализирован (TTL: {default_ttl_minutes}m)")
 
   def generate_client_order_id(
-      self,
-      symbol: str,
-      side: str,
-      quantity: float,
-      price: Optional[float] = None,
-  ) -> str:
-    """
-    Генерация уникального Client Order ID.
+        self,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: Optional[float] = None,
+    ) -> str:
+      """
+      Генерация уникального Client Order ID (максимум 45 символов для Bybit).
 
-    Args:
-        symbol: Торговая пара
-        side: Сторона (Buy/Sell)
-        quantity: Количество
-        price: Цена (опционально)
+      Формат: SYMBOL_Side_YYMMDDHHMMSS_UUID
+      Пример: BTCUSDT_Buy_251018112220_a1b2c3d4
+      Длина: ~35-40 символов (в зависимости от длины символа)
 
-    Returns:
-        str: Уникальный Client Order ID
-    """
-    # Создаем короткий уникальный ID
-    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
-    unique_part = uuid.uuid4().hex[:8]
+      КРИТИЧНО: Bybit ограничивает orderLinkId до 45 символов!
+      """
+      # ИСПРАВЛЕНИЕ: Укороченный timestamp (12 символов вместо 20)
+      timestamp = datetime.utcnow().strftime("%y%m%d%H%M%S")  # YYMMDDHHmmss = 12 символов
 
-    # Формат: SYMBOL_SIDE_TIMESTAMP_UNIQUE
-    client_order_id = f"{symbol}_{side}_{timestamp}_{unique_part}"
+      # UUID остается 8 символов
+      unique_part = uuid.uuid4().hex[:8]
 
-    logger.debug(f"Сгенерирован Client Order ID: {client_order_id}")
-    return client_order_id
+      # Укороченный Side (B/S вместо Buy/Sell)
+      side_short = side[0]  # "B" или "S"
+
+      # Формат: SYMBOL_S_YYMMDDHHMMSS_UUID
+      # Пример: BTCUSDT_B_251018112220_a1b2c3d4
+      # Длина для BTCUSDT: 7 + 1 + 1 + 1 + 12 + 1 + 8 = 31 символ ✅
+      # Длина для 1000RATSUSDT: 13 + 1 + 1 + 1 + 12 + 1 + 8 = 37 символов ✅
+      client_order_id = f"{symbol}_{side_short}_{timestamp}_{unique_part}"
+
+      logger.debug(
+        f"Сгенерирован Client Order ID: {client_order_id} "
+        f"(длина: {len(client_order_id)} символов)"
+      )
+
+      # ПРОВЕРКА: Если длина все еще > 45, обрезаем symbol
+      if len(client_order_id) > 45:
+        # Обрезаем symbol до нужной длины
+        max_symbol_len = 45 - (1 + 1 + 1 + 12 + 1 + 8)  # = 21 символ для symbol
+        symbol_short = symbol[:max_symbol_len]
+        client_order_id = f"{symbol_short}_{side_short}_{timestamp}_{unique_part}"
+        logger.warning(
+          f"Client Order ID обрезан до 45 символов: {client_order_id}"
+        )
+
+      return client_order_id
 
   def generate_idempotency_key(
       self,

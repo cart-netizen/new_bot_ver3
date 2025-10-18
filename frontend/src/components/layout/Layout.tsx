@@ -19,6 +19,22 @@ import {useScreenerStore} from "@/store/screenerStore";
  * ВАЖНО: Правильно обрабатывает React Strict Mode,
  * который в dev режиме монтирует/размонтирует компоненты дважды.
  */
+const lastNotificationTime = new Map<string, number>();
+const NOTIFICATION_COOLDOWN = 3 * 60 * 1000; // 3 минуты в миллисекундах
+
+// Функция проверки throttling
+const shouldShowNotification = (symbol: string): boolean => {
+  const now = Date.now();
+  const lastTime = lastNotificationTime.get(symbol) || 0;
+
+  if (now - lastTime < NOTIFICATION_COOLDOWN) {
+    return false; // Пропускаем
+  }
+
+  lastNotificationTime.set(symbol, now);
+  return true; // Показываем
+};
+
 export function Layout() {
   const { token, isAuthenticated } = useAuthStore();
   const { updateOrderBook, updateMetrics, setConnected } = useMarketStore();
@@ -108,10 +124,14 @@ export function Layout() {
 
       // Новый торговый сигнал
       onTradingSignal: (signal) => {
-        addSignal(signal);
-        toast.info(`Сигнал: ${signal.signal_type} ${signal.symbol}`, {
-          description: signal.reason,
-        });
+        addSignal(signal); // Всегда добавляем сигнал в стор
+
+        // Показываем уведомление только если прошло 3 минуты
+        if (shouldShowNotification(signal.symbol)) {
+          toast.info(`Сигнал: ${signal.signal_type} ${signal.symbol}`, {
+            description: signal.reason,
+          });
+        }
       },
 
       // Ошибка

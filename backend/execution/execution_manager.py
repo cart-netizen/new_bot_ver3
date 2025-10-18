@@ -122,7 +122,89 @@ class ExecutionManager:
         self.stats["total_signals"] += 1
         logger.debug(f"{signal.symbol} | Сигнал добавлен в очередь исполнения")
 
+    async def _sync_positions_with_exchange(self):
+        """
+        Синхронизация локальных позиций с реальным состоянием на бирже.
+
+        Критично для случаев когда:
+        - Позиции закрыты вручную через биржу
+        - Произошел рестарт бота
+        - WebSocket пропустил событие
+        """
+        try:
+            logger.debug("🔄 Синхронизация позиций с биржей...")
+
+            # Запрашиваем актуальные позиции с биржи
+            exchange_positions = await rest_client.get_positions()
+
+            if not exchange_positions:
+                logger.debug("Нет открытых позиций на бирже")
+                # Очищаем локальный стейт если на бирже пусто
+                if self.risk_manager.open_positions:
+                    logger.warning(
+                        f"⚠️ Локально {len(self.risk_manager.open_positions)} позиций, "
+                        f"на бирже 0 → очищаем локальный стейт"
+                    )
+                    self.risk_manager.open_positions.clear()
+                    self.risk_manager.metrics.open_positions_count = 0
+                    self.risk_manager.metrics.total_exposure_usdt = 0.0
+                return
+
+            # Получаем символы открытых позиций на бирже
+            exchange_symbols = {
+                pos.get("symbol") for pos in exchange_positions
+                if float(pos.get("size", 0)) > 0
+            }
+
+            # Получаем символы из локального стейта
+            local_symbols = set(self.risk_manager.open_positions.keys())
+
+            # Находим расхождения
+            missing_locally = exchange_symbols - local_symbols  # На бирже есть, локально нет
+            missing_on_exchange = local_symbols - exchange_symbols  # Локально есть, на бирже нет
+
+            # Удаляем локальные позиции которых нет на бирже
+            for symbol in missing_on_exchange:
+                logger.warning(
+                    f"⚠️ Позиция {symbol} закрыта на бирже, удаляем из локального стейта"
+                )
+                self.risk_manager.register_position_closed(symbol)
+
+            # Добавляем позиции которые есть на бирже но нет локально
+            for symbol in missing_locally:
+                pos_data = next(
+                    (p for p in exchange_positions if p.get("symbol") == symbol),
+                    None
+                )
+                if pos_data:
+                    size = float(pos_data.get("size", 0))
+                    entry_price = float(pos_data.get("avgPrice", 0))
+                    side = SignalType.BUY if pos_data.get("side") == "Buy" else SignalType.SELL
+
+                    logger.warning(
+                        f"⚠️ Позиция {symbol} найдена на бирже, добавляем в локальный стейт"
+                    )
+                    self.risk_manager.register_position_opened(
+                        symbol=symbol,
+                        side=side,
+                        size_usdt=size * entry_price,
+                        entry_price=entry_price,
+                        leverage=10
+                    )
+
+            logger.debug(
+                f"✓ Синхронизация завершена: "
+                f"локально={len(self.risk_manager.open_positions)}, "
+                f"на бирже={len(exchange_symbols)}"
+            )
+
+        except Exception as e:
+            logger.error(f"Ошибка синхронизации позиций: {e}", exc_info=True)
+            # Не падаем, продолжаем работу с текущим стейтом
+
     # ==================== УПРАВЛЕНИЕ ПОЗИЦИЯМИ ====================
+
+
 
     async def open_position(
         self,
@@ -635,6 +717,8 @@ class ExecutionManager:
         # ============================================
         # ШАГ 0.0: ПРОВЕРКА ЛИМИТА ПОЗИЦИЙ
         # ============================================
+        await self._sync_positions_with_exchange()
+
         current_positions = self.risk_manager.metrics.open_positions_count
         max_positions = self.risk_manager.limits.max_open_positions
 

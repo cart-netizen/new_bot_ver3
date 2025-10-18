@@ -681,27 +681,23 @@ class RecoveryService:
         """
         Создать позицию из исполненного ордера.
 
-        ИСПРАВЛЕНО: Использует update_position_link() вместо update()
+        ИСПРАВЛЕНО: Вызов create() с отдельными параметрами, а не объектом Position
         """
-        from database.models import Position
-
-        position = Position(
+        # ИСПРАВЛЕНИЕ: Вызываем create() с параметрами
+        saved_position = await position_repository.create(
             symbol=order.symbol,
             side=order.side,
-            status=PositionStatus.OPEN,
             quantity=order.filled_quantity,
             entry_price=order.average_fill_price,
-            current_price=order.average_fill_price,
             stop_loss=order.stop_loss,
             take_profit=order.take_profit,
-            opened_at=order.filled_at or datetime.now(),
-            entry_reason=f"Recovery: {order.client_order_id}",
-            entry_signal=order.signal_data
+            entry_signal=order.signal_data,
+            entry_market_data=order.market_data,
+            entry_indicators=order.indicators,
+            entry_reason=f"Recovery: {order.client_order_id}"
         )
 
-        saved_position = await position_repository.create(position)
-
-        # ИСПРАВЛЕНИЕ: Используем update_position_link()
+        # Связываем ордер с позицией
         success = await order_repository.update_position_link(
             client_order_id=order.client_order_id,
             position_id=str(saved_position.id)
@@ -718,17 +714,23 @@ class RecoveryService:
             f"{order.filled_quantity} @ {order.average_fill_price:.8f}"
         )
 
+        # Audit log
         await audit_repository.log(
             action=AuditAction.POSITION_OPEN,
             entity_type="Position",
             entity_id=str(saved_position.id),
             new_value={
-                "symbol": position.symbol,
-                "side": position.side.value,
-                "quantity": position.quantity
+                "symbol": order.symbol,
+                "side": order.side.value,
+                "quantity": order.filled_quantity,
+                "entry_price": order.average_fill_price
             },
             reason="Auto-created from hanging order",
-            success=True
+            success=True,
+            context={
+                "source_order_id": str(order.id),
+                "source_client_order_id": order.client_order_id
+            }
         )
 
         return saved_position

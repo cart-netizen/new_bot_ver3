@@ -981,9 +981,18 @@ class BotController:
                 # Уведомляем фронтенд
                 try:
                   from api.websocket import broadcast_signal
-                  await broadcast_signal(signal.to_dict())
+                  if isinstance(signal, TradingSignal):
+                    signal_dict = signal.to_dict()
+                  else:
+                    signal_dict = signal  # Уже dict
+
+                  await broadcast_signal(signal_dict)
                 except Exception as e:
-                  logger.error(f"{symbol} | Ошибка broadcast_signal: {e}")
+                  logger.error(
+                    f"{symbol} | Ошибка broadcast_signal: {e}. "
+                    f"Тип signal: {type(signal)}",
+                    exc_info=True
+                  )
 
               except AttributeError as e:
                 logger.error(

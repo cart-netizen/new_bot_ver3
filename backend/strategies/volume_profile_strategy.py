@@ -444,11 +444,11 @@ class VolumeProfileStrategy:
     self.active_signals[symbol] = signal
     self.signals_generated += 1
 
-    logger.info(
-      f"📊 VOLUME PROFILE SIGNAL [{symbol}]: {signal_type.value}, "
-      f"confidence={confidence:.2f}, "
-      f"POC=${profile.poc_price:.2f}"
-    )
+    # logger.info(
+    #   f"📊 VOLUME PROFILE SIGNAL [{symbol}]: {signal_type.value}, "
+    #   f"confidence={confidence:.2f}, "
+    #   f"POC=${profile.poc_price:.2f}"
+    # )
 
     return signal
 
