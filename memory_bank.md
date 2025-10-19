@@ -1765,3 +1765,58 @@ logger.debug(f"{signal.symbol} | Processing {signal.signal_type.value}")
      └─ Неизвестный тип?
             ↓ ДА
             └─ Error / Warning + return
+
+Компонент 2: Correlation Manager
+
+┌─────────────────────────────────────────────┐
+│         Correlation Manager                 │
+├─────────────────────────────────────────────┤
+│ 1. Расчет Rolling Correlation (30 days)    │
+│    • Pearson correlation coefficient       │
+│    • Динамическое обновление               │
+│                                             │
+│ 2. Группировка по корреляции               │
+│    • Threshold: 0.7 (configurable)         │
+│    • Динамические группы                   │
+│                                             │
+│ 3. Лимиты на группу                        │
+│    • Max 1-2 позиции per group             │
+│    • Предупреждения при превышении         │
+│                                             │
+│ 4. Интеграция с Risk Manager               │
+│    • Проверка перед открытием              │
+│    • Автоматическое обновление при закрытии│
+└─────────────────────────────────────────────┘
+
+Архитектура
+Компоненты
+
+CorrelationCalculator - расчет корреляций
+CorrelationGroupManager - управление группами
+CorrelationValidator - валидация перед открытием позиции
+CorrelationCache - кеширование результатов
+
+Алгоритм Работы
+python# Шаг 1: Инициализация (при старте бота)
+correlation_manager.initialize(symbols)
+  → Загрузить исторические данные (30 дней)
+  → Рассчитать correlation matrix
+  → Сформировать группы (threshold > 0.7)
+
+# Шаг 2: Перед открытием позиции
+can_open, reason = correlation_manager.can_open_position(symbol)
+  → Найти группу для symbol
+  → Проверить лимит позиций в группе
+  → Вернуть разрешение/отказ
+
+# Шаг 3: При закрытии позиции
+correlation_manager.notify_position_closed(symbol)
+  → Обновить счетчик позиций в группе
+  → Логировать изменение
+
+# Шаг 4: Периодическое обновление (раз в день)
+correlation_manager.update_correlations()
+  → Получить свежие данные (30 дней)
+  → Пересчитать correlation matrix
+  → Перегруппировать символы
+  → Уведомить если структура изменилась

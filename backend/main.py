@@ -31,6 +31,7 @@ from ml_engine.monitoring.drift_detector import DriftDetector
 from screener.screener_manager import ScreenerManager
 from strategies.strategy_manager import StrategyManagerConfig, StrategyManager
 from strategy.candle_manager import CandleManager
+from strategy.correlation_manager import correlation_manager
 from strategy.orderbook_manager import OrderBookManager
 from strategy.analyzer import MarketAnalyzer
 from strategy.strategy_engine import StrategyEngine
@@ -213,6 +214,9 @@ class BotController:
     self.dynamic_symbols_manager: Optional[DynamicSymbolsManager] = None
     self.symbols_refresh_task: Optional[asyncio.Task] = None
 
+    # Task для обновления корреляций ==========
+    self.correlation_update_task: Optional[asyncio.Task] = None
+
     self.running = False
 
     logger.info("Инициализирован контроллер бота с ML поддержкой")
@@ -277,6 +281,10 @@ class BotController:
 
       # Инициализируем менеджер исполнения
 
+      # Передаем список торгуемых символов
+      await correlation_manager.initialize(self.symbols)
+
+      logger.info("✓ CorrelationManager инициализирован")
 
       logger.info("=" * 80)
       logger.info("БАЗОВЫЕ КОМПОНЕНТЫ ИНИЦИАЛИЗИРОВАНЫ (БЕЗ WEBSOCKET)")
@@ -427,6 +435,13 @@ class BotController:
           self._symbols_refresh_loop()
         )
         logger.info("✓ Задача обновления списка пар запущена")
+
+      # ========== НОВОЕ: Запуск периодического обновления корреляций ==========
+      self.correlation_update_task = asyncio.create_task(
+        self._periodic_correlation_update()
+      )
+
+      logger.info("✓ Запущено периодическое обновление корреляций")
 
       # Уведомляем фронтенд
       from api.websocket import broadcast_bot_status
@@ -1145,6 +1160,14 @@ class BotController:
         await self.balance_tracker.stop()
         logger.info("✓ Трекер баланса остановлен")
 
+      # ========== Остановка обновления корреляций ==========
+      if self.correlation_update_task:
+        self.correlation_update_task.cancel()
+        try:
+          await self.correlation_update_task
+        except asyncio.CancelledError:
+          pass
+
       if self.symbols_refresh_task:
         self.symbols_refresh_task.cancel()
         try:
@@ -1169,6 +1192,33 @@ class BotController:
       logger.error(f"Ошибка остановки бота: {e}")
       log_exception(logger, e, "Остановка бота")
       raise
+
+  async def _periodic_correlation_update(self):
+    """
+    Периодическое обновление корреляций (раз в день).
+    """
+    while True:
+      try:
+        # Ждем 24 часа
+        await asyncio.sleep(24 * 3600)
+
+        logger.info("🔄 Запуск периодического обновления корреляций...")
+
+        # Обновляем корреляции
+        await correlation_manager.update_correlations(self.symbols)
+
+        logger.info("✓ Корреляции обновлены")
+
+      except asyncio.CancelledError:
+        logger.info("Остановка обновления корреляций")
+        break
+      except Exception as e:
+        logger.error(
+          f"Ошибка при обновлении корреляций: {e}",
+          exc_info=True
+        )
+        # Продолжаем работу при ошибке
+        await asyncio.sleep(3600)  # Повтор через час
 
   async def _handle_orderbook_message(self, data: Dict[str, Any]):
     """

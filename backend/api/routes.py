@@ -19,6 +19,7 @@ from infrastructure.resilience.rate_limiter import rate_limiter
 
 from models.user import LoginRequest, LoginResponse, ChangePasswordRequest
 from config import settings
+from strategy.correlation_manager import correlation_manager
 from utils.balance_tracker import balance_tracker
 
 logger = get_logger(__name__)
@@ -1206,6 +1207,47 @@ async def get_screener_stats(current_user: dict = Depends(require_auth)):
 
   except Exception as e:
     logger.error(f"Ошибка получения статистики скринера: {e}")
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=str(e)
+    )
+
+
+@trading_router.get("/correlation/statistics")
+async def get_correlation_statistics(current_user: dict = Depends(require_auth)):
+  """
+  Получение статистики корреляций.
+
+  Returns:
+      dict: Статистика корреляционных групп
+  """
+  try:
+    stats = correlation_manager.get_statistics()
+    return stats
+  except Exception as e:
+    logger.error(f"Ошибка получения статистики корреляций: {e}")
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=str(e)
+    )
+
+
+@trading_router.get("/correlation/groups")
+async def get_correlation_groups(current_user: dict = Depends(require_auth)):
+  """
+  Получение детальной информации о корреляционных группах.
+
+  Returns:
+      dict: Список групп с деталями
+  """
+  try:
+    groups = correlation_manager.get_group_details()
+    return {
+      "groups": groups,
+      "total": len(groups)
+    }
+  except Exception as e:
+    logger.error(f"Ошибка получения групп корреляций: {e}")
     raise HTTPException(
       status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
       detail=str(e)

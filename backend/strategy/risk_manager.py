@@ -16,6 +16,7 @@ from core.logger import get_logger
 from core.exceptions import RiskManagementError
 from models.signal import TradingSignal, SignalType
 from config import settings
+from strategy.correlation_manager import correlation_manager
 
 logger = get_logger(__name__)
 
@@ -97,6 +98,14 @@ class RiskManager:
 
     # Трекинг открытых позиций
     self.open_positions: Dict[str, Dict] = {}
+
+    # ========== НОВОЕ: Интеграция CorrelationManager ==========
+    self.correlation_manager = correlation_manager
+
+    logger.info(
+      f"Risk Manager инициализирован с CorrelationManager: "
+      f"enabled={self.correlation_manager.enabled}"
+    )
 
     logger.info(
       f"🛡️ Инициализирован Risk Manager: "
@@ -242,6 +251,18 @@ class RiskManager:
           logger.warning(f"{signal.symbol} | {reason}")
           return False, reason
 
+        # ========== НОВОЕ: Проверка корреляционных лимитов ==========
+        can_open_corr, corr_reason = self.correlation_manager.can_open_position(
+          symbol=signal.symbol,
+          position_size_usdt=position_size_usdt
+        )
+
+        if not can_open_corr:
+          logger.warning(
+            f"{signal.symbol} | Отклонено из-за корреляции: {corr_reason}"
+          )
+          return False, corr_reason
+
         logger.debug(
           f"{signal.symbol} | ✓ Сигнал прошел валидацию: "
           f"position={position_size_usdt:.2f} USDT, "
@@ -386,6 +407,15 @@ class RiskManager:
     if size_usdt > self.metrics.largest_position_size:
       self.metrics.largest_position_size = size_usdt
 
+    self.correlation_manager.notify_position_opened(
+      symbol=symbol,
+      exposure_usdt=size_usdt
+    )
+
+    logger.debug(
+      f"{symbol} | Позиция зарегистрирована в CorrelationManager"
+    )
+
     logger.info(
       f"{symbol} | ✓ Позиция зарегистрирована: "
       f"{side.value} {size_usdt:.2f} USDT @ {entry_price:.8f} "
@@ -424,6 +454,15 @@ class RiskManager:
         )
       else:
         self.metrics.largest_position_size = 0.0
+
+      self.correlation_manager.notify_position_closed(
+        symbol=symbol,
+        exposure_usdt=exposure_usdt
+      )
+
+      logger.debug(
+        f"{symbol} | Закрытие позиции зарегистрировано в CorrelationManager"
+      )
 
       logger.info(
         f"{symbol} | ✓ Позиция закрыта: освобождено {actual_margin:.2f} USDT margin"
