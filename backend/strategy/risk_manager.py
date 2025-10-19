@@ -104,6 +104,10 @@ class RiskManager:
     # ========== НОВОЕ: Интеграция CorrelationManager ==========
     self.correlation_manager = correlation_manager
 
+    self.maintenance_margin_rate = 0.2  # 20% для Bybit
+    self.min_notional_value = 5.0  # Минимум notional в USDT
+    self.default_leverage = 10
+
     logger.info(
       f"Risk Manager инициализирован с CorrelationManager: "
       f"enabled={self.correlation_manager.enabled}"
