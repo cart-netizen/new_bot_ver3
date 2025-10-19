@@ -17,6 +17,7 @@ from exchange.rest_client import rest_client
 from infrastructure.resilience.circuit_breaker import circuit_breaker_manager
 from infrastructure.resilience.rate_limiter import rate_limiter
 
+
 from models.user import LoginRequest, LoginResponse, ChangePasswordRequest
 from config import settings
 from strategy.correlation_manager import correlation_manager
@@ -1252,3 +1253,34 @@ async def get_correlation_groups(current_user: dict = Depends(require_auth)):
       status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
       detail=str(e)
     )
+
+
+@trading_router.get("/risk/adaptive-stats")
+async def get_adaptive_risk_stats(current_user: dict = Depends(require_auth)):
+  """API endpoint для статистики Adaptive Risk."""
+
+  from main import bot_controller
+  from config import settings
+
+  # Получаем статистику
+  stats = bot_controller.risk_manager.get_adaptive_risk_statistics()
+
+  return {
+    "mode": settings.RISK_PER_TRADE_MODE,
+    "config": {
+      "base_percent": settings.RISK_PER_TRADE_BASE_PERCENT,
+      "max_percent": settings.RISK_PER_TRADE_MAX_PERCENT,
+      "kelly_fraction": settings.RISK_KELLY_FRACTION,
+      "volatility_scaling": settings.RISK_VOLATILITY_SCALING,
+      "win_rate_scaling": settings.RISK_WIN_RATE_SCALING,
+      "correlation_penalty": settings.RISK_CORRELATION_PENALTY
+    },
+    "statistics": {
+      "total_trades": stats['total_trades'],
+      "win_rate": round(stats['win_rate'], 4),
+      "avg_win": round(stats['avg_win'], 2),
+      "avg_loss": round(stats['avg_loss'], 2),
+      "payoff_ratio": round(stats['payoff_ratio'], 2)
+    },
+    "kelly_available": stats['total_trades'] >= settings.RISK_KELLY_MIN_TRADES
+  }

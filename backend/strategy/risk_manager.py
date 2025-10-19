@@ -16,6 +16,7 @@ from core.logger import get_logger
 from core.exceptions import RiskManagementError
 from models.signal import TradingSignal, SignalType
 from config import settings
+from strategy.adaptive_risk_calculator import adaptive_risk_calculator
 from strategy.correlation_manager import correlation_manager
 from strategy.daily_loss_killer import daily_loss_killer
 
@@ -291,96 +292,143 @@ class RiskManager:
         raise RiskManagementError(f"Failed to validate signal: {str(e)}")
 
   def calculate_position_size(
-        self,
-        signal: TradingSignal,
-        available_balance: float,  # РЕАЛЬНЫЙ баланс передается явно!
-        leverage: Optional[int] = None
-    ) -> float:
-      """
-      Расчет размера позиции с учетом РЕАЛЬНОГО баланса.
+      self,
+      signal: TradingSignal,
+      available_balance: float,
+      stop_loss_price: float,  # НОВЫЙ ПАРАМЕТР: обязательный
+      leverage: Optional[int] = None,
+      current_volatility: Optional[float] = None,
+      ml_confidence: Optional[float] = None
+  ) -> float:
+    """
+    Расчет размера позиции с адаптивным риском.
 
-      КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Теперь НЕ используем self.metrics.available_exposure_usdt
-      в расчётах, а используем переданный available_balance!
-      """
-      if leverage is None:
-        leverage = self.limits.default_leverage
+    КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Теперь использует AdaptiveRiskCalculator
+    для динамического расчета размера на основе множества факторов.
 
-      logger.debug(
-        f"{signal.symbol} | Расчет размера позиции: "
-        f"real_balance={available_balance:.2f} USDT, "
-        f"leverage={leverage}x"
+    Args:
+        signal: Торговый сигнал
+        available_balance: Доступный баланс в USDT (РЕАЛЬНЫЙ!)
+        stop_loss_price: Цена stop loss (ОБЯЗАТЕЛЬНО!)
+        leverage: Кредитное плечо (опционально)
+        current_volatility: Текущая волатильность (опционально)
+        ml_confidence: ML уверенность (опционально)
+
+    Returns:
+        float: Размер позиции в USDT
+    """
+    logger.debug(
+      f"{signal.symbol} | Calculating position size: "
+      f"balance={available_balance:.2f}, "
+      f"entry={signal.price:.8f}, "
+      f"sl={stop_loss_price:.8f}"
+    )
+
+    # Проверяем correlation factor
+    correlation_factor = 1.0
+
+    try:
+      # Получаем группу для символа
+      group = self.correlation_manager.group_manager.get_group_for_symbol(
+        signal.symbol
       )
 
-      # ШАГ 1: Базовый размер - 5% от РЕАЛЬНОГО ДОСТУПНОГО баланса
-      base_size = available_balance * 0.05
+      if group and group.active_positions > 0:
+        # Если в группе уже есть позиции - применяем штраф
+        # Чем больше позиций в коррелирующей группе, тем меньше risk
+        correlation_factor = 1.0 / (1.0 + group.active_positions * 0.3)
 
-      logger.debug(
-        f"{signal.symbol} | Базовый размер (5% от real balance): "
-        f"{base_size:.2f} USDT"
-      )
-
-      # ШАГ 2: Корректируем на основе силы сигнала
-      strength_multiplier = {
-        "STRONG": 1.0,
-        "MEDIUM": 0.7,
-        "WEAK": 0.5
-      }.get(signal.strength.value, 0.5)
-
-      position_size_before_leverage = base_size * strength_multiplier
-
-      logger.debug(
-        f"{signal.symbol} | Размер с учетом силы ({signal.strength.value}): "
-        f"{position_size_before_leverage:.2f} USDT (mult={strength_multiplier})"
-      )
-
-      # ШАГ 3: Применяем кредитное плечо
-      position_size_with_leverage = position_size_before_leverage * leverage
-
-      logger.debug(
-        f"{signal.symbol} | Размер с плечом {leverage}x: "
-        f"{position_size_with_leverage:.2f} USDT"
-      )
-
-      # ШАГ 4: Проверяем минимальный размер
-      if position_size_with_leverage < self.limits.min_order_size_usdt:
-        logger.warning(
-          f"{signal.symbol} | Размер {position_size_with_leverage:.2f} USDT "
-          f"< минимального {self.limits.min_order_size_usdt} USDT"
+        logger.debug(
+          f"{signal.symbol} | Correlation penalty applied: "
+          f"group={group.group_id}, "
+          f"active_positions={group.active_positions}, "
+          f"factor={correlation_factor:.2f}"
         )
+    except Exception as e:
+      logger.warning(f"{signal.symbol} | Error checking correlation: {e}")
+      correlation_factor = 1.0
 
-        position_size_with_leverage = self.limits.min_order_size_usdt
+    # Рассчитываем adaptive risk
+    risk_params = adaptive_risk_calculator.calculate(
+      signal=signal,
+      balance=available_balance,
+      stop_loss_price=stop_loss_price,
+      current_volatility=current_volatility,
+      correlation_factor=correlation_factor,
+      ml_confidence=ml_confidence
+    )
 
-        logger.info(
-          f"{signal.symbol} | ✓ Размер увеличен до минимального: "
-          f"{position_size_with_leverage:.2f} USDT"
-        )
+    # Применяем leverage
+    if leverage is None:
+      leverage = self.limits.default_leverage
 
-      # ШАГ 5: Ограничиваем максимумами
-      # Не можем открыть больше реального баланса с плечом
-      max_by_balance = available_balance * leverage
-      position_size_with_leverage = min(position_size_with_leverage, max_by_balance)
+    # Размер позиции с учетом leverage
+    position_size_usdt = risk_params.max_position_usdt * leverage
 
-      # Расчет фактического margin
-      actual_margin = position_size_with_leverage / leverage
+    # Проверка минимального размера
+    min_size = self.limits.min_order_size_usdt * leverage
 
-      # Проверяем что хватает margin
-      if actual_margin > available_balance:
-        logger.error(
-          f"{signal.symbol} | ❌ Недостаточно margin: "
-          f"требуется {actual_margin:.2f} USDT, доступно {available_balance:.2f} USDT"
-        )
-        # Возвращаем максимально возможный размер
-        position_size_with_leverage = available_balance * leverage
-        actual_margin = available_balance
-
-      logger.info(
-        f"{signal.symbol} | 📊 ФИНАЛЬНЫЙ РАЗМЕР: "
-        f"{position_size_with_leverage:.2f} USDT "
-        f"(margin: {actual_margin:.2f} USDT, leverage: {leverage}x, "
-        f"strength: {signal.strength.value})"
+    if position_size_usdt < min_size:
+      logger.warning(
+        f"{signal.symbol} | Position size {position_size_usdt:.2f} USDT "
+        f"< minimum {min_size:.2f} USDT (with leverage {leverage}x)"
       )
+      position_size_usdt = min_size
 
-      return position_size_with_leverage
+    # Проверка максимального размера (не превышаем balance)
+    max_size = available_balance * leverage
+    if position_size_usdt > max_size:
+      logger.warning(
+        f"{signal.symbol} | Position size {position_size_usdt:.2f} USDT "
+        f"> maximum {max_size:.2f} USDT, capping"
+      )
+      position_size_usdt = max_size
+
+    logger.info(
+      f"{signal.symbol} | ✓ Adaptive Risk calculated: "
+      f"final_risk={risk_params.final_risk_percent:.2%}, "
+      f"position=${position_size_usdt:.2f} USDT "
+      f"(leverage={leverage}x, "
+      f"vol_adj={risk_params.volatility_adjustment:.2f}, "
+      f"corr_adj={risk_params.correlation_adjustment:.2f})"
+    )
+
+    return position_size_usdt
+
+  # ==============================================================
+  # НОВЫЙ МЕТОД: Запись результата трейда
+  # ==============================================================
+
+  def record_trade_result(self, is_win: bool, pnl: float):
+    """
+    Запись результата закрытого трейда для статистики.
+
+    Используется для:
+    - Kelly Criterion расчетов
+    - Adaptive win rate adjustment
+
+    Args:
+        is_win: Прибыльный ли трейд
+        pnl: P&L в USDT
+    """
+    adaptive_risk_calculator.record_trade(is_win, pnl)
+
+    logger.debug(
+      f"Trade result recorded: win={is_win}, pnl={pnl:.2f} USDT"
+    )
+
+  # ==============================================================
+  # НОВЫЙ МЕТОД: Получение статистики Adaptive Risk
+  # ==============================================================
+
+  def get_adaptive_risk_statistics(self) -> dict:
+    """
+    Получение статистики Adaptive Risk Calculator.
+
+    Returns:
+        dict: Статистика с win_rate, payoff_ratio и т.д.
+    """
+    return adaptive_risk_calculator.get_statistics()
 
   def register_position_opened(
       self,

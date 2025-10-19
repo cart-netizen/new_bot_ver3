@@ -730,6 +730,19 @@ class ExecutionManager:
 
                 logger.info(f"💰 Realized PnL: {realized_pnl:.2f} USDT")
 
+                is_win = realized_pnl > 0
+                # ===== Записываем результат для Adaptive Risk =====
+                self.risk_manager.record_trade_result(
+                    is_win=is_win,
+                    pnl=realized_pnl
+                )
+
+                logger.info(
+                    f"{position.symbol} | Trade result recorded: "
+                    f"win={is_win}, pnl={realized_pnl:.2f} USDT"
+                )
+
+
                 # 6. УДАЛЕНИЕ ИЗ RISK MANAGER
                 # ✅ ИСПРАВЛЕНО: Убран аргумент realized_pnl
                 self.risk_manager.register_position_closed(symbol=symbol)
@@ -788,9 +801,10 @@ class ExecutionManager:
         Исполнение торгового сигнала.
 
         ИСПРАВЛЕНИЯ:
-        1. Добавлена валидация и округление quantity
-        2. Добавлена проверка минимального размера ордера (5 USDT)
-        3. Улучшено логирование всех расчетов
+        1. ✅ Правильный порядок: SL/TP → Position Size
+        2. Добавлена валидация и округление quantity
+        3. Добавлена проверка минимального размера ордера
+        4. Улучшено логирование всех расчетов
 
         Args:
             signal: Торговый сигнал
@@ -865,35 +879,207 @@ class ExecutionManager:
             )
 
             # ==========================================
-            # ШАГ 3: РАСЧЕТ РАЗМЕРА ПОЗИЦИИ
+            # ШАГ 3: ВАЛИДАЦИЯ SIGNAL_TYPE И ОПРЕДЕЛЕНИЕ SIDE
             # ==========================================
-            # Используем текущую цену сигнала
-            entry_price = signal.price
+            # HOLD сигналы не требуют исполнения
+            if signal.signal_type == SignalType.HOLD:
+                logger.info(
+                    f"{signal.symbol} | HOLD сигнал - не требует исполнения ордера"
+                )
+                return
 
-            # ИСПРАВЛЕНИЕ: Правильная сигнатура метода calculate_position_size
-            # Метод принимает: (signal: TradingSignal, available_balance: float, leverage: Optional[int])
-            # и возвращает ТОЛЬКО position_size_usdt (float), а не tuple!
+            # Проверка допустимых типов
+            if signal.signal_type not in [SignalType.BUY, SignalType.SELL]:
+                logger.warning(
+                    f"{signal.symbol} | Неизвестный signal_type: {signal.signal_type}, "
+                    f"пропускаем исполнение"
+                )
+                self.stats["rejected_orders"] += 1
+                return
 
-            # Расчет через risk_manager (учитывает leverage)
-            raw_position_size_usdt = self.risk_manager.calculate_position_size(
-                signal=signal,
-                available_balance=available_balance,
-                leverage=self.risk_manager.limits.default_leverage
-            )
+            # Определение side для API биржи
+            if signal.signal_type == SignalType.BUY:
+                side = "Buy"
+            elif signal.signal_type == SignalType.SELL:
+                side = "Sell"
+            else:
+                # Никогда не выполнится из-за проверки выше
+                logger.error(f"{signal.symbol} | Недопустимый signal_type")
+                self.stats["failed_orders"] += 1
+                return
 
-            # Рассчитываем quantity из position_size
-            raw_quantity = raw_position_size_usdt / entry_price
-
-            logger.info(
-                f"{signal.symbol} | Расчет позиции: "
-                f"баланс={available_balance:.2f} USDT, "
-                f"leverage={self.risk_manager.limits.default_leverage}x, "
-                f"размер={raw_position_size_usdt:.2f} USDT, "
-                f"raw_quantity={raw_quantity:.8f}"
-            )
+            logger.debug(f"{signal.symbol} | Side: {side}")
 
             # ==========================================
-            # ШАГ 4: ВАЛИДАЦИЯ И ОКРУГЛЕНИЕ QUANTITY
+            # ШАГ 4: РАСЧЕТ STOP LOSS И TAKE PROFIT
+            # ==========================================
+            # ✅ КРИТИЧНО: Рассчитываем SL/TP ПЕРЕД расчетом размера позиции!
+
+            try:
+                # 4.1 Получаем ATR из metadata сигнала (если есть)
+                atr = signal.metadata.get('atr') if signal.metadata else None
+
+                if atr:
+                    logger.debug(f"{signal.symbol} | ATR доступен: {atr:.2f}")
+
+                # 4.2 Получаем ML result (если есть ML validation)
+                ml_sltp_data = None
+                if hasattr(signal, 'ml_validation_result') and signal.ml_validation_result:
+                    ml_result = signal.ml_validation_result
+                    ml_sltp_data = {
+                        'predicted_mae': ml_result.metadata.get('predicted_mae', 0.012),
+                        'predicted_return': ml_result.predicted_return,
+                        'confidence': ml_result.confidence
+                    }
+                    logger.debug(
+                        f"{signal.symbol} | ML данные доступны: "
+                        f"mae={ml_sltp_data['predicted_mae']:.4f}, "
+                        f"return={ml_sltp_data['predicted_return']:.4f}"
+                    )
+
+                # 4.3 Получаем market regime (если есть)
+                market_regime_str = signal.metadata.get('market_regime') if signal.metadata else None
+                market_regime = None
+
+                if market_regime_str:
+                    try:
+                        if isinstance(market_regime_str, str):
+                            market_regime = MarketRegime(market_regime_str)
+                        else:
+                            market_regime = market_regime_str
+
+                        logger.debug(
+                            f"{signal.symbol} | Market regime: {market_regime.value}"
+                        )
+                    except (ValueError, AttributeError) as e:
+                        logger.warning(
+                            f"{signal.symbol} | Не удалось распарсить market_regime: {e}"
+                        )
+
+                # 4.4 Расчет SL/TP через UnifiedSLTPCalculator
+                entry_price = signal.price
+
+                logger.info(
+                    f"{signal.symbol} | Расчет SL/TP: "
+                    f"entry=${entry_price:.2f}, "
+                    f"has_ml={ml_sltp_data is not None}, "
+                    f"has_atr={atr is not None}, "
+                    f"has_regime={market_regime is not None}"
+                )
+
+                sltp_calc = sltp_calculator.calculate(
+                    signal=signal,
+                    entry_price=entry_price,
+                    ml_result=ml_sltp_data,
+                    atr=atr,
+                    market_regime=market_regime
+                )
+
+                # 4.5 Извлечение результатов
+                stop_loss = sltp_calc.stop_loss
+                take_profit = sltp_calc.take_profit
+
+                logger.info(
+                    f"{signal.symbol} | SL/TP рассчитаны: "
+                    f"method={sltp_calc.calculation_method}, "
+                    f"SL=${stop_loss:.2f}, "
+                    f"TP=${take_profit:.2f}, "
+                    f"R/R={sltp_calc.risk_reward_ratio:.2f}"
+                )
+
+                # 4.6 Валидация рассчитанных значений
+                if side == "Buy":
+                    if stop_loss >= entry_price:
+                        logger.error(
+                            f"{signal.symbol} | ОШИБКА: SL для long должен быть < entry! "
+                            f"SL={stop_loss:.2f}, entry={entry_price:.2f}"
+                        )
+                        self.stats["failed_orders"] += 1
+                        return
+
+                    if take_profit <= entry_price:
+                        logger.error(
+                            f"{signal.symbol} | ОШИБКА: TP для long должен быть > entry! "
+                            f"TP={take_profit:.2f}, entry={entry_price:.2f}"
+                        )
+                        self.stats["failed_orders"] += 1
+                        return
+
+                else:  # side == "Sell"
+                    if stop_loss <= entry_price:
+                        logger.error(
+                            f"{signal.symbol} | ОШИБКА: SL для short должен быть > entry! "
+                            f"SL={stop_loss:.2f}, entry={entry_price:.2f}"
+                        )
+                        self.stats["failed_orders"] += 1
+                        return
+
+                    if take_profit >= entry_price:
+                        logger.error(
+                            f"{signal.symbol} | ОШИБКА: TP для short должен быть < entry! "
+                            f"TP={take_profit:.2f}, entry={entry_price:.2f}"
+                        )
+                        self.stats["failed_orders"] += 1
+                        return
+
+                logger.debug(f"{signal.symbol} | SL/TP validation passed ✓")
+
+            except Exception as e:
+                logger.error(
+                    f"{signal.symbol} | Ошибка расчета SL/TP: {e}",
+                    exc_info=True
+                )
+                self.stats["failed_orders"] += 1
+                return
+
+            # ==========================================
+            # ШАГ 5: РАСЧЕТ РАЗМЕРА ПОЗИЦИИ
+            # ==========================================
+            # ✅ ТЕПЕРЬ stop_loss определен и можем использовать его!
+
+            try:
+                # Получаем текущую волатильность (если есть ATR)
+                current_volatility = None
+                if atr:
+                    # Нормализуем ATR к процентам
+                    current_volatility = atr / entry_price
+
+                # Получаем ML confidence (если есть)
+                ml_confidence = None
+                if ml_sltp_data:
+                    ml_confidence = ml_sltp_data.get('confidence')
+
+                # Рассчитываем размер позиции с Adaptive Risk
+                raw_position_size_usdt = self.risk_manager.calculate_position_size(
+                    signal=signal,
+                    available_balance=available_balance,
+                    stop_loss_price=stop_loss,  # ✅ Теперь определен!
+                    leverage=self.risk_manager.limits.default_leverage,
+                    current_volatility=current_volatility,
+                    ml_confidence=ml_confidence
+                )
+
+                # Рассчитываем quantity из position_size
+                raw_quantity = raw_position_size_usdt / entry_price
+
+                logger.info(
+                    f"{signal.symbol} | Расчет позиции: "
+                    f"баланс={available_balance:.2f} USDT, "
+                    f"leverage={self.risk_manager.limits.default_leverage}x, "
+                    f"размер={raw_position_size_usdt:.2f} USDT, "
+                    f"raw_quantity={raw_quantity:.8f}"
+                )
+
+            except Exception as e:
+                logger.error(
+                    f"{signal.symbol} | Ошибка расчета размера позиции: {e}",
+                    exc_info=True
+                )
+                self.stats["failed_orders"] += 1
+                return
+
+            # ==========================================
+            # ШАГ 6: ВАЛИДАЦИЯ И ОКРУГЛЕНИЕ QUANTITY
             # ==========================================
             validated_quantity = self._validate_and_round_quantity(
                 symbol=signal.symbol,
@@ -931,219 +1117,13 @@ class ExecutionManager:
             )
 
             # ==========================================
-            # ШАГ 5: РАСЧЕТ STOP LOSS И TAKE PROFIT
-            # ==========================================
-            # stop_loss_pct = 0.002  # 2%
-            # take_profit_pct = 0.005  # 4%
-            #
-            # stop_loss_pct = settings.STOP_LOSS_PERCENT / 100  # Конвертируем % в десятичную дробь
-            # take_profit_pct = settings.TAKE_PROFIT_PERCENT / 100
-            #
-            # if signal.signal_type == SignalType.BUY:
-            #     side = "Buy"
-            #     stop_loss = entry_price * (1 - stop_loss_pct)
-            #     take_profit = entry_price * (1 + take_profit_pct)
-            # else:
-            #     side = "Sell"
-            #     stop_loss = entry_price * (1 + stop_loss_pct)
-            #     take_profit = entry_price * (1 - take_profit_pct)
-
-            try:
-                logger.info(f"Обработка сигнала: {signal.symbol} {signal.signal_type.value}")
-
-                # ============================================================
-                # ШАГ 0: Валидация signal_type
-                # ============================================================
-                # HOLD сигналы не требуют расчета SL/TP (нет входа в позицию)
-                if signal.signal_type == SignalType.HOLD:
-                    logger.info(
-                        f"{signal.symbol} | HOLD сигнал - не требует исполнения ордера"
-                    )
-                    return  # Просто выходим, ничего не делаем
-
-                # Дополнительная проверка (defensive programming)
-                if signal.signal_type not in [SignalType.BUY, SignalType.SELL]:
-                    logger.warning(
-                        f"{signal.symbol} | Неизвестный signal_type: {signal.signal_type}, "
-                        f"пропускаем исполнение"
-                    )
-                    return
-
-                # ============================================================
-                # ШАГ 1: Определение side для API биржи
-                # ============================================================
-                # Это ЕДИНСТВЕННОЕ место, где нужен if/else для направления
-                if signal.signal_type == SignalType.BUY:
-                    side = "Buy"
-                elif signal.signal_type == SignalType.SELL:
-                    side = "Sell"
-                else:
-                    # Никогда не выполнится из-за проверки выше
-                    logger.error(f"{signal.symbol} | Недопустимый signal_type")
-                    return
-
-                logger.debug(f"{signal.symbol} | Side: {side}")
-
-                # ============================================================
-                # ШАГ 2: Извлечение данных для SLTP калькулятора
-                # ============================================================
-
-                # 2.1 Получаем ATR из metadata сигнала (если есть)
-                atr = signal.metadata.get('atr')
-                if atr:
-                    logger.debug(f"{signal.symbol} | ATR доступен: {atr:.2f}")
-                else:
-                    logger.debug(f"{signal.symbol} | ATR не найден в metadata")
-
-                # 2.2 Получаем ML result (если есть ML validation)
-                ml_sltp_data = None
-                if hasattr(signal, 'ml_validation_result') and signal.ml_validation_result:
-                    ml_result = signal.ml_validation_result
-                    ml_sltp_data = {
-                        'predicted_mae': ml_result.metadata.get('predicted_mae', 0.012),
-                        'predicted_return': ml_result.predicted_return,
-                        'confidence': ml_result.confidence
-                    }
-                    logger.debug(
-                        f"{signal.symbol} | ML данные доступны: "
-                        f"mae={ml_sltp_data['predicted_mae']:.4f}, "
-                        f"return={ml_sltp_data['predicted_return']:.4f}"
-                    )
-                else:
-                    logger.debug(f"{signal.symbol} | ML валидация отсутствует")
-
-                # 2.3 Получаем market regime (если есть)
-                market_regime_str = signal.metadata.get('market_regime')
-                market_regime = None
-
-                if market_regime_str:
-                    try:
-                        # Конвертируем строку в enum, если нужно
-                        if isinstance(market_regime_str, str):
-                            market_regime = MarketRegime(market_regime_str)
-                        else:
-                            market_regime = market_regime_str
-
-                        logger.debug(
-                            f"{signal.symbol} | Market regime: {market_regime.value}"
-                        )
-                    except (ValueError, AttributeError) as e:
-                        logger.warning(
-                            f"{signal.symbol} | Не удалось распарсить market_regime: {e}"
-                        )
-
-                # ============================================================
-                # ШАГ 3: Расчет SL/TP через UnifiedSLTPCalculator
-                # ============================================================
-                entry_price = signal.price
-
-                logger.info(
-                    f"{signal.symbol} | Расчет SL/TP: "
-                    f"entry=${entry_price:.2f}, "
-                    f"has_ml={ml_sltp_data is not None}, "
-                    f"has_atr={atr is not None}, "
-                    f"has_regime={market_regime is not None}"
-                )
-
-                sltp_calc = sltp_calculator.calculate(
-                    signal=signal,
-                    entry_price=entry_price,
-                    ml_result=ml_sltp_data,
-                    atr=atr,
-                    market_regime=market_regime
-                )
-
-                # ============================================================
-                # ШАГ 4: Извлечение результатов
-                # ============================================================
-                # 🎯 КЛЮЧЕВОЙ МОМЕНТ: Используем ГОТОВЫЕ значения от калькулятора
-                # НЕ НУЖНО пересчитывать с учетом side - калькулятор уже все сделал!
-
-                stop_loss = sltp_calc.stop_loss
-                take_profit = sltp_calc.take_profit
-
-                # ============================================================
-                # ШАГ 5: Логирование детальной информации
-                # ============================================================
-                logger.info(
-                    f"{signal.symbol} | SL/TP рассчитаны: "
-                    f"method={sltp_calc.calculation_method}, "
-                    f"SL=${stop_loss:.2f}, "
-                    f"TP=${take_profit:.2f}, "
-                    f"R/R={sltp_calc.risk_reward_ratio:.2f}, "
-                    f"confidence={sltp_calc.confidence:.2f}"
-                )
-
-                # Дополнительная информация о процентах
-                sl_distance_pct = abs((entry_price - stop_loss) / entry_price) * 100
-                tp_distance_pct = abs((take_profit - entry_price) / entry_price) * 100
-
-                logger.info(
-                    f"{signal.symbol} | Дистанции: "
-                    f"SL={sl_distance_pct:.2f}%, "
-                    f"TP={tp_distance_pct:.2f}%"
-                )
-
-                # Логирование reasoning (для отладки)
-                if sltp_calc.reasoning:
-                    logger.debug(
-                        f"{signal.symbol} | SLTP reasoning: {sltp_calc.reasoning}"
-                    )
-
-                # ============================================================
-                # ШАГ 6: Валидация рассчитанных значений
-                # ============================================================
-                # Проверяем что SL/TP корректны относительно entry_price
-
-                if side == "Buy":
-                    if stop_loss >= entry_price:
-                        logger.error(
-                            f"{signal.symbol} | ОШИБКА: SL для long должен быть < entry! "
-                            f"SL={stop_loss:.2f}, entry={entry_price:.2f}"
-                        )
-                        return  # Не открываем позицию
-
-                    if take_profit <= entry_price:
-                        logger.error(
-                            f"{signal.symbol} | ОШИБКА: TP для long должен быть > entry! "
-                            f"TP={take_profit:.2f}, entry={entry_price:.2f}"
-                        )
-                        return
-
-                else:  # side == "Sell"
-                    if stop_loss <= entry_price:
-                        logger.error(
-                            f"{signal.symbol} | ОШИБКА: SL для short должен быть > entry! "
-                            f"SL={stop_loss:.2f}, entry={entry_price:.2f}"
-                        )
-                        return
-
-                    if take_profit >= entry_price:
-                        logger.error(
-                            f"{signal.symbol} | ОШИБКА: TP для short должен быть < entry! "
-                            f"TP={take_profit:.2f}, entry={entry_price:.2f}"
-                        )
-                        return
-
-                logger.debug(f"{signal.symbol} | SL/TP validation passed ✓")
-
-            except Exception as e:
-                logger.error(
-                    f"{signal.symbol} | Ошибка при исполнении сигнала: {e}",
-                    exc_info=True
-                )
-                self.stats["failed_orders"] += 1  # ← ДОБАВИТЬ
-                return
-
-
-            # ==========================================
-            # ШАГ 6: ОТКРЫТИЕ ПОЗИЦИИ
+            # ШАГ 7: ОТКРЫТИЕ ПОЗИЦИИ
             # ==========================================
             result = await self.open_position(
                 symbol=signal.symbol,
                 side=side,
                 entry_price=entry_price,
-                quantity=validated_quantity,  # Используем валидированное quantity
+                quantity=validated_quantity,
                 stop_loss=stop_loss,
                 take_profit=take_profit,
                 entry_signal=signal.to_dict(),

@@ -482,6 +482,32 @@ class Settings(BaseSettings):
     description="Масштабировать риск на основе волатильности"
   )
 
+  # Adaptive Risk - дополнительные параметры
+  RISK_KELLY_MIN_TRADES: int = Field(
+    default=int(os.getenv("RISK_KELLY_MIN_TRADES", "30")),
+    description="Минимум трейдов для использования Kelly Criterion"
+  )
+
+  RISK_VOLATILITY_BASELINE: float = Field(
+    default=float(os.getenv("RISK_VOLATILITY_BASELINE", "0.02")),
+    description="Baseline дневной волатильности для нормализации (2%)"
+  )
+
+  RISK_WIN_RATE_SCALING: bool = Field(
+    default=os.getenv("RISK_WIN_RATE_SCALING", "true").lower() == "true",
+    description="Масштабировать риск на основе win rate"
+  )
+
+  RISK_WIN_RATE_BASELINE: float = Field(
+    default=float(os.getenv("RISK_WIN_RATE_BASELINE", "0.55")),
+    description="Baseline win rate для нормализации (55%)"
+  )
+
+  RISK_CORRELATION_PENALTY: bool = Field(
+    default=os.getenv("RISK_CORRELATION_PENALTY", "true").lower() == "true",
+    description="Применять штраф за корреляцию позиций"
+  )
+
   # Reversal Detector
   REVERSAL_DETECTOR_ENABLED: bool = Field(
     default=os.getenv("REVERSAL_DETECTOR_ENABLED", "true").lower() == "true",
