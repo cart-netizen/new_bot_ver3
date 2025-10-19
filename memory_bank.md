@@ -1613,3 +1613,155 @@ y_movement = [l["future_movement_10s"] for l in labels]    # ✅ Все запо
 
 # Обучаем модель
 model.fit(features, y_direction)
+
+Обработка SignalType: BUY, SELL, HOLD
+
+Правильная Обработка
+✅ В UnifiedSLTPCalculator
+pythondef calculate(self, signal: TradingSignal, ...):
+    # 1. Валидация: принимаем только BUY или SELL
+    if signal.signal_type not in [SignalType.BUY, SignalType.SELL]:
+        raise RiskManagementError(
+            f"Invalid signal_type: {signal.signal_type}. "
+            f"Ожидается BUY или SELL."
+        )
+    
+    # 2. Явное определение направления
+    if signal.signal_type == SignalType.BUY:
+        position_side = "long"
+    elif signal.signal_type == SignalType.SELL:
+        position_side = "short"
+    else:
+        # Никогда не выполнится, но для безопасности
+        raise RiskManagementError(...)
+
+В ExecutionManager
+pythonasync def _execute_signal(self, signal: TradingSignal):
+    # 1. Ранний выход для HOLD
+    if signal.signal_type == SignalType.HOLD:
+        logger.info(f"{signal.symbol} | HOLD - нет исполнения")
+        return  # Просто выходим
+    
+    # 2. Валидация допустимых типов
+    if signal.signal_type not in [SignalType.BUY, SignalType.SELL]:
+        logger.warning(f"Неизвестный signal_type: {signal.signal_type}")
+        return
+    
+    # 3. Определение side
+    if signal.signal_type == SignalType.BUY:
+        side = "Buy"
+    elif signal.signal_type == SignalType.SELL:
+        side = "Sell"
+    else:
+        return  # Защита на всякий случай
+    
+    # 4. Расчет SL/TP (только для BUY/SELL)
+    sltp_calc = sltp_calculator.calculate(...)
+
+ценарии Обработки
+Сценарий 1: BUY сигнал
+Input: SignalType.BUY
+  ↓
+ExecutionManager:
+  • signal_type == HOLD? → НЕТ
+  • signal_type in [BUY, SELL]? → ДА
+  • side = "Buy"
+  ↓
+UnifiedSLTPCalculator:
+  • signal_type in [BUY, SELL]? → ДА
+  • position_side = "long"
+  • stop_loss = entry * (1 - sl_distance)  ← ниже
+  • take_profit = entry * (1 + tp_distance) ← выше
+  ↓
+Result: Позиция открыта с корректными SL/TP
+
+Сценарий 2: SELL сигнал
+Input: SignalType.SELL
+  ↓
+ExecutionManager:
+  • signal_type == HOLD? → НЕТ
+  • signal_type in [BUY, SELL]? → ДА
+  • side = "Sell"
+  ↓
+UnifiedSLTPCalculator:
+  • signal_type in [BUY, SELL]? → ДА
+  • position_side = "short"
+  • stop_loss = entry * (1 + sl_distance)  ← выше
+  • take_profit = entry * (1 - tp_distance) ← ниже
+  ↓
+Result: Позиция открыта с корректными SL/TP
+
+Сценарий 3: HOLD сигнал
+Input: SignalType.HOLD
+  ↓
+ExecutionManager:
+  • signal_type == HOLD? → ДА
+  • logger.info("HOLD - нет исполнения")
+  • return (ранний выход)
+  ↓
+UnifiedSLTPCalculator: НЕ ВЫЗЫВАЕТСЯ
+  ↓
+Result: Ничего не делаем, сигнал проигнорирован
+
+Сценарий 4: Неизвестный тип (защита)
+Input: signal_type = "UNKNOWN" (теоретически)
+  ↓
+ExecutionManager:
+  • signal_type == HOLD? → НЕТ
+  • signal_type in [BUY, SELL]? → НЕТ
+  • logger.warning("Неизвестный signal_type")
+  • return
+  ↓
+UnifiedSLTPCalculator: НЕ ВЫЗЫВАЕТСЯ
+  ↓
+Result: Сигнал проигнорирован с предупреждением
+
+ Best Practices
+1. Явная Валидация
+python# ХОРОШО - явная проверка всех допустимых значений
+if signal.signal_type not in [SignalType.BUY, SignalType.SELL]:
+    raise RiskManagementError(...)
+2. Ранний Выход для HOLD
+python# ХОРОШО - обрабатываем HOLD сразу
+if signal.signal_type == SignalType.HOLD:
+    return  # Ничего не делаем
+3. Явные Условия
+python# ХОРОШО - явное if/elif для каждого случая
+if signal.signal_type == SignalType.BUY:
+    position_side = "long"
+elif signal.signal_type == SignalType.SELL:
+    position_side = "short"
+else:
+    raise RiskManagementError(...)
+4. Логирование
+python# ХОРОШО - логируем каждый случай
+if signal.signal_type == SignalType.HOLD:
+    logger.info(f"{signal.symbol} | HOLD - no execution")
+    return
+
+logger.debug(f"{signal.symbol} | Processing {signal.signal_type.value}")
+
+Диаграмма Принятия Решений
+Получен сигнал
+     ↓
+     ├─ signal_type == HOLD?
+     │      ↓ ДА
+     │      └─ return (ничего не делаем)
+     │
+     ├─ signal_type == BUY?
+     │      ↓ ДА
+     │      ├─ side = "Buy"
+     │      ├─ position_side = "long"
+     │      ├─ SL = entry - distance (ниже)
+     │      └─ TP = entry + distance (выше)
+     │
+     ├─ signal_type == SELL?
+     │      ↓ ДА
+     │      ├─ side = "Sell"
+     │      ├─ position_side = "short"
+     │      ├─ SL = entry + distance (выше)
+     │      └─ TP = entry - distance (ниже)
+     │
+     └─ Неизвестный тип?
+            ↓ ДА
+            └─ Error / Warning + return

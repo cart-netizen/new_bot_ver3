@@ -387,12 +387,197 @@ class Settings(BaseSettings):
     description="Разрешить несколько позиций по одной паре"
   )
 
+  # =====================================================
+  # РАСШИРЕННЫЙ РИСК-МЕНЕДЖМЕНТ
+  # =====================================================
+
+  # Унифицированный SL/TP Calculator
+  SLTP_CALCULATION_METHOD: str = Field(
+    default=os.getenv("SLTP_CALCULATION_METHOD", "ml"),
+    description="Метод расчета SL/TP: ml, atr, fixed"
+  )
+  SLTP_ML_FALLBACK_ENABLED: bool = Field(
+    default=os.getenv("SLTP_ML_FALLBACK_ENABLED", "true").lower() == "true",
+    description="Использовать ATR fallback при недоступности ML"
+  )
+  SLTP_MAX_STOP_LOSS_PERCENT: float = Field(
+    default=float(os.getenv("SLTP_MAX_STOP_LOSS_PERCENT", "3.0")),
+    description="Максимальный stop loss в % (default: 3%)"
+  )
+  SLTP_ATR_MULTIPLIER_SL: float = Field(
+    default=float(os.getenv("SLTP_ATR_MULTIPLIER_SL", "2.0")),
+    description="Множитель ATR для stop loss"
+  )
+  SLTP_ATR_MULTIPLIER_TP: float = Field(
+    default=float(os.getenv("SLTP_ATR_MULTIPLIER_TP", "4.0")),
+    description="Множитель ATR для take profit"
+  )
+  SLTP_MIN_RISK_REWARD: float = Field(
+    default=float(os.getenv("SLTP_MIN_RISK_REWARD", "2.0")),
+    description="Минимальное соотношение риск/прибыль"
+  )
+
+  # Корреляция позиций
+  CORRELATION_CHECK_ENABLED: bool = Field(
+    default=os.getenv("CORRELATION_CHECK_ENABLED", "true").lower() == "true",
+    description="Проверять корреляцию между позициями"
+  )
+  CORRELATION_MAX_THRESHOLD: float = Field(
+    default=float(os.getenv("CORRELATION_MAX_THRESHOLD", "0.7")),
+    description="Максимальная допустимая корреляция"
+  )
+  CORRELATION_MAX_POSITIONS_PER_GROUP: int = Field(
+    default=int(os.getenv("CORRELATION_MAX_POSITIONS_PER_GROUP", "1")),
+    description="Максимум позиций в одной корреляционной группе"
+  )
+  CORRELATION_LOOKBACK_DAYS: int = Field(
+    default=int(os.getenv("CORRELATION_LOOKBACK_DAYS", "30")),
+    description="Период расчета корреляции (дни)"
+  )
+
+  # Daily Loss Killer
+  DAILY_LOSS_KILLER_ENABLED: bool = Field(
+    default=os.getenv("DAILY_LOSS_KILLER_ENABLED", "true").lower() == "true",
+    description="Автоматическое отключение при дневном убытке"
+  )
+  DAILY_LOSS_MAX_PERCENT: float = Field(
+    default=float(os.getenv("DAILY_LOSS_MAX_PERCENT", "15.0")),
+    description="Максимальный дневной убыток для emergency shutdown (%)"
+  )
+  DAILY_LOSS_WARNING_PERCENT: float = Field(
+    default=float(os.getenv("DAILY_LOSS_WARNING_PERCENT", "10.0")),
+    description="Процент убытка для предупреждения (%)"
+  )
+  DAILY_LOSS_CHECK_INTERVAL_SEC: int = Field(
+    default=int(os.getenv("DAILY_LOSS_CHECK_INTERVAL_SEC", "60")),
+    description="Интервал проверки дневного убытка (секунды)"
+  )
+
+  # Adaptive Risk per Trade
+  RISK_PER_TRADE_MODE: str = Field(
+    default=os.getenv("RISK_PER_TRADE_MODE", "adaptive"),
+    description="Режим расчета риска: fixed, adaptive, kelly"
+  )
+  RISK_PER_TRADE_BASE_PERCENT: float = Field(
+    default=float(os.getenv("RISK_PER_TRADE_BASE_PERCENT", "2.0")),
+    description="Базовый риск на сделку (%)"
+  )
+  RISK_PER_TRADE_MAX_PERCENT: float = Field(
+    default=float(os.getenv("RISK_PER_TRADE_MAX_PERCENT", "5.0")),
+    description="Максимальный риск на сделку (%)"
+  )
+  RISK_KELLY_FRACTION: float = Field(
+    default=float(os.getenv("RISK_KELLY_FRACTION", "0.25")),
+    description="Kelly Criterion fraction (0.25 = 1/4 Kelly)"
+  )
+  RISK_VOLATILITY_SCALING: bool = Field(
+    default=os.getenv("RISK_VOLATILITY_SCALING", "true").lower() == "true",
+    description="Масштабировать риск на основе волатильности"
+  )
+
+  # Reversal Detector
+  REVERSAL_DETECTOR_ENABLED: bool = Field(
+    default=os.getenv("REVERSAL_DETECTOR_ENABLED", "true").lower() == "true",
+    description="Детектор разворота тренда"
+  )
+  REVERSAL_MIN_INDICATORS_CONFIRM: int = Field(
+    default=int(os.getenv("REVERSAL_MIN_INDICATORS_CONFIRM", "3")),
+    description="Минимум индикаторов для подтверждения разворота"
+  )
+  REVERSAL_COOLDOWN_SECONDS: int = Field(
+    default=int(os.getenv("REVERSAL_COOLDOWN_SECONDS", "300")),
+    description="Cooldown между проверками разворота (секунды)"
+  )
+  REVERSAL_AUTO_ACTION: bool = Field(
+    default=os.getenv("REVERSAL_AUTO_ACTION", "false").lower() == "true",
+    description="Автоматически действовать при развороте"
+  )
+
+  # Trailing Stop Manager
+  TRAILING_STOP_ENABLED: bool = Field(
+    default=os.getenv("TRAILING_STOP_ENABLED", "true").lower() == "true",
+    description="Автоматический trailing stop"
+  )
+  TRAILING_STOP_ACTIVATION_PROFIT_PERCENT: float = Field(
+    default=float(os.getenv("TRAILING_STOP_ACTIVATION_PROFIT_PERCENT", "1.5")),
+    description="При какой прибыли активировать trailing (%)"
+  )
+  TRAILING_STOP_DISTANCE_PERCENT: float = Field(
+    default=float(os.getenv("TRAILING_STOP_DISTANCE_PERCENT", "0.8")),
+    description="Дистанция trailing stop от пика (%)"
+  )
+  TRAILING_STOP_UPDATE_INTERVAL_SEC: int = Field(
+    default=int(os.getenv("TRAILING_STOP_UPDATE_INTERVAL_SEC", "5")),
+    description="Интервал обновления trailing stop (секунды)"
+  )
+
+  # ML Integration для риск-менеджмента
+  ML_RISK_INTEGRATION_ENABLED: bool = Field(
+    default=os.getenv("ML_RISK_INTEGRATION_ENABLED", "true").lower() == "true",
+    description="Использовать ML для корректировки риска"
+  )
+  ML_MIN_CONFIDENCE_THRESHOLD: float = Field(
+    default=float(os.getenv("ML_MIN_CONFIDENCE_THRESHOLD", "0.70")),
+    description="Минимальная уверенность ML для входа"
+  )
+  ML_REQUIRE_AGREEMENT: bool = Field(
+    default=os.getenv("ML_REQUIRE_AGREEMENT", "true").lower() == "true",
+    description="Требовать согласия ML с сигналом стратегии"
+  )
+  ML_POSITION_SIZING: bool = Field(
+    default=os.getenv("ML_POSITION_SIZING", "true").lower() == "true",
+    description="ML корректировка размера позиции"
+  )
+  ML_SLTP_CALCULATION: bool = Field(
+    default=os.getenv("ML_SLTP_CALCULATION", "true").lower() == "true",
+    description="ML расчет SL/TP уровней"
+  )
+  ML_MANIPULATION_CHECK: bool = Field(
+    default=os.getenv("ML_MANIPULATION_CHECK", "true").lower() == "true",
+    description="ML проверка на манипуляции"
+  )
+  ML_REGIME_CHECK: bool = Field(
+    default=os.getenv("ML_REGIME_CHECK", "true").lower() == "true",
+    description="ML определение режима рынка"
+  )
+
+  # Notification Settings (заглушки для будущего)
+  NOTIFICATION_EMAIL_ENABLED: bool = Field(
+    default=os.getenv("NOTIFICATION_EMAIL_ENABLED", "false").lower() == "true",
+    description="Email уведомления"
+  )
+  NOTIFICATION_TELEGRAM_ENABLED: bool = Field(
+    default=os.getenv("NOTIFICATION_TELEGRAM_ENABLED", "false").lower() == "true",
+    description="Telegram уведомления"
+  )
+
   model_config = SettingsConfigDict(
     env_file=".env",
     env_file_encoding="utf-8",
     case_sensitive=True,
     extra="ignore"
   )
+
+  @field_validator("SLTP_MAX_STOP_LOSS_PERCENT", "DAILY_LOSS_MAX_PERCENT", mode="before")
+  def validate_percent_positive(cls, v):
+    """Валидация положительных процентов."""
+    if v <= 0:
+      raise ValueError("Процент должен быть положительным числом")
+    return v
+
+  @field_validator("SLTP_MIN_RISK_REWARD", mode="before")
+  def validate_risk_reward_ratio(cls, v):
+    """Валидация минимального R/R."""
+    if v < 1.0:
+      raise ValueError("Минимальный R/R должен быть >= 1.0")
+    return v
+
+  @field_validator("CORRELATION_MAX_THRESHOLD", "ML_MIN_CONFIDENCE_THRESHOLD", mode="before")
+  def validate_threshold_range(cls, v):
+    """Валидация порогов в диапазоне [0, 1]."""
+    if not 0.0 <= v <= 1.0:
+      raise ValueError("Порог должен быть в диапазоне [0.0, 1.0]")
+    return v
 
   @field_validator("TRADING_PAIRS")
   def validate_trading_pairs(cls, v):
