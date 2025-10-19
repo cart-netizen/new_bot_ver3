@@ -23,6 +23,8 @@ from strategy.daily_loss_killer import daily_loss_killer
 logger = get_logger(__name__)
 
 
+
+
 @dataclass
 class RiskLimits:
   """Лимиты риск-менеджмента."""

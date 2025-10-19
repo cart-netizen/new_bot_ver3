@@ -1945,3 +1945,257 @@ base_risk = 2%  # Из конфига
    → risk = 1.22% * 1.15 = 1.40%
 
 FINAL RISK = 1.40%
+
+REVERSAL DETECTOR + POSITION MONITOR
+
+НОВЫЙ ПОДХОД (С DEDICATED MONITOR)
+┌──────────────────────────┐       ┌──────────────────────────┐
+│   ANALYSIS LOOP (500ms)  │       │ POSITION MONITOR (1-2s)  │
+│                          │       │                          │
+│  ┌────────────────────┐  │       │  ┌────────────────────┐  │
+│  │ Scan ALL Symbols   │  │       │  │ Check ONLY Open    │  │
+│  │ Generate Signals   │  │       │  │ Positions          │  │
+│  │ Open New Positions │  │       │  │                    │  │
+│  └────────────────────┘  │       │  ├─ Update Price/PnL │  │
+│                          │       │  ├─ Check Reversal    │  │
+│  Focus: New Trades       │       │  ├─ Check Trailing SL │  │
+└──────────────────────────┘       │  ├─ Check SL/TP       │  │
+                                   │  └─ Auto-close if     │  │
+                                   │      needed           │  │
+                                   │                       │  │
+                                   │  Focus: Protect PnL  │  │
+                                   └──────────────────────┘  │
+                                                             │
+   Работают ПАРАЛЛЕЛЬНО ────────────────────────────────────┘
+
+
+Архитектурные изменения:
+
+Два параллельных цикла: Analysis Loop + Position Monitor
+Position Monitor - dedicated для защиты позиций
+Reversal Detector - shared между обоими циклами
+Новый endpoint: /api/position-monitor/stats
+
+Reversal Detector - Руководство
+📋 Обзор
+Reversal Detector - компонент для раннего обнаружения разворотов тренда, защищающий открытые позиции и предотвращающий входы против нового тренда.
+Ключевые возможности
+
+✅ Multi-Indicator Подтверждение: Требует согласия минимум 3 индикаторов
+✅ 7 Методов Детекции: Price Action, Momentum, Volume, OrderBook, S/R
+✅ 4 Уровня Силы: Weak, Moderate, Strong, Critical
+✅ Автоматические Действия: Опциональное автоматическое закрытие позиций
+✅ Cooldown Механизм: Предотвращение ложных срабатываний
+
+
+🏗️ Архитектура
+Компоненты
+reversal_detector.py          # Основной модуль детекции
+├── detect_reversal()          # Главный метод анализа
+├── _detect_price_action()     # Паттерны свечей
+├── _detect_momentum_div()     # Дивергенции RSI/MACD
+├── _detect_volume_exhaust()   # Аномалии объема
+├── _detect_rsi_reversal()     # Экстремумы RSI
+├── _detect_macd_cross()       # Пересечения MACD
+├── _detect_orderbook_shift()  # Изменения стакана
+└── _detect_sr_collision()     # S/R уровни
+
+risk_models.py                 # Модели данных
+├── ReversalStrength           # Enum силы сигнала
+└── ReversalSignal             # Dataclass результата
+
+main.py                        # Интеграция
+├── _analysis_loop()           # Периодическая проверка
+└── _handle_reversal_signal()  # Обработка сигналов
+
+config.py
+python# Включение/выключение
+REVERSAL_DETECTOR_ENABLED: bool = True
+
+# Минимум подтверждений (1-7)
+REVERSAL_MIN_INDICATORS_CONFIRM: int = 3
+
+# Cooldown между детекциями (секунды)
+REVERSAL_COOLDOWN_SECONDS: int = 300  # 5 минут
+
+# Автоматические действия
+REVERSAL_AUTO_ACTION: bool = False  # False = только уведомления
+Рекомендуемые настройки
+Консервативный режим:
+pythonREVERSAL_MIN_INDICATORS_CONFIRM = 4
+REVERSAL_AUTO_ACTION = False
+Агрессивный режим:
+pythonREVERSAL_MIN_INDICATORS_CONFIRM = 3
+REVERSAL_AUTO_ACTION = True
+Production режим:
+pythonREVERSAL_MIN_INDICATORS_CONFIRM = 3
+REVERSAL_AUTO_ACTION = False  # Ручной контроль
+
+Методы Детекции
+1. Price Action Patterns
+Обнаруживаемые паттерны:
+
+Doji - маленькое тело (<10% от диапазона)
+Bearish Engulfing - красная свеча поглощает зеленую
+Bullish Engulfing - зеленая свеча поглощает красную
+Shooting Star - длинная верхняя тень (>60%)
+Hammer - длинная нижняя тень (>60%)
+
+Пример кода:
+python# Bearish Engulfing для BUY позиции
+if (last_candle.open > last_candle.close and  # Красная
+    prev_candle.close > prev_candle.open and  # Пред. зеленая
+    last_candle.open >= prev_candle.close and  # Открытие выше
+    last_candle.close <= prev_candle.open):    # Закрытие ниже
+    return "bearish_engulfing"
+2. Momentum Divergence
+Принцип:
+
+Цена делает новый high/low
+RSI НЕ подтверждает (не делает новый high/low)
+
+Типы:
+
+Bearish Divergence: Цена ↑, RSI ↓
+Bullish Divergence: Цена ↓, RSI ↑
+
+Период анализа: 20 свечей (дивергенция на последних 10)
+3. Volume Exhaustion
+Признаки:
+
+Spike объема в 2x+ от среднего
+Снижение объема на 30%+ после spike
+Цена около экстремумов (±2%)
+
+Интерпретация:
+
+Высокий объем на пике = Exhaustion buying
+Высокий объем на дне = Exhaustion selling
+
+4. RSI Reversal
+Условия:
+
+Overbought: RSI > 75 и начинает падать
+Oversold: RSI < 25 и начинает расти
+
+Период: Последние 3 значения RSI
+5. MACD Cross
+Сигналы:
+
+Bearish Cross: MACD пересекает Signal сверху вниз
+Bullish Cross: MACD пересекает Signal снизу вверх
+
+Период: Последние 2 значения
+6. OrderBook Pressure Shift
+Метрика: Imbalance из стакана
+Пороги:
+
+imbalance < -0.4 → Сильное давление продавцов
+imbalance > 0.4 → Сильное давление покупателей
+
+7. Support/Resistance Collision
+Алгоритм:
+
+Определение S/R за последние 50 свечей
+Проверка приближения (±0.5%)
+
+Сигналы:
+
+BUY позиция + приближение к сопротивлению
+SELL позиция + приближение к поддержке
+
+
+🎯 Уровни Силы Сигнала
+Классификация
+УровеньИндикаторовДействиеWEAK1-2НаблюдениеMODERATE3-4Ужесточить SLSTRONG5-6Снизить размер на 50%CRITICAL7+Закрыть позицию
+
+Пример:
+
+3 индикатора → confidence = 0.43 (43%)
+5 индикаторов → confidence = 0.71 (71%)
+7 индикаторов → confidence = 1.00 (100%)
+
+🔄 Жизненный Цикл
+1. Проверка Условий
+python# В _analysis_loop_ml_enhanced
+open_position = risk_manager.get_position(symbol)
+
+if open_position:
+    # Определяем тренд позиции
+    current_trend = SignalType.BUY if position_side == 'BUY' else SignalType.SELL
+2. Детекция Разворота
+pythonreversal = reversal_detector.detect_reversal(
+    symbol=symbol,
+    candles=candles,
+    current_trend=current_trend,
+    indicators=indicators,
+    orderbook_metrics=ob_metrics
+)
+3. Обработка Сигнала
+pythonif reversal:
+    await _handle_reversal_signal(
+        symbol=symbol,
+        reversal=reversal,
+        position=open_position
+    )
+4. Выполнение Действия
+CRITICAL → Close Position:
+pythonif auto_action:
+    await execution_manager.close_position(
+        position_id=position_id,
+        exit_reason=f"Critical reversal: {reversal.reason}"
+    )
+STRONG → Reduce Size:
+python# TODO: Реализация partial close
+logger.warning("Consider reducing position by 50%")
+MODERATE → Tighten SL:
+python# TODO: Реализация динамического SL
+logger.warning("Consider tightening stop loss")
+
+📈 Примеры Использования
+Пример 1: Обнаружение Критического Разворота
+Сценарий:
+
+Открыта BUY позиция по BTCUSDT
+Цена достигла сопротивления
+6 индикаторов подтверждают разворот
+
+Результат:
+pythonReversalSignal(
+    symbol="BTCUSDT",
+    detected_at=datetime.now(),
+    strength=ReversalStrength.STRONG,
+    indicators_confirming=[
+        "bearish_engulfing",
+        "bearish_divergence",
+        "rsi_overbought_reversal",
+        "macd_bearish_cross",
+        "orderbook_sell_pressure",
+        "near_resistance"
+    ],
+    confidence=0.86,  # 6/7
+    suggested_action="reduce_size",
+    reason="Reversal detected in uptrend: 6 indicators confirm"
+)
+Логи:
+[WARNING] BTCUSDT | 🔄 REVERSAL DETECTED | Strength: strong, Indicators: 6/3, Action: reduce_size
+[WARNING] BTCUSDT | 🔶 STRONG REVERSAL | Strength: strong | Suggestion: Reduce position size by 50%
+Пример 2: Слабый Разворот (Игнорируется)
+Сценарий:
+
+Открыта BUY позиция
+Только 2 индикатора
+Ниже минимального порога
+
+Результат:
+python# detect_reversal возвращает None
+logger.debug("BTCUSDT | Reversal indicators insufficient: 2/3")
+Пример 3: Cooldown Блокировка
+Сценарий:
+
+Разворот обнаружен 2 минуты назад
+Новая детекция в пределах cooldown (5 мин)
+
+Результат:
+pythonlogger.debug("BTCUSDT | Reversal detection in cooldown: 120s / 300s")
+# Возвращает None

@@ -8,6 +8,7 @@ from datetime import datetime
 from sqlalchemy import select, update
 
 from core.logger import get_logger
+from core.trace_context import trace_operation
 from database.connection import db_manager
 from database.models import Position, PositionStatus, OrderSide
 from core.exceptions import DatabaseError
@@ -372,6 +373,49 @@ class PositionRepository:
     except Exception as e:
       logger.error(f"Ошибка получения активных позиций: {e}")
       return []
+
+  async def find_open_by_symbol(self, symbol: str) -> Optional[Position]:
+    """
+    Найти открытую позицию по символу.
+
+    Args:
+        symbol: Торговая пара
+
+    Returns:
+        Position если найдена, иначе None
+    """
+    with trace_operation("find_open_position_by_symbol", symbol=symbol):
+      try:
+        async with db_manager.get_session() as session:
+          result = await session.execute(
+            select(Position)
+            .where(
+              Position.symbol == symbol,
+              Position.status == PositionStatus.OPEN
+            )
+            .order_by(Position.opened_at.desc())
+            .limit(1)
+          )
+
+          position = result.scalar_one_or_none()
+
+          if position:
+            logger.debug(
+              f"{symbol} | Found open position: {position.id}"
+            )
+          else:
+            logger.debug(
+              f"{symbol} | No open position found in DB"
+            )
+
+          return position
+
+      except Exception as e:
+        logger.error(
+          f"Error finding open position for {symbol}: {e}",
+          exc_info=True
+        )
+        return None
 
 
 # Глобальный экземпляр

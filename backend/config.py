@@ -525,7 +525,12 @@ class Settings(BaseSettings):
     default=os.getenv("REVERSAL_AUTO_ACTION", "false").lower() == "true",
     description="Автоматически действовать при развороте"
   )
-
+  # ==================== POSITION MONITOR ====================
+  POSITION_MONITOR_ENABLED: bool = True
+  POSITION_MONITOR_INTERVAL: float = 2.0  # Секунды между проверками
+  POSITION_MONITOR_REVERSAL_CHECK: bool = True
+  POSITION_MONITOR_TRAILING_STOP: bool = False  # TODO: Реализовать
+  POSITION_MONITOR_SLTP_CHECK: bool = True
   # Trailing Stop Manager
   TRAILING_STOP_ENABLED: bool = Field(
     default=os.getenv("TRAILING_STOP_ENABLED", "true").lower() == "true",

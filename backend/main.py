@@ -21,6 +21,7 @@ from database.connection import db_manager
 from domain.services.fsm_registry import fsm_registry
 from exchange.rest_client import rest_client
 from exchange.websocket_manager import BybitWebSocketManager
+from infrastructure.repositories.position_repository import position_repository
 from infrastructure.resilience.recovery_service import recovery_service
 from ml_engine.detection.layering_detector import LayeringConfig, LayeringDetector
 from ml_engine.detection.spoofing_detector import SpoofingConfig, SpoofingDetector
@@ -35,6 +36,9 @@ from strategy.correlation_manager import correlation_manager
 from strategy.daily_loss_killer import daily_loss_killer
 from strategy.orderbook_manager import OrderBookManager
 from strategy.analyzer import MarketAnalyzer
+from strategy.position_monitor import PositionMonitor
+from strategy.reversal_detector import reversal_detector
+from strategy.risk_models import ReversalSignal
 from strategy.strategy_engine import StrategyEngine
 from strategy.risk_manager import RiskManager
 from execution.execution_manager import ExecutionManager
@@ -218,6 +222,10 @@ class BotController:
     # Task для обновления корреляций ==========
     self.correlation_update_task: Optional[asyncio.Task] = None
 
+    # Position Monitor
+    self.position_monitor: Optional[PositionMonitor] = None
+    self.position_monitor_task: Optional[asyncio.Task] = None
+
     self.running = False
 
     logger.info("Инициализирован контроллер бота с ML поддержкой")
@@ -286,6 +294,16 @@ class BotController:
       # await correlation_manager.initialize(self.symbols)
 
       logger.info("✓ CorrelationManager инициализирован")
+
+      # НОВОЕ: Создание Position Monitor (ПОСЛЕ создания всех менеджеров)
+      self.position_monitor = PositionMonitor(
+        risk_manager=self.risk_manager,
+        candle_managers=self.candle_managers,
+        orderbook_managers=self.orderbook_managers,
+        execution_manager=self.execution_manager
+      )
+
+      logger.info("✓ Position Monitor создан")
 
       logger.info("=" * 80)
       logger.info("БАЗОВЫЕ КОМПОНЕНТЫ ИНИЦИАЛИЗИРОВАНЫ (БЕЗ WEBSOCKET)")
@@ -363,6 +381,8 @@ class BotController:
         # Если screener выключен - статический список
         self.symbols = settings.get_trading_pairs_list()
         logger.info(f"✓ Screener отключен, статический список: {len(self.symbols)} пар")
+
+
 
       logger.info("=" * 80)
       logger.info("ИНИЦИАЛИЗАЦИЯ CORRELATION MANAGER")
@@ -443,6 +463,11 @@ class BotController:
       )
       logger.info("✓ Цикл анализа (ML-Enhanced) запущен")
 
+      # Запуск Position Monitor (ПОСЛЕ запуска analysis_loop)
+      if self.position_monitor:
+        await self.position_monitor.start()
+        logger.info("✓ Position Monitor запущен")
+
       asyncio.create_task(fsm_cleanup_task())
       logger.info("✓ FSM Cleanup Task запланирован")
 
@@ -469,6 +494,7 @@ class BotController:
       await broadcast_bot_status("running", {
         "symbols": self.symbols,
         "ml_enabled": True,
+        "position_monitor_enabled": self.position_monitor.enabled if self.position_monitor else False,
         "message": "Бот успешно запущен с ML поддержкой"
       })
 
@@ -1032,20 +1058,6 @@ class BotController:
                     f"source={type(getattr(signal, 'source', None))}",
                     exc_info=True
                   )
-                # try:
-                #   from api.websocket import broadcast_signal
-                #   if isinstance(signal, TradingSignal):
-                #     signal_dict = signal.to_dict()
-                #   else:
-                #     signal_dict = signal  # Уже dict
-                #
-                #   await broadcast_signal(signal_dict)
-                # except Exception as e:
-                #   logger.error(
-                #     f"{symbol} | Ошибка broadcast_signal: {e}. "
-                #     f"Тип signal: {type(signal)}",
-                #     exc_info=True
-                #   )
 
               except AttributeError as e:
                 logger.error(
@@ -1218,6 +1230,11 @@ class BotController:
           pass
         logger.info("✓ Symbols refresh task остановлен")
 
+      # Остановка Position Monitor
+      if self.position_monitor:
+        await self.position_monitor.stop()
+        logger.info("✓ Position Monitor остановлен")
+
       self.status = BotStatus.STOPPED
       logger.info("=" * 80)
       logger.info("БОТ УСПЕШНО ОСТАНОВЛЕН")
@@ -1281,32 +1298,111 @@ class BotController:
         # Продолжаем работу даже при ошибке
         await asyncio.sleep(3600)  # Повторная попытка через 1 час
 
-  # async def _periodic_correlation_update(self):
-  #   """
-  #   Периодическое обновление корреляций (раз в день).
-  #   """
-  #   while True:
-  #     try:
-  #       # Ждем 24 часа
-  #       await asyncio.sleep(24 * 3600)
-  #
-  #       logger.info("🔄 Запуск периодического обновления корреляций...")
-  #
-  #       # Обновляем корреляции
-  #       await correlation_manager.update_correlations(self.symbols)
-  #
-  #       logger.info("✓ Корреляции обновлены")
-  #
-  #     except asyncio.CancelledError:
-  #       logger.info("Остановка обновления корреляций")
-  #       break
-  #     except Exception as e:
-  #       logger.error(
-  #         f"Ошибка при обновлении корреляций: {e}",
-  #         exc_info=True
-  #       )
-  #       # Продолжаем работу при ошибке
-  #       await asyncio.sleep(3600)  # Повтор через час
+  async def _handle_reversal_signal(
+        self,
+        symbol: str,
+        reversal: ReversalSignal,
+        position: Dict
+    ):
+      """
+      Обработка сигнала разворота.
+
+      Args:
+          symbol: Торговая пара
+          reversal: Сигнал разворота
+          position: Информация о позиции из RiskManager
+      """
+      try:
+        if reversal.suggested_action == "close_position":
+          logger.warning(
+            f"{symbol} | 🚨 CRITICAL REVERSAL DETECTED | "
+            f"Strength: {reversal.strength.value} | "
+            f"Confidence: {reversal.confidence:.2%} | "
+            f"Reason: {reversal.reason}"
+          )
+
+          if reversal_detector.auto_action:
+            logger.warning(
+              f"{symbol} | AUTO-CLOSING position due to critical reversal"
+            )
+
+            # Находим position_id в БД
+            position_in_db = await position_repository.find_open_by_symbol(symbol)
+
+            if position_in_db:
+              current_price = position.get('entry_price', 0) * 1.01  # Fallback
+
+              # Или получаем из OrderBook Manager
+              orderbook_manager = self.orderbook_managers.get(symbol)
+              if orderbook_manager:
+                snapshot = orderbook_manager.get_snapshot()
+                if snapshot and snapshot.mid_price:
+                  current_price = snapshot.mid_price
+
+              # Закрываем позицию через ExecutionManager
+              await self.execution_manager.close_position(
+                position_id=str(position_in_db.id),
+                exit_price=current_price,
+                exit_reason=f"Critical reversal: {reversal.reason}",
+                exit_signal={
+                  "type": "reversal",
+                  "strength": reversal.strength.value,
+                  "indicators": reversal.indicators_confirming,
+                  "confidence": reversal.confidence
+                }
+              )
+
+              logger.info(
+                f"{symbol} | ✓ Position closed due to critical reversal"
+              )
+            else:
+              logger.error(
+                f"{symbol} | Position found in RiskManager but not in DB!"
+              )
+          else:
+            logger.warning(
+              f"{symbol} | ⚠️ MANUAL INTERVENTION REQUIRED | "
+              f"Auto-action disabled - please close position manually"
+            )
+
+        elif reversal.suggested_action == "reduce_size":
+          logger.warning(
+            f"{symbol} | 🔶 STRONG REVERSAL | "
+            f"Strength: {reversal.strength.value} | "
+            f"Suggestion: Reduce position size by 50%"
+          )
+
+          # TODO: Реализовать частичное закрытие позиции
+          # Требуется добавить метод partial_close в ExecutionManager
+          logger.info(
+            f"{symbol} | Partial close not yet implemented - "
+            f"consider manual reduction"
+          )
+
+        elif reversal.suggested_action == "tighten_sl":
+          logger.warning(
+            f"{symbol} | 🔸 MODERATE REVERSAL | "
+            f"Strength: {reversal.strength.value} | "
+            f"Suggestion: Tighten stop loss"
+          )
+
+          # TODO: Реализовать динамическое обновление SL
+          # Требуется добавить метод update_stop_loss в ExecutionManager
+          logger.info(
+            f"{symbol} | Stop loss update not yet implemented - "
+            f"consider manual adjustment"
+          )
+
+        else:
+          logger.debug(
+            f"{symbol} | Weak reversal detected, no action required"
+          )
+
+      except Exception as e:
+        logger.error(
+          f"{symbol} | Error handling reversal signal: {e}",
+          exc_info=True
+        )
 
   async def _handle_orderbook_message(self, data: Dict[str, Any]):
     """

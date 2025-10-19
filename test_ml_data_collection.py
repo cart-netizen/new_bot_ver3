@@ -3,12 +3,7 @@
 
 Файл: backend/tests/ml_engine/test_ml_data_collection.py
 """
-import sys
-from pathlib import Path
 
-# Определяем путь к backend директории
-backend_path = Path(__file__).parent / "backend"
-sys.path.insert(0, str(backend_path))
 import pytest
 import asyncio
 import json

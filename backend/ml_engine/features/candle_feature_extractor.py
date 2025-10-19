@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 @dataclass
 class Candle:
   """Модель свечи (OHLCV)"""
-  timestamp: int
+  timestamp: float
   open: float
   high: float
   low: float

@@ -1284,3 +1284,17 @@ async def get_adaptive_risk_stats(current_user: dict = Depends(require_auth)):
     },
     "kelly_available": stats['total_trades'] >= settings.RISK_KELLY_MIN_TRADES
   }
+
+
+@trading_router.get("/position-monitor/stats")
+async def get_position_monitor_stats(current_user: dict = Depends(require_auth)):
+  """Получение статистики Position Monitor."""
+  from main import bot_controller
+
+  if not bot_controller or not bot_controller.position_monitor:
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Position Monitor недоступен"
+    )
+
+  return bot_controller.position_monitor.get_statistics()

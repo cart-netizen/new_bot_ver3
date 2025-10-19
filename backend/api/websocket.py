@@ -323,3 +323,28 @@ async def broadcast_screener_update(pairs: list):
       "timestamp": int(datetime.now().timestamp() * 1000)
     }
     await manager.broadcast(message, authenticated_only=True)
+
+
+async def broadcast_reversal_alert(
+    symbol: str,
+    reversal_data: dict
+):
+  """
+  Рассылка уведомления о развороте тренда.
+
+  Args:
+      symbol: Торговая пара
+      reversal_data: Данные о развороте
+  """
+  message = {
+    "type": "reversal_alert",
+    "symbol": symbol,
+    "data": reversal_data,
+    "timestamp": datetime.now().isoformat()
+  }
+
+  await manager.broadcast(message)
+
+  logger.debug(
+    f"Reversal alert broadcasted: {symbol} - {reversal_data.get('strength')}"
+  )

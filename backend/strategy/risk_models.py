@@ -8,7 +8,6 @@ from typing import Dict, List, Optional, Literal
 from datetime import datetime
 from enum import Enum
 
-
 class MarketRegime(Enum):
   """Режимы рынка для адаптации риск-параметров."""
   STRONG_TREND = "strong_trend"
@@ -117,6 +116,12 @@ class RiskPerTradeParams:
   final_risk_percent: float
   max_position_usdt: float
 
+class ReversalAction(str, Enum):
+  """Рекомендуемые действия при развороте."""
+  CLOSE_POSITION = "close_position"
+  REDUCE_SIZE = "reduce_size"
+  TIGHTEN_SL = "tighten_sl"
+  NO_ACTION = "no_action"
 
 @dataclass
 class ReversalSignal:
@@ -137,7 +142,7 @@ class ReversalSignal:
   strength: ReversalStrength
   indicators_confirming: List[str]
   confidence: float
-  suggested_action: Literal["close_position", "reduce_size", "tighten_sl", "no_action"]
+  suggested_action: ReversalAction
   reason: str
 
 
@@ -210,3 +215,4 @@ class MLRiskAdjustments:
       "Manipulation risk должен быть в [0, 1]"
     assert 0.0 <= self.feature_quality <= 1.0, \
       "Feature quality должен быть в [0, 1]"
+
