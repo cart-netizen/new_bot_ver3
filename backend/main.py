@@ -295,15 +295,7 @@ class BotController:
 
       logger.info("✓ CorrelationManager инициализирован")
 
-      # НОВОЕ: Создание Position Monitor (ПОСЛЕ создания всех менеджеров)
-      self.position_monitor = PositionMonitor(
-        risk_manager=self.risk_manager,
-        candle_managers=self.candle_managers,
-        orderbook_managers=self.orderbook_managers,
-        execution_manager=self.execution_manager
-      )
 
-      logger.info("✓ Position Monitor создан")
 
       logger.info("=" * 80)
       logger.info("БАЗОВЫЕ КОМПОНЕНТЫ ИНИЦИАЛИЗИРОВАНЫ (БЕЗ WEBSOCKET)")
@@ -422,10 +414,41 @@ class BotController:
         )
       logger.info(f"✓ Создано {len(self.candle_managers)} менеджеров свечей")
 
+
       # ===== Добавляем символы в анализатор =====
       for symbol in self.symbols:
         self.market_analyzer.add_symbol(symbol)
       logger.info(f"✓ {len(self.symbols)} символов добавлено в анализатор")
+
+      # НОВОЕ: Создание Position Monitor (ПОСЛЕ создания всех менеджеров)
+      # ВАЖНО: Создаем ПОСЛЕ того, как все зависимости готовы:
+      # - risk_manager ✓ (создан в начале start)
+      # - execution_manager ✓ (создан в начале start)
+      # - orderbook_managers ✓ (созданы выше)
+      # - candle_managers ✓ (созданы выше)
+      logger.info("Создание Position Monitor...")
+
+      # Проверка зависимостей
+      if not self.risk_manager:
+        raise RuntimeError("RiskManager не инициализирован")
+      if not self.execution_manager:
+        raise RuntimeError("ExecutionManager не инициализирован")
+      if not self.orderbook_managers:
+        raise RuntimeError("OrderBookManagers не созданы")
+      if not self.candle_managers:
+        raise RuntimeError("CandleManagers не созданы")
+
+      self.position_monitor = PositionMonitor(
+        risk_manager=self.risk_manager,
+        candle_managers=self.candle_managers,
+        orderbook_managers=self.orderbook_managers,
+        execution_manager=self.execution_manager
+      )
+
+      logger.info(
+        f"✓ Position Monitor создан с {len(self.candle_managers)} "
+        f"candle managers и {len(self.orderbook_managers)} orderbook managers"
+      )
 
       # ===== ТЕПЕРЬ создаем WebSocket Manager с ПРАВИЛЬНЫМИ символами =====
       logger.info("Создание WebSocket Manager...")
@@ -463,7 +486,14 @@ class BotController:
       )
       logger.info("✓ Цикл анализа (ML-Enhanced) запущен")
 
-      # Запуск Position Monitor (ПОСЛЕ запуска analysis_loop)
+
+      # ========== ЗАПУСК POSITION MONITOR ==========
+      # ВАЖНО: Запускаем ПОСЛЕ analysis_task, так как:
+      # 1. analysis_loop генерирует сигналы
+      # 2. execution_manager открывает позиции
+      # 3. position_monitor мониторит открытые позиции
+
+
       if self.position_monitor:
         await self.position_monitor.start()
         logger.info("✓ Position Monitor запущен")

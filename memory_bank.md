@@ -2199,3 +2199,65 @@ logger.debug("BTCUSDT | Reversal indicators insufficient: 2/3")
 Результат:
 pythonlogger.debug("BTCUSDT | Reversal detection in cooldown: 120s / 300s")
 # Возвращает None
+
+Reversal Detector
+
+┌─────────────────────────────────────────────────────────────┐
+│                     ANALYSIS LOOP (500ms)                    │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+                  ┌───────────────────────┐
+                  │  Check Open Position  │
+                  └───────────────────────┘
+                              │
+                              ▼
+                  ┌───────────────────────┐
+                  │  Get Candles (50+)    │
+                  │  Get Indicators       │
+                  │  Get OrderBook        │
+                  └───────────────────────┘
+                              │
+                              ▼
+           ┌──────────────────────────────────────┐
+           │     REVERSAL DETECTOR                │
+           │  detect_reversal(symbol, candles...) │
+           └──────────────────────────────────────┘
+                              │
+                 ┌────────────┴────────────┐
+                 ▼                         ▼
+         ┌──────────────┐          ┌──────────────┐
+         │ 7 Detection  │          │  Cooldown    │
+         │   Methods    │          │   Check      │
+         └──────────────┘          └──────────────┘
+                 │                         │
+                 └────────────┬────────────┘
+                              ▼
+                  ┌───────────────────────┐
+                  │  Calculate Strength   │
+                  │  Determine Action     │
+                  └───────────────────────┘
+                              │
+                              ▼
+                  ┌───────────────────────┐
+                  │   ReversalSignal      │
+                  └───────────────────────┘
+                              │
+                              ▼
+           ┌──────────────────────────────────────┐
+           │     HANDLE REVERSAL SIGNAL           │
+           │  _handle_reversal_signal()           │
+           └──────────────────────────────────────┘
+                              │
+         ┌────────────────────┼────────────────────┐
+         ▼                    ▼                    ▼
+    [CRITICAL]           [STRONG]            [MODERATE]
+  Close Position      Reduce Size 50%     Tighten SL
+         │                    │                    │
+         └────────────────────┴────────────────────┘
+                              │
+                              ▼
+                  ┌───────────────────────┐
+                  │  Log + WebSocket      │
+                  │  Notification         │
+                  └───────────────────────┘
