@@ -300,7 +300,7 @@ class UnifiedSLTPCalculator:
         """
         Fixed percentage расчет (emergency fallback).
         """
-        sl_percent = min(0.02, self.max_sl_percent)  # 2% или max
+        sl_percent = min(0.01, self.max_sl_percent)  # 2% или max
         tp_percent = sl_percent * self.min_rr_ratio  # Поддерживаем min R/R
 
         if position_side == "long":

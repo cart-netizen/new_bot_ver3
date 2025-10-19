@@ -299,36 +299,54 @@ class RiskManager:
       self,
       signal: TradingSignal,
       available_balance: float,
-      stop_loss_price: float,  # НОВЫЙ ПАРАМЕТР: обязательный
+      stop_loss_price: float,
       leverage: Optional[int] = None,
       current_volatility: Optional[float] = None,
       ml_confidence: Optional[float] = None
   ) -> float:
     """
-    Расчет размера позиции с адаптивным риском.
+    Расчет размера позиции с ПРАВИЛЬНОЙ логикой Risk%.
 
-    КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Теперь использует AdaptiveRiskCalculator
-    для динамического расчета размера на основе множества факторов.
+    ПРАВИЛЬНАЯ ЛОГИКА:
+    Risk% = процент баланса используемый как маржа (initial margin)
+    position_base = balance * risk% (initial margin)
+    position_notional = position_base * leverage (размер позиции в USDT)
+
+    ПРИМЕР:
+    balance = 3.76 USDT
+    risk% = 2%
+    position_base = 3.76 * 0.02 = 0.0752 USDT (initial margin)
+    position_notional = 0.0752 * 10 = 0.752 USDT
+    min_notional = 5 USDT
+    → Final position = 5.0 USDT (после применения минимума)
 
     Args:
         signal: Торговый сигнал
-        available_balance: Доступный баланс в USDT (РЕАЛЬНЫЙ!)
-        stop_loss_price: Цена stop loss (ОБЯЗАТЕЛЬНО!)
+        available_balance: Доступный баланс в USDT
+        stop_loss_price: Цена stop loss
         leverage: Кредитное плечо (опционально)
         current_volatility: Текущая волатильность (опционально)
         ml_confidence: ML уверенность (опционально)
 
     Returns:
-        float: Размер позиции в USDT
+        float: Размер позиции в USDT (notional value)
+               0.0 если невозможно открыть
     """
-    logger.debug(
-      f"{signal.symbol} | Calculating position size: "
-      f"balance={available_balance:.2f}, "
-      f"entry={signal.price:.8f}, "
-      f"sl={stop_loss_price:.8f}"
+    if leverage is None:
+      leverage = self.limits.default_leverage
+
+    symbol = signal.symbol
+    entry_price = signal.price
+
+    logger.info(
+      f"{symbol} | Начало расчета размера позиции: "
+      f"balance={available_balance:.2f} USDT, leverage={leverage}x"
     )
 
-    # Проверяем correlation factor
+    # ============================================
+    # ЭТАП 1: РАСЧЕТ CORRELATION FACTOR
+    # ============================================
+
     correlation_factor = 1.0
 
     try:
@@ -343,16 +361,23 @@ class RiskManager:
         correlation_factor = 1.0 / (1.0 + group.active_positions * 0.3)
 
         logger.debug(
-          f"{signal.symbol} | Correlation penalty applied: "
+          f"{symbol} | Correlation penalty applied: "
           f"group={group.group_id}, "
           f"active_positions={group.active_positions}, "
           f"factor={correlation_factor:.2f}"
         )
     except Exception as e:
-      logger.warning(f"{signal.symbol} | Error checking correlation: {e}")
+      logger.warning(
+        f"{symbol} | Error checking correlation: {e}"
+      )
       correlation_factor = 1.0
 
-    # Рассчитываем adaptive risk
+    # ============================================
+    # ЭТАП 2: ПОЛУЧЕНИЕ RISK% (adaptive)
+    # ============================================
+
+    # Adaptive Risk Calculator возвращает final_risk_percent
+    # Это процент баланса для использования как маржи
     risk_params = adaptive_risk_calculator.calculate(
       signal=signal,
       balance=available_balance,
@@ -362,42 +387,190 @@ class RiskManager:
       ml_confidence=ml_confidence
     )
 
-    # Применяем leverage
-    if leverage is None:
-      leverage = self.limits.default_leverage
+    risk_percent = risk_params.final_risk_percent  # например 0.02 = 2%
 
-    # Размер позиции с учетом leverage
-    position_size_usdt = risk_params.max_position_usdt * leverage
-
-    # Проверка минимального размера
-    min_size = self.limits.min_order_size_usdt * leverage
-
-    if position_size_usdt < min_size:
-      logger.warning(
-        f"{signal.symbol} | Position size {position_size_usdt:.2f} USDT "
-        f"< minimum {min_size:.2f} USDT (with leverage {leverage}x)"
-      )
-      position_size_usdt = min_size
-
-    # Проверка максимального размера (не превышаем balance)
-    max_size = available_balance * leverage
-    if position_size_usdt > max_size:
-      logger.warning(
-        f"{signal.symbol} | Position size {position_size_usdt:.2f} USDT "
-        f"> maximum {max_size:.2f} USDT, capping"
-      )
-      position_size_usdt = max_size
-
-    logger.info(
-      f"{signal.symbol} | ✓ Adaptive Risk calculated: "
-      f"final_risk={risk_params.final_risk_percent:.2%}, "
-      f"position=${position_size_usdt:.2f} USDT "
-      f"(leverage={leverage}x, "
-      f"vol_adj={risk_params.volatility_adjustment:.2f}, "
-      f"corr_adj={risk_params.correlation_adjustment:.2f})"
+    logger.debug(
+      f"{symbol} | Adaptive risk calculated: "
+      f"risk%={risk_percent:.2%}, "
+      f"volatility_adj={risk_params.volatility_adjustment:.2f}, "
+      f"correlation_adj={risk_params.correlation_adjustment:.2f}"
     )
 
-    return position_size_usdt
+    # ============================================
+    # ЭТАП 3: РАСЧЕТ POSITION_BASE (initial margin)
+    # ============================================
+
+    # position_base = сумма баланса для initial margin
+    position_base = available_balance * risk_percent
+
+    logger.debug(
+      f"{symbol} | position_base (initial margin): "
+      f"{position_base:.4f} USDT"
+    )
+
+    # ============================================
+    # ЭТАП 4: РАСЧЕТ NOTIONAL POSITION
+    # ============================================
+
+    # Размер позиции на бирже = маржа * leverage
+    position_notional = position_base * leverage
+
+    logger.debug(
+      f"{symbol} | position_notional (без минимума): "
+      f"{position_notional:.4f} USDT"
+    )
+
+    # ============================================
+    # ЭТАП 5: ПРИМЕНЕНИЕ МИНИМУМА
+    # ============================================
+
+    min_notional = self.limits.min_order_size_usdt
+
+    if position_notional < min_notional:
+      logger.info(
+        f"{symbol} | Position {position_notional:.4f} USDT "
+        f"< minimum {min_notional:.2f} USDT, "
+        f"увеличиваем до минимума"
+      )
+
+      position_notional = min_notional
+
+      # Пересчитываем требуемую маржу после увеличения до минимума
+      position_base = position_notional / leverage
+
+      logger.debug(
+        f"{symbol} | После минимума: "
+        f"notional={position_notional:.2f} USDT, "
+        f"required_margin={position_base:.4f} USDT"
+      )
+
+    # ============================================
+    # ЭТАП 6: РАСЧЕТ ТРЕБУЕМОГО БАЛАНСА
+    # ============================================
+
+    # Initial margin (уже рассчитана)
+    initial_margin = position_base
+
+    # Maintenance margin (20% от initial margin для Bybit)
+    maintenance_margin_rate = 0.2
+    maintenance_margin = initial_margin * maintenance_margin_rate
+
+    # Total required = initial + maintenance
+    total_required = initial_margin + maintenance_margin
+
+    logger.debug(
+      f"{symbol} | Margin breakdown:\n"
+      f"  Initial: {initial_margin:.4f} USDT\n"
+      f"  Maintenance: {maintenance_margin:.4f} USDT\n"
+      f"  Total: {total_required:.4f} USDT"
+    )
+
+    # ============================================
+    # ЭТАП 7: ПРОВЕРКА ДОСТАТОЧНОСТИ БАЛАНСА
+    # ============================================
+
+    if total_required > available_balance:
+      shortage = total_required - available_balance
+
+      logger.error(
+        f"{symbol} | ❌ НЕДОСТАТОЧНО БАЛАНСА:\n"
+        f"  Position size: {position_notional:.2f} USDT\n"
+        f"  Leverage: {leverage}x\n"
+        f"  Risk%: {risk_percent:.2%}\n"
+        f"\n"
+        f"  MARGIN REQUIREMENTS:\n"
+        f"  Initial margin: {initial_margin:.4f} USDT\n"
+        f"  Maintenance margin: {maintenance_margin:.4f} USDT\n"
+        f"  Total required: {total_required:.4f} USDT\n"
+        f"\n"
+        f"  BALANCE:\n"
+        f"  Available: {available_balance:.4f} USDT\n"
+        f"  Shortage: {shortage:.4f} USDT\n"
+        f"\n"
+        f"РЕШЕНИЯ:\n"
+        f"  1. Пополнить баланс минимум на {shortage:.4f} USDT\n"
+        f"  2. Уменьшить min_order_size_usdt в конфиге\n"
+        f"  3. Увеличить leverage (НЕ рекомендуется)"
+      )
+
+      return 0.0  # REJECT
+
+    # ============================================
+    # ЭТАП 8: ПРИМЕНЕНИЕ МАКСИМУМА (опционально)
+    # ============================================
+
+    # Максимальный размер от buying power
+    # Обычно 100% = весь баланс можно использовать
+    max_buying_power_percent = 90/100  # 100%
+
+    # Решаем уравнение: total_required <= balance * max%
+    # (position/leverage) * 1.2 <= balance * max%
+    # position <= balance * max% * leverage / 1.2
+
+    max_position = (available_balance * max_buying_power_percent * leverage) / 1.2
+
+    if position_notional > max_position:
+      logger.warning(
+        f"{symbol} | Position {position_notional:.2f} USDT "
+        f"> maximum {max_position:.2f} USDT, capping"
+      )
+
+      position_notional = max_position
+
+      # Пересчитываем маржу после capping
+      initial_margin = position_notional / leverage
+      maintenance_margin = initial_margin * maintenance_margin_rate
+      total_required = initial_margin + maintenance_margin
+
+      # Повторная проверка баланса
+      if total_required > available_balance:
+        logger.error(
+          f"{symbol} | ❌ После capping всё равно "
+          f"недостаточно баланса"
+        )
+        return 0.0
+
+    # ============================================
+    # ЭТАП 9: ФИНАЛЬНАЯ ПРОВЕРКА МИНИМУМА
+    # ============================================
+
+    # После всех корректировок проверяем что >= минимума
+    if position_notional < min_notional:
+      logger.error(
+        f"{symbol} | ❌ После применения ограничений "
+        f"размер {position_notional:.2f} USDT < "
+        f"минимума {min_notional:.2f} USDT"
+      )
+      return 0.0
+
+    # ============================================
+    # ЭТАП 10: ФИНАЛЬНОЕ ЛОГИРОВАНИЕ
+    # ============================================
+
+    remaining = available_balance - total_required
+    remaining_percent = (remaining / available_balance) * 100
+
+    logger.info(
+      f"{symbol} | ✅ РАЗМЕР ПОЗИЦИИ РАССЧИТАН:\n"
+      f"  Position size: {position_notional:.2f} USDT\n"
+      f"  Leverage: {leverage}x\n"
+      f"  Risk%: {risk_percent:.2%}\n"
+      f"\n"
+      f"  ADAPTIVE ADJUSTMENTS:\n"
+      f"  Volatility adj: {risk_params.volatility_adjustment:.2f}x\n"
+      f"  Correlation adj: {risk_params.correlation_adjustment:.2f}x\n"
+      f"\n"
+      f"  MARGIN REQUIREMENTS:\n"
+      f"  Initial margin: {initial_margin:.4f} USDT\n"
+      f"  Maintenance margin: {maintenance_margin:.4f} USDT\n"
+      f"  Total required: {total_required:.4f} USDT\n"
+      f"\n"
+      f"  BALANCE:\n"
+      f"  Available: {available_balance:.4f} USDT\n"
+      f"  Remaining: {remaining:.4f} USDT ({remaining_percent:.1f}%)"
+    )
+
+    return position_notional
 
 
 
