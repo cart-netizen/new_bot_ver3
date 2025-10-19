@@ -400,3 +400,4 @@ class ExponentialBackoff:
     """Сброс задержки к начальному значению."""
     self.current_delay = self.initial_delay
     self.attempts = 0
+
