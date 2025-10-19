@@ -32,6 +32,7 @@ from screener.screener_manager import ScreenerManager
 from strategies.strategy_manager import StrategyManagerConfig, StrategyManager
 from strategy.candle_manager import CandleManager
 from strategy.correlation_manager import correlation_manager
+from strategy.daily_loss_killer import daily_loss_killer
 from strategy.orderbook_manager import OrderBookManager
 from strategy.analyzer import MarketAnalyzer
 from strategy.strategy_engine import StrategyEngine
@@ -321,6 +322,10 @@ class BotController:
       await self.balance_tracker.start()
       logger.info("✓ Трекер баланса запущен")
 
+      # ========== Запускаем Daily Loss Killer ==========
+      await daily_loss_killer.start()
+      logger.info("✓ Daily Loss Killer запущен")
+
       # Инициализация ML Validator
       await self.ml_validator.initialize()
       logger.info("✅ ML Signal Validator инициализирован")
@@ -437,9 +442,12 @@ class BotController:
         logger.info("✓ Задача обновления списка пар запущена")
 
       # ========== НОВОЕ: Запуск периодического обновления корреляций ==========
-      self.correlation_update_task = asyncio.create_task(
-        self._periodic_correlation_update()
-      )
+      if correlation_manager.enabled:
+        logger.info("Запуск периодического обновления корреляций...")
+        self.correlation_update_task = asyncio.create_task(
+          self._periodic_correlation_update()
+        )
+        logger.info("✓ Correlation update task запущен")
 
       logger.info("✓ Запущено периодическое обновление корреляций")
 
@@ -1155,6 +1163,10 @@ class BotController:
       if self.execution_manager:
         await self.execution_manager.stop()
         logger.info("✓ Менеджер исполнения остановлен")
+
+      # ========== Останавливаем Daily Loss Killer ==========
+      await daily_loss_killer.stop()
+      logger.info("✓ Daily Loss Killer остановлен")
 
       if self.balance_tracker:
         await self.balance_tracker.stop()

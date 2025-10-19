@@ -17,6 +17,7 @@ from core.exceptions import RiskManagementError
 from models.signal import TradingSignal, SignalType
 from config import settings
 from strategy.correlation_manager import correlation_manager
+from strategy.daily_loss_killer import daily_loss_killer
 
 logger = get_logger(__name__)
 
@@ -169,7 +170,22 @@ class RiskManager:
         required_margin = position_size_usdt / leverage
 
         # ============================================
-        # ПРОВЕРКА 0: ЖЁСТКИЙ ЛИМИТ ПОЗИЦИЙ (ДВОЙНАЯ ЗАЩИТА)
+        # ПРОВЕРКА 0.0: DAILY LOSS KILLER (КРИТИЧНО!)
+        # ============================================
+        is_allowed, shutdown_reason = daily_loss_killer.is_trading_allowed()
+
+        if not is_allowed:
+          logger.critical(
+            f"{signal.symbol} | 🚨 TRADING BLOCKED: {shutdown_reason}"
+          )
+          return False, shutdown_reason
+
+        logger.debug(f"{signal.symbol} | ✓ Daily Loss Killer: торговля разрешена")
+
+
+
+        # ============================================
+        # ПРОВЕРКА 0.1: ЖЁСТКИЙ ЛИМИТ ПОЗИЦИЙ (ДВОЙНАЯ ЗАЩИТА)
         # ============================================
         if self.metrics.open_positions_count >= self.limits.max_open_positions:
           reason = (
@@ -457,7 +473,7 @@ class RiskManager:
 
       self.correlation_manager.notify_position_closed(
         symbol=symbol,
-        exposure_usdt=exposure_usdt
+        exposure_usdt=position["size_usdt"]
       )
 
       logger.debug(

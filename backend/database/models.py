@@ -61,7 +61,8 @@ class AuditAction(str, enum.Enum):
   POSITION_MODIFY = "position_modify"
   BALANCE_UPDATE = "balance_update"
   CONFIG_CHANGE = "config_change"
-
+  SYSTEM = "system"  # Системные события (daily reset, startup, shutdown)
+  EMERGENCY_SHUTDOWN = "emergency_shutdown"  # Emergency shutdown из Daily Loss Killer
 
 # ==================== MODELS ====================
 

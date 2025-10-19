@@ -1820,3 +1820,38 @@ correlation_manager.update_correlations()
   → Пересчитать correlation matrix
   → Перегруппировать символы
   → Уведомить если структура изменилась
+
+АНАЛИЗ КОМПОНЕНТА
+Daily Loss Killer обеспечивает:
+
+✅ Автоматический мониторинг дневного P&L (каждые 60 сек)
+✅ WARNING при убытке ≥10%
+✅ EMERGENCY SHUTDOWN при убытке ≥15%
+✅ Автоматический reset в полночь UTC
+✅ Интеграция с NotificationService
+
+Start Bot
+   ↓
+Initialize Daily Loss Killer (starting_balance = current)
+   ↓
+Monitor every 60 sec ─────────────┐
+   ↓                               │
+Check daily P&L                    │
+   ↓                               │
+10% loss? → Send WARNING ──────────┤
+   ↓                               │
+15% loss? → EMERGENCY SHUTDOWN     │
+   ↓                               │
+Block all trading                  │
+   ↓                               │
+Send critical alerts               │
+   ↓                               │
+Wait for manual intervention       │
+   ↓                               │
+00:00 UTC → Daily Reset ───────────┘
+Защита в RiskManager:
+python# В КАЖДОМ validate_signal() - ПЕРВАЯ проверка:
+is_allowed, reason = daily_loss_killer.is_trading_allowed()
+
+if not is_allowed:
+    return False, "TRADING BLOCKED: Emergency shutdown active"

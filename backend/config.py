@@ -178,16 +178,23 @@ class Settings(BaseSettings):
     description="Максимальное допустимое кредитное плечо"
   )
 
-  @field_validator("MAX_LEVERAGE")
+  @field_validator("MAX_LEVERAGE", mode="before")
   @classmethod
   def validate_max_leverage(cls, v, info):
     """Проверка, что MAX_LEVERAGE >= DEFAULT_LEVERAGE"""
+    # ИСПРАВЛЕНО: Сначала конвертируем в int
+    try:
+      v_int = int(v)
+    except (TypeError, ValueError):
+      raise ValueError(f"MAX_LEVERAGE должен быть целым числом, получено: {v}")
+
     default_leverage = info.data.get("DEFAULT_LEVERAGE", 10)
-    if v < default_leverage:
+    if v_int < default_leverage:
       raise ValueError(
-        f"MAX_LEVERAGE ({v}) должен быть >= DEFAULT_LEVERAGE ({default_leverage})"
+        f"MAX_LEVERAGE ({v_int}) должен быть >= DEFAULT_LEVERAGE ({default_leverage})"
       )
-    return v
+
+    return v_int
 
   # ===== НАСТРОЙКИ API СЕРВЕРА =====
   API_HOST: str = Field(default="0.0.0.0")
@@ -559,25 +566,49 @@ class Settings(BaseSettings):
   )
 
   @field_validator("SLTP_MAX_STOP_LOSS_PERCENT", "DAILY_LOSS_MAX_PERCENT", mode="before")
+  @classmethod
   def validate_percent_positive(cls, v):
     """Валидация положительных процентов."""
-    if v <= 0:
+    # ИСПРАВЛЕНО: Сначала конвертируем в float
+    try:
+      v_float = float(v)
+    except (TypeError, ValueError):
+      raise ValueError(f"Процент должен быть числом, получено: {v}")
+
+    if v_float <= 0:
       raise ValueError("Процент должен быть положительным числом")
-    return v
+
+    return v_float
 
   @field_validator("SLTP_MIN_RISK_REWARD", mode="before")
+  @classmethod
   def validate_risk_reward_ratio(cls, v):
     """Валидация минимального R/R."""
-    if v < 1.0:
+    # ИСПРАВЛЕНО: Сначала конвертируем в float
+    try:
+      v_float = float(v)
+    except (TypeError, ValueError):
+      raise ValueError(f"Risk/Reward должен быть числом, получено: {v}")
+
+    if v_float < 1.0:
       raise ValueError("Минимальный R/R должен быть >= 1.0")
-    return v
+
+    return v_float
 
   @field_validator("CORRELATION_MAX_THRESHOLD", "ML_MIN_CONFIDENCE_THRESHOLD", mode="before")
+  @classmethod
   def validate_threshold_range(cls, v):
     """Валидация порогов в диапазоне [0, 1]."""
-    if not 0.0 <= v <= 1.0:
+    # ИСПРАВЛЕНО: Сначала конвертируем в float
+    try:
+      v_float = float(v)
+    except (TypeError, ValueError):
+      raise ValueError(f"Порог должен быть числом, получено: {v}")
+
+    if not 0.0 <= v_float <= 1.0:
       raise ValueError("Порог должен быть в диапазоне [0.0, 1.0]")
-    return v
+
+    return v_float
 
   @field_validator("TRADING_PAIRS")
   def validate_trading_pairs(cls, v):
@@ -589,13 +620,24 @@ class Settings(BaseSettings):
       raise ValueError("Необходимо указать хотя бы одну торговую пару")
     return v
 
-  @field_validator("ORDERBOOK_DEPTH")
+  @field_validator("ORDERBOOK_DEPTH", mode="before")
+  @classmethod
   def validate_orderbook_depth(cls, v):
     """Валидация глубины стакана."""
-    allowed_depths = [1, 50, 200, 500]
-    if v not in allowed_depths:
-      raise ValueError(f"ORDERBOOK_DEPTH должен быть одним из {allowed_depths}")
-    return v
+    # ИСПРАВЛЕНО: Сначала конвертируем в int
+    try:
+      v_int = int(v)
+    except (TypeError, ValueError):
+      raise ValueError(f"Глубина стакана должна быть целым числом, получено: {v}")
+
+    valid_depths = [1, 50, 200, 500]
+    if v_int not in valid_depths:
+      raise ValueError(
+        f"ORDERBOOK_DEPTH должен быть одним из: {valid_depths}. "
+        f"Получено: {v_int}"
+      )
+
+    return v_int
 
   @field_validator("IMBALANCE_BUY_THRESHOLD", "IMBALANCE_SELL_THRESHOLD")
   def validate_imbalance_thresholds(cls, v):
