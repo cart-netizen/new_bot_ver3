@@ -14,6 +14,7 @@
 """
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # Определяем путь к backend директории
@@ -176,7 +177,8 @@ class TestAdaptiveRiskCalculator:
       strength=SignalStrength.MEDIUM,
       confidence=0.7,
       price=50000.0,
-      source=SignalSource.STRATEGY_ENGINE
+      source=SignalSource.STRATEGY,
+      timestamp=int(datetime.now().timestamp() * 1000)
     )
 
     balance = 10000.0
@@ -211,7 +213,8 @@ class TestAdaptiveRiskCalculator:
       strength=SignalStrength.MEDIUM,
       confidence=0.7,
       price=50000.0,
-      source=SignalSource.STRATEGY_ENGINE
+      source=SignalSource.STRATEGY,
+      timestamp=int(datetime.now().timestamp() * 1000)
     )
 
     # Высокая волатильность -> снижение риска
@@ -238,7 +241,8 @@ class TestAdaptiveRiskCalculator:
       strength=SignalStrength.MEDIUM,
       confidence=0.7,
       price=50000.0,
-      source=SignalSource.STRATEGY_ENGINE
+      source=SignalSource.STRATEGY,
+      timestamp=int(datetime.now().timestamp() * 1000)
     )
 
     # Correlation factor = 0.7 (30% penalty)
@@ -271,7 +275,8 @@ class TestAdaptiveRiskCalculator:
       strength=SignalStrength.STRONG,
       confidence=0.8,
       price=50000.0,
-      source=SignalSource.STRATEGY_ENGINE
+      source=SignalSource.STRATEGY,
+      timestamp=int(datetime.now().timestamp() * 1000)
     )
 
     risk_params = self.calculator.calculate(
@@ -357,7 +362,8 @@ class TestAdaptiveRiskCalculatorIntegration:
       strength=SignalStrength.MEDIUM,
       confidence=0.7,
       price=50000.0,
-      source=SignalSource.STRATEGY_ENGINE
+      source=SignalSource.STRATEGY  ,
+      timestamp=int(datetime.now().timestamp() * 1000)
     )
 
     # 1. Первый расчет (без истории)

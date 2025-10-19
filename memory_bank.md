@@ -1855,3 +1855,62 @@ is_allowed, reason = daily_loss_killer.is_trading_allowed()
 
 if not is_allowed:
     return False, "TRADING BLOCKED: Emergency shutdown active"
+
+Adaptive Risk Calculator 
+
+Adaptive Risk Calculator - система динамического расчета размера позиции.
+Режимы работы:
+✅ Fixed - Фиксированный процент (простой)
+✅ Adaptive - Динамический с множественными корректировками (рекомендуется)
+✅ Kelly Criterion - Математически оптимальный размер
+Факторы корректировки (Adaptive mode):
+
+📈 Volatility - Inverse scaling (высокая vol → меньше риска)
+🎯 Win Rate - История успешности
+🔗 Correlation - Штраф за коррелирующие позиции
+🤖 ML Confidence - Boost при высокой уверенности ML
+
+ПРИМЕРЫ ИСПОЛЬЗОВАНИЯ
+Пример 1: Fixed Mode (простой)
+envRISK_PER_TRADE_MODE=fixed
+RISK_PER_TRADE_BASE_PERCENT=2.0
+Результат: Всегда 2% риск, без корректировок.
+Пример 2: Adaptive Mode (рекомендуется)
+envRISK_PER_TRADE_MODE=adaptive
+RISK_PER_TRADE_BASE_PERCENT=2.0
+RISK_VOLATILITY_SCALING=true
+RISK_WIN_RATE_SCALING=true
+RISK_CORRELATION_PENALTY=true
+Результат: Динамический риск 1-3% в зависимости от условий.
+Пример 3: Kelly Criterion (продвинутый)
+envRISK_PER_TRADE_MODE=kelly
+RISK_KELLY_FRACTION=0.25
+RISK_KELLY_MIN_TRADES=50
+
+КАК РАБОТАЕТ ADAPTIVE MODE
+Базовый расчет:
+base_risk = 2%  # Из конфига
+Применение корректировок:
+1. Volatility adjustment:
+   current_vol = 3%
+   baseline = 2%
+   adjustment = baseline / current = 2% / 3% = 0.67x
+   → risk = 2% * 0.67 = 1.34%
+
+2. Win rate adjustment:
+   current_win_rate = 65%
+   baseline = 55%
+   adjustment = 65% / 55% = 1.18x
+   → risk = 1.34% * 1.18 = 1.58%
+
+3. Correlation penalty:
+   group has 1 position
+   factor = 1 / (1 + 1*0.3) = 0.77x
+   → risk = 1.58% * 0.77 = 1.22%
+
+4. ML confidence boost:
+   ml_confidence = 0.85 (high)
+   adjustment = 1.15x
+   → risk = 1.22% * 1.15 = 1.40%
+
+FINAL RISK = 1.40%
