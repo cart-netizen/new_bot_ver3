@@ -987,19 +987,19 @@ class BotController:
                 # Отправляем на исполнение
                 await self.execution_manager.submit_signal(signal)
 
-                try:
-                  signal_dict = signal.to_dict()
-                  logger.debug(f"{symbol} | signal_dict успешно создан: {type(signal_dict)}")
-                  from api.websocket import broadcast_signal
-                  await broadcast_signal(signal_dict)
-                except Exception as e:
-                  logger.error(
-                    f"{symbol} | Ошибка broadcast_signal: {e}. "
-                    f"signal_type type: {type(signal.signal_type)}, "
-                    f"strength type: {type(signal.strength)}, "
-                    f"source type: {type(signal.source)}",
-                    exc_info=True
-                  )
+                # try:
+                #   signal_dict = signal.to_dict()
+                #   logger.debug(f"{symbol} | signal_dict успешно создан: {type(signal_dict)}")
+                #   from api.websocket import broadcast_signal
+                #   await broadcast_signal(signal_dict)
+                # except Exception as e:
+                #   logger.error(
+                #     f"{symbol} | Ошибка broadcast_signal: {e}. "
+                #     f"signal_type type: {type(signal.signal_type)}, "
+                #     f"strength type: {type(signal.strength)}, "
+                #     f"source type: {type(signal.source)}",
+                #     exc_info=True
+                #   )
 
                 # Уведомляем фронтенд
                 try:

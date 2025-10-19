@@ -34,7 +34,7 @@ from strategy.risk_models import MarketRegime
 from strategy.signal_deduplicator import signal_deduplicator
 from strategy.sltp_calculator import sltp_calculator
 from utils.balance_tracker import balance_tracker
-from utils.helpers import get_timestamp_ms, round_price, round_quantity
+from utils.helpers import get_timestamp_ms, round_price, round_quantity, safe_enum_value
 
 logger = get_logger(__name__)
 
@@ -865,6 +865,8 @@ class ExecutionManager:
             # ==========================================
             available_balance = balance_tracker.get_current_balance()
 
+
+
             if available_balance is None or available_balance <= 0:
                 error_msg = (
                     f"КРИТИЧЕСКАЯ ОШИБКА: Баланс недоступен для {signal.symbol}. "
@@ -1127,7 +1129,7 @@ class ExecutionManager:
                 stop_loss=stop_loss,
                 take_profit=take_profit,
                 entry_signal=signal.to_dict(),
-                entry_reason=f"Signal: {signal.signal_type.value}",
+                entry_reason=f"Signal: {safe_enum_value(signal.signal_type)}",
             )
 
             if result:
@@ -1159,7 +1161,7 @@ class ExecutionManager:
         self.execution_history.append({
             "timestamp": get_timestamp_ms(),
             "symbol": signal.symbol,
-            "signal_type": signal.signal_type.value,
+            "signal_type": safe_enum_value(signal.signal_type),
             "price": signal.price,
             "status": status,
             "details": details

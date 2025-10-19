@@ -344,12 +344,12 @@ class CorrelationManager:
     for symbol in symbols:
       try:
         # Запрашиваем дневные свечи
-        klines = await rest_client.get_klines(
+        klines = await rest_client.get_kline(
           symbol=symbol,
           interval="D",  # Дневные свечи
+          limit=self.lookback_days,
           start=start_time,
-          end=end_time,
-          limit=self.lookback_days
+          end=end_time
         )
 
         if not klines:
