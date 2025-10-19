@@ -1788,6 +1788,37 @@ logger.debug(f"{signal.symbol} | Processing {signal.signal_type.value}")
 │    • Автоматическое обновление при закрытии│
 └─────────────────────────────────────────────┘
 
+# Итоговая схема работы
+```
+1. initialize()
+   ├─ REST client
+   ├─ ScreenerManager
+   ├─ DynamicSymbolsManager
+   ├─ MarketAnalyzer
+   ├─ StrategyEngine
+   └─ ML Data Collector
+   
+2. start()
+   ├─ Запуск Screener
+   ├─ Ожидание первых данных
+   ├─ Отбор символов через DynamicSymbolsManager
+   │  └─ self.symbols = [40 пар]
+   │
+   ├─ ✅ ИНИЦИАЛИЗАЦИЯ CORRELATION MANAGER
+   │  └─ correlation_manager.initialize(self.symbols)
+   │
+   ├─ Создание ML Feature Pipeline (self.symbols)
+   ├─ Создание OrderBook Managers (self.symbols)
+   ├─ Создание Candle Managers (self.symbols)
+   ├─ Создание WebSocket Manager (self.symbols)
+   │
+   └─ Запуск задачи обновления корреляций (24 часа)
+
+3. Runtime
+   └─ _screener_broadcast_loop()
+      └─ Проверка изменений символов
+         └─ Обновление корреляций если нужно
+
 Архитектура
 Компоненты
 

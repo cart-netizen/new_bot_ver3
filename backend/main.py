@@ -282,8 +282,8 @@ class BotController:
 
       # Инициализируем менеджер исполнения
 
-      # Передаем список торгуемых символов
-      await correlation_manager.initialize(self.symbols)
+      # # Передаем список торгуемых символов
+      # await correlation_manager.initialize(self.symbols)
 
       logger.info("✓ CorrelationManager инициализирован")
 
@@ -363,6 +363,19 @@ class BotController:
         # Если screener выключен - статический список
         self.symbols = settings.get_trading_pairs_list()
         logger.info(f"✓ Screener отключен, статический список: {len(self.symbols)} пар")
+
+      logger.info("=" * 80)
+      logger.info("ИНИЦИАЛИЗАЦИЯ CORRELATION MANAGER")
+      logger.info("=" * 80)
+
+      await correlation_manager.initialize(self.symbols)
+
+      logger.info(
+        f"✓ CorrelationManager инициализирован для {len(self.symbols)} символов: "
+        f"групп={len(correlation_manager.group_manager.groups)}, "
+        f"покрыто={len(correlation_manager.group_manager.symbol_to_group)} символов"
+      )
+
 
       # ===== КРИТИЧЕСКИ ВАЖНО: СОЗДАЕМ ML Feature Pipeline ЗДЕСЬ =====
       logger.info("Создание ML Feature Pipeline...")
@@ -445,7 +458,7 @@ class BotController:
       if correlation_manager.enabled:
         logger.info("Запуск периодического обновления корреляций...")
         self.correlation_update_task = asyncio.create_task(
-          self._periodic_correlation_update()
+          self._correlation_update_loop()
         )
         logger.info("✓ Correlation update task запущен")
 
@@ -987,35 +1000,52 @@ class BotController:
                 # Отправляем на исполнение
                 await self.execution_manager.submit_signal(signal)
 
+                # Уведомляем фронтенд
+                try:
+                  # Конвертируем TradingSignal в dict ПЕРЕД broadcast
+                  signal_dict = signal.to_dict()
+
+                  # КРИТИЧНО: Конвертируем все Enum в строки
+                  if 'signal_type' in signal_dict and hasattr(signal_dict['signal_type'], 'value'):
+                    signal_dict['signal_type'] = signal_dict['signal_type'].value
+
+                  if 'strength' in signal_dict and hasattr(signal_dict['strength'], 'value'):
+                    signal_dict['strength'] = signal_dict['strength'].value
+
+                  if 'source' in signal_dict and hasattr(signal_dict['source'], 'value'):
+                    signal_dict['source'] = signal_dict['source'].value
+
+                  logger.debug(
+                    f"{symbol} | Подготовлен signal_dict для broadcast: "
+                    f"type={type(signal_dict)}, "
+                    f"signal_type={signal_dict.get('signal_type')}"
+                  )
+
+                  from api.websocket import broadcast_signal
+                  await broadcast_signal(signal_dict)
+
+                except Exception as e:
+                  logger.error(
+                    f"{symbol} | Ошибка broadcast_signal: {e}. "
+                    f"signal_type={type(getattr(signal, 'signal_type', None))}, "
+                    f"strength={type(getattr(signal, 'strength', None))}, "
+                    f"source={type(getattr(signal, 'source', None))}",
+                    exc_info=True
+                  )
                 # try:
-                #   signal_dict = signal.to_dict()
-                #   logger.debug(f"{symbol} | signal_dict успешно создан: {type(signal_dict)}")
                 #   from api.websocket import broadcast_signal
+                #   if isinstance(signal, TradingSignal):
+                #     signal_dict = signal.to_dict()
+                #   else:
+                #     signal_dict = signal  # Уже dict
+                #
                 #   await broadcast_signal(signal_dict)
                 # except Exception as e:
                 #   logger.error(
                 #     f"{symbol} | Ошибка broadcast_signal: {e}. "
-                #     f"signal_type type: {type(signal.signal_type)}, "
-                #     f"strength type: {type(signal.strength)}, "
-                #     f"source type: {type(signal.source)}",
+                #     f"Тип signal: {type(signal)}",
                 #     exc_info=True
                 #   )
-
-                # Уведомляем фронтенд
-                try:
-                  from api.websocket import broadcast_signal
-                  if isinstance(signal, TradingSignal):
-                    signal_dict = signal.to_dict()
-                  else:
-                    signal_dict = signal  # Уже dict
-
-                  await broadcast_signal(signal_dict)
-                except Exception as e:
-                  logger.error(
-                    f"{symbol} | Ошибка broadcast_signal: {e}. "
-                    f"Тип signal: {type(signal)}",
-                    exc_info=True
-                  )
 
               except AttributeError as e:
                 logger.error(
@@ -1205,32 +1235,78 @@ class BotController:
       log_exception(logger, e, "Остановка бота")
       raise
 
-  async def _periodic_correlation_update(self):
+  async def _correlation_update_loop(self):
     """
-    Периодическое обновление корреляций (раз в день).
+    Периодическое обновление корреляций.
+
+    Запускается раз в день для пересчета корреляционных групп
+    при изменении списка торговых пар.
     """
-    while True:
+    logger.info("Запущен цикл обновления корреляций (каждые 24 часа)")
+
+    while self.running:
       try:
         # Ждем 24 часа
         await asyncio.sleep(24 * 3600)
 
-        logger.info("🔄 Запуск периодического обновления корреляций...")
+        if not self.running:
+          break
 
-        # Обновляем корреляции
-        await correlation_manager.update_correlations(self.symbols)
+        logger.info("Время обновления корреляций...")
 
-        logger.info("✓ Корреляции обновлены")
+        # Если символы изменились - пересчитываем корреляции
+        current_symbols = set(self.symbols)
+        registered_symbols = set(correlation_manager.group_manager.symbol_to_group.keys())
+
+        if current_symbols != registered_symbols:
+          logger.warning(
+            f"⚠️ Список символов изменился! "
+            f"Старые: {len(registered_symbols)}, Новые: {len(current_symbols)}"
+          )
+
+          # Пересчитываем корреляции для новых символов
+          await correlation_manager.update_correlations(list(current_symbols))
+
+          logger.info("✓ Корреляции пересчитаны для обновленного списка символов")
+        else:
+          # Просто обновляем существующие корреляции
+          await correlation_manager.update_correlations(self.symbols)
+          logger.info("✓ Корреляции обновлены")
 
       except asyncio.CancelledError:
-        logger.info("Остановка обновления корреляций")
+        logger.info("Задача обновления корреляций отменена")
         break
       except Exception as e:
-        logger.error(
-          f"Ошибка при обновлении корреляций: {e}",
-          exc_info=True
-        )
-        # Продолжаем работу при ошибке
-        await asyncio.sleep(3600)  # Повтор через час
+        logger.error(f"Ошибка в цикле обновления корреляций: {e}", exc_info=True)
+        # Продолжаем работу даже при ошибке
+        await asyncio.sleep(3600)  # Повторная попытка через 1 час
+
+  # async def _periodic_correlation_update(self):
+  #   """
+  #   Периодическое обновление корреляций (раз в день).
+  #   """
+  #   while True:
+  #     try:
+  #       # Ждем 24 часа
+  #       await asyncio.sleep(24 * 3600)
+  #
+  #       logger.info("🔄 Запуск периодического обновления корреляций...")
+  #
+  #       # Обновляем корреляции
+  #       await correlation_manager.update_correlations(self.symbols)
+  #
+  #       logger.info("✓ Корреляции обновлены")
+  #
+  #     except asyncio.CancelledError:
+  #       logger.info("Остановка обновления корреляций")
+  #       break
+  #     except Exception as e:
+  #       logger.error(
+  #         f"Ошибка при обновлении корреляций: {e}",
+  #         exc_info=True
+  #       )
+  #       # Продолжаем работу при ошибке
+  #       await asyncio.sleep(3600)  # Повтор через час
 
   async def _handle_orderbook_message(self, data: Dict[str, Any]):
     """
