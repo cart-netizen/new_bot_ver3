@@ -32,6 +32,7 @@ from exchange.rest_client import rest_client
 from strategy.risk_manager import RiskManager
 from strategy.risk_models import MarketRegime
 from strategy.signal_deduplicator import signal_deduplicator
+from strategy.trailing_stop_manager import trailing_stop_manager
 from strategy.sltp_calculator import sltp_calculator
 from utils.balance_tracker import balance_tracker
 from utils.helpers import get_timestamp_ms, round_price, round_quantity, safe_enum_value
@@ -565,6 +566,22 @@ class ExecutionManager:
                 logger.info(f"✓ Позиция зарегистрирована в RiskManager")
 
                 # ==========================================
+                # ШАГ 6.5: РЕГИСТРАЦИЯ В TRAILING STOP MANAGER
+                # ==========================================
+
+                trailing_stop_manager.register_position_opened(
+                    symbol=symbol,
+                    position_id=str(position.id),
+                    entry_price=entry_price,
+                    stop_loss=stop_loss,
+                    side=order_side
+                )
+
+                logger.debug(
+                    f"Позиция {symbol} зарегистрирована в Trailing Stop Manager"
+                )
+
+                # ==========================================
                 # ШАГ 7: АУДИТ УСПЕШНОГО ОТКРЫТИЯ
                 # ==========================================
                 await audit_repository.log(
@@ -746,6 +763,15 @@ class ExecutionManager:
                 # 6. УДАЛЕНИЕ ИЗ RISK MANAGER
                 # ✅ ИСПРАВЛЕНО: Убран аргумент realized_pnl
                 self.risk_manager.register_position_closed(symbol=symbol)
+
+                # ==========================================
+                # ШАГ 6.5: УДАЛЕНИЕ ИЗ TRAILING STOP MANAGER
+                # ==========================================
+                trailing_stop_manager.register_position_closed(symbol)
+
+                logger.debug(
+                    f"Позиция {symbol} удалена из Trailing Stop Manager"
+                )
 
                 # 7. АУДИТ
                 await audit_repository.log(

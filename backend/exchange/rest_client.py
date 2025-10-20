@@ -796,5 +796,72 @@ class BybitRESTClient:
     logger.debug(f"Получено {kline_count} свечей для {symbol}")
     return response["result"]["list"]
 
+  @retry_async(max_attempts=3, delay=1.0)
+  async def set_trading_stop(
+      self,
+      symbol: str,
+      stop_loss: Optional[float] = None,
+      take_profit: Optional[float] = None,
+      position_idx: int = 0  # 0 для One-Way Mode
+  ) -> Dict:
+    """
+    Установка/обновление Stop Loss и Take Profit для открытой позиции.
+
+    Args:
+        symbol: Торговая пара
+        stop_loss: Новый уровень Stop Loss (опционально)
+        take_profit: Новый уровень Take Profit (опционально)
+        position_idx: Индекс позиции (0 для One-Way Mode)
+
+    Returns:
+        Dict: Результат обновления
+
+    Raises:
+        ValueError: Если API ключи не настроены или оба параметра None
+    """
+    if stop_loss is None and take_profit is None:
+      raise ValueError("Необходимо указать хотя бы один параметр: stop_loss или take_profit")
+
+    logger.info(
+      f"Обновление Trading Stop для {symbol}: "
+      f"SL={stop_loss if stop_loss else 'не изменяется'}, "
+      f"TP={take_profit if take_profit else 'не изменяется'}"
+    )
+
+    # Проверка наличия API ключей
+    if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
+      error_msg = (
+        "API ключи Bybit не настроены. "
+        "Установите BYBIT_API_KEY и BYBIT_API_SECRET в файле .env"
+      )
+      logger.error(error_msg)
+      raise ValueError(error_msg)
+
+    # Параметры запроса
+    params = {
+      "category": BybitCategory.LINEAR.value,
+      "symbol": symbol,
+      "positionIdx": position_idx
+    }
+
+    if stop_loss is not None:
+      params["stopLoss"] = str(stop_loss)
+
+    if take_profit is not None:
+      params["takeProfit"] = str(take_profit)
+
+    response = await self._request(
+      "POST",
+      BybitAPIPaths.SET_TRADING_STOP,
+      params,
+      authenticated=True
+    )
+
+    logger.info(
+      f"Trading Stop для {symbol} обновлен успешно: "
+      f"SL={stop_loss}, TP={take_profit}"
+    )
+    return response
+
 # Глобальный экземпляр клиента
 rest_client = BybitRESTClient()

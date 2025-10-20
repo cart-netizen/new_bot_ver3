@@ -2261,3 +2261,51 @@ Reversal Detector
                   │  Log + WebSocket      │
                   │  Notification         │
                   └───────────────────────┘
+
+Trailing Stop Manager - система динамического управления stop loss для защиты накопленной прибыли. Stop loss автоматически "следует" за ценой на заданном расстоянии, но никогда не отступает назад.
+Ключевые Преимущества
+✅ Защита прибыли - Автоматически фиксирует прибыль при развороте
+✅ Развитие трендов - Не ограничивает прибыльное движение
+✅ Адаптивность - Дистанция увеличивается с ростом прибыли
+✅ Автоматизация - Работает полностью автономно
+✅ Восстановление - Сохраняет состояние при перезапуске
+
+TrailingStopManager
+├── Active Trails Registry (Dict[symbol, TrailingStopState])
+├── Background Update Loop (asyncio Task)
+├── Distance Levels Calculator
+└── Exchange Integration (REST API)
+
+1. Position Opened
+   → ExecutionManager.open_position()
+   → TrailingStopManager.register_position_opened()
+   → Active Trails Registry
+
+2. Price Updates
+   → PositionMonitor.monitor_position()
+   → TrailingStopManager.update_position_price()
+   → TrailingStopState.current_price
+
+3. Automatic Updates (Background Loop)
+   → Check profit threshold
+   → Calculate new stop loss
+   → Update Position Repository
+   → Update Exchange via REST API
+
+4. Position Closed
+   → ExecutionManager.close_position()
+   → TrailingStopManager.register_position_closed()
+   → Remove from Active Trails
+
+Переменные Окружения (.env)
+bash# Включение/выключение
+TRAILING_STOP_ENABLED=true
+
+# Порог активации (% прибыли)
+TRAILING_STOP_ACTIVATION_PROFIT_PERCENT=1.5
+
+# Базовая дистанция trailing (%)
+TRAILING_STOP_DISTANCE_PERCENT=0.8
+
+# Интервал обновления (секунды)
+TRAILING_STOP_UPDATE_INTERVAL_SEC=5

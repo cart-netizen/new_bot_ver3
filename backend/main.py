@@ -42,6 +42,7 @@ from strategy.risk_models import ReversalSignal
 from strategy.strategy_engine import StrategyEngine
 from strategy.risk_manager import RiskManager
 from execution.execution_manager import ExecutionManager
+from strategy.trailing_stop_manager import trailing_stop_manager
 from utils.balance_tracker import balance_tracker
 from utils.constants import BotStatus
 from api.websocket import manager as ws_manager, handle_websocket_messages
@@ -497,6 +498,14 @@ class BotController:
       if self.position_monitor:
         await self.position_monitor.start()
         logger.info("✓ Position Monitor запущен")
+
+      logger.info("Запуск Trailing Stop Manager...")
+      await trailing_stop_manager.start()
+      # Trailing Stop Manager автоматически:
+      # 1. Загружает активные позиции из БД
+      # 2. Запускает фоновую задачу обновления каждые N секунд
+      # 3. Отслеживает прибыльные позиции и подтягивает SL
+
 
       asyncio.create_task(fsm_cleanup_task())
       logger.info("✓ FSM Cleanup Task запланирован")
@@ -1264,6 +1273,9 @@ class BotController:
       if self.position_monitor:
         await self.position_monitor.stop()
         logger.info("✓ Position Monitor остановлен")
+
+      logger.info("Остановка Trailing Stop Manager...")
+      await trailing_stop_manager.stop()
 
       self.status = BotStatus.STOPPED
       logger.info("=" * 80)
