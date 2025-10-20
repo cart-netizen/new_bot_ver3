@@ -1034,7 +1034,7 @@ async def get_strategy_stats(strategy_name: str):
   return strategy.get_statistics()
 
 
-@screener_router.get("/pairs")
+@screener_router.get("/pairs", operation_id="get_screener_pairs_list")
 async def get_screener_pairs(
     min_volume: Optional[float] = None,
     sort_by: Optional[str] = None,
@@ -1096,7 +1096,7 @@ async def get_screener_pairs(
     )
 
 
-@screener_router.post("/pair/{symbol}/toggle")
+@screener_router.post("/pair/{symbol}/toggle", operation_id="toggle_screener_pair_selection")
 async def toggle_pair_selection(
     symbol: str,
     current_user: dict = Depends(require_auth)
@@ -1145,7 +1145,7 @@ async def toggle_pair_selection(
     )
 
 
-@screener_router.get("/selected")
+@screener_router.get("/selected", operation_id="get_screener_selected_pairs")
 async def get_selected_pairs(current_user: dict = Depends(require_auth)):
   """
   Получение списка выбранных пар для графиков.
@@ -1181,7 +1181,7 @@ async def get_selected_pairs(current_user: dict = Depends(require_auth)):
     )
 
 
-@screener_router.get("/stats")
+@screener_router.get("/stats", operation_id="get_screener_statistics")
 async def get_screener_stats(current_user: dict = Depends(require_auth)):
   """
   Получение статистики скринера.

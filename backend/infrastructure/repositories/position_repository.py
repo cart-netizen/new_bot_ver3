@@ -301,46 +301,39 @@ class PositionRepository:
   async def update_current_price(
       self,
       position_id: str,
-      current_price: float,
+      current_price: float
   ) -> bool:
     """
-    Обновление текущей цены и unrealized PnL.
+    Обновление текущей цены для позиции.
 
     Args:
         position_id: ID позиции
         current_price: Текущая цена
 
     Returns:
-        bool: True если обновлено
+        bool: True если обновлено успешно
     """
     try:
       async with db_manager.session() as session:
-        position = await self.get_by_id(position_id)
-        if not position:
-          return False
-
-        # Расчет unrealized PnL
-        if position.side == OrderSide.BUY:
-          unrealized_pnl = (current_price - position.entry_price) * position.quantity
-        else:
-          unrealized_pnl = (position.entry_price - current_price) * position.quantity
-
         stmt = (
           update(Position)
           .where(Position.id == position_id)
           .values(
             current_price=current_price,
-            unrealized_pnl=unrealized_pnl,
-            updated_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
           )
         )
 
-        await session.execute(stmt)
+        result = await session.execute(stmt)
         await session.commit()
-        return True
+
+        return result.rowcount > 0
 
     except Exception as e:
-      logger.error(f"Ошибка обновления цены позиции {position_id}: {e}")
+      logger.error(
+        f"Ошибка обновления текущей цены для позиции {position_id}: {e}",
+        exc_info=True
+      )
       return False
 
   async def get_active_positions(self, symbol: Optional[str] = None) -> List[Position]:
@@ -386,7 +379,7 @@ class PositionRepository:
     """
     with trace_operation("find_open_position_by_symbol", symbol=symbol):
       try:
-        async with db_manager.get_session() as session:
+        async with db_manager.session() as session:
           result = await session.execute(
             select(Position)
             .where(
@@ -417,6 +410,131 @@ class PositionRepository:
         )
         return None
 
+  async def update_stop_loss(
+        self,
+        position_id: str,
+        new_stop_loss: float
+    ) -> bool:
+      """
+      Обновление Stop Loss для позиции.
+
+      Args:
+          position_id: ID позиции
+          new_stop_loss: Новый уровень Stop Loss
+
+      Returns:
+          bool: True если обновлено успешно
+      """
+      try:
+        async with db_manager.session() as session:
+          stmt = (
+            update(Position)
+            .where(Position.id == position_id)
+            .values(
+              stop_loss=new_stop_loss,
+              updated_at=datetime.utcnow()
+            )
+          )
+
+          result = await session.execute(stmt)
+          await session.commit()
+
+          if result.rowcount > 0:
+            logger.debug(
+              f"Stop Loss для позиции {position_id} обновлен: "
+              f"новый SL=${new_stop_loss:.2f}"
+            )
+            return True
+          else:
+            logger.warning(
+              f"Не удалось обновить Stop Loss для позиции {position_id}: "
+              f"позиция не найдена"
+            )
+            return False
+
+      except Exception as e:
+        logger.error(
+          f"Ошибка обновления Stop Loss для позиции {position_id}: {e}",
+          exc_info=True
+        )
+        return False
+
+  async def update_take_profit(
+      self,
+      position_id: str,
+      new_take_profit: float
+  ) -> bool:
+    """
+    Обновление Take Profit для позиции.
+
+    Args:
+        position_id: ID позиции
+        new_take_profit: Новый уровень Take Profit
+
+    Returns:
+        bool: True если обновлено успешно
+    """
+    try:
+      async with db_manager.session() as session:
+        stmt = (
+          update(Position)
+          .where(Position.id == position_id)
+          .values(
+            take_profit=new_take_profit,
+            updated_at=datetime.utcnow()
+          )
+        )
+
+        result = await session.execute(stmt)
+        await session.commit()
+
+        if result.rowcount > 0:
+          logger.debug(
+            f"Take Profit для позиции {position_id} обновлен: "
+            f"новый TP=${new_take_profit:.2f}"
+          )
+          return True
+        else:
+          logger.warning(
+            f"Не удалось обновить Take Profit для позиции {position_id}: "
+            f"позиция не найдена"
+          )
+          return False
+
+    except Exception as e:
+      logger.error(
+        f"Ошибка обновления Take Profit для позиции {position_id}: {e}",
+        exc_info=True
+      )
+      return False
+
+  async def get_by_status(self, status: PositionStatus) -> List[Position]:
+    """
+    Получение позиций по статусу.
+
+    Args:
+        status: Статус позиции
+
+    Returns:
+        List[Position]: Список позиций
+    """
+    try:
+      async with db_manager.session() as session:
+        stmt = (
+          select(Position)
+          .where(Position.status == status)
+          .order_by(Position.opened_at.desc())
+        )
+
+        result = await session.execute(stmt)
+        positions = result.scalars().all()
+
+        logger.debug(f"Найдено {len(positions)} позиций со статусом {status.value}")
+        return list(positions)
+
+    except Exception as e:
+      logger.error(f"Ошибка получения позиций по статусу {status.value}: {e}")
+      return []
 
 # Глобальный экземпляр
 position_repository = PositionRepository()

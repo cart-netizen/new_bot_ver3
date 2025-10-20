@@ -46,7 +46,7 @@ class BybitAPIPaths:
   # Позиции
   GET_POSITIONS = "/v5/position/list"
   SET_LEVERAGE = "/v5/position/set-leverage"
-
+  SET_TRADING_STOP = "/v5/position/trading-stop"
   # Аккаунт
   GET_WALLET_BALANCE = "/v5/account/wallet-balance"
   GET_TRANSACTION_LOG = "/v5/account/transaction-log"

@@ -42,6 +42,7 @@ from strategy.risk_models import ReversalSignal
 from strategy.strategy_engine import StrategyEngine
 from strategy.risk_manager import RiskManager
 from execution.execution_manager import ExecutionManager
+from strategy.trailing_stop_manager import trailing_stop_manager
 from utils.balance_tracker import balance_tracker
 from utils.constants import BotStatus
 from api.websocket import manager as ws_manager, handle_websocket_messages
@@ -518,6 +519,12 @@ class BotController:
         logger.info("✓ Correlation update task запущен")
 
       logger.info("✓ Запущено периодическое обновление корреляций")
+
+      # ==========================================
+      # ЗАПУСК TRAILING STOP MANAGER
+      # ==========================================
+      logger.info("Запуск Trailing Stop Manager...")
+      await trailing_stop_manager.start()
 
       # Уведомляем фронтенд
       from api.websocket import broadcast_bot_status
@@ -1259,6 +1266,12 @@ class BotController:
         except asyncio.CancelledError:
           pass
         logger.info("✓ Symbols refresh task остановлен")
+
+      # ==========================================
+      # ОСТАНОВКА TRAILING STOP MANAGER
+      # ==========================================
+      logger.info("Остановка Trailing Stop Manager...")
+      await trailing_stop_manager.stop()
 
       # Остановка Position Monitor
       if self.position_monitor:

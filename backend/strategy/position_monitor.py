@@ -32,6 +32,9 @@ from strategy.risk_manager import RiskManager
 from models.signal import SignalType
 from ml_engine.features.candle_feature_extractor import Candle
 import numpy as np
+
+from strategy.trailing_stop_manager import trailing_stop_manager
+
 logger = get_logger(__name__)
 
 
@@ -105,6 +108,10 @@ class PositionMonitor:
       return
 
     self.is_running = True
+    # ✅ Фоновая инициализация
+    # self.init_task = asyncio.create_task(self._initialize_in_background())
+
+    # ✅ Немедленный запуск monitor loop
     self.monitor_task = asyncio.create_task(self._monitoring_loop())
     logger.info("✓ PositionMonitor started")
 
@@ -513,28 +520,53 @@ class PositionMonitor:
     return ema
 
   async def _check_trailing_stop(
-      self,
-      symbol: str,
-      position,
-      current_price: float
-  ) -> bool:
-    """
-    Проверка и обновление Trailing Stop.
+        self,
+        symbol: str,
+        position,
+        current_price: float
+    ) -> bool:
+      """
+      Проверка и обновление trailing stop для позиции.
 
-    Args:
-        symbol: Торговая пара
-        position: Position model
-        current_price: Текущая цена
+      Интегрирован с TrailingStopManager для автоматического
+      подтягивания stop loss за ценой.
 
-    Returns:
-        True если trailing stop обновлен
-    """
-    # TODO: Реализовать логику trailing stop
-    # 1. Проверить активирован ли trailing (цена прошла X%)
-    # 2. Если активирован, обновить SL на расстоянии Y% от текущей цены
-    # 3. SL может только подниматься (для BUY) или опускаться (для SELL)
+      Args:
+          symbol: Торговая пара
+          position: Объект позиции из БД
+          current_price: Текущая цена
 
-    return False
+      Returns:
+          bool: True если trailing stop был обновлен
+      """
+      try:
+        # Обновляем текущую цену в trailing stop manager
+        trailing_stop_manager.update_position_price(symbol, current_price)
+
+        # Получаем статус trailing stop
+        status = trailing_stop_manager.get_trailing_status(symbol)
+
+        if not status:
+          # Позиция не зарегистрирована в trailing manager
+          logger.debug(f"{symbol} | Trailing stop не зарегистрирован")
+          return False
+
+        # Логируем статус если trailing активен
+        if status['is_active']:
+          logger.debug(
+            f"{symbol} | Trailing stop активен: "
+            f"SL=${status['current_stop_loss']:.2f}, "
+            f"Distance={status['trailing_distance']:.2%}"
+          )
+
+        return False  # Trailing manager обновляет автоматически
+
+      except Exception as e:
+        logger.error(
+          f"{symbol} | Ошибка проверки trailing stop: {e}",
+          exc_info=True
+        )
+        return False
 
   async def _check_stop_loss_take_profit(
       self,
