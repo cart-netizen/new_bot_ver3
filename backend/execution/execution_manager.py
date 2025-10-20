@@ -32,7 +32,6 @@ from exchange.rest_client import rest_client
 from strategy.risk_manager import RiskManager
 from strategy.risk_models import MarketRegime
 from strategy.signal_deduplicator import signal_deduplicator
-from strategy.trailing_stop_manager import trailing_stop_manager
 from strategy.sltp_calculator import sltp_calculator
 from utils.balance_tracker import balance_tracker
 from utils.helpers import get_timestamp_ms, round_price, round_quantity, safe_enum_value
@@ -566,22 +565,6 @@ class ExecutionManager:
                 logger.info(f"✓ Позиция зарегистрирована в RiskManager")
 
                 # ==========================================
-                # ШАГ 6.5: РЕГИСТРАЦИЯ В TRAILING STOP MANAGER
-                # ==========================================
-
-                trailing_stop_manager.register_position_opened(
-                    symbol=symbol,
-                    position_id=str(position.id),
-                    entry_price=entry_price,
-                    stop_loss=stop_loss,
-                    side=order_side
-                )
-
-                logger.debug(
-                    f"Позиция {symbol} зарегистрирована в Trailing Stop Manager"
-                )
-
-                # ==========================================
                 # ШАГ 7: АУДИТ УСПЕШНОГО ОТКРЫТИЯ
                 # ==========================================
                 await audit_repository.log(
@@ -764,15 +747,6 @@ class ExecutionManager:
                 # ✅ ИСПРАВЛЕНО: Убран аргумент realized_pnl
                 self.risk_manager.register_position_closed(symbol=symbol)
 
-                # ==========================================
-                # ШАГ 6.5: УДАЛЕНИЕ ИЗ TRAILING STOP MANAGER
-                # ==========================================
-                trailing_stop_manager.register_position_closed(symbol)
-
-                logger.debug(
-                    f"Позиция {symbol} удалена из Trailing Stop Manager"
-                )
-
                 # 7. АУДИТ
                 await audit_repository.log(
                     action=AuditAction.POSITION_CLOSE,
@@ -824,25 +798,16 @@ class ExecutionManager:
 
     async def _execute_signal(self, signal: TradingSignal):
         """
-        Исполнение торгового сигнала с ML-enhanced risk management.
+        Исполнение торгового сигнала.
 
-        ПОЛНАЯ ВЕРСИЯ с сохранением всей существующей логики + ML интеграция.
-
-        Pipeline:
-        0. Проверка лимитов позиций и дедупликация
-        1. Получение информации об инструменте
-        2. Проверка баланса
-        2.5. Извлечение ML features (НОВОЕ)
-        3. Валидация signal_type
-        4. Расчет SL/TP (с ML или ATR/fixed fallback)
-        5. Расчет размера позиции (с ML adjustments или без)
-        5.1. ML-enhanced validation (НОВОЕ)
-        5.2. Применение ML adjustments (НОВОЕ)
-        6. Валидация и округление quantity
-        7. Открытие позиции (с ML метаданными или без)
+        ИСПРАВЛЕНИЯ:
+        1. ✅ Правильный порядок: SL/TP → Position Size
+        2. Добавлена валидация и округление quantity
+        3. Добавлена проверка минимального размера ордера
+        4. Улучшено логирование всех расчетов
 
         Args:
-            signal: Торговый сигнал для исполнения
+            signal: Торговый сигнал
         """
         # ============================================
         # ШАГ 0.0: ПРОВЕРКА ЛИМИТА ПОЗИЦИЙ
@@ -900,6 +865,8 @@ class ExecutionManager:
             # ==========================================
             available_balance = balance_tracker.get_current_balance()
 
+
+
             if available_balance is None or available_balance <= 0:
                 error_msg = (
                     f"КРИТИЧЕСКАЯ ОШИБКА: Баланс недоступен для {signal.symbol}. "
@@ -912,66 +879,6 @@ class ExecutionManager:
             logger.info(
                 f"{signal.symbol} | Доступный баланс: {available_balance:.2f} USDT"
             )
-
-            # ==========================================
-            # ШАГ 2.5: ИЗВЛЕЧЕНИЕ ML FEATURES (НОВОЕ!)
-            # ==========================================
-            feature_vector = None
-
-            # Попытка 1: Из метаданных сигнала
-            if signal.metadata and 'ml_features' in signal.metadata:
-                feature_vector = signal.metadata['ml_features']
-                logger.debug(f"{signal.symbol} | ML features из signal metadata")
-
-            # Попытка 2: Из bot_controller cache
-            if not feature_vector:
-                try:
-                    from main import bot_controller
-                    if hasattr(bot_controller, 'latest_features'):
-                        feature_vector = bot_controller.latest_features.get(signal.symbol)
-                        if feature_vector:
-                            logger.debug(
-                                f"{signal.symbol} | ML features из bot_controller cache"
-                            )
-                except Exception as e:
-                    logger.debug(
-                        f"{signal.symbol} | Не удалось получить cached features: {e}"
-                    )
-
-            # Попытка 3: Извлечь on-the-fly (если доступен pipeline)
-            if not feature_vector:
-                try:
-                    from main import bot_controller
-                    if hasattr(bot_controller, 'ml_feature_pipeline'):
-                        pipeline = bot_controller.ml_feature_pipeline
-                        # 1. Получаем orderbook snapshot
-                        orderbook_manager = bot_controller.orderbook_managers.get(signal.symbol)
-                        orderbook_snapshot = orderbook_manager.get_snapshot()
-
-                        # 2. Получаем candles
-                        candle_manager = bot_controller.candle_managers.get(signal.symbol)
-                        candles = candle_manager.get_candles()
-
-                        # 3. Извлекаем features через правильный метод
-                        feature_vector = await pipeline.extract_features_single(
-                            symbol=signal.symbol,
-                            orderbook_snapshot=orderbook_snapshot,
-                            candles=candles
-                        )
-                        if feature_vector:
-                            logger.debug(
-                                f"{signal.symbol} | ML features извлечены on-the-fly"
-                            )
-                except Exception as e:
-                    logger.debug(
-                        f"{signal.symbol} | Failed to extract ML features: {e}"
-                    )
-
-            if not feature_vector:
-                logger.debug(
-                    f"{signal.symbol} | ML features недоступны, "
-                    f"будет использован fallback"
-                )
 
             # ==========================================
             # ШАГ 3: ВАЛИДАЦИЯ SIGNAL_TYPE И ОПРЕДЕЛЕНИЕ SIDE
@@ -998,6 +905,7 @@ class ExecutionManager:
             elif signal.signal_type == SignalType.SELL:
                 side = "Sell"
             else:
+                # Никогда не выполнится из-за проверки выше
                 logger.error(f"{signal.symbol} | Недопустимый signal_type")
                 self.stats["failed_orders"] += 1
                 return
@@ -1131,44 +1039,6 @@ class ExecutionManager:
             # ==========================================
             # ✅ ТЕПЕРЬ stop_loss определен и можем использовать его!
 
-            # ШАГ 5.1: ML-ENHANCED VALIDATION (НОВОЕ!)
-            # ------------------------------------------
-            # Проверяем, поддерживает ли risk_manager ML validation
-            ml_adjustments = None
-
-            if hasattr(self.risk_manager, 'validate_signal_ml_enhanced') and feature_vector:
-                try:
-                    logger.debug(f"{signal.symbol} | Используем ML-enhanced validation")
-
-                    is_valid_ml, reason_ml, ml_adjustments = await self.risk_manager.validate_signal_ml_enhanced(
-                        signal=signal,
-                        balance=available_balance,
-                        feature_vector=feature_vector
-                    )
-
-                    if not is_valid_ml:
-                        logger.warning(
-                            f"{signal.symbol} | ❌ ML-enhanced validation FAILED: {reason_ml}"
-                        )
-                        self.stats["rejected_orders"] += 1
-                        return
-
-                    logger.info(
-                        f"{signal.symbol} | ✅ ML-enhanced validation PASSED | "
-                        f"ML conf={ml_adjustments.ml_confidence:.2f}, "
-                        f"Size mult={ml_adjustments.position_size_multiplier:.2f}x"
-                    )
-
-                except Exception as e:
-                    logger.error(
-                        f"{signal.symbol} | ML-enhanced validation error: {e}, "
-                        f"falling back to standard validation",
-                        exc_info=True
-                    )
-                    ml_adjustments = None
-
-            # ШАГ 5.2: РАСЧЕТ РАЗМЕРА ПОЗИЦИИ
-            # ------------------------------------------
             try:
                 # Получаем текущую волатильность (если есть ATR)
                 current_volatility = None
@@ -1181,66 +1051,24 @@ class ExecutionManager:
                 if ml_sltp_data:
                     ml_confidence = ml_sltp_data.get('confidence')
 
-                # Рассчитываем базовый размер позиции с Adaptive Risk
+                # Рассчитываем размер позиции с Adaptive Risk
                 raw_position_size_usdt = self.risk_manager.calculate_position_size(
                     signal=signal,
                     available_balance=available_balance,
-                    stop_loss_price=stop_loss,
+                    stop_loss_price=stop_loss,  # ✅ Теперь определен!
                     leverage=self.risk_manager.limits.default_leverage,
                     current_volatility=current_volatility,
                     ml_confidence=ml_confidence
                 )
 
-                # ШАГ 5.3: ПРИМЕНЕНИЕ ML ADJUSTMENTS (если есть)
-                # ------------------------------------------------
-                if ml_adjustments and ml_adjustments.position_size_multiplier:
-                    # ML корректировка размера
-                    ml_adjusted_size = raw_position_size_usdt * ml_adjustments.position_size_multiplier
-
-                    # Ограничиваем максимумом (5% от баланса)
-                    max_size = available_balance * 0.05
-                    final_position_size_usdt = min(ml_adjusted_size, max_size)
-
-                    logger.info(
-                        f"{signal.symbol} | 📊 ML position sizing: "
-                        f"base=${raw_position_size_usdt:.2f} × "
-                        f"{ml_adjustments.position_size_multiplier:.2f} = "
-                        f"${ml_adjusted_size:.2f} → "
-                        f"capped at ${final_position_size_usdt:.2f}"
-                    )
-
-                    # Обновляем SL/TP из ML adjustments (если отличаются)
-                    if ml_adjustments.stop_loss_price != stop_loss:
-                        logger.debug(
-                            f"{signal.symbol} | ML adjusted SL: "
-                            f"{stop_loss:.2f} → {ml_adjustments.stop_loss_price:.2f}"
-                        )
-                        stop_loss = ml_adjustments.stop_loss_price
-
-                    if ml_adjustments.take_profit_price != take_profit:
-                        logger.debug(
-                            f"{signal.symbol} | ML adjusted TP: "
-                            f"{take_profit:.2f} → {ml_adjustments.take_profit_price:.2f}"
-                        )
-                        take_profit = ml_adjustments.take_profit_price
-                else:
-                    # Без ML adjustments - используем базовый размер
-                    final_position_size_usdt = raw_position_size_usdt
-
-                    if not feature_vector:
-                        logger.debug(
-                            f"{signal.symbol} | Fallback sizing (ML недоступна): "
-                            f"${final_position_size_usdt:.2f}"
-                        )
-
                 # Рассчитываем quantity из position_size
-                raw_quantity = final_position_size_usdt / entry_price
+                raw_quantity = raw_position_size_usdt / entry_price
 
                 logger.info(
                     f"{signal.symbol} | Расчет позиции: "
                     f"баланс={available_balance:.2f} USDT, "
                     f"leverage={self.risk_manager.limits.default_leverage}x, "
-                    f"размер={final_position_size_usdt:.2f} USDT, "
+                    f"размер={raw_position_size_usdt:.2f} USDT, "
                     f"raw_quantity={raw_quantity:.8f}"
                 )
 
@@ -1287,29 +1115,12 @@ class ExecutionManager:
             logger.info(
                 f"{signal.symbol} | ✅ Финальные параметры ордера: "
                 f"quantity={validated_quantity:.8f}, "
-                f"notional={final_notional:.2f} USDT, "
-                f"ML={'ENABLED' if ml_adjustments else 'DISABLED'}"
+                f"notional={final_notional:.2f} USDT"
             )
 
             # ==========================================
             # ШАГ 7: ОТКРЫТИЕ ПОЗИЦИИ
             # ==========================================
-            # Подготовка entry_signal с ML метаданными
-            entry_signal_dict = signal.to_dict()
-
-            # Добавляем ML метаданные (если есть)
-            if ml_adjustments:
-                entry_signal_dict.update({
-                    'ml_enhanced': True,
-                    'ml_confidence': ml_adjustments.ml_confidence,
-                    'ml_expected_return': ml_adjustments.expected_return,
-                    'ml_position_multiplier': ml_adjustments.position_size_multiplier,
-                    'ml_market_regime': ml_adjustments.market_regime.value if ml_adjustments.market_regime else None,
-                    'final_position_size_usdt': final_notional
-                })
-            else:
-                entry_signal_dict['ml_enhanced'] = False
-
             result = await self.open_position(
                 symbol=signal.symbol,
                 side=side,
@@ -1317,7 +1128,7 @@ class ExecutionManager:
                 quantity=validated_quantity,
                 stop_loss=stop_loss,
                 take_profit=take_profit,
-                entry_signal=entry_signal_dict,
+                entry_signal=signal.to_dict(),
                 entry_reason=f"Signal: {safe_enum_value(signal.signal_type)}",
             )
 
@@ -1325,9 +1136,7 @@ class ExecutionManager:
                 self.stats["executed_orders"] += 1
                 logger.info(
                     f"{signal.symbol} | ✅ Позиция успешно открыта: "
-                    f"{side} {validated_quantity:.8f} @ {entry_price:.8f}, "
-                    f"SL={stop_loss:.2f}, TP={take_profit:.2f}, "
-                    f"ML={'ENABLED' if ml_adjustments else 'DISABLED'}"
+                    f"{side} {validated_quantity:.8f} @ {entry_price:.8f}"
                 )
             else:
                 self.stats["failed_orders"] += 1
@@ -1339,7 +1148,6 @@ class ExecutionManager:
                 exc_info=True
             )
             self.stats["failed_orders"] += 1
-
 
     def _add_to_history(self, signal: TradingSignal, status: str, details: str):
         """
