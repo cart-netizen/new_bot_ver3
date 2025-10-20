@@ -1775,93 +1775,93 @@ class BotController:
   #     logger.error(f"Ошибка получения баланса: {e}")
 
 
-async def _initialize_risk_manager(self):
-  """
-  Инициализация Risk Manager с правильным балансом.
+  async def _initialize_risk_manager(self):
+    """
+    Инициализация Risk Manager с правильным балансом.
 
-  ЛОГИКА:
-  - Если ML_RISK_INTEGRATION_ENABLED=True → RiskManagerMLEnhanced
-  - Если ML_RISK_INTEGRATION_ENABLED=False → обычный RiskManager
-  - При ml_validator=None → RiskManagerMLEnhanced работает в fallback режиме
-  """
-  logger.info("=" * 80)
-  logger.info("ИНИЦИАЛИЗАЦИЯ RISK MANAGER")
-  logger.info("=" * 80)
-
-  try:
-    # Получаем реальный баланс
-    balance_data = await rest_client.get_wallet_balance()
-    real_balance = balance_tracker._calculate_total_balance(balance_data)
-
-    logger.info(f"✓ Получен баланс с биржи: {real_balance:.2f} USDT")
-
-    # ========================================
-    # УСЛОВНАЯ ИНИЦИАЛИЗАЦИЯ RISK MANAGER
-    # ========================================
-
-    # Проверяем, включена ли ML интеграция
-    ml_enabled = settings.ML_RISK_INTEGRATION_ENABLED
-
-    if ml_enabled:
-      # ========================================
-      # ML-ENHANCED RISK MANAGER
-      # ========================================
-      logger.info("📊 Создание ML-Enhanced Risk Manager...")
-
-      # Проверяем доступность ml_validator
-      ml_validator_available = (
-          hasattr(self, 'ml_validator') and
-          self.ml_validator is not None
-      )
-
-      if ml_validator_available:
-        logger.info(
-          f"✓ ML Validator доступен, будет использован для валидации"
-        )
-      else:
-        logger.warning(
-          f"⚠️ ML Validator недоступен, Risk Manager будет работать "
-          f"в fallback режиме (как обычный RiskManager)"
-        )
-
-      # Создаем ML-Enhanced Risk Manager
-      # ВАЖНО: Даже если ml_validator=None, он будет работать в fallback
-      self.risk_manager = RiskManagerMLEnhanced(
-        ml_validator=self.ml_validator if ml_validator_available else None,
-        default_leverage=settings.DEFAULT_LEVERAGE,
-        initial_balance=real_balance
-      )
-
-      logger.info(
-        f"✅ ML-Enhanced Risk Manager инициализирован: "
-        f"leverage={settings.DEFAULT_LEVERAGE}x, "
-        f"balance=${real_balance:.2f}, "
-        f"ml_validator={'enabled' if ml_validator_available else 'disabled (fallback)'}"
-      )
-
-    else:
-      # ========================================
-      # ОБЫЧНЫЙ RISK MANAGER (БЕЗ ML)
-      # ========================================
-      logger.info("📊 Создание обычного Risk Manager (ML отключен)...")
-
-      self.risk_manager = RiskManager(
-        default_leverage=settings.DEFAULT_LEVERAGE,
-        initial_balance=real_balance
-      )
-
-      logger.info(
-        f"✅ Risk Manager инициализирован: "
-        f"leverage={settings.DEFAULT_LEVERAGE}x, "
-        f"balance=${real_balance:.2f}, "
-        f"mode=standard (без ML)"
-      )
-
+    ЛОГИКА:
+    - Если ML_RISK_INTEGRATION_ENABLED=True → RiskManagerMLEnhanced
+    - Если ML_RISK_INTEGRATION_ENABLED=False → обычный RiskManager
+    - При ml_validator=None → RiskManagerMLEnhanced работает в fallback режиме
+    """
+    logger.info("=" * 80)
+    logger.info("ИНИЦИАЛИЗАЦИЯ RISK MANAGER")
     logger.info("=" * 80)
 
-  except Exception as e:
-    logger.error(f"❌ Ошибка инициализации Risk Manager: {e}", exc_info=True)
-    raise
+    try:
+      # Получаем реальный баланс
+      balance_data = await rest_client.get_wallet_balance()
+      real_balance = balance_tracker._calculate_total_balance(balance_data)
+
+      logger.info(f"✓ Получен баланс с биржи: {real_balance:.2f} USDT")
+
+      # ========================================
+      # УСЛОВНАЯ ИНИЦИАЛИЗАЦИЯ RISK MANAGER
+      # ========================================
+
+      # Проверяем, включена ли ML интеграция
+      ml_enabled = settings.ML_RISK_INTEGRATION_ENABLED
+
+      if ml_enabled:
+        # ========================================
+        # ML-ENHANCED RISK MANAGER
+        # ========================================
+        logger.info("📊 Создание ML-Enhanced Risk Manager...")
+
+        # Проверяем доступность ml_validator
+        ml_validator_available = (
+            hasattr(self, 'ml_validator') and
+            self.ml_validator is not None
+        )
+
+        if ml_validator_available:
+          logger.info(
+            f"✓ ML Validator доступен, будет использован для валидации"
+          )
+        else:
+          logger.warning(
+            f"⚠️ ML Validator недоступен, Risk Manager будет работать "
+            f"в fallback режиме (как обычный RiskManager)"
+          )
+
+        # Создаем ML-Enhanced Risk Manager
+        # ВАЖНО: Даже если ml_validator=None, он будет работать в fallback
+        self.risk_manager = RiskManagerMLEnhanced(
+          ml_validator=self.ml_validator if ml_validator_available else None,
+          default_leverage=settings.DEFAULT_LEVERAGE,
+          initial_balance=real_balance
+        )
+
+        logger.info(
+          f"✅ ML-Enhanced Risk Manager инициализирован: "
+          f"leverage={settings.DEFAULT_LEVERAGE}x, "
+          f"balance=${real_balance:.2f}, "
+          f"ml_validator={'enabled' if ml_validator_available else 'disabled (fallback)'}"
+        )
+
+      else:
+        # ========================================
+        # ОБЫЧНЫЙ RISK MANAGER (БЕЗ ML)
+        # ========================================
+        logger.info("📊 Создание обычного Risk Manager (ML отключен)...")
+
+        self.risk_manager = RiskManager(
+          default_leverage=settings.DEFAULT_LEVERAGE,
+          initial_balance=real_balance
+        )
+
+        logger.info(
+          f"✅ Risk Manager инициализирован: "
+          f"leverage={settings.DEFAULT_LEVERAGE}x, "
+          f"balance=${real_balance:.2f}, "
+          f"mode=standard (без ML)"
+        )
+
+      logger.info("=" * 80)
+
+    except Exception as e:
+      logger.error(f"❌ Ошибка инициализации Risk Manager: {e}", exc_info=True)
+      raise
 
 # Глобальный контроллер бота
 bot_controller: Optional[BotController] = None
