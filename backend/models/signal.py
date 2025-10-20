@@ -87,12 +87,22 @@ class TradingSignal:
     - Безопасная обработка Enum полей (если уже строка, не вызываем .value)
     - Защита от AttributeError
     """
+
+    def enum_to_str(value):
+      """Конвертация Enum в строку"""
+      if hasattr(value, 'value'):
+        return value.value
+      return str(value)
+
     return {
       "symbol": self.symbol,
       # ИСПРАВЛЕНИЕ: Проверяем тип перед вызовом .value
-      "signal_type": self.signal_type.value if hasattr(self.signal_type, 'value') else self.signal_type,
-      "strength": self.strength.value if hasattr(self.strength, 'value') else self.strength,
-      "source": self.source.value if hasattr(self.source, 'value') else self.source,
+      # "signal_type": self.signal_type.value if hasattr(self.signal_type, 'value') else self.signal_type,
+      # "strength": self.strength.value if hasattr(self.strength, 'value') else self.strength,
+      # "source": self.source.value if hasattr(self.source, 'value') else self.source,
+      "signal_type": enum_to_str(self.signal_type),
+      "strength": enum_to_str(self.strength),
+      "source": enum_to_str(self.source),
       "timestamp": self.timestamp,
       "datetime": datetime.fromtimestamp(self.timestamp / 1000).isoformat(),
       "price": self.price,
@@ -103,7 +113,7 @@ class TradingSignal:
         "cluster_info": self.cluster_info,
       },
       "reason": self.reason,
-      "metadata": self.metadata,
+      "metadata": self.metadata if self.metadata else {},
       "status": {
         "executed": self.executed,
         "execution_price": self.execution_price,

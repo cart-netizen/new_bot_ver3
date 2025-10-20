@@ -251,19 +251,102 @@ async def broadcast_metrics_update(symbol: str, metrics: dict):
   await manager.broadcast(message)
 
 
-async def broadcast_signal(signal: dict):
+# async def broadcast_signal(signal: dict):
+#   """
+#   Рассылка нового торгового сигнала.
+#
+#   Args:
+#       signal: Торговый сигнал
+#   """
+#   message = {
+#     "type": "trading_signal",
+#     "signal": signal
+#   }
+#   await manager.broadcast(message)
+async def broadcast_signal(signal):
   """
   Рассылка нового торгового сигнала.
 
   Args:
-      signal: Торговый сигнал
+      signal: Торговый сигнал (TradingSignal или dict)
   """
+  # ✅ ЗАЩИТА: Автоматическая конвертация TradingSignal в dict
+  from models.signal import TradingSignal
+
+  if isinstance(signal, TradingSignal):
+    logger.warning(
+      "broadcast_signal получил TradingSignal объект вместо dict. "
+      "Автоматически конвертирую в dict."
+    )
+    signal_dict = signal.to_dict()
+  else:
+    signal_dict = signal
+
+  # ✅ ДОПОЛНИТЕЛЬНАЯ ЗАЩИТА: Проверка всех значений на JSON-сериализуемость
+  signal_dict = _ensure_json_serializable(signal_dict)
+
   message = {
     "type": "trading_signal",
-    "signal": signal
+    "signal": signal_dict
   }
-  await manager.broadcast(message)
 
+  try:
+    await manager.broadcast(message)
+  except Exception as e:
+    logger.error(
+      f"Ошибка broadcast_signal: {e}. "
+      f"Signal dict keys: {list(signal_dict.keys()) if isinstance(signal_dict, dict) else 'NOT_DICT'}"
+    )
+    raise
+
+
+def _ensure_json_serializable(obj):
+  """
+  Рекурсивная проверка и конвертация объектов в JSON-сериализуемые типы.
+
+  Args:
+      obj: Любой объект Python
+
+  Returns:
+      JSON-сериализуемый объект
+  """
+  import json
+  from enum import Enum
+  from datetime import datetime
+
+  if obj is None:
+    return None
+
+  # Enum -> строка
+  if isinstance(obj, Enum):
+    return obj.value
+
+  # datetime -> ISO string
+  if isinstance(obj, datetime):
+    return obj.isoformat()
+
+  # dict -> рекурсивная обработка
+  if isinstance(obj, dict):
+    return {
+      key: _ensure_json_serializable(value)
+      for key, value in obj.items()
+    }
+
+  # list/tuple -> рекурсивная обработка
+  if isinstance(obj, (list, tuple)):
+    return [_ensure_json_serializable(item) for item in obj]
+
+  # Проверка базовых JSON типов
+  if isinstance(obj, (str, int, float, bool)):
+    return obj
+
+  # Fallback: попытка конвертации в строку
+  try:
+    json.dumps(obj)  # Тест сериализации
+    return obj
+  except (TypeError, ValueError):
+    logger.warning(f"Объект типа {type(obj)} не сериализуем, конвертирую в строку")
+    return str(obj)
 
 async def broadcast_orderbook_update(symbol: str, orderbook: dict):
   """

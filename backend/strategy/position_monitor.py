@@ -27,6 +27,7 @@ from config import settings
 from database.models import PositionStatus
 from infrastructure.repositories.position_repository import position_repository
 from exchange.rest_client import rest_client
+from strategy.analyzer import OrderBookAnalyzer
 from strategy.reversal_detector import reversal_detector
 from strategy.risk_manager import RiskManager
 from models.signal import SignalType
@@ -70,6 +71,9 @@ class PositionMonitor:
     self.candle_managers = candle_managers
     self.orderbook_managers = orderbook_managers
     self.execution_manager = execution_manager
+
+    # ===== ДОБАВЛЕНО: Кеш для OrderBookAnalyzer =====
+    self.orderbook_analyzers: Dict[str, OrderBookAnalyzer] = {}
 
     # Настройки
     self.enabled = settings.POSITION_MONITOR_ENABLED
@@ -379,14 +383,36 @@ class PositionMonitor:
       # Извлекаем индикаторы из свечей (простой расчет RSI/MACD)
       indicators = self._calculate_indicators(candles)
 
-      # Метрики стакана
       orderbook_metrics = None
+
+      # ===== ИСПРАВЛЕНИЕ: Метрики стакана через OrderBookAnalyzer =====
       if orderbook_manager:
-        snapshot = orderbook_manager.get_snapshot()
-        if snapshot:
-          orderbook_metrics = {
-            'imbalance': snapshot.imbalance
-          }
+        try:
+          # ✅ Используем кешированный analyzer
+          analyzer = self._get_orderbook_analyzer(symbol)
+
+          # Вычисляем метрики
+          metrics = analyzer.analyze(orderbook_manager)
+
+          if metrics:
+            orderbook_metrics = {
+              'imbalance': metrics.imbalance,
+              'imbalance_depth_5': metrics.imbalance_depth_5,
+              'imbalance_depth_10': metrics.imbalance_depth_10,
+              'spread': metrics.spread,
+              'mid_price': metrics.mid_price
+            }
+
+            logger.debug(
+              f"{symbol} | OrderBook metrics: "
+              f"imbalance={metrics.imbalance:.4f}"
+            )
+        except Exception as e:
+          logger.warning(
+            f"{symbol} | Failed to calculate orderbook metrics: {e}",
+            exc_info=False
+          )
+          orderbook_metrics = None
 
       # Проверяем разворот
       reversal = reversal_detector.detect_reversal(
@@ -449,7 +475,10 @@ class PositionMonitor:
       return False
 
     except Exception as e:
-      logger.error(f"{symbol} | Error checking reversal: {e}", exc_info=True)
+      logger.error(
+        f"{symbol} | Error checking reversal: {e}",
+        exc_info=True  # ✅ Добавлен traceback для отладки
+      )
       return False
 
   def _calculate_indicators(self, candles: List[Candle]) -> Dict:
@@ -651,6 +680,23 @@ class PositionMonitor:
       "sltp_triggers": self.sltp_triggers,
       "monitored_positions": len(self.risk_manager.get_all_positions())
     }
+
+  def _get_orderbook_analyzer(self, symbol: str) -> OrderBookAnalyzer:
+    """
+    Получить или создать OrderBookAnalyzer для символа.
+
+    Args:
+        symbol: Торговая пара
+
+    Returns:
+        OrderBookAnalyzer instance
+    """
+    if symbol not in self.orderbook_analyzers:
+      from strategy.analyzer import OrderBookAnalyzer
+      self.orderbook_analyzers[symbol] = OrderBookAnalyzer(symbol)
+      logger.debug(f"{symbol} | Created OrderBookAnalyzer instance")
+
+    return self.orderbook_analyzers[symbol]
 
 
 # Глобальный экземпляр (инициализируется в main.py)
