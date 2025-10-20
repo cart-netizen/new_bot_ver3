@@ -41,6 +41,7 @@ from strategy.reversal_detector import reversal_detector
 from strategy.risk_models import ReversalSignal
 from strategy.strategy_engine import StrategyEngine
 from strategy.risk_manager import RiskManager
+from strategy.risk_manager_ml_enhanced import RiskManagerMLEnhanced
 from execution.execution_manager import ExecutionManager
 from strategy.trailing_stop_manager import trailing_stop_manager
 from utils.balance_tracker import balance_tracker
