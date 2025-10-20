@@ -16,7 +16,7 @@ import numpy as np
 from collections import deque
 
 from core.logger import get_logger
-from models.signal import TradingSignal, SignalType, SignalStrength
+from models.signal import TradingSignal, SignalType
 from ml_engine.features import FeatureVector
 from strategy.risk_models import MarketRegime
 from utils.helpers import safe_enum_value
@@ -463,7 +463,7 @@ class MLSignalValidator:
         )
 
       # 2. Проверка на NaN/Inf в значениях
-      def check_values(data: Dict) -> float:
+      def check_values(data: Dict) -> tuple[int, int]:
         """Рекурсивная проверка значений."""
         total_fields = 0
         valid_fields = 0

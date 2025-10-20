@@ -6,7 +6,8 @@
 import asyncio
 import os
 import signal
-from typing import Dict, Optional, Any
+from datetime import datetime
+from typing import Dict, Optional, Any, cast
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -1237,6 +1238,17 @@ class BotController:
         await self.ml_data_collector.finalize()
         logger.info("✓ ML Data Collector финализирован")
 
+      # ========================================
+      # ОСТАНОВКА ML VALIDATOR ()
+      # ========================================
+      if hasattr(self, 'ml_validator') and self.ml_validator:
+        try:
+          logger.info("Останавливаем ML Signal Validator...")
+          await self.ml_validator.cleanup()
+          logger.info("✓ ML Signal Validator остановлен")
+        except Exception as e:
+          logger.error(f"Ошибка при остановке ML validator: {e}")
+
       # Останавливаем остальные компоненты
       if self.websocket_manager:
         await self.websocket_manager.stop()
@@ -1496,26 +1508,138 @@ class BotController:
       if not isinstance(e, (OrderBookSyncError, OrderBookError)):
         log_exception(logger, e, "Обработка сообщения стакана")
 
-  def get_status(self) -> dict:
-    """Получение статуса бота."""
-    ws_status = {}
+  # def get_status(self) -> dict:
+  #   """Получение статуса бота."""
+  #   ws_status = {}
+  #   if self.websocket_manager:
+  #     ws_status = self.websocket_manager.get_connection_statuses()
+  #
+  #   # ===== НОВОЕ: Добавляем ML статистику =====
+  #   ml_status = {
+  #     "features_extracted": len(self.latest_features),
+  #     "data_collected_samples": (
+  #         self.ml_data_collector.get_statistics()
+  #         if self.ml_data_collector else {}
+  #     )
+  #   }
+  #
+  #   return {
+  #     "status": self.status.value,
+  #     "symbols": self.symbols,
+  #     "ml_enabled": True,  # НОВОЕ
+  #     "ml_status": ml_status,  # НОВОЕ
+  #     "websocket_connections": ws_status,
+  #     "orderbook_managers": {
+  #       symbol: manager.get_stats()
+  #       for symbol, manager in self.orderbook_managers.items()
+  #     },
+  #     "execution_stats": (
+  #       self.execution_manager.get_statistics()
+  #       if self.execution_manager else {}
+  #     ),
+  #   }
+
+  def get_status(self) -> Dict[str, Any]:
+    """Получение статуса бота с расширенной ML аналитикой."""
+
+    # ========================================
+    # СУЩЕСТВУЮЩАЯ ЛОГИКА (БЕЗ ИЗМЕНЕНИЙ)
+    # ========================================
+
+    ws_status: Dict[Any, Any] = {}
     if self.websocket_manager:
       ws_status = self.websocket_manager.get_connection_statuses()
 
-    # ===== НОВОЕ: Добавляем ML статистику =====
-    ml_status = {
+    # ===== СУЩЕСТВУЮЩАЯ ML статистика =====
+    ml_status: Dict[str, Any] = {
       "features_extracted": len(self.latest_features),
-      "data_collected_samples": (
-          self.ml_data_collector.get_statistics()
-          if self.ml_data_collector else {}
+      "data_collected_samples": cast(
+        Dict[str, Any],
+        self.ml_data_collector.get_statistics() if self.ml_data_collector else {}
       )
     }
 
-    return {
+    # ========================================
+    # РАСШИРЕНИЕ ml_status НОВЫМИ МЕТРИКАМИ
+    # ========================================
+
+    # Добавляем статус ML интеграции
+    try:
+      ml_status["ml_integration_enabled"] = getattr(
+        settings, 'ML_RISK_INTEGRATION_ENABLED', False
+      )
+    except Exception:
+      ml_status["ml_integration_enabled"] = False
+
+    # ML Validator статистика
+    if hasattr(self, 'ml_validator') and self.ml_validator:
+      try:
+        validator_stats = self.ml_validator.get_statistics()
+        ml_status["validator"] = {
+          "total_validations": validator_stats.get("total_validations", 0),
+          "ml_success_count": validator_stats.get("ml_success_count", 0),
+          "fallback_count": validator_stats.get("fallback_count", 0),
+          "agreement_count": validator_stats.get("agreement_count", 0),
+          "ml_server_available": validator_stats.get("ml_server_available", False),
+          "success_rate": validator_stats.get("success_rate", 0.0),
+          "agreement_rate": validator_stats.get("agreement_rate", 0.0),
+          "fallback_rate": validator_stats.get("fallback_rate", 0.0),
+          # Расширенные метрики
+          "avg_mae": validator_stats.get("avg_mae"),
+          "avg_manipulation_risk": validator_stats.get("avg_manipulation_risk", 0.0)
+        }
+      except Exception as e:
+        logger.debug(f"Cannot get ML validator stats: {e}")
+        ml_status["validator"] = {"status": "unavailable"}
+    else:
+      ml_status["validator"] = {"status": "not_initialized"}
+
+    # ML-Enhanced Risk Manager статистика
+    if (
+        hasattr(self, 'risk_manager') and
+        hasattr(self.risk_manager, 'get_ml_stats')
+    ):
+      try:
+        ml_risk_stats = self.risk_manager.get_ml_stats()
+        ml_status["risk_manager"] = {
+          "ml_enabled": ml_risk_stats.get("ml_enabled", False),
+          "total_validations": ml_risk_stats.get("total_validations", 0),
+          "ml_used": ml_risk_stats.get("ml_used", 0),
+          "ml_rejected": ml_risk_stats.get("ml_rejected", 0),
+          "fallback_used": ml_risk_stats.get("fallback_used", 0),
+          "ml_usage_rate": ml_risk_stats.get("ml_usage_rate", 0.0),
+          "ml_rejection_rate": ml_risk_stats.get("ml_rejection_rate", 0.0)
+        }
+      except Exception as e:
+        logger.debug(f"Cannot get ML risk manager stats: {e}")
+        ml_status["risk_manager"] = {"status": "unavailable"}
+    else:
+      ml_status["risk_manager"] = {"status": "standard_mode"}
+
+    # Feature Pipeline статистика
+    if hasattr(self, 'ml_feature_pipeline') and self.ml_feature_pipeline:
+      try:
+        symbols_with_features = list(self.latest_features.keys()) if hasattr(self, 'latest_features') else []
+        ml_status["feature_pipeline"] = {
+          "active": True,
+          "symbols_count": len(symbols_with_features),
+          "recent_symbols": symbols_with_features[:10]
+        }
+      except Exception as e:
+        logger.debug(f"Cannot get feature pipeline stats: {e}")
+        ml_status["feature_pipeline"] = {"active": False}
+    else:
+      ml_status["feature_pipeline"] = {"active": False}
+
+    # ========================================
+    # БАЗОВЫЙ RETURN (СУЩЕСТВУЮЩАЯ СТРУКТУРА)
+    # ========================================
+
+    status_dict: Dict[str, Any] = {
       "status": self.status.value,
       "symbols": self.symbols,
-      "ml_enabled": True,  # НОВОЕ
-      "ml_status": ml_status,  # НОВОЕ
+      "ml_enabled": True,  # СУЩЕСТВУЮЩЕЕ
+      "ml_status": ml_status,  # РАСШИРЕННОЕ
       "websocket_connections": ws_status,
       "orderbook_managers": {
         symbol: manager.get_stats()
@@ -1526,6 +1650,71 @@ class BotController:
         if self.execution_manager else {}
       ),
     }
+
+    # ========================================
+    # ДОПОЛНИТЕЛЬНЫЕ МЕТРИКИ (НОВЫЕ КЛЮЧИ)
+    # ========================================
+
+    # Risk Manager metrics
+    if hasattr(self, 'risk_manager') and self.risk_manager:
+      try:
+        status_dict["risk_metrics"] = self.risk_manager.metrics.to_dict()
+        status_dict["active_positions"] = len(self.risk_manager.open_positions)
+        status_dict["open_positions_list"] = list(
+          self.risk_manager.open_positions.keys()
+        )
+      except Exception as e:
+        logger.debug(f"Cannot get risk metrics: {e}")
+
+    # Balance Tracker
+    try:
+      from utils.balance_tracker import balance_tracker
+      balance_stats = balance_tracker.get_stats()
+      status_dict["balance"] = {
+        "current": balance_stats.get("current_balance", 0.0),
+        "initial": balance_stats.get("initial_balance", 0.0),
+        "total_pnl": balance_stats.get("total_pnl", 0.0),
+        "total_pnl_percentage": balance_stats.get("total_pnl_percentage", 0.0)
+      }
+    except Exception as e:
+      logger.debug(f"Cannot get balance stats: {e}")
+
+    # Daily Loss Killer
+    try:
+      from strategy.daily_loss_killer import daily_loss_killer
+      dlk_stats = daily_loss_killer.get_statistics()
+      status_dict["daily_loss_killer"] = {
+        "trading_allowed": dlk_stats.get("is_allowed", True),
+        "daily_pnl": dlk_stats.get("daily_pnl", 0.0),
+        "daily_loss_percent": dlk_stats.get("daily_loss_percent", 0.0),
+        "max_loss_percent": dlk_stats.get("max_daily_loss_percent", 0.0)
+      }
+    except Exception as e:
+      logger.debug(f"Cannot get daily loss killer stats: {e}")
+
+    # Correlation Manager
+    try:
+      from strategy.correlation_manager import correlation_manager
+      corr_stats = correlation_manager.get_statistics()
+      status_dict["correlation_stats"] = {
+        "total_groups": corr_stats.get("total_groups", 0),
+        "total_symbols": corr_stats.get("total_symbols", 0),
+        "active_positions": corr_stats.get("active_positions", 0)
+      }
+    except Exception as e:
+      logger.debug(f"Cannot get correlation stats: {e}")
+
+    # Position Monitor (если есть)
+    if hasattr(self, 'position_monitor') and self.position_monitor:
+      try:
+        status_dict["position_monitor"] = self.position_monitor.get_statistics()
+      except Exception as e:
+        logger.debug(f"Cannot get position monitor stats: {e}")
+
+    # Timestamp
+    status_dict["timestamp"] = datetime.now().isoformat()
+
+    return status_dict
 
   async def _ml_stats_loop(self):
     """
@@ -1601,23 +1790,110 @@ class BotController:
         logger.error(f"Ошибка в screener broadcast loop: {e}")
         await asyncio.sleep(interval)
 
-  async def _initialize_risk_manager(self):
-    """Инициализация Risk Manager."""
-    # Создаём без баланса
-    self.risk_manager = RiskManager(default_leverage=settings.DEFAULT_LEVERAGE)
+  # async def _initialize_risk_manager(self):
+  #   """Инициализация Risk Manager."""
+  #   # Создаём без баланса
+  #   self.risk_manager = RiskManager(default_leverage=settings.DEFAULT_LEVERAGE)
+  #
+  #   # Получаем реальный баланс
+  #   try:
+  #     balance_data = await rest_client.get_wallet_balance()
+  #     real_balance = balance_tracker._calculate_total_balance(balance_data)
+  #
+  #     # ИСПОЛЬЗУЕМ update_available_balance
+  #     self.risk_manager.update_available_balance(real_balance)
+  #
+  #     logger.info(f"✓ Risk Manager обновлён балансом: {real_balance:.2f} USDT")
+  #   except Exception as e:
+  #     logger.error(f"Ошибка получения баланса: {e}")
 
-    # Получаем реальный баланс
+  async def _initialize_risk_manager(self):
+    """
+    Инициализация Risk Manager с правильным балансом.
+
+    ЛОГИКА:
+    - Если ML_RISK_INTEGRATION_ENABLED=True → RiskManagerMLEnhanced
+    - Если ML_RISK_INTEGRATION_ENABLED=False → обычный RiskManager
+    - При ml_validator=None → RiskManagerMLEnhanced работает в fallback режиме
+    """
+    logger.info("=" * 80)
+    logger.info("ИНИЦИАЛИЗАЦИЯ RISK MANAGER")
+    logger.info("=" * 80)
+
     try:
+      # Получаем реальный баланс
       balance_data = await rest_client.get_wallet_balance()
       real_balance = balance_tracker._calculate_total_balance(balance_data)
 
-      # ИСПОЛЬЗУЕМ update_available_balance
-      self.risk_manager.update_available_balance(real_balance)
+      logger.info(f"✓ Получен баланс с биржи: {real_balance:.2f} USDT")
 
-      logger.info(f"✓ Risk Manager обновлён балансом: {real_balance:.2f} USDT")
+      # ========================================
+      # УСЛОВНАЯ ИНИЦИАЛИЗАЦИЯ RISK MANAGER
+      # ========================================
+
+      # Проверяем, включена ли ML интеграция
+      ml_enabled = settings.ML_RISK_INTEGRATION_ENABLED
+
+      if ml_enabled:
+        # ========================================
+        # ML-ENHANCED RISK MANAGER
+        # ========================================
+        logger.info("📊 Создание ML-Enhanced Risk Manager...")
+
+        # Проверяем доступность ml_validator
+        ml_validator_available = (
+            hasattr(self, 'ml_validator') and
+            self.ml_validator is not None
+        )
+
+        if ml_validator_available:
+          logger.info(
+            f"✓ ML Validator доступен, будет использован для валидации"
+          )
+        else:
+          logger.warning(
+            f"⚠️ ML Validator недоступен, Risk Manager будет работать "
+            f"в fallback режиме (как обычный RiskManager)"
+          )
+
+        # Создаем ML-Enhanced Risk Manager
+        # ВАЖНО: Даже если ml_validator=None, он будет работать в fallback
+        self.risk_manager = RiskManagerMLEnhanced(
+          ml_validator=self.ml_validator if ml_validator_available else None,
+          default_leverage=settings.DEFAULT_LEVERAGE,
+          initial_balance=real_balance
+        )
+
+        logger.info(
+          f"✅ ML-Enhanced Risk Manager инициализирован: "
+          f"leverage={settings.DEFAULT_LEVERAGE}x, "
+          f"balance=${real_balance:.2f}, "
+          f"ml_validator={'enabled' if ml_validator_available else 'disabled (fallback)'}"
+        )
+
+      else:
+        # ========================================
+        # ОБЫЧНЫЙ RISK MANAGER (БЕЗ ML)
+        # ========================================
+        logger.info("📊 Создание обычного Risk Manager (ML отключен)...")
+
+        self.risk_manager = RiskManager(
+          default_leverage=settings.DEFAULT_LEVERAGE,
+          initial_balance=real_balance
+        )
+
+        logger.info(
+          f"✅ Risk Manager инициализирован: "
+          f"leverage={settings.DEFAULT_LEVERAGE}x, "
+          f"balance=${real_balance:.2f}, "
+          f"mode=standard (без ML)"
+        )
+
+      logger.info("=" * 80)
+
     except Exception as e:
-      logger.error(f"Ошибка получения баланса: {e}")
-
+      logger.error(f"❌ Ошибка инициализации Risk Manager: {e}", exc_info=True)
+      raise
 
 # Глобальный контроллер бота
 bot_controller: Optional[BotController] = None
