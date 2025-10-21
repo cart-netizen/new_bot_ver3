@@ -152,25 +152,63 @@ class BotController:
 
     self.ml_stats_task: Optional[asyncio.Task] = None
 
-    # ML Signal Validator
-    # ml_validator_config = ValidationConfig(
-    #   model_server_url=os.getenv('ML_SERVER_URL', 'http://localhost:8001'),
-    #   min_ml_confidence=float(os.getenv('ML_MIN_CONFIDENCE', '0.6')),
-    #   ml_weight=float(os.getenv('ML_WEIGHT', '0.6')),
-    #   strategy_weight=float(os.getenv('STRATEGY_WEIGHT', '0.4'))
-    # )
-    # self.ml_validator = MLSignalValidator(ml_validator_config)
+    # ============================================
+    # ML SIGNAL VALIDATOR - Создаём конфигурацию
+    # ============================================
+    logger.info("🤖 Создание ML Signal Validator...")
 
-    ml_config = ValidationConfig(
-      model_server_url=settings.ML_SERVER_URL,
-      min_ml_confidence=settings.ML_MIN_CONFIDENCE,
-      ml_weight=settings.ML_WEIGHT,
-      strategy_weight=settings.STRATEGY_WEIGHT,
-      health_check_enabled=True,
-      health_check_interval=30,
-    )
+    try:
+      # Создаём конфигурацию для ML Validator
+      ml_validator_config = ValidationConfig(
+        # ML Server настройки
+        model_server_url=settings.ML_SERVER_URL,
+        model_version="latest",
+        request_timeout=5.0,
 
-    self.ml_validator = MLSignalValidator(config=ml_config)
+        # Health Check
+        health_check_enabled=True,
+        health_check_interval=30,
+        health_check_timeout=2.0,
+
+        # Validation пороги
+        min_ml_confidence=settings.ML_MIN_CONFIDENCE,
+        confidence_boost_factor=1.2,
+        confidence_penalty_factor=0.7,
+
+        # Hybrid decision веса
+        ml_weight=settings.ML_WEIGHT,
+        strategy_weight=settings.STRATEGY_WEIGHT,
+
+        # Fallback поведение
+        use_fallback_on_error=True,
+        fallback_to_strategy=True,
+
+        # Caching
+        cache_predictions=True,
+        cache_ttl_seconds=30,
+
+        # Advanced метрики (включаем ВСЕ)
+        enable_mae_prediction=True,
+        enable_manipulation_detection=True,
+        enable_regime_detection=True,
+        enable_feature_quality_check=True
+      )
+
+      # Создаём экземпляр ML Validator (БЕЗ инициализации HTTP сессии)
+      self.ml_validator = MLSignalValidator(config=ml_validator_config)
+
+      logger.info(
+        f"✓ ML Signal Validator создан: "
+        f"server={settings.ML_SERVER_URL}, "
+        f"min_confidence={settings.ML_MIN_CONFIDENCE:.2f}"
+      )
+
+    except Exception as e:
+      logger.warning(
+        f"⚠️ ML Signal Validator creation failed: {e}. "
+        f"Продолжаем без ML валидации."
+      )
+      self.ml_validator = None
 
     # Drift Detector
     self.drift_detector = DriftDetector(
@@ -321,6 +359,24 @@ class BotController:
       logger.info("ЗАПУСК ТОРГОВОГО БОТА (ML-ENHANCED)")
       logger.info("=" * 80)
 
+      # ============================================
+      # ML SIGNAL VALIDATOR - Инициализация
+      # ============================================
+      # ВАЖНО: Инициализируем HTTP сессию и health check
+      if self.ml_validator:
+        logger.info("🤖 Инициализация ML Signal Validator...")
+        try:
+          await self.ml_validator.initialize()
+          logger.info("✅ ML Signal Validator инициализирован")
+        except Exception as e:
+          logger.error(
+            f"❌ Ошибка инициализации ML Validator: {e}. "
+            f"ML validator будет недоступен."
+          )
+          # Не останавливаем бота, просто логируем
+      else:
+        logger.warning("⚠️ ML Signal Validator не создан, пропускаем инициализацию")
+
       # Инициализация риск-менеджера с реальным балансом
       await self._initialize_risk_manager()
 
@@ -339,9 +395,9 @@ class BotController:
       await daily_loss_killer.start()
       logger.info("✓ Daily Loss Killer запущен")
 
-      # Инициализация ML Validator
-      await self.ml_validator.initialize()
-      logger.info("✅ ML Signal Validator инициализирован")
+      # # Инициализация ML Validator
+      # await self.ml_validator.initialize()
+      # logger.info("✅ ML Signal Validator инициализирован")
 
       # ===== SCREENER MANAGER - Запускаем =====
       if self.screener_manager:
@@ -1269,6 +1325,18 @@ class BotController:
           pass
         logger.info("✓ Symbols refresh task остановлен")
 
+      # ============================================
+      # ML SIGNAL VALIDATOR - Остановка
+      # ============================================
+      # КРИТИЧЕСКИ ВАЖНО: Используем cleanup() вместо stop()
+      if hasattr(self, 'ml_validator') and self.ml_validator:
+        try:
+          logger.info("🤖 Останавливаем ML Signal Validator...")
+          await self.ml_validator.cleanup()  # ← ИСПРАВЛЕНО: cleanup() вместо stop()
+          logger.info("✅ ML Signal Validator остановлен")
+        except Exception as e:
+          logger.error(f"❌ Ошибка при остановке ML validator: {e}")
+
       # ==========================================
       # ОСТАНОВКА TRAILING STOP MANAGER
       # ==========================================
@@ -1280,13 +1348,6 @@ class BotController:
         await self.position_monitor.stop()
         logger.info("✓ Position Monitor остановлен")
 
-      # Остановка ML Signal Validator
-      if hasattr(self, 'ml_validator') and self.ml_validator:
-        try:
-          logger.info("Останавливаем ML Signal Validator...")
-          await self.ml_validator.stop()
-        except Exception as e:
-          logger.error(f"Ошибка при остановке ML validator: {e}")
 
       self.status = BotStatus.STOPPED
       logger.info("=" * 80)
@@ -1789,79 +1850,79 @@ class BotController:
     logger.info("=" * 80)
 
     try:
-      # Получаем реальный баланс
-      balance_data = await rest_client.get_wallet_balance()
-      real_balance = balance_tracker._calculate_total_balance(balance_data)
+        # Получаем реальный баланс
+        balance_data = await rest_client.get_wallet_balance()
+        real_balance = balance_tracker._calculate_total_balance(balance_data)
 
-      logger.info(f"✓ Получен баланс с биржи: {real_balance:.2f} USDT")
+        logger.info(f"✓ Получен баланс с биржи: {real_balance:.2f} USDT")
 
-      # ========================================
-      # УСЛОВНАЯ ИНИЦИАЛИЗАЦИЯ RISK MANAGER
-      # ========================================
-
-      # Проверяем, включена ли ML интеграция
-      ml_enabled = settings.ML_RISK_INTEGRATION_ENABLED
-
-      if ml_enabled:
         # ========================================
-        # ML-ENHANCED RISK MANAGER
+        # УСЛОВНАЯ ИНИЦИАЛИЗАЦИЯ RISK MANAGER
         # ========================================
-        logger.info("📊 Создание ML-Enhanced Risk Manager...")
 
-        # Проверяем доступность ml_validator
-        ml_validator_available = (
-            hasattr(self, 'ml_validator') and
-            self.ml_validator is not None
-        )
+        # Проверяем, включена ли ML интеграция
+        ml_enabled = settings.ML_RISK_INTEGRATION_ENABLED
 
-        if ml_validator_available:
-          logger.info(
-            f"✓ ML Validator доступен, будет использован для валидации"
-          )
+        if ml_enabled:
+            # ========================================
+            # ML-ENHANCED RISK MANAGER
+            # ========================================
+            logger.info("📊 Создание ML-Enhanced Risk Manager...")
+
+            # Проверяем доступность ml_validator
+            ml_validator_available = (
+                hasattr(self, 'ml_validator') and
+                self.ml_validator is not None
+            )
+
+            if ml_validator_available:
+                logger.info(
+                    f"✓ ML Validator доступен, будет использован для валидации"
+                )
+            else:
+                logger.warning(
+                    f"⚠️ ML Validator недоступен, Risk Manager будет работать "
+                    f"в fallback режиме (как обычный RiskManager)"
+                )
+
+            # Создаем ML-Enhanced Risk Manager
+            # ВАЖНО: Даже если ml_validator=None, он будет работать в fallback
+            self.risk_manager = RiskManagerMLEnhanced(
+                ml_validator=self.ml_validator if ml_validator_available else None,
+                default_leverage=settings.DEFAULT_LEVERAGE,
+                initial_balance=real_balance
+            )
+
+            logger.info(
+                f"✅ ML-Enhanced Risk Manager инициализирован: "
+                f"leverage={settings.DEFAULT_LEVERAGE}x, "
+                f"balance=${real_balance:.2f}, "
+                f"ml_validator={'enabled' if ml_validator_available else 'disabled (fallback)'}"
+            )
+
         else:
-          logger.warning(
-            f"⚠️ ML Validator недоступен, Risk Manager будет работать "
-            f"в fallback режиме (как обычный RiskManager)"
-          )
+            # ========================================
+            # ОБЫЧНЫЙ RISK MANAGER (БЕЗ ML)
+            # ========================================
+            logger.info("📊 Создание обычного Risk Manager (ML отключен)...")
 
-        # Создаем ML-Enhanced Risk Manager
-        # ВАЖНО: Даже если ml_validator=None, он будет работать в fallback
-        self.risk_manager = RiskManagerMLEnhanced(
-          ml_validator=self.ml_validator if ml_validator_available else None,
-          default_leverage=settings.DEFAULT_LEVERAGE,
-          initial_balance=real_balance
-        )
+            self.risk_manager = RiskManager(
+                default_leverage=settings.DEFAULT_LEVERAGE,
+                initial_balance=real_balance
+            )
 
-        logger.info(
-          f"✅ ML-Enhanced Risk Manager инициализирован: "
-          f"leverage={settings.DEFAULT_LEVERAGE}x, "
-          f"balance=${real_balance:.2f}, "
-          f"ml_validator={'enabled' if ml_validator_available else 'disabled (fallback)'}"
-        )
+            logger.info(
+                f"✅ Risk Manager инициализирован: "
+                f"leverage={settings.DEFAULT_LEVERAGE}x, "
+                f"balance=${real_balance:.2f}, "
+                f"mode=standard (без ML)"
+            )
 
-      else:
-        # ========================================
-        # ОБЫЧНЫЙ RISK MANAGER (БЕЗ ML)
-        # ========================================
-        logger.info("📊 Создание обычного Risk Manager (ML отключен)...")
-
-        self.risk_manager = RiskManager(
-          default_leverage=settings.DEFAULT_LEVERAGE,
-          initial_balance=real_balance
-        )
-
-        logger.info(
-          f"✅ Risk Manager инициализирован: "
-          f"leverage={settings.DEFAULT_LEVERAGE}x, "
-          f"balance=${real_balance:.2f}, "
-          f"mode=standard (без ML)"
-        )
-
-      logger.info("=" * 80)
+        logger.info("=" * 80)
 
     except Exception as e:
-      logger.error(f"❌ Ошибка инициализации Risk Manager: {e}", exc_info=True)
-      raise
+        logger.error(f"❌ Ошибка инициализации Risk Manager: {e}", exc_info=True)
+        raise
 
 # Глобальный контроллер бота
 bot_controller: Optional[BotController] = None
