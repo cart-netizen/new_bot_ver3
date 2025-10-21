@@ -1010,49 +1010,98 @@ class BotController:
             # ==================== 7. ML ВАЛИДАЦИЯ (OPTIONAL) ====================
             if has_ml_validator and feature_vector and signal:
               try:
-                # Передаём весь объект TradingSignal, а не только signal_type
                 validation_result = await self.ml_validator.validate(
                   signal,
                   feature_vector
                 )
 
-                if not validation_result.validated:
-                  logger.info(
-                    f"❌ Сигнал отклонен ML Validator [{symbol}]: "
-                    f"{validation_result.reason}"
-                  )
-                  signal = None  # Сбрасываем сигнал, но продолжаем обработку
-                else:
-                  # ===== ОБНОВЛЯЕМ СИГНАЛ С ML ВАЛИДАЦИЕЙ =====
+                # Проверяем результат валидации
+                if validation_result.validated:
+                  # ========================================
+                  # ИСПРАВЛЕНИЕ: Проверяем fallback режим
+                  # ========================================
+                  is_fallback = validation_result.used_fallback
+
                   # 1. Меняем source на ML_VALIDATED
                   signal.source = SignalSource.ML_VALIDATED
 
-                  # 2. Обновляем confidence и strength
-                  signal.confidence = validation_result.final_confidence
-
-                  # 3. Пересчитываем strength на основе ML confidence
-                  if validation_result.final_confidence > 0.8:
-                    signal.strength = SignalStrength.STRONG
-                  elif validation_result.final_confidence > 0.6:
-                    signal.strength = SignalStrength.MEDIUM
+                  # 2. Обновляем confidence
+                  # ИСПРАВЛЕНИЕ: В fallback режиме НЕ понижаем confidence
+                  if is_fallback:
+                    # Используем оригинальный confidence из стратегии
+                    signal.confidence = validation_result.final_confidence
+                    logger.info(
+                      f"🔄 ML Fallback режим [{symbol}]: "
+                      f"используем стратегию confidence={signal.confidence:.2f}"
+                    )
                   else:
-                    signal.strength = SignalStrength.WEAK
+                    # ML доступна - используем ML confidence
+                    signal.confidence = validation_result.final_confidence
+                    logger.info(
+                      f"🤖 ML валидация [{symbol}]: "
+                      f"ML confidence={validation_result.ml_confidence:.2f}, "
+                      f"final={signal.confidence:.2f}"
+                    )
+
+                  # 3. Пересчитываем strength на основе final confidence
+                  # ИСПРАВЛЕНИЕ: Используем более мягкие пороги для fallback
+                  if is_fallback:
+                    # В fallback режиме используем пороги стратегии
+                    if signal.confidence > 0.7:
+                      signal.strength = SignalStrength.STRONG
+                    elif signal.confidence > 0.5:
+                      signal.strength = SignalStrength.MEDIUM
+                    else:
+                      signal.strength = SignalStrength.WEAK
+                  else:
+                    # С ML используем стандартные пороги
+                    if validation_result.final_confidence > 0.8:
+                      signal.strength = SignalStrength.STRONG
+                    elif validation_result.final_confidence > 0.6:
+                      signal.strength = SignalStrength.MEDIUM
+                    else:
+                      signal.strength = SignalStrength.WEAK
 
                   # 4. Добавляем ML метаданные
                   if not signal.metadata:
                     signal.metadata = {}
+
                   signal.metadata['ml_validated'] = True
+                  signal.metadata['ml_fallback'] = is_fallback
                   signal.metadata['ml_direction'] = validation_result.ml_direction
                   signal.metadata['ml_confidence'] = validation_result.ml_confidence
+
+                  # Дополнительные метрики
+                  if validation_result.predicted_mae:
+                    signal.metadata['predicted_mae'] = validation_result.predicted_mae
+                  if validation_result.manipulation_risk:
+                    signal.metadata['manipulation_risk'] = validation_result.manipulation_risk
+                  if validation_result.market_regime:
+                    signal.metadata['market_regime'] = validation_result.market_regime.value
+                  if validation_result.feature_quality:
+                    signal.metadata['feature_quality'] = validation_result.feature_quality
 
                   logger.info(
                     f"✅ Сигнал подтвержден ML Validator [{symbol}]: "
                     f"source=ML_VALIDATED, "
                     f"strength={safe_enum_value(signal.strength)}, "
-                    f"final_confidence={validation_result.final_confidence:.2f}"
+                    f"final_confidence={signal.confidence:.2f}, "
+                    f"fallback={is_fallback}"
                   )
+                else:
+                  # Валидация не прошла
+                  logger.warning(
+                    f"❌ ML Validator отклонил сигнал [{symbol}]: "
+                    f"reason={validation_result.reason}"
+                  )
+                  signal = None  # Отклоняем сигнал
+
               except Exception as e:
                 logger.error(f"{symbol} | Ошибка ML Validator: {e}", exc_info=True)
+                # В случае ошибки оставляем сигнал как есть (fallback)
+                logger.info(
+                  f"⚠️ ML Validator error, используем сигнал стратегии [{symbol}]"
+                )
 
             # ==================== 8. S/R КОНТЕКСТ (OPTIONAL) ====================
             sr_context = []

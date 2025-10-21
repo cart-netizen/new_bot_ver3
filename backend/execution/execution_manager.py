@@ -799,27 +799,133 @@ class ExecutionManager:
 
     # ==================== ПРИВАТНЫЕ МЕТОДЫ ====================
 
+    # async def _process_queue(self):
+    #     """Обработка очереди сигналов."""
+    #     logger.info("Запущена обработка очереди исполнения")
+    #
+    #     while self.is_running:
+    #         try:
+    #             # Получаем сигнал из очереди с таймаутом
+    #             try:
+    #                 signal = await asyncio.wait_for(
+    #                     self.signal_queue.get(),
+    #                     timeout=1.0
+    #                 )
+    #             except asyncio.TimeoutError:
+    #                 continue
+    #
+    #             # Обрабатываем сигнал
+    #             await self._execute_signal(signal)
+    #
+    #         except Exception as e:
+    #             logger.error(f"Ошибка обработки очереди исполнения: {e}")
+    #             await asyncio.sleep(1)
+
     async def _process_queue(self):
-        """Обработка очереди сигналов."""
+        """
+        Обработка очереди сигналов на исполнение.
+
+        ИСПРАВЛЕНИЯ:
+        - Проверка типа signal перед обработкой
+        - Обработка некорректных объектов в очереди
+        - Детальное логирование для диагностики
+        """
         logger.info("Запущена обработка очереди исполнения")
 
         while self.is_running:
             try:
-                # Получаем сигнал из очереди с таймаутом
+                # ==========================================
+                # ШАГ 1: ПОЛУЧЕНИЕ СИГНАЛА ИЗ ОЧЕРЕДИ
+                # ==========================================
                 try:
                     signal = await asyncio.wait_for(
                         self.signal_queue.get(),
                         timeout=1.0
                     )
                 except asyncio.TimeoutError:
+                    # Таймаут - это нормально, просто продолжаем ждать
                     continue
 
-                # Обрабатываем сигнал
-                await self._execute_signal(signal)
+                # ==========================================
+                # ШАГ 2: КРИТИЧЕСКАЯ ВАЛИДАЦИЯ ТИПА
+                # ==========================================
+                if signal is None:
+                    logger.warning("Получен None из очереди, пропускаем")
+                    continue
+
+                # КРИТИЧНО: Проверяем что это TradingSignal
+                if not isinstance(signal, TradingSignal):
+                    logger.error(
+                        f"❌ КРИТИЧЕСКАЯ ОШИБКА: Неверный тип объекта в очереди! "
+                        f"Ожидался: TradingSignal, "
+                        f"Получен: {type(signal).__name__}"
+                    )
+
+                    # Пытаемся вывести содержимое для диагностики
+                    try:
+                        logger.error(f"Содержимое объекта: {signal}")
+                    except Exception as e:
+                        logger.error(f"Не удалось вывести содержимое: {e}")
+
+                    # Пропускаем некорректный объект
+                    continue
+
+                # ==========================================
+                # ШАГ 3: ВАЛИДАЦИЯ ОБЯЗАТЕЛЬНЫХ АТРИБУТОВ
+                # ==========================================
+                try:
+                    # Проверяем наличие критических атрибутов
+                    required_attrs = ['symbol', 'signal_type', 'price']
+                    missing_attrs = [attr for attr in required_attrs if not hasattr(signal, attr)]
+
+                    if missing_attrs:
+                        logger.error(
+                            f"❌ TradingSignal не содержит обязательных атрибутов: {missing_attrs}. "
+                            f"Пропускаем сигнал."
+                        )
+                        continue
+
+                    # Проверяем что signal_type это Enum, а не строка
+                    if hasattr(signal.signal_type, 'value'):
+                        signal_type_value = signal.signal_type.value
+                    else:
+                        signal_type_value = str(signal.signal_type)
+
+                    logger.debug(
+                        f"✓ Валидный сигнал получен: "
+                        f"symbol={signal.symbol}, "
+                        f"type={signal_type_value}, "
+                        f"price={signal.price:.8f}"
+                    )
+
+                except Exception as e:
+                    logger.error(
+                        f"❌ Ошибка валидации атрибутов сигнала: {e}",
+                        exc_info=True
+                    )
+                    continue
+
+                # ==========================================
+                # ШАГ 4: ОБРАБОТКА СИГНАЛА
+                # ==========================================
+                try:
+                    await self._execute_signal(signal)
+                except Exception as e:
+                    logger.error(
+                        f"❌ Ошибка исполнения сигнала {signal.symbol}: {e}",
+                        exc_info=True
+                    )
+                    # Продолжаем обработку следующих сигналов
 
             except Exception as e:
-                logger.error(f"Ошибка обработки очереди исполнения: {e}")
+                logger.error(
+                    f"❌ Критическая ошибка в цикле обработки очереди: {e}",
+                    exc_info=True
+                )
+                # Небольшая задержка для предотвращения зацикливания при критических ошибках
                 await asyncio.sleep(1)
+
+        logger.info("Обработка очереди исполнения остановлена")
 
     async def _execute_signal(self, signal: TradingSignal):
         """
@@ -879,7 +985,7 @@ class ExecutionManager:
             return
 
         logger.info(
-            f"{signal.symbol} | Исполнение сигнала: {signal.signal_type.value} @ {signal.price:.8f}"
+            f"{signal.symbol} | Исполнение сигнала: {safe_enum_value(signal.signal_type)} @ {signal.price:.8f}"
         )
 
         try:
@@ -1144,10 +1250,7 @@ class ExecutionManager:
                 self.stats["failed_orders"] += 1
                 return
 
-            # ==========================================
-            # ШАГ 5: РАСЧЕТ РАЗМЕРА ПОЗИЦИИ
-            # ==========================================
-            # ✅ ТЕПЕРЬ stop_loss определен и можем использовать его!
+
 
             # ШАГ 5.1: ML-ENHANCED VALIDATION (НОВОЕ!)
             # ------------------------------------------
@@ -1343,7 +1446,7 @@ class ExecutionManager:
                 self.stats["executed_orders"] += 1
                 logger.info(
                     f"{signal.symbol} | ✅ Позиция успешно открыта: "
-                    f"{side} {validated_quantity:.8f} @ {entry_price:.8f}, "
+                    f"{safe_enum_value(side)} {validated_quantity:.8f} @ {entry_price:.8f}, "
                     f"SL={stop_loss:.2f}, TP={take_profit:.2f}, "
                     f"ML={'ENABLED' if ml_adjustments else 'DISABLED'}"
                 )

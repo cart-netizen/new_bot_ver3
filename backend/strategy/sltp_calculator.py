@@ -299,29 +299,157 @@ class UnifiedSLTPCalculator:
     ) -> SLTPCalculation:
         """
         Fixed percentage расчет (emergency fallback).
-        """
-        sl_percent = min(0.01, self.max_sl_percent)  # 2% или max
-        tp_percent = sl_percent * self.min_rr_ratio  # Поддерживаем min R/R
 
+        УЛУЧШЕНИЯ:
+        - Адаптация для монет с очень маленькой ценой
+        - Гарантия минимального расстояния SL/TP
+        - Проверка на деление на ноль
+
+        Args:
+            entry_price: Цена входа
+            position_side: "long" или "short"
+
+        Returns:
+            SLTPCalculation с гарантированным R/R
+        """
+        # ==========================================
+        # ШАГ 1: ОПРЕДЕЛЕНИЕ БАЗОВЫХ ПРОЦЕНТОВ
+        # ==========================================
+        # Используем максимум между фиксированным процентом и долей от max_sl
+        # Это важно для маленьких цен, где округление критично
+        base_sl_pct = 0.02  # 2% базовый SL
+
+        # Для очень маленьких цен (< $0.01) используем больший процент
+        if entry_price < 0.01:
+            base_sl_pct = 0.05  # 5% для микрокапов
+            logger.debug(
+                f"Очень маленькая цена ({entry_price:.8f}), "
+                f"используем расширенный SL: {base_sl_pct:.1%}"
+            )
+        elif entry_price < 0.1:
+            base_sl_pct = 0.03  # 3% для маленьких цен
+            logger.debug(
+                f"Маленькая цена ({entry_price:.8f}), "
+                f"используем расширенный SL: {base_sl_pct:.1%}"
+            )
+
+        # Не превышаем максимальный SL
+        sl_percent = min(base_sl_pct, self.max_sl_percent)
+
+        # TP основан на минимальном R/R
+        tp_percent = sl_percent * self.min_rr_ratio
+
+        logger.debug(
+            f"Fixed расчет: entry=${entry_price:.8f}, "
+            f"sl_pct={sl_percent:.2%}, "
+            f"tp_pct={tp_percent:.2%}, "
+            f"min_rr={self.min_rr_ratio:.1f}"
+        )
+
+        # ==========================================
+        # ШАГ 2: РАСЧЕТ АБСОЛЮТНЫХ УРОВНЕЙ
+        # ==========================================
         if position_side == "long":
             stop_loss = entry_price * (1 - sl_percent)
             take_profit = entry_price * (1 + tp_percent)
-        else:
+        else:  # short
             stop_loss = entry_price * (1 + sl_percent)
             take_profit = entry_price * (1 - tp_percent)
+
+        # ==========================================
+        # ШАГ 3: КРИТИЧЕСКАЯ ВАЛИДАЦИЯ
+        # ==========================================
+        # Проверяем что SL реально отличается от entry
+        sl_distance = abs(entry_price - stop_loss)
+        min_distance = entry_price * 0.001  # Минимум 0.1% расстояние
+
+        if sl_distance < min_distance:
+            logger.warning(
+                f"Fixed SL слишком близко к entry: "
+                f"distance={sl_distance:.8f} ({sl_distance / entry_price:.3%}), "
+                f"min_required={min_distance:.8f} ({min_distance / entry_price:.3%}). "
+                f"Увеличиваем до 1%."
+            )
+
+            # Увеличиваем до 1% минимум
+            sl_percent = 0.01
+            tp_percent = sl_percent * self.min_rr_ratio
+
+            if position_side == "long":
+                stop_loss = entry_price * (1 - sl_percent)
+                take_profit = entry_price * (1 + tp_percent)
+            else:
+                stop_loss = entry_price * (1 + sl_percent)
+                take_profit = entry_price * (1 - tp_percent)
+
+            # Пересчитываем расстояние
+            sl_distance = abs(entry_price - stop_loss)
+
+        # Проверяем что TP реально отличается от entry
+        tp_distance = abs(take_profit - entry_price)
+
+        if tp_distance < min_distance:
+            logger.warning(
+                f"Fixed TP слишком близко к entry: "
+                f"distance={tp_distance:.8f}. "
+                f"Корректируем на основе SL."
+            )
+
+            # TP = entry + (SL_distance * min_RR)
+            if position_side == "long":
+                take_profit = entry_price + (sl_distance * self.min_rr_ratio)
+            else:
+                take_profit = entry_price - (sl_distance * self.min_rr_ratio)
+
+            tp_distance = abs(take_profit - entry_price)
+
+        # ==========================================
+        # ШАГ 4: ФИНАЛЬНАЯ ПРОВЕРКА R/R
+        # ==========================================
+        # Проверка на деление на ноль (не должно случиться после валидаций выше)
+        if sl_distance == 0:
+            logger.error(
+                f"❌ КРИТИЧЕСКАЯ ОШИБКА в _calculate_fixed: "
+                f"sl_distance = 0 после всех корректировок! "
+                f"entry={entry_price:.8f}, SL={stop_loss:.8f}"
+            )
+            # Экстренная корректировка
+            sl_distance = entry_price * 0.01  # 1% принудительно
+            if position_side == "long":
+                stop_loss = entry_price - sl_distance
+                take_profit = entry_price + (sl_distance * self.min_rr_ratio)
+            else:
+                stop_loss = entry_price + sl_distance
+                take_profit = entry_price - (sl_distance * self.min_rr_ratio)
+            tp_distance = abs(take_profit - entry_price)
+
+        # Вычисляем финальный R/R
+        final_rr = tp_distance / sl_distance
+
+        # ==========================================
+        # ШАГ 5: ЛОГИРОВАНИЕ И ВОЗВРАТ
+        # ==========================================
+        logger.info(
+            f"✓ Fixed SL/TP: "
+            f"SL=${stop_loss:.8f} ({sl_distance / entry_price:.2%}), "
+            f"TP=${take_profit:.8f} ({tp_distance / entry_price:.2%}), "
+            f"R/R={final_rr:.2f}"
+        )
 
         return SLTPCalculation(
             stop_loss=stop_loss,
             take_profit=take_profit,
-            risk_reward_ratio=self.min_rr_ratio,
+            risk_reward_ratio=final_rr,
             trailing_start_profit=tp_percent * 0.5,
             calculation_method="fixed",
             reasoning={
-                "sl_percent": sl_percent,
-                "tp_percent": tp_percent,
-                "note": "Emergency fallback"
+                "sl_percent": sl_distance / entry_price,
+                "tp_percent": tp_distance / entry_price,
+                "base_sl_percent": base_sl_pct,
+                "adjustments_applied": sl_distance < min_distance or tp_distance < min_distance,
+                "note": "Emergency fallback with price-adaptive parameters"
             },
-            confidence=0.5  # Низкая уверенность
+            confidence=0.5  # Низкая уверенность для fixed
         )
 
     def _get_confidence_multiplier(self, confidence: float) -> float:

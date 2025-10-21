@@ -193,9 +193,17 @@ class RiskManagerMLEnhanced(RiskManager):
     # ========================================
     # ШАГ 2: ML ВАЛИДАЦИЯ (если доступна)
     # ========================================
+    used_fallback = validation_result.used_fallback if validation_result else False
+
     if ml_result:
+      # ========================================
+      # ИСПРАВЛЕНИЕ: Проверяем used_fallback из ValidationResult
+      # ========================================
+
+
       # 2.1 ML Confidence Check
-      if ml_result['confidence'] < self.ml_min_confidence:
+      # ИСПРАВЛЕНИЕ: Пропускаем проверку для fallback режима
+      if not used_fallback and ml_result['confidence'] < self.ml_min_confidence:
         reason = (
           f"ML confidence слишком низкий: "
           f"{ml_result['confidence']:.2f} < {self.ml_min_confidence:.2f}"
@@ -204,8 +212,17 @@ class RiskManagerMLEnhanced(RiskManager):
         self.ml_stats['ml_rejected'] += 1
         return False, reason, None
 
+      # Для fallback режима логируем но пропускаем
+      if used_fallback:
+        logger.info(
+          f"{signal.symbol} | ML fallback режим: "
+          f"пропускаем проверку ML confidence, "
+          f"используем стратегию confidence={ml_result['confidence']:.2f}"
+        )
+
       # 2.2 ML Agreement Check
-      if self.ml_require_agreement:
+      # ИСПРАВЛЕНИЕ: Пропускаем проверку для fallback режима
+      if not used_fallback and self.ml_require_agreement:
         ml_direction = ml_result['direction']
         if ml_direction != signal.signal_type:
           reason = (
@@ -219,7 +236,8 @@ class RiskManagerMLEnhanced(RiskManager):
       # ========================================
       # 2.3 MANIPULATION DETECTION
       # ========================================
-      if self.ml_manipulation_check:
+      # ИСПРАВЛЕНИЕ: Пропускаем для fallback режима
+      if not used_fallback and self.ml_manipulation_check:
         manipulation_risk = ml_result['manipulation_risk']
 
         # Порог риска манипуляции из settings или дефолт
@@ -241,49 +259,82 @@ class RiskManagerMLEnhanced(RiskManager):
       # ========================================
       # 2.4 MARKET REGIME CHECK
       # ========================================
-      if self.ml_regime_check and ml_result['market_regime']:
-        regime = ml_result['market_regime']
+      # ИСПРАВЛЕНИЕ: Пропускаем для fallback режима
+      if not used_fallback and self.ml_regime_check:
+        regime = ml_result.get('market_regime')
+        if regime:
+          forbidden_regimes = self._get_forbidden_regimes(signal)
+          if regime in forbidden_regimes:
+            reason = (
+              f"Несовместимый режим рынка: {regime.value}, "
+              f"запрещенные: {[r.value for r in forbidden_regimes]}"
+            )
+            logger.warning(f"{signal.symbol} | {reason}")
+            self.ml_stats['ml_rejected'] += 1
+            return False, reason, None
 
-        # Определяем запрещенные режимы для текущей стратегии
-        forbidden_regimes = self._get_forbidden_regimes(signal)
-
-        if regime in forbidden_regimes:
-          reason = (
-            f"Неподходящий режим рынка: {regime.value}, "
-            f"стратегия не рекомендуется"
-          )
-          logger.warning(f"{signal.symbol} | {reason}")
-          self.ml_stats['ml_rejected'] += 1
-          return False, reason, None
+      # Для fallback режима инкрементируем счетчик
+      if used_fallback:
+        self.ml_stats['fallback_used'] += 1
+        logger.info(
+          f"{signal.symbol} | ✅ ML fallback validation PASSED | "
+          f"Using strategy signal with confidence={ml_result['confidence']:.2f}"
+        )
+      else:
+        self.ml_stats['ml_used'] += 1
+        logger.info(
+          f"{signal.symbol} | ✅ ML validation PASSED | "
+          f"confidence={ml_result['confidence']:.2f}"
+        )
 
     # ========================================
     # ШАГ 3: SL/TP CALCULATION
     # ========================================
-    if self.ml_sltp_calculation and ml_result:
-      # ML-based SL/TP
-      sltp_calc = await self._calculate_ml_sltp(
-        signal,
-        ml_result,
-        balance
-      )
-      logger.info(
-        f"{signal.symbol} | ML-based SL/TP: "
-        f"SL={sltp_calc.stop_loss:.2f}, "
-        f"TP={sltp_calc.take_profit:.2f}, "
-        f"R/R={sltp_calc.risk_reward_ratio:.2f}"
-      )
+    if self.ml_sltp_calculation and ml_result and not used_fallback:
+      # ML доступна - используем ML расчет
+      try:
+        sltp_calc = await self._calculate_ml_sltp(
+          signal, ml_result, balance
+        )
+        logger.debug(
+          f"{signal.symbol} | ML SL/TP использован: "
+          f"SL={sltp_calc.stop_loss:.2f}, TP={sltp_calc.take_profit:.2f}"
+        )
+      except Exception as e:
+        logger.warning(
+          f"{signal.symbol} | ML SL/TP calculation error: {e}, "
+          f"fallback to unified calculator"
+        )
+        # Fallback на unified calculator
+        sltp_calc = sltp_calculator.calculate(
+          signal=signal,
+          entry_price=signal.price,
+          ml_result=None,
+          atr=None,
+          market_regime=ml_result.get('market_regime') if ml_result else None
+        )
     else:
-      # Fallback: ATR-based SL/TP
-      sltp_calc = await sltp_calculator.calculate_sltp(
-        signal=signal,
-        balance=balance,
-        symbol_info=None  # Берется из кэша
-      )
+      # Fallback режим или ML недоступна - используем ТОЛЬКО unified calculator
       logger.info(
-        f"{signal.symbol} | Fallback ATR-based SL/TP: "
-        f"SL={sltp_calc.stop_loss:.2f}, "
-        f"TP={sltp_calc.take_profit:.2f}"
+        f"{signal.symbol} | Используем UnifiedSLTPCalculator "
+        f"(fallback режим или ML недоступна)"
       )
+
+      sltp_calc = sltp_calculator.calculate(
+        signal=signal,
+        entry_price=signal.price,
+        ml_result=None,  # В fallback НЕ передаем ml_result
+        atr=None,
+        market_regime=ml_result.get('market_regime') if ml_result else None
+      )
+
+    logger.info(
+      f"{signal.symbol} | SL/TP выбраны: "
+      f"method={sltp_calc.calculation_method}, "
+      f"SL={sltp_calc.stop_loss:.2f}, "
+      f"TP={sltp_calc.take_profit:.2f}, "
+      f"R/R={sltp_calc.risk_reward_ratio:.2f}"
+    )
 
     # ========================================
     # ШАГ 4: POSITION SIZING
@@ -293,7 +344,7 @@ class RiskManagerMLEnhanced(RiskManager):
     # ========================================
     ml_size_mult = 1.0  # Дефолтное значение
 
-    if self.ml_position_sizing and ml_result:
+    if ml_result and self.ml_position_sizing and not used_fallback:
       # ML-adjusted position sizing
       ml_size_mult = self._calculate_ml_size_multiplier(ml_result)
 
@@ -304,25 +355,31 @@ class RiskManagerMLEnhanced(RiskManager):
         f"regime={ml_result['market_regime'].value if ml_result['market_regime'] else 'None'}"
       )
     else:
-      # Fallback: Adaptive Risk Calculator
+      # Fallback: Adaptive Risk Calculator с минимумом 1.0x
+      from strategy.adaptive_risk_calculator import adaptive_risk_calculator
+
       adaptive_mult = adaptive_risk_calculator.calculate_risk_multiplier(
         signal.confidence
       )
-      ml_size_mult = adaptive_mult
+
+      # КРИТИЧНО: Гарантируем минимум 1.0x в fallback режиме
+      # чтобы избежать размера позиции ниже минимума
+      ml_size_mult = max(1.0, adaptive_mult)
 
       logger.info(
         f"{signal.symbol} | Fallback adaptive size multiplier: "
-        f"{ml_size_mult:.2f}x"
+        f"calculated={adaptive_mult:.2f}x, "
+        f"final={ml_size_mult:.2f}x (минимум 1.0x для fallback)"
       )
 
-    # Вычисляем базовый размер позиции
+      # Вычисляем базовый размер позиции
     base_position_size = self.calculate_position_size(
-      signal=signal,  # ✅ Передаем весь сигнал
-      available_balance=balance,  # ✅ Правильное имя параметра
-      stop_loss_price=sltp_calc.stop_loss,  # ✅ Остается как есть
-      leverage=self.default_leverage,  # ✅ Берем из self
-      current_volatility=None,  # Optional
-      ml_confidence=ml_result['confidence'] if ml_result else None  # ✅ ML confidence
+      signal=signal,
+      available_balance=balance,
+      stop_loss_price=sltp_calc.stop_loss,
+      leverage=self.default_leverage,
+      current_volatility=None,
+      ml_confidence=ml_result['confidence'] if ml_result else None
     )
 
     # Применяем ML множитель
@@ -521,82 +578,225 @@ class RiskManagerMLEnhanced(RiskManager):
     return total_mult
 
   async def _calculate_ml_sltp(
-      self,
-      signal: TradingSignal,
-      ml_result: Dict,
-      balance: float
-  ) -> SLTPCalculation:
-    """
-    ML-based расчет SL/TP.
+        self,
+        signal: TradingSignal,
+        ml_result: dict,
+        balance: float
+    ) -> SLTPCalculation:
+      """
+      ML-based расчет Stop Loss и Take Profit.
 
-    Использует:
-    - Predicted MAE для установки SL
-    - Expected Return для установки TP
-    - Market Regime для корректировки
+      Использует:
+      - Predicted MAE для установки SL
+      - Expected Return для установки TP
+      - Market Regime для корректировки
 
-    Args:
-        signal: Торговый сигнал
-        ml_result: ML предсказание
-        balance: Баланс
+      ИСПРАВЛЕНИЯ:
+      - Проверка деления на ноль (sl_distance == 0)
+      - Гарантия минимального R/R >= 2.0
+      - Fallback на fixed расчет при ошибках
 
-    Returns:
-        SLTPCalculation
-    """
-    entry_price = signal.price
-    predicted_mae = ml_result.get('predicted_mae', 0.015)
-    expected_return = ml_result.get('predicted_return', 0.02)
-    regime = ml_result.get('market_regime')
+      Args:
+          signal: Торговый сигнал
+          ml_result: ML предсказание
+          balance: Баланс
 
-    # Корректируем SL на основе MAE и режима
-    sl_distance_pct = predicted_mae * 1.5  # 1.5x MAE для буфера
+      Returns:
+          SLTPCalculation
 
-    # Регулируем на основе режима
-    if regime == MarketRegime.HIGH_VOLATILITY:
-      sl_distance_pct *= 1.3  # Шире SL при волатильности
-    elif regime == MarketRegime.STRONG_TREND:
-      sl_distance_pct *= 0.9  # Уже SL в тренде
+      Raises:
+          ValueError: Если signal_type некорректен
+      """
+      # ==========================================
+      # ШАГ 1: ИЗВЛЕЧЕНИЕ ML ДАННЫХ
+      # ==========================================
+      entry_price = signal.price
+      predicted_mae = ml_result.get('predicted_mae', 0.015)  # Default 1.5%
+      expected_return = ml_result.get('predicted_return', 0.02)  # Default 2%
+      regime = ml_result.get('market_regime')
+      confidence = ml_result.get('confidence', 0.75)
 
-    # Корректируем TP на основе expected return и режима
-    tp_distance_pct = expected_return
+      logger.debug(
+        f"{signal.symbol} | ML SL/TP расчет: "
+        f"entry=${entry_price:.8f}, "
+        f"mae={predicted_mae:.4f}, "
+        f"return={expected_return:.4f}, "
+        f"regime={regime.value if regime else 'None'}, "
+        f"confidence={confidence:.2f}"
+      )
 
-    # Регулируем на основе режима
-    if regime == MarketRegime.RANGING:
-      tp_distance_pct *= 0.8  # Ближе TP в флэте
-    elif regime == MarketRegime.STRONG_TREND:
-      tp_distance_pct *= 1.2  # Дальше TP в тренде
+      # ==========================================
+      # ШАГ 2: ОПРЕДЕЛЕНИЕ НАПРАВЛЕНИЯ ПОЗИЦИИ
+      # ==========================================
+      if signal.signal_type == SignalType.BUY:
+        position_side = "long"
+      elif signal.signal_type == SignalType.SELL:
+        position_side = "short"
+      else:
+        error_msg = (
+          f"{signal.symbol} | Некорректный signal_type для ML SL/TP: "
+          f"{signal.signal_type}. Используем fixed fallback."
+        )
+        logger.error(error_msg)
+        # Fallback на fixed расчет
+        return sltp_calculator._calculate_fixed(entry_price, "long")
 
-    # Вычисляем цены
-    if signal.signal_type == SignalType.BUY:
-      stop_loss = entry_price * (1 - sl_distance_pct)
-      take_profit = entry_price * (1 + tp_distance_pct)
-    else:  # SELL
-      stop_loss = entry_price * (1 + sl_distance_pct)
-      take_profit = entry_price * (1 - tp_distance_pct)
+      # ==========================================
+      # ШАГ 3: БАЗОВЫЙ РАСЧЕТ SL ДИСТАНЦИИ
+      # ==========================================
+      # SL на основе predicted MAE с буфером
+      sl_distance_pct = predicted_mae * 1.5  # 1.5x MAE для буфера
 
-    # Вычисляем R/R
-    sl_distance = abs(entry_price - stop_loss)
-    tp_distance = abs(take_profit - entry_price)
-    risk_reward = tp_distance / sl_distance if sl_distance > 0 else 1.0
+      # Регулируем на основе режима рынка
+      if regime == MarketRegime.HIGH_VOLATILITY:
+        sl_distance_pct *= 1.3  # Шире SL при волатильности
+        logger.debug(f"{signal.symbol} | HIGH_VOLATILITY: SL расширен на 30%")
+      elif regime == MarketRegime.STRONG_TREND:
+        sl_distance_pct *= 0.9  # Уже SL в тренде
+        logger.debug(f"{signal.symbol} | STRONG_TREND: SL сужен на 10%")
+      elif regime == MarketRegime.RANGING:
+        sl_distance_pct *= 0.8  # Ближе SL во флэте
+        logger.debug(f"{signal.symbol} | RANGING: SL сужен на 20%")
 
-    # Trailing start (начинаем trailing при 40% от TP)
-    trailing_start_profit = 0.4
+      # Ограничиваем максимальным SL (3% по умолчанию)
+      max_sl_pct = settings.SLTP_MAX_STOP_LOSS_PERCENT / 100
+      if sl_distance_pct > max_sl_pct:
+        logger.warning(
+          f"{signal.symbol} | ML SL {sl_distance_pct:.2%} превышает max {max_sl_pct:.2%}, "
+          f"ограничиваем"
+        )
+        sl_distance_pct = max_sl_pct
 
-    return SLTPCalculation(
-      stop_loss=stop_loss,
-      take_profit=take_profit,
-      risk_reward_ratio=risk_reward,
-      trailing_start_profit=trailing_start_profit,
-      calculation_method="ml",
-      reasoning={
-        "predicted_mae": predicted_mae,
-        "expected_return": expected_return,
-        "market_regime": regime.value if regime else None,
-        "sl_distance_pct": sl_distance_pct,
-        "tp_distance_pct": tp_distance_pct,
-        "risk_reward": risk_reward
-      },
-      confidence=ml_result['confidence']
-    )
+      # ==========================================
+      # ШАГ 4: БАЗОВЫЙ РАСЧЕТ TP ДИСТАНЦИИ
+      # ==========================================
+      # TP на основе expected return
+      tp_distance_pct = expected_return
+
+      # Регулируем на основе режима рынка
+      if regime == MarketRegime.RANGING:
+        tp_distance_pct *= 0.8  # Ближе TP в флэте
+        logger.debug(f"{signal.symbol} | RANGING: TP сужен на 20%")
+      elif regime == MarketRegime.STRONG_TREND:
+        tp_distance_pct *= 1.2  # Дальше TP в тренде
+        logger.debug(f"{signal.symbol} | STRONG_TREND: TP расширен на 20%")
+      elif regime == MarketRegime.HIGH_VOLATILITY:
+        tp_distance_pct *= 1.1  # Немного дальше TP при волатильности
+        logger.debug(f"{signal.symbol} | HIGH_VOLATILITY: TP расширен на 10%")
+
+      # Регулируем на основе confidence
+      if confidence > 0.85:
+        tp_distance_pct *= 1.2  # Дальше TP при высокой уверенности
+        logger.debug(f"{signal.symbol} | High confidence: TP расширен на 20%")
+      elif confidence < 0.7:
+        tp_distance_pct *= 0.9  # Ближе TP при низкой уверенности
+        logger.debug(f"{signal.symbol} | Low confidence: TP сужен на 10%")
+
+      # ==========================================
+      # ШАГ 5: РАСЧЕТ АБСОЛЮТНЫХ УРОВНЕЙ SL/TP
+      # ==========================================
+      if position_side == "long":
+        stop_loss = entry_price * (1 - sl_distance_pct)
+        take_profit = entry_price * (1 + tp_distance_pct)
+      else:  # short
+        stop_loss = entry_price * (1 + sl_distance_pct)
+        take_profit = entry_price * (1 - tp_distance_pct)
+
+      # ==========================================
+      # ШАГ 6: КРИТИЧЕСКАЯ ВАЛИДАЦИЯ И КОРРЕКЦИЯ R/R
+      # ==========================================
+      # Вычисляем дистанции
+      sl_distance = abs(entry_price - stop_loss)
+      tp_distance = abs(take_profit - entry_price)
+
+      # КРИТИЧНО: Проверка на деление на ноль
+      if sl_distance == 0 or sl_distance < entry_price * 0.0001:  # < 0.01%
+        logger.error(
+          f"{signal.symbol} | ❌ КРИТИЧЕСКАЯ ОШИБКА: SL дистанция слишком мала или = 0! "
+          f"entry={entry_price:.8f}, SL={stop_loss:.8f}, distance={sl_distance:.8f}. "
+          f"Используем FIXED fallback."
+        )
+        # Fallback на fixed расчет
+        return sltp_calculator._calculate_fixed(entry_price, position_side)
+
+      # Вычисляем R/R
+      risk_reward = tp_distance / sl_distance
+
+      # КРИТИЧНО: Гарантируем минимальный R/R
+      min_rr = settings.SLTP_MIN_RISK_REWARD  # Обычно 2.0 или 4.0
+
+      if risk_reward <= 0:
+        logger.error(
+          f"{signal.symbol} | ❌ КРИТИЧЕСКАЯ ОШИБКА: R/R <= 0! "
+          f"risk_reward={risk_reward:.4f}, "
+          f"sl_distance={sl_distance:.8f}, "
+          f"tp_distance={tp_distance:.8f}. "
+          f"Используем FIXED fallback."
+        )
+        # Fallback на fixed расчет
+        return sltp_calculator._calculate_fixed(entry_price, position_side)
+
+      if risk_reward < min_rr:
+        logger.warning(
+          f"{signal.symbol} | ML R/R слишком низкий: {risk_reward:.2f} < {min_rr:.2f}. "
+          f"Корректируем TP для достижения min R/R."
+        )
+
+        # Корректируем TP для достижения минимального R/R
+        if position_side == "long":
+          take_profit = entry_price + (sl_distance * min_rr)
+        else:  # short
+          take_profit = entry_price - (sl_distance * min_rr)
+
+        # Пересчитываем
+        tp_distance = abs(take_profit - entry_price)
+        risk_reward = min_rr
+
+        logger.info(
+          f"{signal.symbol} | ✓ TP скорректирован: "
+          f"new_tp={take_profit:.8f}, "
+          f"new_rr={risk_reward:.2f}"
+        )
+
+      # ==========================================
+      # ШАГ 7: РАСЧЕТ TRAILING START
+      # ==========================================
+      # Начинаем trailing при достижении 40% от TP
+      trailing_start_profit = 0.4
+
+      # ==========================================
+      # ШАГ 8: ФОРМИРОВАНИЕ РЕЗУЛЬТАТА
+      # ==========================================
+      logger.info(
+        f"{signal.symbol} | ✓ ML SL/TP рассчитаны: "
+        f"SL=${stop_loss:.8f} ({sl_distance_pct:.2%}), "
+        f"TP=${take_profit:.8f} ({tp_distance_pct:.2%}), "
+        f"R/R={risk_reward:.2f}, "
+        f"confidence={confidence:.2f}"
+      )
+
+      return SLTPCalculation(
+        stop_loss=stop_loss,
+        take_profit=take_profit,
+        risk_reward_ratio=risk_reward,  # ГАРАНТИРОВАННО >= min_rr
+        trailing_start_profit=trailing_start_profit,
+        calculation_method="ml",
+        reasoning={
+          "predicted_mae": predicted_mae,
+          "expected_return": expected_return,
+          "market_regime": regime.value if regime else None,
+          "sl_distance_pct": sl_distance_pct,
+          "tp_distance_pct": tp_distance_pct,
+          "confidence": confidence,
+          "risk_reward": risk_reward,
+          "adjustments": {
+            "regime_applied": regime is not None,
+            "confidence_boost": confidence > 0.85,
+            "rr_corrected": risk_reward == min_rr
+          }
+        },
+        confidence=confidence
+      )
 
   def _get_forbidden_regimes(self, signal: TradingSignal) -> list:
     """

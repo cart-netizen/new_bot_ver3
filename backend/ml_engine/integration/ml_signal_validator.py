@@ -282,11 +282,11 @@ class MLSignalValidator:
         return ValidationResult(
           original_signal=signal,
           ml_direction=None,
-          ml_confidence=None,
+          ml_confidence=signal.confidence,  # ✅ ИСПРАВЛЕНО: Передаем оригинальный confidence
           ml_expected_return=None,
           validated=True,
           final_signal_type=signal.signal_type,
-          final_confidence=signal.confidence * self.config.strategy_weight,
+          final_confidence=signal.confidence,  # ✅ ИСПРАВЛЕНО: Без штрафа
           agreement=False,
           reason="ML unavailable, using strategy signal (fallback)",
           inference_time_ms=inference_time,
