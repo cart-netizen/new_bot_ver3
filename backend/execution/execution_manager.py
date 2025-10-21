@@ -931,20 +931,22 @@ class ExecutionManager:
         """
         Исполнение торгового сигнала с ML-enhanced risk management.
 
-        ПОЛНАЯ ВЕРСИЯ с сохранением всей существующей логики + ML интеграция.
+        ИСПРАВЛЕННАЯ ВЕРСИЯ:
+        - SL/TP рассчитывается ТОЛЬКО в validate_signal_ml_enhanced
+        - Fallback расчет SL/TP если ML недоступна
+        - Все .value заменены на safe_enum_value()
 
         Pipeline:
         0. Проверка лимитов позиций и дедупликация
         1. Получение информации об инструменте
         2. Проверка баланса
-        2.5. Извлечение ML features (НОВОЕ)
+        2.5. Извлечение ML features
         3. Валидация signal_type
-        4. Расчет SL/TP (с ML или ATR/fixed fallback)
-        5. Расчет размера позиции (с ML adjustments или без)
-        5.1. ML-enhanced validation (НОВОЕ)
-        5.2. Применение ML adjustments (НОВОЕ)
+        4. ML-enhanced validation (рассчитывает SL/TP внутри)
+        4.1. Fallback расчет SL/TP (если ML недоступна)
+        5. Расчет размера позиции
         6. Валидация и округление quantity
-        7. Открытие позиции (с ML метаданными или без)
+        7. Открытие позиции
 
         Args:
             signal: Торговый сигнал для исполнения
@@ -1019,7 +1021,7 @@ class ExecutionManager:
             )
 
             # ==========================================
-            # ШАГ 2.5: ИЗВЛЕЧЕНИЕ ML FEATURES (НОВОЕ!)
+            # ШАГ 2.5: ИЗВЛЕЧЕНИЕ ML FEATURES
             # ==========================================
             feature_vector = None
 
@@ -1043,19 +1045,16 @@ class ExecutionManager:
                         f"{signal.symbol} | Не удалось получить cached features: {e}"
                     )
 
-            # Попытка 3: Извлечь on-the-fly (если доступен pipeline)
+            # Попытка 3: Извлечь on-the-fly
             if not feature_vector:
                 try:
                     from main import bot_controller
 
-                    # Проверяем наличие всех необходимых компонентов
                     if (hasattr(bot_controller, 'ml_feature_pipeline') and
                         hasattr(bot_controller, 'orderbook_managers') and
                         hasattr(bot_controller, 'candle_managers')):
 
                         pipeline = bot_controller.ml_feature_pipeline
-
-                        # Получаем orderbook snapshot
                         orderbook_manager = bot_controller.orderbook_managers.get(signal.symbol)
                         if not orderbook_manager:
                             raise ValueError(f"OrderBook manager для {signal.symbol} не найден")
@@ -1064,7 +1063,6 @@ class ExecutionManager:
                         if not orderbook_snapshot:
                             raise ValueError(f"OrderBook snapshot для {signal.symbol} недоступен")
 
-                        # Получаем candles
                         candle_manager = bot_controller.candle_managers.get(signal.symbol)
                         if not candle_manager:
                             raise ValueError(f"Candle manager для {signal.symbol} не найден")
@@ -1073,7 +1071,6 @@ class ExecutionManager:
                         if not candles or len(candles) == 0:
                             raise ValueError(f"Candles для {signal.symbol} недоступны")
 
-                        # Извлекаем features через правильный метод
                         feature_vector = await pipeline.extract_features_single(
                             symbol=signal.symbol,
                             orderbook_snapshot=orderbook_snapshot,
@@ -1093,24 +1090,21 @@ class ExecutionManager:
 
             if not feature_vector:
                 logger.debug(
-                    f"{signal.symbol} | ML features недоступны, "
-                    f"будет использован fallback"
+                    f"{signal.symbol} | ML features недоступны, будет использован fallback"
                 )
 
             # ==========================================
             # ШАГ 3: ВАЛИДАЦИЯ SIGNAL_TYPE И ОПРЕДЕЛЕНИЕ SIDE
             # ==========================================
-            # HOLD сигналы не требуют исполнения
             if signal.signal_type == SignalType.HOLD:
                 logger.info(
                     f"{signal.symbol} | HOLD сигнал - не требует исполнения ордера"
                 )
                 return
 
-            # Проверка допустимых типов
             if signal.signal_type not in [SignalType.BUY, SignalType.SELL]:
                 logger.warning(
-                    f"{signal.symbol} | Неизвестный signal_type: {signal.signal_type}, "
+                    f"{signal.symbol} | Неизвестный signal_type: {safe_enum_value(signal.signal_type)}, "
                     f"пропускаем исполнение"
                 )
                 self.stats["rejected_orders"] += 1
@@ -1122,145 +1116,28 @@ class ExecutionManager:
             elif signal.signal_type == SignalType.SELL:
                 side = "Sell"
             else:
-                logger.error(f"{signal.symbol} | Недопустимый signal_type")
+                logger.error(
+                    f"{signal.symbol} | Недопустимый signal_type: {safe_enum_value(signal.signal_type)}"
+                )
                 self.stats["failed_orders"] += 1
                 return
 
             logger.debug(f"{signal.symbol} | Side: {side}")
 
             # ==========================================
-            # ШАГ 4: РАСЧЕТ STOP LOSS И TAKE PROFIT
+            # ШАГ 4: ML-ENHANCED VALIDATION
+            # КРИТИЧНО: Рассчитывает SL/TP внутри!
             # ==========================================
-            # ✅ КРИТИЧНО: Рассчитываем SL/TP ПЕРЕД расчетом размера позиции!
-
-            try:
-                # 4.1 Получаем ATR из metadata сигнала (если есть)
-                atr = signal.metadata.get('atr') if signal.metadata else None
-
-                if atr:
-                    logger.debug(f"{signal.symbol} | ATR доступен: {atr:.2f}")
-
-                # 4.2 Получаем ML result (если есть ML validation)
-                ml_sltp_data = None
-                if hasattr(signal, 'ml_validation_result') and signal.ml_validation_result:
-                    ml_result = signal.ml_validation_result
-                    ml_sltp_data = {
-                        'predicted_mae': ml_result.metadata.get('predicted_mae', 0.012),
-                        'predicted_return': ml_result.predicted_return,
-                        'confidence': ml_result.confidence
-                    }
-                    logger.debug(
-                        f"{signal.symbol} | ML данные доступны: "
-                        f"mae={ml_sltp_data['predicted_mae']:.4f}, "
-                        f"return={ml_sltp_data['predicted_return']:.4f}"
-                    )
-
-                # 4.3 Получаем market regime (если есть)
-                market_regime_str = signal.metadata.get('market_regime') if signal.metadata else None
-                market_regime = None
-
-                if market_regime_str:
-                    try:
-                        if isinstance(market_regime_str, str):
-                            market_regime = MarketRegime(market_regime_str)
-                        else:
-                            market_regime = market_regime_str
-
-                        logger.debug(
-                            f"{signal.symbol} | Market regime: {market_regime.value}"
-                        )
-                    except (ValueError, AttributeError) as e:
-                        logger.warning(
-                            f"{signal.symbol} | Не удалось распарсить market_regime: {e}"
-                        )
-
-                # 4.4 Расчет SL/TP через UnifiedSLTPCalculator
-                entry_price = signal.price
-
-                logger.info(
-                    f"{signal.symbol} | Расчет SL/TP: "
-                    f"entry=${entry_price:.2f}, "
-                    f"has_ml={ml_sltp_data is not None}, "
-                    f"has_atr={atr is not None}, "
-                    f"has_regime={market_regime is not None}"
-                )
-
-                sltp_calc = sltp_calculator.calculate(
-                    signal=signal,
-                    entry_price=entry_price,
-                    ml_result=ml_sltp_data,
-                    atr=atr,
-                    market_regime=market_regime
-                )
-
-                # 4.5 Извлечение результатов
-                stop_loss = sltp_calc.stop_loss
-                take_profit = sltp_calc.take_profit
-
-                logger.info(
-                    f"{signal.symbol} | SL/TP рассчитаны: "
-                    f"method={sltp_calc.calculation_method}, "
-                    f"SL=${stop_loss:.2f}, "
-                    f"TP=${take_profit:.2f}, "
-                    f"R/R={sltp_calc.risk_reward_ratio:.2f}"
-                )
-
-                # 4.6 Валидация рассчитанных значений
-                if side == "Buy":
-                    if stop_loss >= entry_price:
-                        logger.error(
-                            f"{signal.symbol} | ОШИБКА: SL для long должен быть < entry! "
-                            f"SL={stop_loss:.2f}, entry={entry_price:.2f}"
-                        )
-                        self.stats["failed_orders"] += 1
-                        return
-
-                    if take_profit <= entry_price:
-                        logger.error(
-                            f"{signal.symbol} | ОШИБКА: TP для long должен быть > entry! "
-                            f"TP={take_profit:.2f}, entry={entry_price:.2f}"
-                        )
-                        self.stats["failed_orders"] += 1
-                        return
-
-                else:  # side == "Sell"
-                    if stop_loss <= entry_price:
-                        logger.error(
-                            f"{signal.symbol} | ОШИБКА: SL для short должен быть > entry! "
-                            f"SL={stop_loss:.2f}, entry={entry_price:.2f}"
-                        )
-                        self.stats["failed_orders"] += 1
-                        return
-
-                    if take_profit >= entry_price:
-                        logger.error(
-                            f"{signal.symbol} | ОШИБКА: TP для short должен быть < entry! "
-                            f"TP={take_profit:.2f}, entry={entry_price:.2f}"
-                        )
-                        self.stats["failed_orders"] += 1
-                        return
-
-                logger.debug(f"{signal.symbol} | SL/TP validation passed ✓")
-
-            except Exception as e:
-                logger.error(
-                    f"{signal.symbol} | Ошибка расчета SL/TP: {e}",
-                    exc_info=True
-                )
-                self.stats["failed_orders"] += 1
-                return
-
-
-
-            # ШАГ 5.1: ML-ENHANCED VALIDATION (НОВОЕ!)
-            # ------------------------------------------
-            # Проверяем, поддерживает ли risk_manager ML validation
             ml_adjustments = None
+            stop_loss = None
+            take_profit = None
+            entry_price = signal.price
 
             if hasattr(self.risk_manager, 'validate_signal_ml_enhanced') and feature_vector:
                 try:
                     logger.debug(f"{signal.symbol} | Используем ML-enhanced validation")
 
+                    # ML validation рассчитает SL/TP внутри
                     is_valid_ml, reason_ml, ml_adjustments = await self.risk_manager.validate_signal_ml_enhanced(
                         signal=signal,
                         balance=available_balance,
@@ -1274,35 +1151,154 @@ class ExecutionManager:
                         self.stats["rejected_orders"] += 1
                         return
 
+                    # ========================================
+                    # ИЗВЛЕКАЕМ SL/TP ИЗ ML_ADJUSTMENTS
+                    # ========================================
+                    stop_loss = ml_adjustments.stop_loss_price
+                    take_profit = ml_adjustments.take_profit_price
+
                     logger.info(
                         f"{signal.symbol} | ✅ ML-enhanced validation PASSED | "
                         f"ML conf={ml_adjustments.ml_confidence:.2f}, "
+                        f"SL=${stop_loss:.2f}, "
+                        f"TP=${take_profit:.2f}, "
+                        f"R/R={(abs(take_profit - entry_price) / abs(entry_price - stop_loss)):.2f}, "
                         f"Size mult={ml_adjustments.position_size_multiplier:.2f}x"
                     )
 
                 except Exception as e:
                     logger.error(
                         f"{signal.symbol} | ML-enhanced validation error: {e}, "
-                        f"falling back to standard validation",
+                        f"falling back to standard SL/TP calculation",
                         exc_info=True
                     )
                     ml_adjustments = None
+                    stop_loss = None
+                    take_profit = None
 
-            # ШАГ 5.2: РАСЧЕТ РАЗМЕРА ПОЗИЦИИ
-            # ------------------------------------------
+            # ==========================================
+            # ШАГ 4.1: FALLBACK РАСЧЕТ SL/TP
+            # (если ML validation недоступна или произошла ошибка)
+            # ==========================================
+            if stop_loss is None or take_profit is None:
+                logger.info(
+                    f"{signal.symbol} | ML validation недоступна или failed, "
+                    f"используем fallback расчет SL/TP"
+                )
+
+                try:
+                    # Получаем дополнительные данные для расчета
+                    atr = signal.metadata.get('atr') if signal.metadata else None
+
+                    ml_sltp_data = None
+                    if hasattr(signal, 'ml_validation_result') and signal.ml_validation_result:
+                        ml_result = signal.ml_validation_result
+                        ml_sltp_data = {
+                            'predicted_mae': ml_result.metadata.get('predicted_mae', 0.012),
+                            'predicted_return': ml_result.predicted_return,
+                            'confidence': ml_result.confidence
+                        }
+
+                    market_regime_str = signal.metadata.get('market_regime') if signal.metadata else None
+                    market_regime = None
+                    if market_regime_str:
+                        try:
+                            if isinstance(market_regime_str, str):
+                                market_regime = MarketRegime(market_regime_str)
+                            else:
+                                market_regime = market_regime_str
+                        except (ValueError, AttributeError):
+                            pass
+
+                    # Расчет через UnifiedSLTPCalculator
+                    logger.info(
+                        f"{signal.symbol} | Fallback расчет SL/TP: "
+                        f"entry=${entry_price:.2f}, "
+                        f"has_atr={atr is not None}, "
+                        f"has_regime={market_regime is not None}"
+                    )
+
+                    sltp_calc = sltp_calculator.calculate(
+                        signal=signal,
+                        entry_price=entry_price,
+                        ml_result=ml_sltp_data,
+                        atr=atr,
+                        market_regime=market_regime
+                    )
+
+                    stop_loss = sltp_calc.stop_loss
+                    take_profit = sltp_calc.take_profit
+
+                    logger.info(
+                        f"{signal.symbol} | Fallback SL/TP рассчитаны: "
+                        f"method={sltp_calc.calculation_method}, "
+                        f"SL=${stop_loss:.2f}, "
+                        f"TP=${take_profit:.2f}, "
+                        f"R/R={sltp_calc.risk_reward_ratio:.2f}"
+                    )
+
+                except Exception as e:
+                    logger.error(
+                        f"{signal.symbol} | Ошибка fallback расчета SL/TP: {e}",
+                        exc_info=True
+                    )
+                    self.stats["failed_orders"] += 1
+                    return
+
+            # ==========================================
+            # ВАЛИДАЦИЯ РАССЧИТАННЫХ SL/TP
+            # ==========================================
+            if side == "Buy":
+                if stop_loss >= entry_price:
+                    logger.error(
+                        f"{signal.symbol} | ОШИБКА: SL для long должен быть < entry! "
+                        f"SL={stop_loss:.2f}, entry={entry_price:.2f}"
+                    )
+                    self.stats["failed_orders"] += 1
+                    return
+
+                if take_profit <= entry_price:
+                    logger.error(
+                        f"{signal.symbol} | ОШИБКА: TP для long должен быть > entry! "
+                        f"TP={take_profit:.2f}, entry={entry_price:.2f}"
+                    )
+                    self.stats["failed_orders"] += 1
+                    return
+
+            else:  # side == "Sell"
+                if stop_loss <= entry_price:
+                    logger.error(
+                        f"{signal.symbol} | ОШИБКА: SL для short должен быть > entry! "
+                        f"SL={stop_loss:.2f}, entry={entry_price:.2f}"
+                    )
+                    self.stats["failed_orders"] += 1
+                    return
+
+                if take_profit >= entry_price:
+                    logger.error(
+                        f"{signal.symbol} | ОШИБКА: TP для short должен быть < entry! "
+                        f"TP={take_profit:.2f}, entry={entry_price:.2f}"
+                    )
+                    self.stats["failed_orders"] += 1
+                    return
+
+            logger.debug(f"{signal.symbol} | SL/TP validation passed ✓")
+
+            # ==========================================
+            # ШАГ 5: РАСЧЕТ РАЗМЕРА ПОЗИЦИИ
+            # ==========================================
             try:
-                # Получаем текущую волатильность (если есть ATR)
+                # Получаем дополнительные данные
                 current_volatility = None
+                atr = signal.metadata.get('atr') if signal.metadata else None
                 if atr:
-                    # Нормализуем ATR к процентам
                     current_volatility = atr / entry_price
 
-                # Получаем ML confidence (если есть)
                 ml_confidence = None
-                if ml_sltp_data:
-                    ml_confidence = ml_sltp_data.get('confidence')
+                if ml_adjustments:
+                    ml_confidence = ml_adjustments.ml_confidence
 
-                # Рассчитываем базовый размер позиции с Adaptive Risk
+                # Рассчитываем базовый размер позиции
                 raw_position_size_usdt = self.risk_manager.calculate_position_size(
                     signal=signal,
                     available_balance=available_balance,
@@ -1312,13 +1308,9 @@ class ExecutionManager:
                     ml_confidence=ml_confidence
                 )
 
-                # ШАГ 5.3: ПРИМЕНЕНИЕ ML ADJUSTMENTS (если есть)
-                # ------------------------------------------------
+                # Применяем ML adjustments (если есть)
                 if ml_adjustments and ml_adjustments.position_size_multiplier:
-                    # ML корректировка размера
                     ml_adjusted_size = raw_position_size_usdt * ml_adjustments.position_size_multiplier
-
-                    # Ограничиваем максимумом (5% от баланса)
                     max_size = available_balance * 0.05
                     final_position_size_usdt = min(ml_adjusted_size, max_size)
 
@@ -1329,32 +1321,13 @@ class ExecutionManager:
                         f"${ml_adjusted_size:.2f} → "
                         f"capped at ${final_position_size_usdt:.2f}"
                     )
-
-                    # Обновляем SL/TP из ML adjustments (если отличаются)
-                    if ml_adjustments.stop_loss_price != stop_loss:
-                        logger.debug(
-                            f"{signal.symbol} | ML adjusted SL: "
-                            f"{stop_loss:.2f} → {ml_adjustments.stop_loss_price:.2f}"
-                        )
-                        stop_loss = ml_adjustments.stop_loss_price
-
-                    if ml_adjustments.take_profit_price != take_profit:
-                        logger.debug(
-                            f"{signal.symbol} | ML adjusted TP: "
-                            f"{take_profit:.2f} → {ml_adjustments.take_profit_price:.2f}"
-                        )
-                        take_profit = ml_adjustments.take_profit_price
                 else:
-                    # Без ML adjustments - используем базовый размер
                     final_position_size_usdt = raw_position_size_usdt
+                    logger.debug(
+                        f"{signal.symbol} | Standard sizing: ${final_position_size_usdt:.2f}"
+                    )
 
-                    if not feature_vector:
-                        logger.debug(
-                            f"{signal.symbol} | Fallback sizing (ML недоступна): "
-                            f"${final_position_size_usdt:.2f}"
-                        )
-
-                # Рассчитываем quantity из position_size
+                # Рассчитываем quantity
                 raw_quantity = final_position_size_usdt / entry_price
 
                 logger.info(
@@ -1446,7 +1419,7 @@ class ExecutionManager:
                 self.stats["executed_orders"] += 1
                 logger.info(
                     f"{signal.symbol} | ✅ Позиция успешно открыта: "
-                    f"{safe_enum_value(side)} {validated_quantity:.8f} @ {entry_price:.8f}, "
+                    f"{side} {validated_quantity:.8f} @ {entry_price:.8f}, "
                     f"SL={stop_loss:.2f}, TP={take_profit:.2f}, "
                     f"ML={'ENABLED' if ml_adjustments else 'DISABLED'}"
                 )
