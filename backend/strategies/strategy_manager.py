@@ -1,6 +1,9 @@
 """
 Strategy Manager - объединение всех торговых стратегий.
 
+ИСПРАВЛЕНИЕ: Добавлена валидация минимального количества стратегий
+в побеждающей группе для всех режимов consensus.
+
 Функциональность:
 - Управление множественными стратегиями
 - Объединение сигналов (consensus)
@@ -12,11 +15,12 @@ Strategy Manager - объединение всех торговых страте
 """
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import numpy as np
 
 from core.logger import get_logger
+from models.orderbook import OrderBookSnapshot, OrderBookMetrics
 from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
 from strategy.candle_manager import Candle
 
@@ -25,6 +29,13 @@ from strategies.momentum_strategy import MomentumStrategy, MomentumConfig
 from strategies.sar_wave_strategy import SARWaveStrategy, SARWaveConfig
 from strategies.supertrend_strategy import SuperTrendStrategy, SuperTrendConfig
 from strategies.volume_profile_strategy import VolumeProfileStrategy, VolumeProfileConfig
+
+# Импорт новых OrderBook стратегий
+from strategies.imbalance_strategy import ImbalanceStrategy, ImbalanceConfig
+from strategies.volume_flow_strategy import VolumeFlowStrategy, VolumeFlowConfig
+from strategies.liquidity_zone_strategy import LiquidityZoneStrategy, LiquidityZoneConfig
+from strategies.smart_money_strategy import SmartMoneyStrategy, SmartMoneyConfig
+
 from utils.helpers import safe_enum_value
 
 logger = get_logger(__name__)
@@ -36,6 +47,11 @@ class StrategyPriority(Enum):
   MEDIUM = 2
   LOW = 1
 
+class StrategyType(Enum):
+  """Тип стратегии."""
+  CANDLE = "candle"  # Работает только со свечами
+  ORDERBOOK = "orderbook"  # Работает только со стаканом
+  HYBRID = "hybrid"  # Комбинирует свечи и стакан
 
 @dataclass
 class StrategyManagerConfig:
@@ -75,13 +91,81 @@ class StrategyManagerConfig:
 
 
 @dataclass
+class ExtendedStrategyManagerConfig:
+  """Расширенная конфигурация Strategy Manager."""
+  # Режим объединения сигналов
+  consensus_mode: str = "weighted"  # "weighted", "majority", "unanimous"
+
+  # Минимальные требования
+  min_strategies_for_signal: int = 2
+  min_consensus_confidence: float = 0.6
+
+  # Веса стратегий (candle-based)
+  candle_strategy_weights: Dict[str, float] = field(default_factory=lambda: {
+    'momentum': 0.20,
+    'sar_wave': 0.15,
+    'supertrend': 0.20,
+    'volume_profile': 0.15
+  })
+
+  # Веса стратегий (orderbook-based)
+  orderbook_strategy_weights: Dict[str, float] = field(default_factory=lambda: {
+    'imbalance': 0.10,
+    'volume_flow': 0.10,
+    'liquidity_zone': 0.10
+  })
+
+  # Веса стратегий (hybrid)
+  hybrid_strategy_weights: Dict[str, float] = field(default_factory=lambda: {
+    'smart_money': 0.15
+  })
+
+  # Приоритеты стратегий
+  strategy_priorities: Dict[str, StrategyPriority] = field(default_factory=lambda: {
+    # Candle strategies
+    'momentum': StrategyPriority.HIGH,
+    'sar_wave': StrategyPriority.MEDIUM,
+    'supertrend': StrategyPriority.HIGH,
+    'volume_profile': StrategyPriority.MEDIUM,
+    # OrderBook strategies
+    'imbalance': StrategyPriority.MEDIUM,
+    'volume_flow': StrategyPriority.MEDIUM,
+    'liquidity_zone': StrategyPriority.HIGH,
+    # Hybrid strategies
+    'smart_money': StrategyPriority.HIGH
+  })
+
+  # Типы стратегий
+  strategy_types: Dict[str, StrategyType] = field(default_factory=lambda: {
+    'momentum': StrategyType.CANDLE,
+    'sar_wave': StrategyType.CANDLE,
+    'supertrend': StrategyType.CANDLE,
+    'volume_profile': StrategyType.CANDLE,
+    'imbalance': StrategyType.ORDERBOOK,
+    'volume_flow': StrategyType.ORDERBOOK,
+    'liquidity_zone': StrategyType.ORDERBOOK,
+    'smart_money': StrategyType.HYBRID
+  })
+
+  # Гибридный consensus режим
+  hybrid_consensus_mode: str = 'weighted'  # 'all_agree', 'any_agree', 'weighted'
+
+  # Включение гибридных стратегий
+  enable_hybrid_strategies: bool = True
+  enable_orderbook_strategies: bool = True
+
+  # Конфликт-резолюция
+  conflict_resolution: str = "highest_confidence"
+
+@dataclass
 class StrategyResult:
-  """Результат от одной стратегии."""
-  strategy_name: str
-  signal: Optional[TradingSignal]
-  priority: StrategyPriority
-  weight: float
-  execution_time_ms: float
+    """Результат от одной стратегии."""
+    strategy_name: str
+    strategy_type: StrategyType
+    signal: Optional[TradingSignal]
+    priority: StrategyPriority
+    weight: float
+    execution_time_ms: float
 
 
 @dataclass
@@ -94,15 +178,22 @@ class ConsensusSignal:
   consensus_confidence: float
   strategy_results: List[StrategyResult]
 
+  # Разбивка по типам стратегий
+  candle_strategies_count: int = 0
+  orderbook_strategies_count: int = 0
+  hybrid_strategies_count: int = 0
 
-class StrategyManager:
+class ExtendedStrategyManager:
   """
-  Менеджер торговых стратегий.
+  Расширенный менеджер торговых стратегий.
 
-  Управляет множественными стратегиями и объединяет их сигналы.
+  Управляет:
+  - Свечными стратегиями (традиционный технический анализ)
+  - OrderBook стратегиями (микроструктура рынка)
+  - Гибридными стратегиями (комбинация обоих)
   """
 
-  def __init__(self, config: StrategyManagerConfig):
+  def __init__(self, config: ExtendedStrategyManagerConfig):
     """
     Инициализация менеджера.
 
@@ -111,20 +202,31 @@ class StrategyManager:
     """
     self.config = config
 
-    # Инициализация стратегий
-    self.strategies: Dict[str, any] = {}
+    # Инициализация свечных стратегий
+    self.candle_strategies: Dict[str, any] = {}
+    self.candle_strategies['momentum'] = MomentumStrategy(MomentumConfig())
+    self.candle_strategies['sar_wave'] = SARWaveStrategy(SARWaveConfig())
+    self.candle_strategies['supertrend'] = SuperTrendStrategy(SuperTrendConfig())
+    self.candle_strategies['volume_profile'] = VolumeProfileStrategy(VolumeProfileConfig())
 
-    # Momentum Strategy
-    self.strategies['momentum'] = MomentumStrategy(MomentumConfig())
+    # Инициализация OrderBook стратегий
+    self.orderbook_strategies: Dict[str, any] = {}
+    if config.enable_orderbook_strategies:
+      self.orderbook_strategies['imbalance'] = ImbalanceStrategy(ImbalanceConfig())
+      self.orderbook_strategies['volume_flow'] = VolumeFlowStrategy(VolumeFlowConfig())
+      self.orderbook_strategies['liquidity_zone'] = LiquidityZoneStrategy(LiquidityZoneConfig())
 
-    # SAR Wave Strategy
-    self.strategies['sar_wave'] = SARWaveStrategy(SARWaveConfig())
+    # Инициализация гибридных стратегий
+    self.hybrid_strategies: Dict[str, any] = {}
+    if config.enable_hybrid_strategies:
+      self.hybrid_strategies['smart_money'] = SmartMoneyStrategy(SmartMoneyConfig())
 
-    # SuperTrend Strategy
-    self.strategies['supertrend'] = SuperTrendStrategy(SuperTrendConfig())
-
-    # Volume Profile Strategy
-    self.strategies['volume_profile'] = VolumeProfileStrategy(VolumeProfileConfig())
+    # Объединенный список всех стратегий
+    self.all_strategies = {
+      **self.candle_strategies,
+      **self.orderbook_strategies,
+      **self.hybrid_strategies
+    }
 
     # Статистика
     self.total_analyses = 0
@@ -133,8 +235,10 @@ class StrategyManager:
     self.conflicts_resolved = 0
 
     logger.info(
-      f"Инициализирован StrategyManager: "
-      f"strategies={list(self.strategies.keys())}, "
+      f"Инициализирован ExtendedStrategyManager: "
+      f"candle_strategies={list(self.candle_strategies.keys())}, "
+      f"orderbook_strategies={list(self.orderbook_strategies.keys())}, "
+      f"hybrid_strategies={list(self.hybrid_strategies.keys())}, "
       f"consensus_mode={config.consensus_mode}"
     )
 
@@ -142,10 +246,30 @@ class StrategyManager:
       self,
       symbol: str,
       candles: List[Candle],
-      current_price: float
+      current_price: float,
+      orderbook: Optional[OrderBookSnapshot] = None,
+      metrics: Optional[OrderBookMetrics] = None,
+      sr_levels: Optional[List] = None,
+      volume_profile: Optional[Dict] = None,
+      ml_prediction: Optional[Dict] = None
   ) -> List[StrategyResult]:
     """
-    Запустить все стратегии для анализа.
+    Запустить ВСЕ стратегии для анализа.
+
+    Роутинг данных:
+    - Candle strategies: получают только candles
+    - OrderBook strategies: получают candles + orderbook + metrics
+    - Hybrid strategies: получают всё
+
+    Args:
+        symbol: Торговая пара
+        candles: История свечей
+        current_price: Текущая цена
+        orderbook: Снимок стакана (для OrderBook/Hybrid стратегий)
+        metrics: Метрики стакана (для OrderBook/Hybrid стратегий)
+        sr_levels: S/R уровни (опционально)
+        volume_profile: Volume profile (опционально)
+        ml_prediction: ML предсказание (опционально)
 
     Returns:
         Список результатов от каждой стратегии
@@ -154,21 +278,22 @@ class StrategyManager:
 
     results = []
 
-    for strategy_name, strategy in self.strategies.items():
+    # ========== Candle Strategies ==========
+    for strategy_name, strategy in self.candle_strategies.items():
       start_time = time.time()
 
       try:
         signal = strategy.analyze(symbol, candles, current_price)
-        execution_time = (time.time() - start_time) * 1000  # ms
+        execution_time = (time.time() - start_time) * 1000
 
         result = StrategyResult(
           strategy_name=strategy_name,
+          strategy_type=StrategyType.CANDLE,
           signal=signal,
           priority=self.config.strategy_priorities.get(
-            strategy_name,
-            StrategyPriority.MEDIUM
+            strategy_name, StrategyPriority.MEDIUM
           ),
-          weight=self.config.strategy_weights.get(strategy_name, 0.25),
+          weight=self.config.candle_strategy_weights.get(strategy_name, 0.10),
           execution_time_ms=execution_time
         )
 
@@ -176,13 +301,106 @@ class StrategyManager:
 
         if signal:
           logger.debug(
-            f"[{strategy_name}] Signal: {safe_enum_value(signal.signal_type)}, "
+            f"[CANDLE/{strategy_name}] {symbol}: "
+            f"{safe_enum_value(signal.signal_type)}, "
             f"confidence={signal.confidence:.2f}"
           )
 
       except Exception as e:
-        logger.error(f"Ошибка в стратегии {strategy_name}: {e}", exc_info=True)
+        logger.error(f"Ошибка в candle стратегии {strategy_name}: {e}", exc_info=True)
         continue
+
+    # ========== OrderBook Strategies ==========
+    if orderbook and metrics and self.config.enable_orderbook_strategies:
+      for strategy_name, strategy in self.orderbook_strategies.items():
+        start_time = time.time()
+
+        try:
+          # Передаем дополнительные параметры для LiquidityZone
+          if strategy_name == 'liquidity_zone':
+            signal = strategy.analyze(
+              symbol, candles, current_price, orderbook, metrics,
+              sr_levels=sr_levels,
+              volume_profile=volume_profile
+            )
+          else:
+            signal = strategy.analyze(
+              symbol, candles, current_price, orderbook, metrics
+            )
+
+          execution_time = (time.time() - start_time) * 1000
+
+          result = StrategyResult(
+            strategy_name=strategy_name,
+            strategy_type=StrategyType.ORDERBOOK,
+            signal=signal,
+            priority=self.config.strategy_priorities.get(
+              strategy_name, StrategyPriority.MEDIUM
+            ),
+            weight=self.config.orderbook_strategy_weights.get(strategy_name, 0.10),
+            execution_time_ms=execution_time
+          )
+
+          results.append(result)
+
+          if signal:
+            logger.debug(
+              f"[ORDERBOOK/{strategy_name}] {symbol}: "
+              f"{safe_enum_value(signal.signal_type)}, "
+              f"confidence={signal.confidence:.2f}"
+            )
+
+        except Exception as e:
+          logger.error(
+            f"Ошибка в orderbook стратегии {strategy_name}: {e}",
+            exc_info=True
+          )
+          continue
+
+    # ========== Hybrid Strategies ==========
+    if orderbook and metrics and self.config.enable_hybrid_strategies:
+      for strategy_name, strategy in self.hybrid_strategies.items():
+        start_time = time.time()
+
+        try:
+          signal = strategy.analyze(
+            symbol=symbol,
+            candles=candles,
+            current_price=current_price,
+            orderbook=orderbook,
+            metrics=metrics,
+            volume_profile=volume_profile,
+            ml_prediction=ml_prediction
+          )
+
+          execution_time = (time.time() - start_time) * 1000
+
+          result = StrategyResult(
+            strategy_name=strategy_name,
+            strategy_type=StrategyType.HYBRID,
+            signal=signal,
+            priority=self.config.strategy_priorities.get(
+              strategy_name, StrategyPriority.MEDIUM
+            ),
+            weight=self.config.hybrid_strategy_weights.get(strategy_name, 0.15),
+            execution_time_ms=execution_time
+          )
+
+          results.append(result)
+
+          if signal:
+            logger.debug(
+              f"[HYBRID/{strategy_name}] {symbol}: "
+              f"{safe_enum_value(signal.signal_type)}, "
+              f"confidence={signal.confidence:.2f}"
+            )
+
+        except Exception as e:
+          logger.error(
+            f"Ошибка в hybrid стратегии {strategy_name}: {e}",
+            exc_info=True
+          )
+          continue
 
     self.total_analyses += 1
 
@@ -197,311 +415,310 @@ class StrategyManager:
     """
     Построить consensus сигнал из результатов стратегий.
 
-    Returns:
-        ConsensusSignal или None
+    Учитывает:
+    - Разные типы стратегий (candle/orderbook/hybrid)
+    - Веса и приоритеты
+    - Конфликты между сигналами
     """
-    # Фильтруем результаты с сигналами
+    # Фильтруем только стратегии с сигналами
     results_with_signals = [r for r in strategy_results if r.signal is not None]
 
-    if len(results_with_signals) < self.config.min_strategies_for_signal:
-      logger.debug(
-        f"Недостаточно стратегий для consensus: "
-        f"{len(results_with_signals)} < {self.config.min_strategies_for_signal}"
-      )
+    if not results_with_signals:
       return None
 
-    # Группируем по типу сигнала
+    # Подсчет по типам
+    candle_count = len([r for r in results_with_signals if r.strategy_type == StrategyType.CANDLE])
+    orderbook_count = len([r for r in results_with_signals if r.strategy_type == StrategyType.ORDERBOOK])
+    hybrid_count = len([r for r in results_with_signals if r.strategy_type == StrategyType.HYBRID])
+
+    # Анализ согласованности
     buy_signals = [r for r in results_with_signals if r.signal.signal_type == SignalType.BUY]
     sell_signals = [r for r in results_with_signals if r.signal.signal_type == SignalType.SELL]
 
-    # Определяем consensus направление
-    if self.config.consensus_mode == "majority":
-      consensus_signal = self._majority_consensus(
-        buy_signals,
-        sell_signals,
-        strategy_results
+    # Проверка минимального количества стратегий
+    if len(results_with_signals) < self.config.min_strategies_for_signal:
+      logger.debug(
+        f"{symbol} | Недостаточно стратегий: "
+        f"{len(results_with_signals)}/{self.config.min_strategies_for_signal}"
       )
+      return None
 
-    elif self.config.consensus_mode == "weighted":
+    # Определение консенсуса по режиму
+    if self.config.consensus_mode == "weighted":
       consensus_signal = self._weighted_consensus(
-        buy_signals,
-        sell_signals,
-        strategy_results
+        buy_signals, sell_signals, symbol, current_price
       )
-
+    elif self.config.consensus_mode == "majority":
+      consensus_signal = self._majority_consensus(
+        buy_signals, sell_signals, symbol, current_price
+      )
     elif self.config.consensus_mode == "unanimous":
       consensus_signal = self._unanimous_consensus(
-        buy_signals,
-        sell_signals,
-        strategy_results
+        results_with_signals, symbol, current_price
+      )
+    else:
+      consensus_signal = self._weighted_consensus(
+        buy_signals, sell_signals, symbol, current_price
       )
 
-    else:
-      logger.error(f"Неизвестный consensus_mode: {self.config.consensus_mode}")
+    if not consensus_signal:
       return None
 
-    if consensus_signal:
-      self.signals_generated += 1
-      if consensus_signal.agreement_count == len(results_with_signals):
-        self.consensus_achieved += 1
-      else:
-        self.conflicts_resolved += 1
+    # Обогащаем информацией о типах стратегий
+    consensus_signal.candle_strategies_count = candle_count
+    consensus_signal.orderbook_strategies_count = orderbook_count
+    consensus_signal.hybrid_strategies_count = hybrid_count
+
+    self.consensus_achieved += 1
 
     return consensus_signal
-
-  def _majority_consensus(
-      self,
-      buy_signals: List[StrategyResult],
-      sell_signals: List[StrategyResult],
-      all_results: List[StrategyResult]
-  ) -> Optional[ConsensusSignal]:
-    """Majority voting consensus."""
-    if len(buy_signals) > len(sell_signals):
-      signal_type = SignalType.BUY
-      contributing = buy_signals
-      agreement = len(buy_signals)
-      disagreement = len(sell_signals)
-    elif len(sell_signals) > len(buy_signals):
-      signal_type = SignalType.SELL
-      contributing = sell_signals
-      agreement = len(sell_signals)
-      disagreement = len(buy_signals)
-    else:
-      # Равное количество - конфликт
-      return self._resolve_conflict(buy_signals, sell_signals, all_results)
-
-    # Средняя уверенность
-    avg_confidence = float(np.mean([r.signal.confidence for r in contributing]))
-
-    if avg_confidence < self.config.min_consensus_confidence:
-      return None
-
-    # Создаем consensus сигнал
-    final_signal = TradingSignal(
-      symbol=contributing[0].signal.symbol,
-      signal_type=signal_type,
-      source=SignalSource.STRATEGY,
-      strength=self._determine_strength(avg_confidence),
-      price=contributing[0].signal.price,
-      confidence=avg_confidence,
-      timestamp=int(datetime.now().timestamp() * 1000),
-      reason=f"Majority consensus: {agreement} strategies agree",
-      metadata={
-        'consensus_mode': 'majority',
-        'contributing_strategies': [r.strategy_name for r in contributing],
-        'agreement_count': agreement,
-        'disagreement_count': disagreement
-      }
-    )
-
-    return ConsensusSignal(
-      final_signal=final_signal,
-      contributing_strategies=[r.strategy_name for r in contributing],
-      agreement_count=agreement,
-      disagreement_count=disagreement,
-      consensus_confidence=avg_confidence,
-      strategy_results=all_results
-    )
 
   def _weighted_consensus(
       self,
       buy_signals: List[StrategyResult],
       sell_signals: List[StrategyResult],
-      all_results: List[StrategyResult]
+      symbol: str,
+      current_price: float
   ) -> Optional[ConsensusSignal]:
-    """Weighted voting consensus."""
-    # Вычисляем взвешенные голоса
-    buy_weight = sum(r.weight * r.signal.confidence for r in buy_signals)
-    sell_weight = sum(r.weight * r.signal.confidence for r in sell_signals)
+    """Взвешенный consensus на основе весов и confidence."""
+    # Взвешенные голоса
+    buy_score = sum(r.weight * r.signal.confidence for r in buy_signals)
+    sell_score = sum(r.weight * r.signal.confidence for r in sell_signals)
 
-    if buy_weight > sell_weight:
-      signal_type = SignalType.BUY
-      contributing = buy_signals
-      consensus_confidence = buy_weight / sum(r.weight for r in buy_signals)
-    elif sell_weight > buy_weight:
-      signal_type = SignalType.SELL
-      contributing = sell_signals
-      consensus_confidence = sell_weight / sum(r.weight for r in sell_signals)
-    else:
-      return self._resolve_conflict(buy_signals, sell_signals, all_results)
+    total_score = buy_score + sell_score
 
-    if consensus_confidence < self.config.min_consensus_confidence:
+    if total_score == 0:
       return None
 
+    # Определение победителя
+    if buy_score > sell_score:
+      final_type = SignalType.BUY
+      consensus_confidence = buy_score / total_score
+      contributing = buy_signals
+      agreement_count = len(buy_signals)
+      disagreement_count = len(sell_signals)
+    else:
+      final_type = SignalType.SELL
+      consensus_confidence = sell_score / total_score
+      contributing = sell_signals
+      agreement_count = len(sell_signals)
+      disagreement_count = len(buy_signals)
+
+    # Проверка минимальной consensus confidence
+    if consensus_confidence < self.config.min_consensus_confidence:
+      logger.debug(
+        f"{symbol} | Consensus confidence слишком низкая: {consensus_confidence:.2f}"
+      )
+      return None
+
+    # Усредненная confidence от согласных стратегий
+    avg_confidence = np.mean([r.signal.confidence for r in contributing])
+
+    # Итоговая confidence: комбинация consensus и средней confidence
+    final_confidence = (consensus_confidence + avg_confidence) / 2.0
+
+    # Определение силы
+    if final_confidence >= 0.8:
+      signal_strength = SignalStrength.STRONG
+    elif final_confidence >= 0.65:
+      signal_strength = SignalStrength.MEDIUM
+    else:
+      signal_strength = SignalStrength.WEAK
+
+    # Собираем причины
+    reasons = []
+    for result in contributing[:3]:  # Топ 3
+      if result.signal.reason:
+        reasons.append(f"{result.strategy_name}: {result.signal.reason[:50]}")
+
+    # Создание финального сигнала
     final_signal = TradingSignal(
-      symbol=contributing[0].signal.symbol,
-      signal_type=signal_type,
-      source=SignalSource.STRATEGY,
-      strength=self._determine_strength(consensus_confidence),
-      price=contributing[0].signal.price,
-      confidence=consensus_confidence,
+      symbol=symbol,
+      signal_type=final_type,
+      source=SignalSource.CONSENSUS,
+      strength=signal_strength,
+      price=current_price,
+      confidence=final_confidence,
       timestamp=int(datetime.now().timestamp() * 1000),
-      reason=f"Weighted consensus: {len(contributing)} strategies (weight={buy_weight if signal_type == SignalType.BUY else sell_weight:.2f})",
+      reason=f"Consensus ({agreement_count}/{agreement_count + disagreement_count}): " +
+             " | ".join(reasons[:2]),
       metadata={
         'consensus_mode': 'weighted',
-        'contributing_strategies': [r.strategy_name for r in contributing],
-        'buy_weight': buy_weight,
-        'sell_weight': sell_weight
-      }
-    )
-
-    return ConsensusSignal(
-      final_signal=final_signal,
-      contributing_strategies=[r.strategy_name for r in contributing],
-      agreement_count=len(contributing),
-      disagreement_count=len(buy_signals if signal_type == SignalType.SELL else sell_signals),
-      consensus_confidence=consensus_confidence,
-      strategy_results=all_results
-    )
-
-  def _unanimous_consensus(
-      self,
-      buy_signals: List[StrategyResult],
-      sell_signals: List[StrategyResult],
-      all_results: List[StrategyResult]
-  ) -> Optional[ConsensusSignal]:
-    """Unanimous consensus - все стратегии должны согласиться."""
-    results_with_signals = [r for r in all_results if r.signal is not None]
-
-    # Все должны быть BUY или все SELL
-    if len(buy_signals) == len(results_with_signals):
-      signal_type = SignalType.BUY
-      contributing = buy_signals
-    elif len(sell_signals) == len(results_with_signals):
-      signal_type = SignalType.SELL
-      contributing = sell_signals
-    else:
-      # Нет единогласия
-      return None
-
-    avg_confidence = float(np.mean([r.signal.confidence for r in contributing]))
-
-    if avg_confidence < self.config.min_consensus_confidence:
-      return None
-
-    final_signal = TradingSignal(
-      symbol=contributing[0].signal.symbol,
-      signal_type=signal_type,
-      source=SignalSource.STRATEGY,
-      strength=SignalStrength.STRONG,
-      price=contributing[0].signal.price,
-      confidence=avg_confidence,
-      timestamp=int(datetime.now().timestamp() * 1000),
-      reason=f"Unanimous consensus: ALL {len(contributing)} strategies agree",
-      metadata={
-        'consensus_mode': 'unanimous',
+        'buy_score': buy_score,
+        'sell_score': sell_score,
         'contributing_strategies': [r.strategy_name for r in contributing]
       }
     )
 
-    return ConsensusSignal(
+    consensus = ConsensusSignal(
       final_signal=final_signal,
       contributing_strategies=[r.strategy_name for r in contributing],
-      agreement_count=len(contributing),
-      disagreement_count=0,
-      consensus_confidence=avg_confidence,
-      strategy_results=all_results
+      agreement_count=agreement_count,
+      disagreement_count=disagreement_count,
+      consensus_confidence=final_confidence,
+      strategy_results=contributing
     )
 
-  def _resolve_conflict(
+    self.signals_generated += 1
+
+    return consensus
+
+  def _majority_consensus(
       self,
       buy_signals: List[StrategyResult],
       sell_signals: List[StrategyResult],
-      all_results: List[StrategyResult]
+      symbol: str,
+      current_price: float
   ) -> Optional[ConsensusSignal]:
-    """Разрешить конфликт между стратегиями."""
-    if self.config.conflict_resolution == "cancel":
-      logger.info("Конфликт стратегий: отмена сигнала")
+    """Простое большинство голосов."""
+    if len(buy_signals) > len(sell_signals):
+      final_type = SignalType.BUY
+      contributing = buy_signals
+      agreement_count = len(buy_signals)
+      disagreement_count = len(sell_signals)
+    elif len(sell_signals) > len(buy_signals):
+      final_type = SignalType.SELL
+      contributing = sell_signals
+      agreement_count = len(sell_signals)
+      disagreement_count = len(buy_signals)
+    else:
+      # Ничья - нет consensus
       return None
 
-    elif self.config.conflict_resolution == "highest_confidence":
-      # Выбираем сигнал с наибольшей уверенностью
-      all_signals = buy_signals + sell_signals
-      best = max(all_signals, key=lambda r: r.signal.confidence)
+    # Consensus confidence = процент согласия
+    total_strategies = agreement_count + disagreement_count
+    consensus_confidence = agreement_count / total_strategies
 
-      logger.info(
-        f"Конфликт разрешен: выбран {best.strategy_name} "
-        f"с confidence={best.signal.confidence:.2f}"
-      )
+    if consensus_confidence < self.config.min_consensus_confidence:
+      return None
 
-      return ConsensusSignal(
-        final_signal=best.signal,
-        contributing_strategies=[best.strategy_name],
-        agreement_count=1,
-        disagreement_count=len(all_signals) - 1,
-        consensus_confidence=best.signal.confidence,
-        strategy_results=all_results
-      )
+    # Средняя confidence
+    avg_confidence = np.mean([r.signal.confidence for r in contributing])
+    final_confidence = avg_confidence
 
-    elif self.config.conflict_resolution == "priority":
-      # Выбираем по приоритету
-      all_signals = buy_signals + sell_signals
-      best = max(all_signals, key=lambda r: r.priority.value)
+    signal_strength = SignalStrength.MEDIUM
 
-      logger.info(
-        f"Конфликт разрешен: выбран {best.strategy_name} "
-        f"с приоритетом={best.priority.name}"
-      )
+    final_signal = TradingSignal(
+      symbol=symbol,
+      signal_type=final_type,
+      source=SignalSource.CONSENSUS,
+      strength=signal_strength,
+      price=current_price,
+      confidence=final_confidence,
+      timestamp=int(datetime.now().timestamp() * 1000),
+      reason=f"Majority consensus: {agreement_count}/{total_strategies}",
+      metadata={'consensus_mode': 'majority'}
+    )
 
-      return ConsensusSignal(
-        final_signal=best.signal,
-        contributing_strategies=[best.strategy_name],
-        agreement_count=1,
-        disagreement_count=len(all_signals) - 1,
-        consensus_confidence=best.signal.confidence,
-        strategy_results=all_results
-      )
+    consensus = ConsensusSignal(
+      final_signal=final_signal,
+      contributing_strategies=[r.strategy_name for r in contributing],
+      agreement_count=agreement_count,
+      disagreement_count=disagreement_count,
+      consensus_confidence=consensus_confidence,
+      strategy_results=contributing
+    )
 
-    return None
+    self.signals_generated += 1
 
-  def _determine_strength(self, confidence: float) -> SignalStrength:
-    """Определить силу сигнала по confidence."""
-    if confidence >= 0.8:
-      return SignalStrength.STRONG
-    elif confidence >= 0.6:
-      return SignalStrength.MEDIUM
-    else:
-      return SignalStrength.WEAK
+    return consensus
+
+  def _unanimous_consensus(
+      self,
+      results_with_signals: List[StrategyResult],
+      symbol: str,
+      current_price: float
+  ) -> Optional[ConsensusSignal]:
+    """Единогласное согласие всех стратегий."""
+    if not results_with_signals:
+      return None
+
+    # Проверяем что все сигналы одинаковые
+    first_signal_type = results_with_signals[0].signal.signal_type
+
+    if not all(r.signal.signal_type == first_signal_type for r in results_with_signals):
+      return None
+
+    # Все согласны!
+    avg_confidence = np.mean([r.signal.confidence for r in results_with_signals])
+
+    final_signal = TradingSignal(
+      symbol=symbol,
+      signal_type=first_signal_type,
+      source=SignalSource.CONSENSUS,
+      strength=SignalStrength.STRONG,
+      price=current_price,
+      confidence=avg_confidence,
+      timestamp=int(datetime.now().timestamp() * 1000),
+      reason=f"Unanimous consensus: all {len(results_with_signals)} strategies agree",
+      metadata={'consensus_mode': 'unanimous'}
+    )
+
+    consensus = ConsensusSignal(
+      final_signal=final_signal,
+      contributing_strategies=[r.strategy_name for r in results_with_signals],
+      agreement_count=len(results_with_signals),
+      disagreement_count=0,
+      consensus_confidence=1.0,
+      strategy_results=results_with_signals
+    )
+
+    self.signals_generated += 1
+
+    return consensus
 
   def analyze_with_consensus(
       self,
       symbol: str,
       candles: List[Candle],
-      current_price: float
+      current_price: float,
+      orderbook: Optional[OrderBookSnapshot] = None,
+      metrics: Optional[OrderBookMetrics] = None,
+      sr_levels: Optional[List] = None,
+      volume_profile: Optional[Dict] = None,
+      ml_prediction: Optional[Dict] = None
   ) -> Optional[ConsensusSignal]:
     """
-    Полный анализ: запустить все стратегии и построить consensus.
+    Полный анализ с генерацией consensus сигнала.
 
-    Returns:
-        ConsensusSignal или None
+    Удобный метод, объединяющий analyze_all_strategies + build_consensus.
     """
-    # Запускаем все стратегии
-    strategy_results = self.analyze_all_strategies(symbol, candles, current_price)
+    # Шаг 1: Запускаем все стратегии
+    results = self.analyze_all_strategies(
+      symbol=symbol,
+      candles=candles,
+      current_price=current_price,
+      orderbook=orderbook,
+      metrics=metrics,
+      sr_levels=sr_levels,
+      volume_profile=volume_profile,
+      ml_prediction=ml_prediction
+    )
 
-    # Строим consensus
-    consensus = self.build_consensus(symbol, strategy_results, current_price)
+    # Шаг 2: Строим consensus
+    consensus = self.build_consensus(symbol, results, current_price)
 
     if consensus:
       logger.info(
-        f"✅ CONSENSUS SIGNAL [{symbol}]: {consensus.final_signal.signal_type.value}, "
+        f"✅ CONSENSUS [{symbol}]: {safe_enum_value(consensus.final_signal.signal_type)}, "
         f"confidence={consensus.consensus_confidence:.2f}, "
-        f"strategies={consensus.contributing_strategies}, "
-        f"agreement={consensus.agreement_count}/{consensus.agreement_count + consensus.disagreement_count}"
+        f"agreement={consensus.agreement_count}/"
+        f"{consensus.agreement_count + consensus.disagreement_count}, "
+        f"strategies={', '.join(consensus.contributing_strategies)}"
       )
 
     return consensus
 
   def get_statistics(self) -> Dict:
-    """Получить статистику менеджера."""
+    """Получить статистику работы менеджера."""
     consensus_rate = (
       self.consensus_achieved / self.signals_generated
-      if self.signals_generated > 0
-      else 0.0
+      if self.signals_generated > 0 else 0.0
     )
 
     # Статистика по каждой стратегии
     strategy_stats = {}
-    for name, strategy in self.strategies.items():
+    for name, strategy in self.all_strategies.items():
       strategy_stats[name] = strategy.get_statistics()
 
     return {
@@ -510,70 +727,524 @@ class StrategyManager:
       'consensus_achieved': self.consensus_achieved,
       'conflicts_resolved': self.conflicts_resolved,
       'consensus_rate': consensus_rate,
+      'candle_strategies_count': len(self.candle_strategies),
+      'orderbook_strategies_count': len(self.orderbook_strategies),
+      'hybrid_strategies_count': len(self.hybrid_strategies),
       'strategies': strategy_stats
     }
-
-
-# # Пример использования
-# if __name__ == "__main__":
-#   from strategy.candle_manager import Candle
-#   from datetime import datetime
-#   import random
 #
-#   # Конфигурация
-#   config = StrategyManagerConfig(
-#     consensus_mode="weighted",
-#     min_strategies_for_signal=2,
-#     min_consensus_confidence=0.6
-#   )
+# class StrategyManager:
+#   """
+#   Менеджер торговых стратегий.
 #
-#   manager = StrategyManager(config)
+#   Управляет множественными стратегиями и объединяет их сигналы.
+#   """
 #
-#   # Генерируем тестовые свечи
-#   base_price = 50000.0
-#   candles = []
+#   def __init__(self, config: StrategyManagerConfig):
+#     """
+#     Инициализация менеджера.
 #
-#   for i in range(150):
-#     trend = i * 10
-#     noise = random.uniform(-100, 100)
-#     price = base_price + trend + noise
+#     Args:
+#         config: Конфигурация менеджера
+#     """
+#     self.config = config
 #
-#     candle = Candle(
-#       timestamp=int(datetime.now().timestamp() * 1000) + i * 60000,
-#       open=price - 5,
-#       high=price + abs(random.uniform(20, 50)),
-#       low=price - abs(random.uniform(20, 50)),
-#       close=price,
-#       volume=1000 + random.uniform(-200, 200)
+#     # Инициализация стратегий
+#     self.strategies: Dict[str, any] = {}
+#
+#     # Momentum Strategy
+#     self.strategies['momentum'] = MomentumStrategy(MomentumConfig())
+#
+#     # SAR Wave Strategy
+#     self.strategies['sar_wave'] = SARWaveStrategy(SARWaveConfig())
+#
+#     # SuperTrend Strategy
+#     self.strategies['supertrend'] = SuperTrendStrategy(SuperTrendConfig())
+#
+#     # Volume Profile Strategy
+#     self.strategies['volume_profile'] = VolumeProfileStrategy(VolumeProfileConfig())
+#
+#     # Статистика
+#     self.total_analyses = 0
+#     self.signals_generated = 0
+#     self.consensus_achieved = 0
+#     self.conflicts_resolved = 0
+#
+#     logger.info(
+#       f"Инициализирован StrategyManager: "
+#       f"strategies={list(self.strategies.keys())}, "
+#       f"consensus_mode={config.consensus_mode}, "
+#       f"min_strategies={config.min_strategies_for_signal}"
 #     )
-#     candles.append(candle)
 #
-#   # Анализируем с consensus
-#   consensus = manager.analyze_with_consensus(
-#     "BTCUSDT",
-#     candles,
-#     candles[-1].close
-#   )
+#   def analyze_all_strategies(
+#       self,
+#       symbol: str,
+#       candles: List[Candle],
+#       current_price: float
+#   ) -> List[StrategyResult]:
+#     """
+#     Запустить все стратегии для анализа.
 #
-#   if consensus:
-#     print(f"\nConsensus Signal:")
-#     print(f"  Type: {consensus.final_signal.signal_type.value}")
-#     print(f"  Confidence: {consensus.consensus_confidence:.2f}")
-#     print(f"  Contributing strategies: {consensus.contributing_strategies}")
-#     print(f"  Agreement: {consensus.agreement_count}/{consensus.agreement_count + consensus.disagreement_count}")
-#     print(f"  Reason: {consensus.final_signal.reason}")
-#   else:
-#     print("\nNo consensus achieved")
+#     Returns:
+#         Список результатов от каждой стратегии
+#     """
+#     import time
 #
-#   # Статистика
-#   stats = manager.get_statistics()
-#   print(f"\nManager Statistics:")
-#   print(f"  Total analyses: {stats['total_analyses']}")
-#   print(f"  Signals generated: {stats['signals_generated']}")
-#   print(f"  Consensus rate: {stats['consensus_rate']:.2%}")
+#     results = []
 #
-#   print(f"\nStrategy Statistics:")
-#   for name, strategy_stats in stats['strategies'].items():
-#     print(f"  {name}:")
-#     for key, value in strategy_stats.items():
-#       print(f"    {key}: {value}")
+#     for strategy_name, strategy in self.strategies.items():
+#       start_time = time.time()
+#
+#       try:
+#         signal = strategy.analyze(symbol, candles, current_price)
+#         execution_time = (time.time() - start_time) * 1000  # ms
+#
+#         result = StrategyResult(
+#           strategy_name=strategy_name,
+#           signal=signal,
+#           priority=self.config.strategy_priorities.get(
+#             strategy_name,
+#             StrategyPriority.MEDIUM
+#           ),
+#           weight=self.config.strategy_weights.get(strategy_name, 0.25),
+#           execution_time_ms=execution_time
+#         )
+#
+#         results.append(result)
+#
+#         if signal:
+#           logger.debug(
+#             f"[{strategy_name}] Signal: {safe_enum_value(signal.signal_type)}, "
+#             f"confidence={signal.confidence:.2f}"
+#           )
+#
+#       except Exception as e:
+#         logger.error(f"Ошибка в стратегии {strategy_name}: {e}", exc_info=True)
+#         continue
+#
+#     self.total_analyses += 1
+#
+#     return results
+#
+#   def build_consensus(
+#       self,
+#       symbol: str,
+#       strategy_results: List[StrategyResult],
+#       current_price: float
+#   ) -> Optional[ConsensusSignal]:
+#     """
+#     Построить consensus сигнал из результатов стратегий.
+#
+#     Args:
+#         symbol: Торговая пара
+#         strategy_results: Результаты от всех стратегий
+#         current_price: Текущая цена
+#
+#     Returns:
+#         ConsensusSignal или None
+#     """
+#     # Фильтруем результаты с сигналами
+#     results_with_signals = [r for r in strategy_results if r.signal is not None]
+#
+#     if len(results_with_signals) < self.config.min_strategies_for_signal:
+#       logger.debug(
+#         f"Недостаточно стратегий для consensus: "
+#         f"{len(results_with_signals)} < {self.config.min_strategies_for_signal}"
+#       )
+#       return None
+#
+#     # Группируем по типу сигнала
+#     buy_signals = [r for r in results_with_signals if r.signal.signal_type == SignalType.BUY]
+#     sell_signals = [r for r in results_with_signals if r.signal.signal_type == SignalType.SELL]
+#
+#     # Логируем распределение
+#     logger.debug(
+#       f"[{symbol}] Consensus распределение: "
+#       f"BUY={len(buy_signals)}, SELL={len(sell_signals)}, "
+#       f"total={len(results_with_signals)}"
+#     )
+#
+#     # Определяем consensus направление
+#     if self.config.consensus_mode == "majority":
+#       consensus_signal = self._majority_consensus(
+#         buy_signals,
+#         sell_signals,
+#         strategy_results
+#       )
+#
+#     elif self.config.consensus_mode == "weighted":
+#       consensus_signal = self._weighted_consensus(
+#         buy_signals,
+#         sell_signals,
+#         strategy_results
+#       )
+#
+#     elif self.config.consensus_mode == "unanimous":
+#       consensus_signal = self._unanimous_consensus(
+#         buy_signals,
+#         sell_signals,
+#         strategy_results
+#       )
+#
+#     else:
+#       logger.error(f"Неизвестный consensus_mode: {self.config.consensus_mode}")
+#       return None
+#
+#     if consensus_signal:
+#       self.signals_generated += 1
+#       if consensus_signal.agreement_count == len(results_with_signals):
+#         self.consensus_achieved += 1
+#       else:
+#         self.conflicts_resolved += 1
+#
+#     return consensus_signal
+#
+#   def _majority_consensus(
+#       self,
+#       buy_signals: List[StrategyResult],
+#       sell_signals: List[StrategyResult],
+#       all_results: List[StrategyResult]
+#   ) -> Optional[ConsensusSignal]:
+#     """
+#     Majority voting consensus.
+#
+#     ИСПРАВЛЕНИЕ: Добавлена проверка минимального количества в побеждающей группе.
+#     """
+#     if len(buy_signals) > len(sell_signals):
+#       signal_type = SignalType.BUY
+#       contributing = buy_signals
+#       agreement = len(buy_signals)
+#       disagreement = len(sell_signals)
+#     elif len(sell_signals) > len(buy_signals):
+#       signal_type = SignalType.SELL
+#       contributing = sell_signals
+#       agreement = len(sell_signals)
+#       disagreement = len(buy_signals)
+#     else:
+#       # Равное количество - конфликт
+#       return self._resolve_conflict(buy_signals, sell_signals, all_results)
+#
+#     # ========================================
+#     # ИСПРАВЛЕНИЕ: Проверка минимального количества в побеждающей группе
+#     # ========================================
+#     if len(contributing) < self.config.min_strategies_for_signal:
+#       logger.info(
+#         f"Majority consensus отклонен: недостаточно стратегий в побеждающей группе "
+#         f"({len(contributing)} < {self.config.min_strategies_for_signal}). "
+#         f"BUY={len(buy_signals)}, SELL={len(sell_signals)}"
+#       )
+#       return None
+#
+#     # Средняя уверенность
+#     avg_confidence = float(np.mean([r.signal.confidence for r in contributing]))
+#
+#     if avg_confidence < self.config.min_consensus_confidence:
+#       logger.debug(
+#         f"Majority consensus отклонен: низкая confidence "
+#         f"({avg_confidence:.2f} < {self.config.min_consensus_confidence})"
+#       )
+#       return None
+#
+#     # Создаем consensus сигнал
+#     final_signal = TradingSignal(
+#       symbol=contributing[0].signal.symbol,
+#       signal_type=signal_type,
+#       source=SignalSource.STRATEGY,
+#       strength=self._determine_strength(avg_confidence),
+#       price=contributing[0].signal.price,
+#       confidence=avg_confidence,
+#       timestamp=int(datetime.now().timestamp() * 1000),
+#       reason=f"Majority consensus: {agreement} strategies agree",
+#       metadata={
+#         'consensus_mode': 'majority',
+#         'contributing_strategies': [r.strategy_name for r in contributing],
+#         'agreement_count': agreement,
+#         'disagreement_count': disagreement
+#       }
+#     )
+#
+#     return ConsensusSignal(
+#       final_signal=final_signal,
+#       contributing_strategies=[r.strategy_name for r in contributing],
+#       agreement_count=agreement,
+#       disagreement_count=disagreement,
+#       consensus_confidence=avg_confidence,
+#       strategy_results=all_results
+#     )
+#
+#   def _weighted_consensus(
+#       self,
+#       buy_signals: List[StrategyResult],
+#       sell_signals: List[StrategyResult],
+#       all_results: List[StrategyResult]
+#   ) -> Optional[ConsensusSignal]:
+#     """
+#     Weighted voting consensus.
+#
+#     ИСПРАВЛЕНИЕ: Добавлена проверка минимального количества в побеждающей группе.
+#     """
+#     # Вычисляем взвешенные голоса
+#     buy_weight = sum(r.weight * r.signal.confidence for r in buy_signals)
+#     sell_weight = sum(r.weight * r.signal.confidence for r in sell_signals)
+#
+#     logger.debug(
+#       f"Weighted voting: BUY_weight={buy_weight:.4f} ({len(buy_signals)} strategies), "
+#       f"SELL_weight={sell_weight:.4f} ({len(sell_signals)} strategies)"
+#     )
+#
+#     if buy_weight > sell_weight:
+#       signal_type = SignalType.BUY
+#       contributing = buy_signals
+#       winning_weight = buy_weight
+#     elif sell_weight > buy_weight:
+#       signal_type = SignalType.SELL
+#       contributing = sell_signals
+#       winning_weight = sell_weight
+#     else:
+#       logger.debug("Weighted voting: равные веса - переход к conflict resolution")
+#       return self._resolve_conflict(buy_signals, sell_signals, all_results)
+#
+#     # ========================================
+#     # ИСПРАВЛЕНИЕ: Проверка минимального количества в побеждающей группе
+#     # ========================================
+#     if len(contributing) < self.config.min_strategies_for_signal:
+#       logger.info(
+#         f"Weighted consensus отклонен: недостаточно стратегий в побеждающей группе "
+#         f"({len(contributing)} < {self.config.min_strategies_for_signal}). "
+#         f"{signal_type.value} group: {[r.strategy_name for r in contributing]}, "
+#         f"weight={winning_weight:.4f}"
+#       )
+#       return None
+#
+#     # Вычисляем consensus confidence
+#     consensus_confidence = winning_weight / sum(r.weight for r in contributing)
+#
+#     logger.debug(
+#       f"Weighted consensus confidence: {consensus_confidence:.4f} "
+#       f"(winning_weight={winning_weight:.4f} / sum_weights={sum(r.weight for r in contributing):.4f})"
+#     )
+#
+#     if consensus_confidence < self.config.min_consensus_confidence:
+#       logger.info(
+#         f"Weighted consensus отклонен: низкая confidence "
+#         f"({consensus_confidence:.4f} < {self.config.min_consensus_confidence})"
+#       )
+#       return None
+#
+#     final_signal = TradingSignal(
+#       symbol=contributing[0].signal.symbol,
+#       signal_type=signal_type,
+#       source=SignalSource.STRATEGY,
+#       strength=self._determine_strength(consensus_confidence),
+#       price=contributing[0].signal.price,
+#       confidence=consensus_confidence,
+#       timestamp=int(datetime.now().timestamp() * 1000),
+#       reason=f"Weighted consensus: {len(contributing)} strategies (total_weight={winning_weight:.2f})",
+#       metadata={
+#         'consensus_mode': 'weighted',
+#         'contributing_strategies': [r.strategy_name for r in contributing],
+#         'buy_weight': buy_weight,
+#         'sell_weight': sell_weight,
+#         'winning_weight': winning_weight,
+#         'consensus_confidence': consensus_confidence
+#       }
+#     )
+#
+#     return ConsensusSignal(
+#       final_signal=final_signal,
+#       contributing_strategies=[r.strategy_name for r in contributing],
+#       agreement_count=len(contributing),
+#       disagreement_count=len(buy_signals if signal_type == SignalType.SELL else sell_signals),
+#       consensus_confidence=consensus_confidence,
+#       strategy_results=all_results
+#     )
+#
+#   def _unanimous_consensus(
+#       self,
+#       buy_signals: List[StrategyResult],
+#       sell_signals: List[StrategyResult],
+#       all_results: List[StrategyResult]
+#   ) -> Optional[ConsensusSignal]:
+#     """
+#     Unanimous consensus - все стратегии должны согласиться.
+#
+#     ИСПРАВЛЕНИЕ: Добавлена проверка минимального количества.
+#     """
+#     results_with_signals = [r for r in all_results if r.signal is not None]
+#
+#     # Все должны быть BUY или все SELL
+#     if len(buy_signals) == len(results_with_signals):
+#       signal_type = SignalType.BUY
+#       contributing = buy_signals
+#     elif len(sell_signals) == len(results_with_signals):
+#       signal_type = SignalType.SELL
+#       contributing = sell_signals
+#     else:
+#       # Нет единогласия
+#       logger.debug(
+#         f"Unanimous consensus невозможен: BUY={len(buy_signals)}, SELL={len(sell_signals)}"
+#       )
+#       return None
+#
+#     # ========================================
+#     # ИСПРАВЛЕНИЕ: Проверка минимального количества
+#     # ========================================
+#     if len(contributing) < self.config.min_strategies_for_signal:
+#       logger.info(
+#         f"Unanimous consensus отклонен: недостаточно стратегий "
+#         f"({len(contributing)} < {self.config.min_strategies_for_signal})"
+#       )
+#       return None
+#
+#     avg_confidence = float(np.mean([r.signal.confidence for r in contributing]))
+#
+#     if avg_confidence < self.config.min_consensus_confidence:
+#       logger.debug(
+#         f"Unanimous consensus отклонен: низкая confidence "
+#         f"({avg_confidence:.2f} < {self.config.min_consensus_confidence})"
+#       )
+#       return None
+#
+#     final_signal = TradingSignal(
+#       symbol=contributing[0].signal.symbol,
+#       signal_type=signal_type,
+#       source=SignalSource.STRATEGY,
+#       strength=SignalStrength.STRONG,
+#       price=contributing[0].signal.price,
+#       confidence=avg_confidence,
+#       timestamp=int(datetime.now().timestamp() * 1000),
+#       reason=f"Unanimous consensus: ALL {len(contributing)} strategies agree",
+#       metadata={
+#         'consensus_mode': 'unanimous',
+#         'contributing_strategies': [r.strategy_name for r in contributing]
+#       }
+#     )
+#
+#     return ConsensusSignal(
+#       final_signal=final_signal,
+#       contributing_strategies=[r.strategy_name for r in contributing],
+#       agreement_count=len(contributing),
+#       disagreement_count=0,
+#       consensus_confidence=avg_confidence,
+#       strategy_results=all_results
+#     )
+#
+#   def _resolve_conflict(
+#       self,
+#       buy_signals: List[StrategyResult],
+#       sell_signals: List[StrategyResult],
+#       all_results: List[StrategyResult]
+#   ) -> Optional[ConsensusSignal]:
+#     """Разрешить конфликт между стратегиями."""
+#     logger.info(
+#       f"Конфликт стратегий: BUY={len(buy_signals)}, SELL={len(sell_signals)}, "
+#       f"resolution={self.config.conflict_resolution}"
+#     )
+#
+#     if self.config.conflict_resolution == "cancel":
+#       logger.info("Конфликт стратегий: отмена сигнала")
+#       return None
+#
+#     elif self.config.conflict_resolution == "highest_confidence":
+#       # Выбираем сигнал с наибольшей уверенностью
+#       all_signals = buy_signals + sell_signals
+#       best = max(all_signals, key=lambda r: r.signal.confidence)
+#
+#       logger.info(
+#         f"Конфликт разрешен: выбран {best.strategy_name} "
+#         f"с confidence={best.signal.confidence:.2f}"
+#       )
+#
+#       return ConsensusSignal(
+#         final_signal=best.signal,
+#         contributing_strategies=[best.strategy_name],
+#         agreement_count=1,
+#         disagreement_count=len(all_signals) - 1,
+#         consensus_confidence=best.signal.confidence,
+#         strategy_results=all_results
+#       )
+#
+#     elif self.config.conflict_resolution == "priority":
+#       # Выбираем по приоритету
+#       all_signals = buy_signals + sell_signals
+#       best = max(all_signals, key=lambda r: r.priority.value)
+#
+#       logger.info(
+#         f"Конфликт разрешен: выбран {best.strategy_name} "
+#         f"с приоритетом={best.priority.name}"
+#       )
+#
+#       return ConsensusSignal(
+#         final_signal=best.signal,
+#         contributing_strategies=[best.strategy_name],
+#         agreement_count=1,
+#         disagreement_count=len(all_signals) - 1,
+#         consensus_confidence=best.signal.confidence,
+#         strategy_results=all_results
+#       )
+#
+#     return None
+#
+#   def _determine_strength(self, confidence: float) -> SignalStrength:
+#     """Определить силу сигнала по confidence."""
+#     if confidence >= 0.8:
+#       return SignalStrength.STRONG
+#     elif confidence >= 0.6:
+#       return SignalStrength.MEDIUM
+#     else:
+#       return SignalStrength.WEAK
+#
+#   def analyze_with_consensus(
+#       self,
+#       symbol: str,
+#       candles: List[Candle],
+#       current_price: float
+#   ) -> Optional[ConsensusSignal]:
+#     """
+#     Полный анализ: запустить все стратегии и построить consensus.
+#
+#     Returns:
+#         ConsensusSignal или None
+#     """
+#     # Запускаем все стратегии
+#     strategy_results = self.analyze_all_strategies(symbol, candles, current_price)
+#
+#     # Строим consensus
+#     consensus = self.build_consensus(symbol, strategy_results, current_price)
+#
+#     if consensus:
+#       logger.info(
+#         f"✅ CONSENSUS SIGNAL [{symbol}]: {consensus.final_signal.signal_type.value}, "
+#         f"confidence={consensus.consensus_confidence:.2f}, "
+#         f"strategies={consensus.contributing_strategies}, "
+#         f"agreement={consensus.agreement_count}/{consensus.agreement_count + consensus.disagreement_count}"
+#       )
+#     else:
+#       logger.debug(
+#         f"❌ NO CONSENSUS [{symbol}]: не достигнут консенсус стратегий"
+#       )
+#
+#     return consensus
+#
+#   def get_statistics(self) -> Dict:
+#     """Получить статистику менеджера."""
+#     consensus_rate = (
+#       self.consensus_achieved / self.signals_generated
+#       if self.signals_generated > 0
+#       else 0.0
+#     )
+#
+#     # Статистика по каждой стратегии
+#     strategy_stats = {}
+#     for name, strategy in self.strategies.items():
+#       strategy_stats[name] = strategy.get_statistics()
+#
+#     return {
+#       'total_analyses': self.total_analyses,
+#       'signals_generated': self.signals_generated,
+#       'consensus_achieved': self.consensus_achieved,
+#       'conflicts_resolved': self.conflicts_resolved,
+#       'consensus_rate': consensus_rate,
+#       'strategies': strategy_stats
+#     }

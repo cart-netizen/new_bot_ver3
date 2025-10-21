@@ -31,7 +31,9 @@ from ml_engine.integration.ml_signal_validator import ValidationConfig, MLSignal
 from ml_engine.monitoring.drift_detector import DriftDetector
 # from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
 from screener.screener_manager import ScreenerManager
-from strategies.strategy_manager import StrategyManagerConfig, StrategyManager
+from strategies.adaptive import AdaptiveConsensusManager, WeightOptimizerConfig, OptimizationMethod, \
+  RegimeDetectorConfig, PerformanceTrackerConfig, AdaptiveConsensusConfig
+from strategies.strategy_manager import ExtendedStrategyManagerConfig, ExtendedStrategyManager
 from strategy.candle_manager import CandleManager
 from strategy.correlation_manager import correlation_manager
 from strategy.daily_loss_killer import daily_loss_killer
@@ -245,12 +247,94 @@ class BotController:
 
     # ==================== STRATEGY MANAGER ====================
 
-    strategy_manager_config = StrategyManagerConfig(
-      consensus_mode=os.getenv('CONSENSUS_MODE', 'weighted'),
-      min_strategies_for_signal=int(os.getenv('MIN_STRATEGIES', '2')),
-      min_consensus_confidence=float(os.getenv('MIN_CONSENSUS_CONFIDENCE', '0.6'))
+    strategy_config = ExtendedStrategyManagerConfig(
+      consensus_mode="weighted",
+      min_strategies_for_signal=2,
+      min_consensus_confidence=0.6,
+
+      # Веса свечных стратегий
+      candle_strategy_weights={
+        'momentum': 0.20,
+        'sar_wave': 0.15,
+        'supertrend': 0.20,
+        'volume_profile': 0.15
+      },
+
+      # Веса OrderBook стратегий
+      orderbook_strategy_weights={
+        'imbalance': 0.10,
+        'volume_flow': 0.10,
+        'liquidity_zone': 0.10
+      },
+
+      # Веса Hybrid стратегий
+      hybrid_strategy_weights={
+        'smart_money': 0.15
+      },
+
+      # Включение новых стратегий
+      enable_orderbook_strategies=True,  # Включить OrderBook стратегии
+      enable_hybrid_strategies=True  # Включить Hybrid стратегии
     )
-    self.strategy_manager = StrategyManager(strategy_manager_config)
+
+    self.strategy_manager = ExtendedStrategyManager(strategy_config)
+
+    # ========== ADAPTIVE CONSENSUS (НОВОЕ) ==========
+    if settings.ENABLE_ADAPTIVE_CONSENSUS:
+      logger.info("Инициализация Adaptive Consensus...")
+
+      # Конфигурация компонентов
+      adaptive_config = AdaptiveConsensusConfig(
+        # Enable/disable компонентов
+        enable_performance_tracking=True,
+        enable_regime_detection=True,
+        enable_weight_optimization=True,
+
+        # Performance Tracker Config
+        performance_tracker_config=PerformanceTrackerConfig(
+          data_dir="data/strategy_performance",
+          enable_persistence=True,
+          short_term_hours=24,
+          medium_term_days=7,
+          long_term_days=30,
+          min_signals_for_metrics=20,
+          min_closed_signals_for_metrics=10
+        ),
+
+        # Regime Detector Config
+        regime_detector_config=RegimeDetectorConfig(
+          adx_strong_threshold=25.0,
+          adx_weak_threshold=15.0,
+          update_frequency_seconds=300  # 5 минут
+        ),
+
+        # Weight Optimizer Config
+        weight_optimizer_config=WeightOptimizerConfig(
+          optimization_method=OptimizationMethod.HYBRID,  # Performance + Regime
+          min_weight=0.05,
+          max_weight=0.40,
+          update_frequency_seconds=21600,  # 6 часов
+          regime_weight_blend=0.6  # 60% performance, 40% regime
+        ),
+
+        # Consensus Config
+        consensus_mode="adaptive_weighted",
+        min_consensus_confidence=0.6,
+        conflict_resolution_mode="performance_priority",
+        enable_quality_metrics=True,
+        min_consensus_quality=0.6
+      )
+
+      # Инициализация AdaptiveConsensusManager
+      self.adaptive_consensus_manager = AdaptiveConsensusManager(
+        config=adaptive_config,
+        strategy_manager=self.strategy_manager
+      )
+
+      logger.info("✅ Adaptive Consensus инициализирован")
+    else:
+      self.adaptive_consensus_manager = None
+      logger.info("Adaptive Consensus отключен")
 
     # ===== SCREENER MANAGER (НОВОЕ) =====
     self.screener_manager: Optional[ScreenerManager] = None
@@ -916,11 +1000,82 @@ class BotController:
               # РЕЖИМ 1: Strategy Manager с Consensus (если доступен)
               if has_strategy_manager:
                 try:
-                  consensus = self.strategy_manager.analyze_with_consensus(
-                    symbol,
-                    candles,
-                    current_price
-                  )
+                  sr_levels = None
+                  if has_sr_detector:
+                    sr_levels = self.sr_detector.detect_levels(symbol)
+
+                  # Получаем Volume Profile если доступен
+                  volume_profile_data = None
+                  if 'volume_profile' in self.strategy_manager.candle_strategies:
+                    vp_strategy = self.strategy_manager.candle_strategies['volume_profile']
+
+                    if symbol in vp_strategy.profiles:
+                      profile = vp_strategy.profiles[symbol]
+                      volume_profile_data = {
+                        'poc_price': profile.poc_price,
+                        'poc_volume': profile.poc_volume,
+                        'value_area_high': profile.value_area_high,
+                        'value_area_low': profile.value_area_low,
+                        'hvn_nodes': [
+                          {'price': node.price, 'volume': node.volume, 'strength': node.strength}
+                          for node in profile.hvn_nodes
+                        ],
+                        'lvn_nodes': [
+                          {'price': node.price, 'volume': node.volume, 'strength': node.strength}
+                          for node in profile.lvn_nodes
+                        ]
+                      }
+
+                  # Получаем ML предсказание если доступно
+                  ml_prediction = None
+                  if has_ml_validator and feature_vector:
+                    try:
+                      validation = await self.ml_validator.validate_signal(
+                        symbol=symbol,
+                        signal=None,  # Пока нет сигнала
+                        features=feature_vector
+                      )
+                      ml_prediction = {
+                        'confidence': validation.ml_confidence,
+                        'prediction': 'bullish' if validation.should_trade else 'bearish'
+                      }
+                    except Exception as e:
+                      logger.error(f"{symbol} | ML prediction error: {e}")
+
+                  if self.adaptive_consensus_manager:
+                    # ===== ADAPTIVE CONSENSUS РЕЖИМ =====
+                    consensus = self.adaptive_consensus_manager.build_adaptive_consensus(
+                      symbol=symbol,
+                      candles=candles,
+                      current_price=current_price,
+                      orderbook=snapshot,
+                      metrics=metrics,
+                      sr_levels=sr_levels if has_sr_detector else None,
+                      volume_profile=volume_profile_data,
+                      ml_prediction=ml_prediction
+                    )
+
+                    if consensus:
+                      logger.info(
+                        f"✅ ADAPTIVE CONSENSUS [{symbol}]: "
+                        f"{safe_enum_value(consensus.final_signal.signal_type)}, "
+                        f"confidence={consensus.consensus_confidence:.2f}, "
+                        f"quality={consensus.final_signal.metadata.get('consensus_quality', 0.0):.2f}"
+                      )
+
+                  else:
+                    # ===== СТАНДАРТНЫЙ CONSENSUS РЕЖИМ =====
+                    consensus = self.strategy_manager.analyze_with_consensus(
+                      symbol=symbol,
+                      candles=candles,
+                      current_price=current_price,
+                      orderbook=snapshot,
+                      metrics=metrics,
+                      sr_levels=sr_levels if has_sr_detector else None,
+                      volume_profile=volume_profile_data,
+                      ml_prediction=ml_prediction
+                    )
+
 
                   # Проверяем что consensus не None и имеет нужные атрибуты
                   if consensus and hasattr(consensus, 'final_signal') and consensus.final_signal:
@@ -1279,6 +1434,21 @@ class BotController:
                 )
               except Exception as e:
                 logger.error(f"{symbol} | Ошибка сбора ML данных: {e}")
+
+            # Логирование статистики по стратегиям
+
+            stats = self.strategy_manager.get_statistics()
+
+            logger.info(
+              f"Strategy Manager Stats: "
+              f"total_analyses={stats['total_analyses']}, "
+              f"signals={stats['signals_generated']}, "
+              f"consensus_rate={stats['consensus_rate']:.2%}"
+            )
+
+            # Статистика по стратегиям
+            for strategy_name, strategy_stats in stats['strategies'].items():
+              logger.debug(f"[{strategy_name}] {strategy_stats}")
 
           except Exception as e:
             logger.error(f"Ошибка анализа {symbol}: {e}", exc_info=True)
@@ -2105,7 +2275,8 @@ from api.app import app
 app.router.lifespan_context = lifespan
 
 # Регистрируем роутеры
-from api.routes import auth_router, bot_router, data_router, trading_router, monitoring_router, screener_router
+from api.routes import auth_router, bot_router, data_router, trading_router, monitoring_router, screener_router, \
+  adaptive_router
 
 app.include_router(auth_router)
 app.include_router(bot_router)
@@ -2113,7 +2284,7 @@ app.include_router(data_router)
 app.include_router(trading_router)
 app.include_router(monitoring_router)
 app.include_router(screener_router)
-
+app.include_router(adaptive_router)
 # WebSocket эндпоинт
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

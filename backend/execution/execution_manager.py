@@ -8,6 +8,7 @@
 """
 
 import asyncio
+from datetime import datetime
 from decimal import Decimal
 from typing import Optional, Dict, List
 from collections import deque
@@ -29,6 +30,7 @@ from infrastructure.resilience.rate_limiter import rate_limited
 from models.signal import TradingSignal, SignalType
 from models.market_data import OrderSide, OrderType, TimeInForce
 from exchange.rest_client import rest_client
+from strategies.adaptive import adaptive_consensus_manager
 from strategy.risk_manager import RiskManager
 from strategy.risk_models import MarketRegime
 from strategy.signal_deduplicator import signal_deduplicator
@@ -771,6 +773,28 @@ class ExecutionManager:
                 logger.debug(
                     f"Позиция {symbol} удалена из Trailing Stop Manager"
                 )
+
+                if adaptive_consensus_manager:
+                    # Получаем информацию о позиции
+                    contributing_strategies = position.metadata.get('contributing_strategies', [])
+                    signal_timestamp = position.metadata.get('signal_timestamp')
+
+                    if contributing_strategies and signal_timestamp:
+                        # Записываем outcome
+                        adaptive_consensus_manager.record_signal_outcome(
+                            symbol=position.symbol,
+                            signal_timestamp=signal_timestamp,
+                            contributing_strategies=contributing_strategies,
+                            exit_price=exit_price,
+                            exit_timestamp=int(datetime.now().timestamp() * 1000),
+                            pnl_usdt=realized_pnl
+                        )
+
+                        logger.info(
+                            f"📊 Performance recorded: {position.symbol}, "
+                            f"PnL={realized_pnl:.2f} USDT, "
+                            f"strategies={contributing_strategies}"
+                        )
 
                 # 7. АУДИТ
                 await audit_repository.log(

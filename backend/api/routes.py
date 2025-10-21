@@ -43,6 +43,7 @@ strategies_router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 
 screener_router = APIRouter(prefix="/screener", tags=["Screener"])
 
+adaptive_router = APIRouter(prefix="/adaptive", tags=["adaptive"])
 # ===== МОДЕЛИ ОТВЕТОВ =====
 
 class StatusResponse(BaseModel):
@@ -1298,3 +1299,99 @@ async def get_position_monitor_stats(current_user: dict = Depends(require_auth))
     )
 
   return bot_controller.position_monitor.get_statistics()
+
+
+@adaptive_router.get("/statistics")
+async def get_adaptive_statistics():
+  """Статистика Adaptive Consensus."""
+  from main import bot_controller
+
+  if not bot_controller.adaptive_consensus_manager:
+    return {"enabled": False}
+
+  return {
+    "enabled": True,
+    "statistics": bot_controller.adaptive_consensus_manager.get_statistics()
+  }
+
+
+@adaptive_router.get("/regime/{symbol}")
+async def get_market_regime(symbol: str):
+  """Текущий режим рынка для символа."""
+  from main import bot_controller
+
+  if not bot_controller.adaptive_consensus_manager:
+    return {"error": "Adaptive Consensus disabled"}
+
+  regime_detector = bot_controller.adaptive_consensus_manager.regime_detector
+
+  if not regime_detector:
+    return {"error": "Regime Detector not available"}
+
+  regime = regime_detector.get_current_regime(symbol)
+
+  if not regime:
+    return {"error": f"No regime data for {symbol}"}
+
+  return {
+    "symbol": regime.symbol,
+    "trend": regime.trend.value,
+    "trend_strength": regime.trend_strength,
+    "volatility": regime.volatility.value,
+    "liquidity": regime.liquidity.value,
+    "adx": regime.adx_value,
+    "atr": regime.atr_value,
+    "recommended_weights": regime.recommended_strategy_weights
+  }
+
+
+@adaptive_router.get("/performance/{symbol}")
+async def get_strategy_performance(symbol: str, time_window: str = "7d"):
+  """Performance метрики стратегий для символа."""
+  from main import bot_controller
+
+  if not bot_controller.adaptive_consensus_manager:
+    return {"error": "Adaptive Consensus disabled"}
+
+  tracker = bot_controller.adaptive_consensus_manager.performance_tracker
+
+  if not tracker:
+    return {"error": "Performance Tracker not available"}
+
+  # Получаем метрики для всех стратегий
+  metrics = {}
+
+  for strategy_name in bot_controller.strategy_manager.all_strategies.keys():
+    strategy_metrics = tracker.get_strategy_metrics(
+      strategy_name, symbol, time_window
+    )
+
+    if strategy_metrics:
+      metrics[strategy_name] = {
+        "win_rate": strategy_metrics.win_rate,
+        "sharpe_ratio": strategy_metrics.sharpe_ratio,
+        "profit_factor": strategy_metrics.profit_factor,
+        "performance_score": strategy_metrics.performance_score,
+        "total_signals": strategy_metrics.total_signals,
+        "closed_signals": strategy_metrics.closed_signals
+      }
+
+  return {"symbol": symbol, "time_window": time_window, "metrics": metrics}
+
+
+@adaptive_router.get("/weights/{symbol}")
+async def get_current_weights(symbol: str):
+  """Текущие веса стратегий для символа."""
+  from main import bot_controller
+
+  if not bot_controller.adaptive_consensus_manager:
+    return {"error": "Adaptive Consensus disabled"}
+
+  optimizer = bot_controller.adaptive_consensus_manager.weight_optimizer
+
+  if not optimizer:
+    return {"error": "Weight Optimizer not available"}
+
+  current_weights = optimizer.current_weights.get(symbol, {})
+
+  return {"symbol": symbol, "weights": current_weights}

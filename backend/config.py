@@ -130,6 +130,23 @@ class Settings(BaseSettings):
       description="Минимальная уверенность для консенсуса"
   )
 
+  # Adaptive Consensus Settings
+  ENABLE_ADAPTIVE_CONSENSUS: bool = env.bool("ENABLE_ADAPTIVE_CONSENSUS", True)
+
+  # Performance Tracking
+  PERFORMANCE_DATA_DIR: str = env.str("PERFORMANCE_DATA_DIR", "data/strategy_performance")
+  PERFORMANCE_TRACKING_ENABLED: bool = env.bool("PERFORMANCE_TRACKING_ENABLED", True)
+
+  # Regime Detection
+  REGIME_DETECTION_ENABLED: bool = env.bool("REGIME_DETECTION_ENABLED", True)
+  REGIME_UPDATE_FREQUENCY_SECONDS: int = env.int("REGIME_UPDATE_FREQUENCY_SECONDS", 300)
+
+  # Weight Optimization
+  WEIGHT_OPTIMIZATION_ENABLED: bool = env.bool("WEIGHT_OPTIMIZATION_ENABLED", True)
+  WEIGHT_OPTIMIZATION_METHOD: str = env.str("WEIGHT_OPTIMIZATION_METHOD", "HYBRID")
+  WEIGHT_UPDATE_FREQUENCY_SECONDS: int = env.int("WEIGHT_UPDATE_FREQUENCY_SECONDS", 21600)
+
+
   @field_validator("CONSENSUS_MODE", mode="before")
   @classmethod
   def validate_consensus_mode(cls, v):

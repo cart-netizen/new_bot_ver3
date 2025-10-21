@@ -2726,3 +2726,146 @@ bashML_RISK_INTEGRATION_ENABLED=false  # Полностью без ML
 - В stop() используем cleanup() вместо stop()
 - _initialize_risk_manager использует уже созданный ml_validator
 """ 
+
+OrderBook-Aware Strategies
+
+1. Базовая инфраструктура
+
+base_orderbook_strategy.py - Абстрактный базовый класс для OrderBook-стратегий
+
+Утилиты для детекции манипуляций
+Анализ качества ликвидности
+Работа с объемными кластерами
+Управление историей snapshot'ов
+
+
+
+2. OrderBook Стратегии
+imbalance_strategy.py - ImbalanceStrategy
+
+Торговля на дисбалансе спроса/предложения
+Анализ дисбаланса на разных глубинах (5, 10, total)
+Подтверждение через volume delta
+Фильтрация через крупные стены
+
+volume_flow_strategy.py - VolumeFlowStrategy
+
+Детекция whale orders (крупных заявок)
+Трекинг и поглощение volume clusters
+Order Flow Imbalance (OFI) расчет
+Следование за потоками "умных денег"
+
+liquidity_zone_strategy.py - LiquidityZoneStrategy
+
+Торговля от зон высокой ликвидности (HVN/LVN)
+Интеграция с S/R Level Detector
+Mean Reversion от HVN
+Breakout через LVN с объемным подтверждением
+Rejection паттерны
+
+3. Hybrid Стратегия
+smart_money_strategy.py - SmartMoneyStrategy
+
+Этап 1: Определение тренда (SuperTrend, ADX, EMA)
+Этап 2: Поиск точки входа через стакан
+Этап 3: Подтверждение через Volume Profile + ML
+Комбинирует свечной анализ с микроструктурой рынка
+Адаптивное управление рисками (ATR-based)
+
+4. Расширенный менеджер
+strategy_manager_extended.py - ExtendedStrategyManager
+
+Управление тремя типами стратегий:
+
+CANDLE: Традиционные свечные (momentum, sar_wave, supertrend, volume_profile)
+ORDERBOOK: Новые стакан-based (imbalance, volume_flow, liquidity_zone)
+HYBRID: Комбинированные (smart_money)
+
+
+Интеллектуальный роутинг данных
+Weighted/Majority/Unanimous consensus режимы
+Раздельные веса для разных типов стратегий
+
+Шаг 3: Настройка конфигурации
+3.1 Веса стратегий
+Рекомендуемое распределение весов (сумма = 1.0):
+python# Candle strategies: 0.70 (традиционный анализ)
+'momentum': 0.20        # Сильный тренд
+'supertrend': 0.20      # Направление тренда
+'sar_wave': 0.15        # Волновой анализ
+'volume_profile': 0.15  # Объемный профиль
+
+# OrderBook strategies: 0.30 (микроструктура)
+'imbalance': 0.10       # Дисбаланс
+'volume_flow': 0.10     # Whale orders
+'liquidity_zone': 0.10  # HVN/LVN
+
+# Hybrid strategies: 0.15 (комбинированный подход)
+'smart_money': 0.15     # Smart money следование
+3.2 Приоритеты
+pythonstrategy_priorities={
+    # HIGH приоритет - доверяем больше
+    'momentum': StrategyPriority.HIGH,
+    'supertrend': StrategyPriority.HIGH,
+    'liquidity_zone': StrategyPriority.HIGH,
+    'smart_money': StrategyPriority.HIGH,
+    
+    # MEDIUM приоритет - стандартное доверие
+    'sar_wave': StrategyPriority.MEDIUM,
+    'volume_profile': StrategyPriority.MEDIUM,
+    'imbalance': StrategyPriority.MEDIUM,
+    'volume_flow': StrategyPriority.MEDIUM,
+}
+3.3 Режимы consensus
+Weighted (рекомендуется):
+pythonconsensus_mode="weighted"
+
+Учитывает веса и confidence каждой стратегии
+Более гибкий и адаптивный
+
+Majority:
+pythonconsensus_mode="majority"
+
+Простое большинство голосов
+Каждая стратегия имеет равный вес
+
+Unanimous:
+pythonconsensus_mode="unanimous"
+
+Требует согласия ВСЕХ стратегий
+Очень консервативный подход
+Меньше сигналов, но выше точность
+
+Adaptive Consensus
+
+1. StrategyPerformanceTracker (strategy_performance_tracker.py)
+
+Непрерывный мониторинг эффективности каждой стратегии
+Метрики: Win Rate, Sharpe Ratio, Profit Factor, Confidence Calibration
+Temporal windows: 24h, 7d, 30d с exponential decay
+Персистентное хранение в JSONL
+Детекция деградации производительности
+
+2. MarketRegimeDetector (market_regime_detector.py)
+
+Идентификация трендовых режимов (Strong/Weak Up/Down, Ranging)
+Определение волатильности (High/Normal/Low)
+Оценка ликвидности
+Детекция структурных изменений (Chow Test)
+Рекомендации по весам для каждого режима
+
+3. WeightOptimizer (weight_optimizer.py)
+
+Performance-based optimization (EWMA)
+Regime-adaptive optimization
+Bayesian optimization (Thompson Sampling)
+Constraints и safeguards (min/max weights, diversity)
+Smooth transitions
+Emergency rebalancing при деградации
+
+4. AdaptiveConsensusManager (adaptive_consensus_manager.py)
+
+Интеграция всех адаптивных компонентов
+Enhanced conflict resolution
+Quality metrics для consensus
+Continuous learning
