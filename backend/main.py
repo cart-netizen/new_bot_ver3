@@ -1079,46 +1079,198 @@ class BotController:
 
   async def _analysis_loop_ml_enhanced(self):
     """
-    Продвинутый цикл анализа с ML и опциональными детекторами.
+    === ФИНАЛЬНАЯ ОПТИМАЛЬНАЯ РЕАЛИЗАЦИЯ ===
 
-    Workflow:
-    1. Получить данные (orderbook, candles)
-    2. [OPTIONAL] Проверка детекторов манипуляций
-    3. [OPTIONAL] Обновление S/R детектора
-    4. Извлечение ML признаков
-    5. [OPTIONAL] Strategy Manager consensus ИЛИ базовая генерация сигналов
-    6. [OPTIONAL] ML валидация сигнала
-    7. [OPTIONAL] S/R контекст
-    8. Исполнение сигнала
-    9. [OPTIONAL] Drift monitoring
-    10. Сбор данных для ML обучения
+    Главный цикл анализа рынка с полной интеграцией всех модулей системы.
+
+    АРХИТЕКТУРА ИНТЕГРАЦИИ:
+    ═══════════════════════════════════════════════════════════════════════
+
+    Фаза 1: OrderBook-Aware Strategies
+    ├── ExtendedStrategyManager
+    ├── CANDLE strategies (momentum, sar_wave, supertrend, volume_profile)
+    ├── ORDERBOOK strategies (imbalance, volume_flow, liquidity_zone)
+    └── HYBRID strategies (smart_money)
+
+    Фаза 2: Adaptive Consensus Management
+    ├── StrategyPerformanceTracker - мониторинг эффективности
+    ├── MarketRegimeDetector - определение рыночного режима
+    ├── WeightOptimizer - динамическая оптимизация весов
+    └── Continuous learning через signal outcomes
+
+    Фаза 3: Multi-Timeframe Analysis
+    ├── TimeframeCoordinator - управление свечами на 4+ TF
+    ├── TimeframeAnalyzer - анализ каждого TF независимо
+    ├── TimeframeAligner - проверка alignment и confluence
+    └── TimeframeSignalSynthesizer - синтез финального сигнала
+
+    Фаза 4: Integrated Analysis Engine
+    ├── Объединение всех фаз
+    ├── 4 режима: SINGLE_TF_ONLY, MTF_ONLY, HYBRID, ADAPTIVE
+    ├── Intelligent fallback механизмы
+    └── Comprehensive quality control
+
+    ═══════════════════════════════════════════════════════════════════════
+
+    WORKFLOW (Per Symbol):
+    ┌────────────────────────────────────────────────────────────────────┐
+    │ 1. Market Data Collection                                          │
+    │    ├─ OrderBook Snapshot                                           │
+    │    ├─ Candles (Single TF + MTF if enabled)                        │
+    │    ├─ OrderBook Metrics                                            │
+    │    └─ Market Metrics                                               │
+    ├────────────────────────────────────────────────────────────────────┤
+    │ 2. Manipulation Detection (если включено)                          │
+    │    ├─ Spoofing Detector                                            │
+    │    └─ Layering Detector                                            │
+    ├────────────────────────────────────────────────────────────────────┤
+    │ 3. S/R Levels Detection & Update (если включено)                   │
+    ├────────────────────────────────────────────────────────────────────┤
+    │ 4. ML Feature Extraction                                           │
+    │    └─ 110+ признаков из всех источников                            │
+    ├────────────────────────────────────────────────────────────────────┤
+    │ 5. 🎯 INTEGRATED ANALYSIS (ЯДРО СИСТЕМЫ)                          │
+    │    └─ IntegratedEngine.analyze()                                   │
+    │       ├─ Single-TF Analysis (Фаза 1 + Фаза 2)                     │
+    │       │   ├─ ExtendedStrategyManager                               │
+    │       │   └─ AdaptiveConsensusManager (если включен)               │
+    │       ├─ MTF Analysis (Фаза 3, если включен)                      │
+    │       │   └─ MultiTimeframeManager                                 │
+    │       └─ Signal Synthesis (Фаза 4)                                 │
+    │           ├─ Conflict Resolution                                   │
+    │           ├─ Quality Scoring                                       │
+    │           └─ Risk Assessment                                       │
+    ├────────────────────────────────────────────────────────────────────┤
+    │ 6. ML Validation финального сигнала (если включено)                │
+    ├────────────────────────────────────────────────────────────────────┤
+    │ 7. Quality & Risk Checks                                           │
+    ├────────────────────────────────────────────────────────────────────┤
+    │ 8. Signal Metadata Enrichment                                      │
+    │    └─ S/R context, contributing strategies, timestamps             │
+    ├────────────────────────────────────────────────────────────────────┤
+    │ 9. Execution Submission                                            │
+    │    └─ ExecutionManager.submit_signal()                             │
+    ├────────────────────────────────────────────────────────────────────┤
+    │ 10. Drift Monitoring (если включено)                               │
+    ├────────────────────────────────────────────────────────────────────┤
+    │ 11. ML Data Collection для обучения                                │
+    ├────────────────────────────────────────────────────────────────────┤
+    │ 12. Real-time Broadcasting к UI (если включено)                    │
+    └────────────────────────────────────────────────────────────────────┘
+
+    ERROR HANDLING:
+    - Per-symbol error counter с автоматическим skip
+    - Fallback механизмы на каждом уровне
+    - Критические алерты при превышении лимитов
+    - Graceful degradation (работа даже при отключенных модулях)
+
+    PERFORMANCE:
+    - Асинхронная обработка символов
+    - Intelligent caching
+    - Performance tracking и warning при превышении порогов
+    - Периодическая статистика (каждые 100 циклов)
+
+    ПРИМЕЧАНИЕ:
+    - Функция спроектирована для работы даже при частично отключенных модулях
+    - Feature flags позволяют гибко управлять компонентами
+    - Все критические операции имеют try-catch обработку
     """
-    # КРИТИЧНО: Импорты в начале функции для использования во всех блоках
     from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
     from datetime import datetime
+    import traceback
 
-    logger.info("🔄 Запущен продвинутый analysis loop (ML-Enhanced)")
+    # ========================================================================
+    # БЛОК 1: ИНИЦИАЛИЗАЦИЯ И ПОДГОТОВКА
+    # ========================================================================
 
-    # Проверяем какие компоненты доступны
+    logger.info("=" * 80)
+    logger.info("🚀 ANALYSIS LOOP ЗАПУЩЕН (ФИНАЛЬНАЯ РЕАЛИЗАЦИЯ)")
+    logger.info("=" * 80)
+    logger.info(f"📊 Режим анализа: {settings.INTEGRATED_ANALYSIS_MODE}")
+    logger.info(f"⏱️ Интервал анализа: {settings.ANALYSIS_INTERVAL}с")
+    logger.info(
+      f"📈 Торговые пары: {len(self.symbols)} ({', '.join(self.symbols[:5])}{'...' if len(self.symbols) > 5 else ''})")
+
+    # Проверка доступности компонентов
+    has_strategy_manager = self.strategy_manager is not None
+    has_adaptive_consensus = self.adaptive_consensus is not None
+    has_mtf_manager = self.mtf_manager is not None
+    has_integrated_engine = self.integrated_engine is not None
+    has_ml_validator = self.ml_validator is not None
+    has_ml_feature_pipeline = self.ml_feature_pipeline is not None
+    has_ml_data_collector = self.ml_data_collector is not None
+    has_sr_detector = self.sr_detector is not None
     has_spoofing_detector = hasattr(self, 'spoofing_detector') and self.spoofing_detector
     has_layering_detector = hasattr(self, 'layering_detector') and self.layering_detector
-    has_sr_detector = hasattr(self, 'sr_detector') and self.sr_detector
-    has_strategy_manager = hasattr(self, 'strategy_manager') and self.strategy_manager
-    has_ml_validator = hasattr(self, 'ml_validator') and self.ml_validator
     has_drift_detector = hasattr(self, 'drift_detector') and self.drift_detector
 
-    logger.info(
-      f"📊 Доступные компоненты: "
-      f"Spoofing={has_spoofing_detector}, "
-      f"Layering={has_layering_detector}, "
-      f"S/R={has_sr_detector}, "
-      f"StrategyManager={has_strategy_manager}, "
-      f"MLValidator={has_ml_validator}, "
-      f"Drift={has_drift_detector}"
-    )
+    logger.info("📦 Статус компонентов:")
+    logger.info(f"   ├─ Strategy Manager: {'✅' if has_strategy_manager else '❌'}")
+    logger.info(f"   ├─ Adaptive Consensus: {'✅' if has_adaptive_consensus else '❌'}")
+    logger.info(f"   ├─ MTF Manager: {'✅' if has_mtf_manager else '❌'}")
+    logger.info(f"   ├─ Integrated Engine: {'✅' if has_integrated_engine else '❌'}")
+    logger.info(f"   ├─ ML Validator: {'✅' if has_ml_validator else '❌'}")
+    logger.info(f"   ├─ ML Feature Pipeline: {'✅' if has_ml_feature_pipeline else '❌'}")
+    logger.info(f"   ├─ ML Data Collector: {'✅' if has_ml_data_collector else '❌'}")
+    logger.info(f"   ├─ S/R Detector: {'✅' if has_sr_detector else '❌'}")
+    logger.info(f"   ├─ Spoofing Detector: {'✅' if has_spoofing_detector else '❌'}")
+    logger.info(f"   ├─ Layering Detector: {'✅' if has_layering_detector else '❌'}")
+    logger.info(f"   └─ Drift Detector: {'✅' if has_drift_detector else '❌'}")
+    logger.info("=" * 80)
+
+    # КРИТИЧЕСКАЯ ПРОВЕРКА: IntegratedEngine обязателен
+    if not has_integrated_engine:
+      logger.critical(
+        "🚨 КРИТИЧЕСКАЯ ОШИБКА: IntegratedEngine не инициализирован! "
+        "Analysis loop не может работать без него."
+      )
+      if settings.ENABLE_CRITICAL_ALERTS:
+        await self._send_critical_alert(
+          "IntegratedEngine отсутствует",
+          "Analysis loop остановлен из-за отсутствия критического компонента"
+        )
+      return
+
+    # Инициализация счетчиков и статистики
+    error_count = {}  # Счетчик ошибок по символам
+    max_consecutive_errors = 5  # Максимум последовательных ошибок перед skip
+    cycle_number = 0
+
+    # Инициализация статистики (если еще не инициализирована)
+    if not hasattr(self, 'stats') or not self.stats:
+      self.stats = {
+        'analysis_cycles': 0,
+        'signals_generated': 0,
+        'signals_executed': 0,
+        'orders_placed': 0,
+        'positions_opened': 0,
+        'positions_closed': 0,
+        'total_pnl': 0.0,
+        'consensus_achieved': 0,
+        'consensus_failed': 0,
+        'adaptive_weight_updates': 0,
+        'mtf_signals': 0,
+        'ml_validations': 0,
+        'ml_data_collected': 0,
+        'manipulations_detected': 0,
+        'drift_detections': 0,
+        'warnings': 0,
+        'errors': 0
+      }
+
+    logger.info("✅ Analysis Loop инициализирован и готов к работе")
+
+    # ========================================================================
+    # БЛОК 2: ГЛАВНЫЙ ЦИКЛ АНАЛИЗА
+    # ========================================================================
 
     while self.status == BotStatus.RUNNING:
+      cycle_start = time.time()
+      cycle_number += 1
+
       try:
+        # async with self.analysis_lock:
+
         # Ждем пока все WebSocket соединения установятся
         if not self.websocket_manager.is_all_connected():
           await asyncio.sleep(1)
@@ -1126,617 +1278,750 @@ class BotController:
 
         # Анализируем каждую пару
         for symbol in self.symbols:
+          symbol_start = time.time()
+
+          # Инициализация error counter для символа
+          if symbol not in error_count:
+            error_count[symbol] = 0
+
+          # Пропуск символа если слишком много ошибок подряд
+          if error_count[symbol] >= max_consecutive_errors:
+            if cycle_number % 10 == 0:  # Лог каждые 10 циклов
+              logger.warning(
+                f"⚠️ [{symbol}] Пропуск анализа: {error_count[symbol]} "
+                f"последовательных ошибок (лимит: {max_consecutive_errors})"
+              )
+            continue
+
           try:
-            # ==================== 1. ПОЛУЧЕНИЕ ДАННЫХ ====================
-            manager = self.orderbook_managers[symbol]
+            # ============================================================
+            # ШАГ 1: ПОЛУЧЕНИЕ MARKET DATA
+            # ============================================================
+
+            ob_manager = self.orderbook_managers[symbol]
             candle_manager = self.candle_managers[symbol]
 
             # Пропускаем если нет данных
-            if not manager.snapshot_received:
+            if not ob_manager.snapshot_received:
+              logger.debug(f"[{symbol}] OrderBook Manager не найден, пропускаем")
               continue
 
             # Получаем снимок стакана
-            snapshot = manager.get_snapshot()
-            if not snapshot:
+            orderbook_snapshot  = ob_manager.get_snapshot()
+            if not orderbook_snapshot :
+              logger.debug(f"[{symbol}] OrderBook не готов или невалиден, пропускаем")
               continue
 
             # Получаем свечи
             candles = candle_manager.get_candles()
             if not candles or len(candles) < 50:
+              logger.debug(
+                f"[{symbol}] Недостаточно свечей: "
+                f"{len(candles)}/{settings.MIN_CANDLES_FOR_ANALYSIS}"
+              )
               continue
 
-            current_price = snapshot.mid_price
+            current_price = orderbook_snapshot.mid_price
             if not current_price:
               continue
 
+            # 1.3 OrderBook Metrics
+            orderbook_metrics = self.market_analyzer.analyze_symbol(symbol, ob_manager)
+
+            # 1.4 Market Metrics
+            market_metrics = self.market_analyzer.analyze_symbol(
+              symbol=symbol,
+              candles=candles,
+              orderbook=orderbook_snapshot
+            )
+
+            logger.debug(
+              f"[{symbol}] Market Data: "
+              f"price={current_price:.2f}, "
+              f"candles={len(candles)}, "
+              f"spread={orderbook_metrics.spread_bps:.2f}bps, "
+              f"imbalance={orderbook_metrics.imbalance:.3f}, "
+              f"volatility={market_metrics.volatility:.4f}"
+            )
             # ==================== BROADCAST ORDERBOOK (КРИТИЧНО ДЛЯ ФРОНТЕНДА) ====================
-            try:
-              from api.websocket import broadcast_orderbook_update
-              await broadcast_orderbook_update(symbol, snapshot.to_dict())
-            except Exception as e:
-              logger.error(f"{symbol} | Ошибка broadcast orderbook: {e}")
+            # try:
+            #   from api.websocket import broadcast_orderbook_update
+            #   await broadcast_orderbook_update(symbol, orderbook_snapshot.to_dict())
+            # except Exception as e:
+            #   logger.error(f"{symbol} | Ошибка broadcast orderbook: {e}")
 
-            # ==================== 2. ДЕТЕКТОРЫ МАНИПУЛЯЦИЙ (OPTIONAL) ====================
+            # ============================================================
+            # ШАГ 2: ДЕТЕКЦИЯ МАНИПУЛЯЦИЙ (опционально)
+            # ============================================================
+
             manipulation_detected = False
-            manipulation_details = []
+            manipulation_types = []
 
+            # 2.1 Spoofing Detection
             if has_spoofing_detector:
               try:
-                self.spoofing_detector.update(snapshot)
+                self.spoofing_detector.update(orderbook_snapshot)
                 has_spoofing = self.spoofing_detector.is_spoofing_active(
                   symbol,
                   time_window_seconds=60
                 )
+
                 if has_spoofing:
                   manipulation_detected = True
-                  manipulation_details.append("spoofing")
-              except Exception as e:
-                logger.error(f"{symbol} | Ошибка spoofing detector: {e}")
+                  manipulation_types.append("spoofing")
 
+              except Exception as e:
+                logger.error(f"[{symbol}] Ошибка Spoofing Detector: {e}")
+
+            # 2.2 Layering Detection
             if has_layering_detector:
               try:
-                self.layering_detector.update(snapshot)
+                self.layering_detector.update(orderbook_snapshot)
                 has_layering = self.layering_detector.is_layering_active(
                   symbol,
                   time_window_seconds=60
                 )
+
                 if has_layering:
                   manipulation_detected = True
-                  manipulation_details.append("layering")
-              except Exception as e:
-                logger.error(f"{symbol} | Ошибка layering detector: {e}")
+                  manipulation_types.append("layering")
 
+              except Exception as e:
+                logger.error(f"[{symbol}] Ошибка Layering Detector: {e}")
+
+            # Блокировка торговли при манипуляциях
             if manipulation_detected:
               logger.warning(
-                f"⚠️  МАНИПУЛЯЦИИ [{symbol}]: "
-                f"{', '.join(manipulation_details)} - "
-                f"ТОРГОВЛЯ ЗАБЛОКИРОВАНА (признаки извлекаются)"
+                f"⚠️ [{symbol}] МАНИПУЛЯЦИИ ОБНАРУЖЕНЫ: "
+                f"{', '.join(manipulation_types).upper()} - "
+                f"ТОРГОВЛЯ ЗАБЛОКИРОВАНА"
               )
-              # НЕ делаем continue! Продолжаем извлечение признаков
+              self.stats['manipulations_detected'] += 1
 
-            # ==================== 3. S/R ДЕТЕКТОР (OPTIONAL) ====================
+              # Продолжаем извлечение признаков для data collection,
+              # но НЕ генерируем торговые сигналы
+              # (skip будет после извлечения признаков)
+
+            # ============================================================
+            # ШАГ 3: S/R LEVELS DETECTION & UPDATE (опционально)
+            # ============================================================
+
             sr_levels = None
             if has_sr_detector:
               try:
+                # Обновляем S/R детектор свежими свечами
                 self.sr_detector.update_candles(symbol, candles)
+
+                # Детектируем уровни
                 sr_levels = self.sr_detector.detect_levels(symbol)
+
+                if sr_levels:
+                  logger.debug(
+                    f"[{symbol}] S/R Levels: "
+                    f"{len(sr_levels.get('support', []))} supports, "
+                    f"{len(sr_levels.get('resistance', []))} resistances"
+                  )
+
               except Exception as e:
-                logger.error(f"{symbol} | Ошибка S/R detector: {e}")
+                logger.error(f"[{symbol}] Ошибка S/R Detector: {e}")
 
             # ==================== 4. ТРАДИЦИОННЫЙ АНАЛИЗ ====================
             # ПРАВИЛЬНО: передаём OrderBookManager, НЕ OrderBookSnapshot
-            metrics = self.market_analyzer.analyze_symbol(symbol, manager)
+            # metrics = self.market_analyzer.analyze_symbol(symbol, ob_manager)
 
             # ==================== BROADCAST METRICS (КРИТИЧНО ДЛЯ ФРОНТЕНДА) ====================
-            try:
-              from api.websocket import broadcast_metrics_update
-              await broadcast_metrics_update(symbol, metrics.to_dict())
-            except Exception as e:
-              logger.error(f"{symbol} | Ошибка broadcast metrics: {e}")
+            # try:
+            #   from api.websocket import broadcast_metrics_update
+            #   await broadcast_metrics_update(symbol, metrics.to_dict())
+            # except Exception as e:
+            #   logger.error(f"{symbol} | Ошибка broadcast metrics: {e}")
 
-            # Шаг 4a: Multi-Timeframe Analysis
-            if config.enable_mtf:
-              mtf_signal = await mtf_manager.analyze_symbol(
-                symbol=symbol,
-                orderbook=orderbook,
-                metrics=metrics
-              )
+            # ============================================================
+            # ШАГ 4: ML FEATURE EXTRACTION
+            # ============================================================
 
-              if mtf_signal:
-                # Используем MTF сигнал вместо single-TF
-                final_signal = mtf_signal.signal
-
-                # Модифицируем risk parameters
-                position_size *= mtf_signal.recommended_position_size_multiplier
-                stop_loss_price = mtf_signal.recommended_stop_loss_price
-                take_profit_price = mtf_signal.recommended_take_profit_price
-
-                # Quality check
-                if mtf_signal.signal_quality < config.min_mtf_quality:
-                  logger.info("MTF signal quality too low, skipping")
-                  continue
-
-                if mtf_signal.risk_level == "EXTREME":
-                  logger.warning("EXTREME risk, skipping trade")
-                  continue
-              else:
-                # Fallback к single-TF analysis
-                logger.debug("No MTF signal, using single-TF")
-
-            # ==================== 5. ML ИЗВЛЕЧЕНИЕ ПРИЗНАКОВ ====================
             feature_vector = None
-            try:
-              feature_vector = await self.ml_feature_pipeline.extract_features_single(
-                symbol=symbol,
-                orderbook_snapshot=snapshot,
-                candles=candles
-              )
+            ml_prediction = None
 
-              if feature_vector:
-                logger.debug(
-                  f"{symbol} | Извлечено {feature_vector.feature_count} ML признаков"
-                )
-            except Exception as e:
-              logger.error(f"{symbol} | Ошибка извлечения признаков: {e}")
-
-            # ==================== 6. ГЕНЕРАЦИЯ СИГНАЛОВ ====================
-            signal = None
-            consensus_info = None
-
-            # БЛОКИРОВКА: Пропускаем генерацию сигналов если обнаружены манипуляции
-            if manipulation_detected:
-              logger.debug(
-                f"{symbol} | Генерация сигналов пропущена из-за манипуляций: "
-                f"{', '.join(manipulation_details)}"
-              )
-            else:
-              # РЕЖИМ 1: Strategy Manager с Consensus (если доступен)
-              if has_strategy_manager:
-                try:
-                  sr_levels = None
-                  if has_sr_detector:
-                    sr_levels = self.sr_detector.detect_levels(symbol)
-
-                  # Получаем Volume Profile если доступен
-                  volume_profile_data = None
-                  if 'volume_profile' in self.strategy_manager.candle_strategies:
-                    vp_strategy = self.strategy_manager.candle_strategies['volume_profile']
-
-                    if symbol in vp_strategy.profiles:
-                      profile = vp_strategy.profiles[symbol]
-                      volume_profile_data = {
-                        'poc_price': profile.poc_price,
-                        'poc_volume': profile.poc_volume,
-                        'value_area_high': profile.value_area_high,
-                        'value_area_low': profile.value_area_low,
-                        'hvn_nodes': [
-                          {'price': node.price, 'volume': node.volume, 'strength': node.strength}
-                          for node in profile.hvn_nodes
-                        ],
-                        'lvn_nodes': [
-                          {'price': node.price, 'volume': node.volume, 'strength': node.strength}
-                          for node in profile.lvn_nodes
-                        ]
-                      }
-
-                  # Получаем ML предсказание если доступно
-                  ml_prediction = None
-                  if has_ml_validator and feature_vector:
-                    try:
-                      validation = await self.ml_validator.validate_signal(
-                        symbol=symbol,
-                        signal=None,  # Пока нет сигнала
-                        features=feature_vector
-                      )
-                      ml_prediction = {
-                        'confidence': validation.ml_confidence,
-                        'prediction': 'bullish' if validation.should_trade else 'bearish'
-                      }
-                    except Exception as e:
-                      logger.error(f"{symbol} | ML prediction error: {e}")
-
-                  if self.adaptive_consensus_manager:
-                    # ===== ADAPTIVE CONSENSUS РЕЖИМ =====
-                    consensus = self.adaptive_consensus_manager.build_adaptive_consensus(
-                      symbol=symbol,
-                      candles=candles,
-                      current_price=current_price,
-                      orderbook=snapshot,
-                      metrics=metrics,
-                      sr_levels=sr_levels if has_sr_detector else None,
-                      volume_profile=volume_profile_data,
-                      ml_prediction=ml_prediction
-                    )
-
-                    if consensus:
-                      logger.info(
-                        f"✅ ADAPTIVE CONSENSUS [{symbol}]: "
-                        f"{safe_enum_value(consensus.final_signal.signal_type)}, "
-                        f"confidence={consensus.consensus_confidence:.2f}, "
-                        f"quality={consensus.final_signal.metadata.get('consensus_quality', 0.0):.2f}"
-                      )
-
-                  else:
-                    # ===== СТАНДАРТНЫЙ CONSENSUS РЕЖИМ =====
-                    consensus = self.strategy_manager.analyze_with_consensus(
-                      symbol=symbol,
-                      candles=candles,
-                      current_price=current_price,
-                      orderbook=snapshot,
-                      metrics=metrics,
-                      sr_levels=sr_levels if has_sr_detector else None,
-                      volume_profile=volume_profile_data,
-                      ml_prediction=ml_prediction
-                    )
-
-
-                  # Проверяем что consensus не None и имеет нужные атрибуты
-                  if consensus and hasattr(consensus, 'final_signal') and consensus.final_signal:
-                    # Безопасное получение атрибутов с fallback значениями
-                    contributing_strategies = getattr(consensus, 'contributing_strategies', [])
-                    total_strategies = getattr(consensus, 'total_strategies', len(contributing_strategies))
-                    agreement_count = getattr(consensus, 'agreement_count', len(contributing_strategies))
-                    final_confidence = getattr(consensus, 'final_confidence', 0.7)
-
-                    consensus_info = {
-                      'signal_type': consensus.final_signal,
-                      'strategies': contributing_strategies,
-                      'agreement': f"{agreement_count}/{total_strategies}",
-                      'confidence': final_confidence
-                    }
-
-                    # Создаём сигнал из consensus (импорты уже в начале функции)
-                    # ИСПРАВЛЕНИЕ: final_signal это SignalType, не TradingSignal
-                    final_signal_type = consensus.final_signal
-
-                    # Если final_signal это строка, конвертируем в SignalType
-                    if isinstance(final_signal_type, str):
-                      final_signal_type = SignalType(final_signal_type)
-
-                    signal = TradingSignal(
-                      symbol=symbol,
-                      signal_type=final_signal_type,  # ИСПРАВЛЕНО: используем final_signal_type
-                      source=SignalSource.STRATEGY,  # Изменится на ML_VALIDATED после валидации
-                      strength=(
-                        SignalStrength.STRONG
-                        if final_confidence > 0.7
-                        else SignalStrength.MEDIUM
-                      ),
-                      price=current_price,
-                      confidence=final_confidence,
-                      timestamp=int(datetime.now().timestamp() * 1000),
-                      reason=f"Consensus ({len(contributing_strategies)} strategies)",
-                      metadata={
-                        'consensus_strategies': contributing_strategies,
-                        'consensus_agreement': consensus_info['agreement']
-                      }
-                    )
-
-                    logger.info(
-                      f"🎯 Strategy Manager Consensus [{symbol}]: "
-                      f"{safe_enum_value(signal.signal_type)}, "  
-                      f"confidence={final_confidence:.2f}, "
-                      f"strategies={contributing_strategies}"
-                    )
-                except Exception as e:
-                  logger.error(f"{symbol} | Ошибка Strategy Manager: {e}", exc_info=True)
-
-              # РЕЖИМ 2: Базовая генерация сигналов (fallback)
-              if not signal:
-                try:
-                  signal = self.strategy_engine.analyze_and_generate_signal(
-                    symbol=symbol,
-                    metrics=metrics,
-                    features=feature_vector
-                  )
-
-                  if signal:
-                    logger.debug(
-                      f"🎯 Базовый сигнал [{symbol}]: "
-                      f"{safe_enum_value(signal.signal_type)}, "
-                      f"confidence={signal.confidence:.2f}"
-                    )
-                except Exception as e:
-                  logger.error(f"{symbol} | Ошибка генерации сигнала: {e}", exc_info=True)
-
-            # Если сигнала нет - пропускаем
-            if not signal:
-              # Всё равно собираем данные для ML
-              if feature_vector and self.ml_data_collector:
-                try:
-                  await self.ml_data_collector.collect_sample(
-                    symbol=symbol,
-                    feature_vector=feature_vector,
-                    orderbook_snapshot=snapshot,
-                    market_metrics=metrics,
-                    executed_signal=None
-                  )
-                except Exception as e:
-                  logger.error(f"{symbol} | Ошибка сбора ML данных: {e}")
-              continue
-
-            # ==================== 7. ML ВАЛИДАЦИЯ (OPTIONAL) ====================
-            if has_ml_validator and feature_vector and signal:
+            if has_ml_feature_pipeline:
               try:
-                validation_result = await self.ml_validator.validate(
-                  signal,
-                  feature_vector
+                # Извлекаем признаки из всех доступных источников
+                feature_vector = await self.ml_feature_pipeline.extract_features(
+                  symbol=symbol,
+                  candles=candles,
+                  orderbook_snapshot=orderbook_snapshot,
+                  orderbook_metrics=orderbook_metrics,
+                  market_metrics=market_metrics,
+                  sr_levels=sr_levels  # Может быть None
                 )
 
-                # Проверяем результат валидации
-                if validation_result.validated:
-                  # ========================================
-                  # ИСПРАВЛЕНИЕ: Проверяем fallback режим
-                  # ========================================
-                  is_fallback = validation_result.used_fallback
+                if feature_vector:
+                  logger.debug(
+                    f"[{symbol}] Извлечено {feature_vector.feature_count} ML признаков, "
+                    f"качество: {feature_vector.quality_score:.3f}"
+                  )
 
-                  # 1. Меняем source на ML_VALIDATED
-                  signal.source = SignalSource.ML_VALIDATED
+                  # Опционально: получаем ML prediction (если нужно для обогащения)
+                  # НЕ используем для блокировки торговли, только для метаданных
+                  if self.ml_validator and not manipulation_detected:
+                    try:
+                      ml_prediction = await self.ml_validator.predict(
+                        feature_vector=feature_vector
+                      )
 
-                  # 2. Обновляем confidence
-                  # ИСПРАВЛЕНИЕ: В fallback режиме НЕ понижаем confidence
-                  if is_fallback:
-                    # Используем оригинальный confidence из стратегии
-                    signal.confidence = validation_result.final_confidence
-                    logger.info(
-                      f"🔄 ML Fallback режим [{symbol}]: "
-                      f"используем стратегию confidence={signal.confidence:.2f}"
-                    )
-                  else:
-                    # ML доступна - используем ML confidence
-                    signal.confidence = validation_result.final_confidence
-                    logger.info(
-                      f"🤖 ML валидация [{symbol}]: "
-                      f"ML confidence={validation_result.ml_confidence:.2f}, "
-                      f"final={signal.confidence:.2f}"
-                    )
+                      if ml_prediction:
+                        logger.debug(
+                          f"[{symbol}] ML Prediction: "
+                          f"direction={ml_prediction.get('prediction')}, "
+                          f"confidence={ml_prediction.get('confidence', 0):.3f}"
+                        )
+                    except Exception as e:
+                      logger.error(f"[{symbol}] Ошибка ML Prediction: {e}")
+                else:
+                  logger.warning(f"[{symbol}] Feature extraction вернул None")
 
-                  # 3. Пересчитываем strength на основе final confidence
-                  # ИСПРАВЛЕНИЕ: Используем более мягкие пороги для fallback
-                  if is_fallback:
-                    # В fallback режиме используем пороги стратегии
-                    if signal.confidence > 0.7:
-                      signal.strength = SignalStrength.STRONG
-                    elif signal.confidence > 0.5:
-                      signal.strength = SignalStrength.MEDIUM
-                    else:
-                      signal.strength = SignalStrength.WEAK
-                  else:
-                    # С ML используем стандартные пороги
-                    if validation_result.final_confidence > 0.8:
-                      signal.strength = SignalStrength.STRONG
-                    elif validation_result.final_confidence > 0.6:
-                      signal.strength = SignalStrength.MEDIUM
-                    else:
-                      signal.strength = SignalStrength.WEAK
+              except Exception as e:
+                logger.error(f"[{symbol}] Ошибка ML Feature Extraction: {e}")
+                logger.debug(traceback.format_exc())
 
-                  # 4. Добавляем ML метаданные
-                  if not signal.metadata:
-                    signal.metadata = {}
+            # Блокировка торговли если были манипуляции
+            # (но продолжаем для data collection)
+            if manipulation_detected:
+              # Переходим к ML Data Collection (ШАГ 11)
+              # НЕ генерируем сигнал
+              logger.debug(f"[{symbol}] Пропускаем analysis из-за манипуляций")
+              # Jump to ML Data Collection...
+              # (код ниже будет пропущен через continue в конце этого блока)
 
-                  signal.metadata['ml_validated'] = True
-                  signal.metadata['ml_fallback'] = is_fallback
-                  signal.metadata['ml_direction'] = validation_result.ml_direction
-                  signal.metadata['ml_confidence'] = validation_result.ml_confidence
+            # ============================================================
+            # ШАГ 5: 🎯 INTEGRATED ANALYSIS (ЯДРО СИСТЕМЫ)
+            # ============================================================
 
-                  # Дополнительные метрики
-                  if validation_result.predicted_mae:
-                    signal.metadata['predicted_mae'] = validation_result.predicted_mae
-                  if validation_result.manipulation_risk:
-                    signal.metadata['manipulation_risk'] = validation_result.manipulation_risk
-                  if validation_result.market_regime:
-                    signal.metadata['market_regime'] = validation_result.market_regime.value
-                  if validation_result.feature_quality:
-                    signal.metadata['feature_quality'] = validation_result.feature_quality
+            integrated_signal = None
+
+            if not manipulation_detected:  # Анализируем только если нет манипуляций
+              try:
+                logger.debug(f"[{symbol}] Запуск IntegratedEngine.analyze()...")
+
+                # Вызываем IntegratedEngine для полного анализа
+                integrated_signal = await self.integrated_engine.analyze(
+                  symbol=symbol,
+                  candles=candles,
+                  current_price=current_price,
+                  orderbook=orderbook_snapshot,
+                  metrics=orderbook_metrics
+                )
+
+                if integrated_signal:
+                  # ========================================================
+                  # ОБРАБОТКА INTEGRATED SIGNAL
+                  # ========================================================
 
                   logger.info(
-                    f"✅ Сигнал подтвержден ML Validator [{symbol}]: "
-                    f"source=ML_VALIDATED, "
-                    f"strength={safe_enum_value(signal.strength)}, "
-                    f"final_confidence={signal.confidence:.2f}, "
-                    f"fallback={is_fallback}"
-                  )
-                else:
-                  # Валидация не прошла
-                  logger.warning(
-                    f"❌ ML Validator отклонил сигнал [{symbol}]: "
-                    f"reason={validation_result.reason}"
-                  )
-                  signal = None  # Отклоняем сигнал
-
-              except Exception as e:
-                logger.error(f"{symbol} | Ошибка ML Validator: {e}", exc_info=True)
-                # В случае ошибки оставляем сигнал как есть (fallback)
-                logger.info(
-                  f"⚠️ ML Validator error, используем сигнал стратегии [{symbol}]"
-                )
-
-            # ==================== 8. S/R КОНТЕКСТ (OPTIONAL) ====================
-            sr_context = []
-            if has_sr_detector and sr_levels and signal:
-              try:
-                nearest_levels = self.sr_detector.get_nearest_levels(
-                  symbol,
-                  current_price,
-                  max_distance_pct=0.02
-                )
-
-                if nearest_levels.get("support"):
-                  support = nearest_levels["support"]
-                  sr_context.append(
-                    f"Support: ${support.price:.2f} "
-                    f"(strength={support.strength:.2f})"
+                    f"🎯 [{symbol}] IntegratedSignal получен: "
+                    f"type={integrated_signal.final_signal.signal_type.value}, "
+                    f"mode={integrated_signal.source_analysis_mode.value}, "
+                    f"quality={integrated_signal.combined_quality_score:.3f}, "
+                    f"confidence={integrated_signal.combined_confidence:.3f}"
                   )
 
-                if nearest_levels.get("resistance"):
-                  resistance = nearest_levels["resistance"]
-                  sr_context.append(
-                    f"Resistance: ${resistance.price:.2f} "
-                    f"(strength={resistance.strength:.2f})"
-                  )
+                  # Детальное логирование (если включено)
+                  if settings.VERBOSE_SIGNAL_LOGGING:
+                    self._log_integrated_signal(symbol, integrated_signal)
 
-                if sr_context:
-                  if not signal.metadata:
-                    signal.metadata = {}
-                  signal.metadata['sr_context'] = sr_context
-              except Exception as e:
-                logger.error(f"{symbol} | Ошибка S/R context: {e}")
+                  # Извлекаем финальный сигнал
+                  final_signal = integrated_signal.final_signal
 
-            # ==================== 9. ФИНАЛЬНЫЙ ЛОГ И ИСПОЛНЕНИЕ ====================
-            # ИСПРАВЛЕНИЕ: Проверяем что signal существует и является TradingSignal
-            if signal:
-              try:
-                # КРИТИЧНО: Проверяем тип объекта signal перед использованием
-                if not isinstance(signal, TradingSignal):
-                  logger.error(
-                    f"{symbol} | КРИТИЧЕСКАЯ ОШИБКА: signal имеет неправильный тип: {type(signal)}. "
-                    f"Ожидается TradingSignal. Пропускаем исполнение."
-                  )
-                  continue
+                  # ========================================================
+                  # ШАГ 6: ENRICHMENT SIGNAL METADATA
+                  # ========================================================
 
-                # Формируем лог с проверками атрибутов
-                log_parts = [
-                  f"🎯 ФИНАЛЬНЫЙ СИГНАЛ [{symbol}]:",
-                  f"{safe_enum_value(signal.signal_type)}",
-                  f"confidence={signal.confidence:.2f}",
-                  f"strength={safe_enum_value(signal.strength)}"
-                ]
+                  # Инициализация metadata если нужно
+                  if not final_signal.metadata:
+                    final_signal.metadata = {}
 
-                if consensus_info:
-                  log_parts.append(
-                    f"strategies={consensus_info['strategies']}"
-                  )
+                  # Добавляем integrated analysis метаданные
+                  final_signal.metadata.update({
+                    # Integrated Analysis Info
+                    'integrated_analysis': True,
+                    'analysis_mode': integrated_signal.source_analysis_mode.value,
+                    'combined_quality': integrated_signal.combined_quality_score,
+                    'combined_confidence': integrated_signal.combined_confidence,
 
-                if signal.metadata and signal.metadata.get('ml_validated'):
-                  log_parts.append("ML_VALIDATED")
+                    # Source tracking
+                    'single_tf_used': integrated_signal.used_single_tf,
+                    'mtf_used': integrated_signal.used_mtf,
 
-                if sr_context:
-                  log_parts.append(f"SR: {', '.join(sr_context)}")
+                    # Risk parameters
+                    'position_multiplier': integrated_signal.recommended_position_multiplier,
+                    'risk_level': integrated_signal.risk_level,
 
-                logger.info(" | ".join(log_parts))
+                    # Timestamps
+                    'signal_timestamp': int(time.time() * 1000),
+                    'analysis_timestamp': integrated_signal.analysis_timestamp,
+                    'analysis_duration_ms': integrated_signal.analysis_duration_ms,
+                    'cycle_number': cycle_number,
 
-                # Отправляем на исполнение
-                await self.execution_manager.submit_signal(signal)
+                    # Market context
+                    'current_price': current_price,
+                    'orderbook_imbalance': orderbook_metrics.imbalance,
+                    'spread_bps': orderbook_metrics.spread_bps,
+                    'market_volatility': market_metrics.volatility if market_metrics else None
+                  })
 
-                # Уведомляем фронтенд
-                try:
-                  # Конвертируем TradingSignal в dict ПЕРЕД broadcast
-                  signal_dict = signal.to_dict()
+                  # Single-TF Consensus Info
+                  if integrated_signal.single_tf_consensus:
+                    consensus = integrated_signal.single_tf_consensus
+                    final_signal.metadata['single_tf_consensus'] = {
+                      'mode': consensus.consensus_mode,
+                      'confidence': consensus.consensus_confidence,
+                      'agreement_count': consensus.agreement_count,
+                      'disagreement_count': consensus.disagreement_count
+                    }
 
-                  # КРИТИЧНО: Конвертируем все Enum в строки
-                  if 'signal_type' in signal_dict and hasattr(signal_dict['signal_type'], 'value'):
-                    signal_dict['signal_type'] = signal_dict['signal_type'].value
+                    # Contributing strategies для Performance Tracker
+                    contributing_strategies = consensus.contributing_strategies
+                    final_signal.metadata['contributing_strategies'] = contributing_strategies
 
-                  if 'strength' in signal_dict and hasattr(signal_dict['strength'], 'value'):
-                    signal_dict['strength'] = signal_dict['strength'].value
+                  # MTF Signal Info
+                  if integrated_signal.mtf_signal:
+                    mtf = integrated_signal.mtf_signal
+                    final_signal.metadata['mtf_signal'] = {
+                      'quality': mtf.signal_quality,
+                      'risk_level': mtf.risk_level,
+                      'alignment_score': mtf.alignment_score,
+                      'confluence_detected': mtf.confluence_detected,
+                      'divergence_type': mtf.divergence_type,
+                      'recommended_position_multiplier': mtf.recommended_position_size_multiplier
+                    }
 
-                  if 'source' in signal_dict and hasattr(signal_dict['source'], 'value'):
-                    signal_dict['source'] = signal_dict['source'].value
+                    if mtf.warnings:
+                      final_signal.metadata['mtf_warnings'] = mtf.warnings
 
-                  logger.debug(
-                    f"{symbol} | Подготовлен signal_dict для broadcast: "
-                    f"type={type(signal_dict)}, "
-                    f"signal_type={signal_dict.get('signal_type')}"
-                  )
+                  # Adaptive weights (если доступно)
+                  if integrated_signal.adaptive_weights:
+                    final_signal.metadata['adaptive_weights'] = integrated_signal.adaptive_weights
 
-                  from api.websocket import broadcast_signal
-                  await broadcast_signal(signal_dict)
+                  # Market regime (если доступно)
+                  if integrated_signal.market_regime:
+                    final_signal.metadata['market_regime'] = integrated_signal.market_regime
 
-                except Exception as e:
-                  logger.error(
-                    f"{symbol} | Ошибка broadcast_signal: {e}. "
-                    f"signal_type={type(getattr(signal, 'signal_type', None))}, "
-                    f"strength={type(getattr(signal, 'strength', None))}, "
-                    f"source={type(getattr(signal, 'source', None))}",
-                    exc_info=True
-                  )
+                  # ML Prediction (если было)
+                  if ml_prediction:
+                    final_signal.metadata['ml_prediction'] = {
+                      'direction': ml_prediction.get('prediction'),
+                      'confidence': ml_prediction.get('confidence')
+                    }
 
-              except AttributeError as e:
-                logger.error(
-                  f"{symbol} | AttributeError при обработке сигнала: {e}. "
-                  f"Тип signal: {type(signal)}, "
-                  f"Атрибуты: {dir(signal) if signal else 'None'}",
-                  exc_info=True
-                )
-                continue
-              except Exception as e:
-                logger.error(
-                  f"{symbol} | Ошибка исполнения сигнала: {e}",
-                  exc_info=True
-                )
-                continue
+                  # Warnings от engine
+                  if integrated_signal.warnings:
+                    final_signal.metadata['engine_warnings'] = integrated_signal.warnings
 
-            # ==================== 10. DRIFT MONITORING (OPTIONAL) ====================
-            if has_drift_detector and feature_vector and signal:
-              try:
-                # Конвертируем SignalType enum в int для drift detector
-                # SignalType.BUY -> 1, SignalType.SELL -> 2, SignalType.HOLD -> 0
-                signal_type_value = safe_enum_value(signal.signal_type)  # Получаем строку "BUY", "SELL", "HOLD"
-                signal_type_map = {
-                  "BUY": 1,
-                  "SELL": 2,
-                  "HOLD": 0
-                }
-                prediction_int = signal_type_map.get(
-                  signal_type_value,
-                  0
-                )
+                  # ========================================================
+                  # ШАГ 7: ML VALIDATION ФИНАЛЬНОГО СИГНАЛА
+                  # ========================================================
 
-                self.drift_detector.add_observation(
-                  features=feature_vector.to_array(),
-                  prediction=prediction_int,
-                  label=None  # Label будет установлен позже
-                )
+                  ml_should_trade = True  # По умолчанию разрешаем
+                  ml_validation_confidence = None
 
-                # Периодическая проверка drift
-                if self.drift_detector.should_check_drift():
-                  drift_metrics = self.drift_detector.check_drift()
+                  if has_ml_validator and feature_vector:
+                    try:
+                      logger.debug(f"[{symbol}] Запуск ML Validation...")
 
-                  if drift_metrics and drift_metrics.drift_detected:
+                      # ML Validator проверяет финальный сигнал
+                      validation_result = await self.ml_validator.validate_signal(
+                        symbol=symbol,
+                        signal=final_signal,
+                        features=feature_vector
+                      )
+
+                      ml_should_trade = validation_result.should_trade
+                      ml_validation_confidence = validation_result.ml_confidence
+
+                      # Добавляем ML validation метаданные
+                      final_signal.metadata.update({
+                        'ml_validated': True,
+                        'ml_should_trade': ml_should_trade,
+                        'ml_validation_confidence': ml_validation_confidence,
+                        'ml_validation_reason': validation_result.reason if not ml_should_trade else None
+                      })
+
+                      # Логирование результата
+                      if ml_should_trade:
+                        logger.info(
+                          f"✅ [{symbol}] ML Validation: APPROVED "
+                          f"(confidence={ml_validation_confidence:.3f})"
+                        )
+                      else:
+                        logger.warning(
+                          f"❌ [{symbol}] ML Validation: REJECTED "
+                          f"(reason={validation_result.reason})"
+                        )
+
+                      self.stats['ml_validations'] += 1
+
+                      # Отклоняем сигнал если ML не одобрил
+                      if not ml_should_trade:
+                        logger.info(f"⛔ [{symbol}] Сигнал отклонен ML Validator")
+                        integrated_signal = None  # Отменяем сигнал
+                        continue  # Следующий символ
+
+                    except Exception as e:
+                      logger.error(f"[{symbol}] Ошибка ML Validation: {e}")
+                      logger.debug(traceback.format_exc())
+                      # Продолжаем без ML validation
+
+                  # ========================================================
+                  # ШАГ 8: QUALITY & RISK CHECKS
+                  # ========================================================
+
+                  # 8.1 Проверка минимального качества
+                  if integrated_signal.combined_quality_score < settings.MIN_COMBINED_QUALITY:
+                    logger.info(
+                      f"⚠️ [{symbol}] Низкое качество сигнала: "
+                      f"{integrated_signal.combined_quality_score:.3f} < "
+                      f"{settings.MIN_COMBINED_QUALITY}, пропускаем"
+                    )
+                    self.stats['warnings'] += 1
+                    continue  # Следующий символ
+
+                  # 8.2 Проверка confidence
+                  if integrated_signal.combined_confidence < settings.MIN_SIGNAL_CONFIDENCE:
+                    logger.info(
+                      f"⚠️ [{symbol}] Низкая уверенность сигнала: "
+                      f"{integrated_signal.combined_confidence:.3f} < "
+                      f"{settings.MIN_SIGNAL_CONFIDENCE}, пропускаем"
+                    )
+                    self.stats['warnings'] += 1
+                    continue  # Следующий символ
+
+                  # 8.3 Проверка EXTREME риска
+                  if integrated_signal.risk_level == "EXTREME":
                     logger.warning(
-                      f"⚠️  MODEL DRIFT ОБНАРУЖЕН:\n"
-                      f"   Severity: {drift_metrics.severity}\n"
-                      f"   Feature drift: {drift_metrics.feature_drift_score:.4f}\n"
-                      f"   Prediction drift: {drift_metrics.prediction_drift_score:.4f}\n"
-                      f"   Recommendation: {drift_metrics.recommendation}"
+                      f"🚨 [{symbol}] EXTREME RISK детектирован, пропускаем"
+                    )
+                    self.stats['warnings'] += 1
+                    continue  # Следующий символ
+
+                  # ========================================================
+                  # ШАГ 9: S/R CONTEXT ENRICHMENT (опционально)
+                  # ========================================================
+
+                  if has_sr_detector and sr_levels:
+                    try:
+                      # Получаем ближайшие S/R уровни
+                      nearest_levels = self.sr_detector.get_nearest_levels(
+                        symbol=symbol,
+                        current_price=current_price,
+                        max_distance_pct=0.02  # 2% от цены
+                      )
+
+                      sr_context = []
+
+                      # Support
+                      if nearest_levels.get("support"):
+                        support = nearest_levels["support"]
+                        sr_context.append(
+                          f"Support: ${support.price:.2f} "
+                          f"(strength={support.strength:.2f}, "
+                          f"distance={abs(current_price - support.price) / current_price * 100:.2f}%)"
+                        )
+
+                      # Resistance
+                      if nearest_levels.get("resistance"):
+                        resistance = nearest_levels["resistance"]
+                        sr_context.append(
+                          f"Resistance: ${resistance.price:.2f} "
+                          f"(strength={resistance.strength:.2f}, "
+                          f"distance={abs(resistance.price - current_price) / current_price * 100:.2f}%)"
+                        )
+
+                      if sr_context:
+                        final_signal.metadata['sr_context'] = sr_context
+                        logger.debug(
+                          f"[{symbol}] S/R Context: {' | '.join(sr_context)}"
+                        )
+
+                    except Exception as e:
+                      logger.error(f"[{symbol}] Ошибка S/R Context: {e}")
+
+                  # ========================================================
+                  # ШАГ 10: EXECUTION SUBMISSION
+                  # ========================================================
+
+                  try:
+                    logger.info(
+                      f"📤 [{symbol}] Отправка сигнала на исполнение: "
+                      f"{final_signal.signal_type.value} @ {final_signal.entry_price:.2f}"
                     )
 
-                    # Сохраняем drift history
-                    try:
-                      self.drift_detector.save_drift_history(
-                        f"logs/drift_history_{symbol}.json"
+                    # Отправляем сигнал в ExecutionManager
+                    submission_result = await self.execution_manager.submit_signal(
+                      signal=final_signal
+                    )
+
+                    if submission_result.success:
+                      logger.info(
+                        f"✅ [{symbol}] Сигнал принят ExecutionManager: "
+                        f"order_id={submission_result.order_id or 'pending'}"
                       )
-                    except Exception as e:
-                      logger.error(f"Ошибка сохранения drift history: {e}")
-              except Exception as e:
-                logger.error(f"{symbol} | Ошибка drift monitoring: {e}")
+                      self.stats['signals_executed'] += 1
+                    else:
+                      logger.warning(
+                        f"⚠️ [{symbol}] Сигнал отклонен ExecutionManager: "
+                        f"{submission_result.reason}"
+                      )
+                      self.stats['warnings'] += 1
 
-            # ==================== 11. СБОР ДАННЫХ ДЛЯ ML ОБУЧЕНИЯ ====================
-            if feature_vector and self.ml_data_collector:
-              try:
-                await self.ml_data_collector.collect_sample(
-                  symbol=symbol,
-                  feature_vector=feature_vector,
-                  orderbook_snapshot=snapshot,
-                  market_metrics=metrics,
-                  executed_signal={
-                    "type": safe_enum_value(signal.signal_type),  # Получаем строковое значение enum
-                    "confidence": signal.confidence,
-                    "strength": safe_enum_value(signal.strength),  # Тоже enum
-                  } if signal else None
+                  except Exception as e:
+                    logger.error(f"❌ [{symbol}] Ошибка submission: {e}")
+                    logger.debug(traceback.format_exc())
+
+                  # Обновление статистики
+                  self.stats['signals_generated'] += 1
+
+                  if integrated_signal.used_mtf:
+                    self.stats['mtf_signals'] += 1
+
+                else:
+                  # Сигнал не сгенерирован
+                  logger.debug(
+                    f"[{symbol}] IntegratedEngine не вернул сигнал "
+                    f"(консенсус не достигнут или низкое качество)"
+                  )
+
+              except Exception as e:
+                logger.error(
+                  f"❌ [{symbol}] Ошибка IntegratedEngine.analyze(): {e}"
                 )
+                logger.error(traceback.format_exc())
+                error_count[symbol] += 1
+                continue  # Следующий символ
+
+            # ============================================================
+            # ШАГ 11: DRIFT MONITORING (опционально)
+            # ============================================================
+
+            if has_drift_detector and feature_vector:
+              try:
+                drift_detected = self.drift_detector.detect_drift(
+                  feature_vector=feature_vector
+                )
+
+                if drift_detected:
+                  logger.warning(
+                    f"🔔 [{symbol}] Model Drift обнаружен! "
+                    f"Требуется переобучение модели."
+                  )
+                  self.stats['drift_detections'] += 1
+
+                  # Опционально: отправить алерт
+                  if settings.ENABLE_DRIFT_ALERTS:
+                    await self._send_drift_alert(symbol)
+
               except Exception as e:
-                logger.error(f"{symbol} | Ошибка сбора ML данных: {e}")
+                logger.error(f"[{symbol}] Ошибка Drift Detection: {e}")
 
-            # Логирование статистики по стратегиям
+            # ============================================================
+            # ШАГ 12: ML DATA COLLECTION (для обучения)
+            # ============================================================
 
-            stats = self.strategy_manager.get_statistics()
+            if has_ml_data_collector and feature_vector:
+              try:
+                # Проверяем нужно ли собирать данные
+                if self.ml_data_collector.should_collect():
+                  # Подготовка sample
+                  sample_data = {
+                    'symbol': symbol,
+                    'timestamp': int(time.time() * 1000),
+                    'features': feature_vector,
+                    'price': current_price,
+                    'orderbook_snapshot': {
+                      'best_bid': orderbook_snapshot.best_bid_price,
+                      'best_ask': orderbook_snapshot.best_ask_price,
+                      'mid_price': orderbook_snapshot.mid_price,
+                      'spread': orderbook_snapshot.spread,
+                      'imbalance': orderbook_metrics.imbalance
+                    },
+                    'market_metrics': {
+                      'volatility': market_metrics.volatility if market_metrics else None,
+                      'volume': market_metrics.volume if market_metrics else None,
+                      'momentum': market_metrics.momentum if market_metrics else None
+                    }
+                  }
 
-            logger.info(
-              f"Strategy Manager Stats: "
-              f"total_analyses={stats['total_analyses']}, "
-              f"signals={stats['signals_generated']}, "
-              f"consensus_rate={stats['consensus_rate']:.2%}"
-            )
+                  # Если был сгенерирован сигнал - добавляем его
+                  if integrated_signal:
+                    sample_data['signal'] = {
+                      'type': integrated_signal.final_signal.signal_type.value,
+                      'confidence': integrated_signal.combined_confidence,
+                      'quality': integrated_signal.combined_quality_score,
+                      'entry_price': integrated_signal.final_signal.entry_price,
+                      'stop_loss': integrated_signal.final_signal.stop_loss,
+                      'take_profit': integrated_signal.final_signal.take_profit,
+                      'source_mode': integrated_signal.source_analysis_mode.value
+                    }
 
-            # Статистика по стратегиям
-            for strategy_name, strategy_stats in stats['strategies'].items():
-              logger.debug(f"[{strategy_name}] {strategy_stats}")
+                  # Сохранение sample
+                  await self.ml_data_collector.collect_sample(sample_data)
+
+                  self.stats['ml_data_collected'] += 1
+                  logger.debug(f"[{symbol}] ML Data sample собран")
+
+              except Exception as e:
+                logger.error(f"[{symbol}] Ошибка ML Data Collection: {e}")
+
+            # ============================================================
+            # ШАГ 13: REAL-TIME BROADCASTING (опционально)
+            # ============================================================
+
+            try:
+              # Broadcast OrderBook Update
+              from api.websocket import broadcast_orderbook_update
+              await broadcast_orderbook_update(
+                symbol=symbol,
+                orderbook=orderbook_snapshot.to_dict()
+              )
+
+              # Broadcast Metrics Update
+              from api.websocket import broadcast_metrics_update
+              await broadcast_metrics_update(
+                symbol=symbol,
+                metrics=orderbook_metrics.to_dict()
+              )
+
+              # Broadcast Signal (если был)
+              if integrated_signal:
+                from api.websocket import broadcast_signal_update
+                await broadcast_signal_update(
+                  symbol=symbol,
+                  signal=integrated_signal.final_signal.to_dict()
+                )
+
+            except Exception as e:
+              # Broadcasting errors не критичны
+              logger.debug(f"[{symbol}] Ошибка broadcasting: {e}")
+
+            # ============================================================
+            # УСПЕШНОЕ ЗАВЕРШЕНИЕ АНАЛИЗА СИМВОЛА
+            # ============================================================
+
+            # Сброс error counter при успехе
+            error_count[symbol] = 0
+
+            # Время выполнения для символа
+            symbol_elapsed = time.time() - symbol_start
+
+            if symbol_elapsed > settings.ANALYSIS_WARNING_THRESHOLD:
+              logger.warning(
+                f"⏱️ [{symbol}] Анализ занял {symbol_elapsed:.2f}с "
+                f"(> {settings.ANALYSIS_WARNING_THRESHOLD}с)"
+              )
+            else:
+              logger.debug(
+                f"[{symbol}] Анализ завершен за {symbol_elapsed:.2f}с"
+              )
 
           except Exception as e:
-            logger.error(f"Ошибка анализа {symbol}: {e}", exc_info=True)
-            log_exception(logger, e, f"Анализ {symbol}")
+            # Обработка ошибки для конкретного символа
+            error_count[symbol] += 1
 
-        # Пауза между циклами
-        await asyncio.sleep(0.5)  # 500ms
+            logger.error(
+              f"❌ [{symbol}] Ошибка в analysis loop "
+              f"(#{error_count[symbol]}/{max_consecutive_errors}): {e}"
+            )
+            logger.debug(traceback.format_exc())
+
+            self.stats['errors'] += 1
+
+            # Проверка превышения лимита ошибок
+            if error_count[symbol] >= max_consecutive_errors:
+              logger.critical(
+                f"🚨 [{symbol}] Достигнут лимит последовательных ошибок "
+                f"({max_consecutive_errors}), символ будет пропущен до рестарта"
+              )
+
+              # Отправка критического алерта
+              if settings.ENABLE_CRITICAL_ALERTS:
+                await self._send_critical_alert(
+                  f"[{symbol}] Множественные ошибки в analysis loop",
+                  f"Символ пропущен после {max_consecutive_errors} ошибок подряд"
+                )
+
+            continue  # Следующий символ
+
+            # Конец цикла по символам
+
+            # ================================================================
+            # ОБНОВЛЕНИЕ СТАТИСТИКИ ЦИКЛА
+            # ================================================================
+
+            self.stats['analysis_cycles'] += 1
+
+            # Периодическое логирование статистики (каждые 100 циклов)
+            if cycle_number % 100 == 0:
+              self._log_analysis_statistics()
+
+            # Расчет времени выполнения цикла
+          cycle_elapsed = time.time() - cycle_start
+
+          # Warning если цикл занял слишком много времени
+          if cycle_elapsed > settings.ANALYSIS_INTERVAL:
+            logger.warning(
+              f"⏱️ Цикл анализа #{cycle_number} занял {cycle_elapsed:.2f}с "
+              f"(> интервал {settings.ANALYSIS_INTERVAL}с)"
+            )
+
+          # Ожидание до следующего цикла
+          sleep_time = max(0, settings.ANALYSIS_INTERVAL - cycle_elapsed)
+          if sleep_time > 0:
+            await asyncio.sleep(sleep_time)
 
       except asyncio.CancelledError:
-        logger.info("Цикл анализа отменен")
+        # Graceful shutdown
+        logger.info("🛑 Analysis Loop получил CancelledError, завершаем...")
         break
+
       except Exception as e:
-        logger.error(f"Критическая ошибка в цикле анализа: {e}", exc_info=True)
-        log_exception(logger, e, "Цикл анализа")
-        await asyncio.sleep(1)
+        # Критическая ошибка в главном цикле
+        logger.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА в главном analysis loop: {e}")
+        logger.error(traceback.format_exc())
+
+        self.stats['errors'] += 1
+
+        # Отправка критического алерта
+        if settings.ENABLE_CRITICAL_ALERTS:
+          await self._send_critical_alert(
+            "Критическая ошибка в главном цикле",
+            f"Error: {str(e)}"
+          )
+
+        # Небольшая задержка перед следующей попыткой
+        await asyncio.sleep(5)
+
+      # ========================================================================
+      # ЗАВЕРШЕНИЕ LOOP
+      # ========================================================================
+
+      logger.warning("⚠️ Analysis Loop остановлен")
+      logger.info("=" * 80)
+      logger.info("📊 ФИНАЛЬНАЯ СТАТИСТИКА РАБОТЫ")
+      logger.info("=" * 80)
+      logger.info(f"   ├─ Циклов анализа: {self.stats['analysis_cycles']}")
+      logger.info(f"   ├─ Сигналов сгенерировано: {self.stats['signals_generated']}")
+      logger.info(f"   ├─ Сигналов выполнено: {self.stats['signals_executed']}")
+      logger.info(f"   ├─ Ордеров размещено: {self.stats['orders_placed']}")
+      logger.info(f"   ├─ Позиций открыто: {self.stats['positions_opened']}")
+      logger.info(f"   ├─ Позиций закрыто: {self.stats['positions_closed']}")
+      logger.info(f"   ├─ Общий PnL: {self.stats['total_pnl']:.2f} USDT")
+      logger.info(f"   ├─ MTF сигналов: {self.stats['mtf_signals']}")
+      logger.info(f"   ├─ ML валидаций: {self.stats['ml_validations']}")
+      logger.info(f"   ├─ ML данных собрано: {self.stats['ml_data_collected']}")
+      logger.info(f"   ├─ Манипуляций обнаружено: {self.stats['manipulations_detected']}")
+      logger.info(f"   ├─ Drift детекций: {self.stats['drift_detections']}")
+      logger.info(f"   ├─ Предупреждений: {self.stats['warnings']}")
+      logger.info(f"   └─ Ошибок: {self.stats['errors']}")
+      logger.info("=" * 80)
 
 
   async def stop(self):
@@ -2542,6 +2827,247 @@ class BotController:
 
     except Exception as e:
       logger.error(f"Ошибка в процессе cleanup: {e}")
+
+    def _log_integrated_signal(self, symbol: str, integrated_signal):
+      """
+      Детальное логирование интегрированного сигнала.
+
+      Args:
+          symbol: Торговая пара
+          integrated_signal: IntegratedSignal объект
+      """
+      signal = integrated_signal.final_signal
+
+      logger.info("=" * 80)
+      logger.info(f"🎯 INTEGRATED SIGNAL: {symbol}")
+      logger.info("=" * 80)
+
+      # ===== ОСНОВНАЯ ИНФОРМАЦИЯ =====
+      logger.info(f"📊 Тип сигнала: {signal.signal_type.value}")
+      logger.info(f"💯 Combined Confidence: {integrated_signal.combined_confidence:.3f}")
+      logger.info(f"⭐ Combined Quality: {integrated_signal.combined_quality_score:.3f}")
+      logger.info(f"📈 Entry Price: ${signal.entry_price:.2f}")
+      logger.info(f"🛡️ Stop Loss: ${signal.stop_loss:.2f} ({signal.stop_loss_pct:.2f}%)")
+      logger.info(f"🎯 Take Profit: ${signal.take_profit:.2f} ({signal.take_profit_pct:.2f}%)")
+      logger.info(f"💰 Position Multiplier: {integrated_signal.recommended_position_multiplier:.2f}x")
+      logger.info(f"⚠️ Risk Level: {integrated_signal.risk_level}")
+
+      # ===== ИСТОЧНИК АНАЛИЗА =====
+      logger.info("-" * 80)
+      logger.info("🔧 ANALYSIS SOURCE:")
+      logger.info(f"   ├─ Analysis Mode: {integrated_signal.source_analysis_mode.value}")
+      logger.info(f"   ├─ Single-TF: {'✅ USED' if integrated_signal.used_single_tf else '❌ NOT USED'}")
+      logger.info(f"   └─ MTF: {'✅ USED' if integrated_signal.used_mtf else '❌ NOT USED'}")
+
+      # ===== SINGLE-TF CONSENSUS =====
+      if integrated_signal.single_tf_consensus:
+        consensus = integrated_signal.single_tf_consensus
+        logger.info("-" * 80)
+        logger.info("🔸 SINGLE-TF CONSENSUS:")
+        logger.info(f"   ├─ Consensus Mode: {consensus.consensus_mode}")
+        logger.info(f"   ├─ Consensus Confidence: {consensus.consensus_confidence:.3f}")
+        logger.info(f"   ├─ Agreement: {consensus.agreement_count} strategies")
+        logger.info(f"   ├─ Disagreement: {consensus.disagreement_count} strategies")
+        logger.info(f"   └─ Contributing Strategies:")
+        for strategy in consensus.contributing_strategies:
+          logger.info(f"       └─ {strategy}")
+
+      # ===== MTF SIGNAL =====
+      if integrated_signal.mtf_signal:
+        mtf = integrated_signal.mtf_signal
+        logger.info("-" * 80)
+        logger.info("🔹 MTF SIGNAL:")
+        logger.info(f"   ├─ Signal Quality: {mtf.signal_quality:.3f}")
+        logger.info(f"   ├─ Risk Level: {mtf.risk_level}")
+        logger.info(f"   ├─ Alignment Score: {mtf.alignment_score:.3f}")
+        logger.info(f"   ├─ Confluence Detected: {'✅ YES' if mtf.confluence_detected else '❌ NO'}")
+        logger.info(f"   ├─ Recommended Position Multiplier: {mtf.recommended_position_size_multiplier:.2f}x")
+
+        if mtf.divergence_type:
+          logger.info(f"   ├─ Divergence Type: {mtf.divergence_type}")
+
+        if mtf.warnings:
+          logger.info("   └─ MTF Warnings:")
+          for warning in mtf.warnings:
+            logger.info(f"       ⚠️ {warning}")
+
+      # ===== ADAPTIVE WEIGHTS =====
+      if integrated_signal.adaptive_weights:
+        logger.info("-" * 80)
+        logger.info("⚖️ ADAPTIVE WEIGHTS:")
+        for strategy, weight in integrated_signal.adaptive_weights.items():
+          logger.info(f"   ├─ {strategy}: {weight:.3f}")
+
+      # ===== MARKET REGIME =====
+      if integrated_signal.market_regime:
+        logger.info("-" * 80)
+        logger.info(f"📊 Market Regime: {integrated_signal.market_regime}")
+
+      # ===== WARNINGS =====
+      if integrated_signal.warnings:
+        logger.info("-" * 80)
+        logger.info("⚠️ WARNINGS:")
+        for warning in integrated_signal.warnings:
+          logger.info(f"   └─ {warning}")
+
+      # ===== ANALYSIS PERFORMANCE =====
+      logger.info("-" * 80)
+      logger.info("⏱️ PERFORMANCE:")
+      logger.info(f"   ├─ Analysis Duration: {integrated_signal.analysis_duration_ms:.2f}ms")
+      logger.info(f"   └─ Analysis Timestamp: {integrated_signal.analysis_timestamp}")
+
+      logger.info("=" * 80)
+
+  def _log_analysis_statistics(self):
+    """
+    Периодическое логирование статистики работы analysis loop.
+    """
+    logger.info("=" * 80)
+    logger.info("📊 ANALYSIS LOOP STATISTICS")
+    logger.info("=" * 80)
+
+    # ===== ОСНОВНЫЕ МЕТРИКИ =====
+    logger.info("🔄 CYCLES & SIGNALS:")
+    logger.info(f"   ├─ Analysis Cycles: {self.stats['analysis_cycles']}")
+    logger.info(f"   ├─ Signals Generated: {self.stats['signals_generated']}")
+    logger.info(f"   ├─ Signals Executed: {self.stats['signals_executed']}")
+    logger.info(
+      f"   └─ Execution Rate: {self.stats['signals_executed'] / max(self.stats['signals_generated'], 1) * 100:.1f}%")
+
+    # ===== TRADING ACTIVITY =====
+    logger.info("💰 TRADING ACTIVITY:")
+    logger.info(f"   ├─ Orders Placed: {self.stats['orders_placed']}")
+    logger.info(f"   ├─ Positions Opened: {self.stats['positions_opened']}")
+    logger.info(f"   ├─ Positions Closed: {self.stats['positions_closed']}")
+    logger.info(f"   └─ Total PnL: {self.stats['total_pnl']:.2f} USDT")
+
+    # ===== ADAPTIVE CONSENSUS =====
+    if self.adaptive_consensus:
+      logger.info("🔄 ADAPTIVE CONSENSUS:")
+      logger.info(f"   ├─ Consensus Achieved: {self.stats['consensus_achieved']}")
+      logger.info(f"   ├─ Consensus Failed: {self.stats['consensus_failed']}")
+      logger.info(f"   ├─ Weight Updates: {self.stats['adaptive_weight_updates']}")
+
+      consensus_rate = self.stats['consensus_achieved'] / max(
+        self.stats['consensus_achieved'] + self.stats['consensus_failed'], 1
+      ) * 100
+      logger.info(f"   └─ Consensus Rate: {consensus_rate:.1f}%")
+
+    # ===== MTF ANALYSIS =====
+    if self.mtf_manager:
+      logger.info("⏱️ MULTI-TIMEFRAME:")
+      logger.info(f"   ├─ MTF Signals: {self.stats['mtf_signals']}")
+      mtf_rate = self.stats['mtf_signals'] / max(self.stats['signals_generated'], 1) * 100
+      logger.info(f"   └─ MTF Signal Rate: {mtf_rate:.1f}%")
+
+    # ===== ML COMPONENTS =====
+    if self.ml_validator:
+      logger.info("🤖 ML COMPONENTS:")
+      logger.info(f"   ├─ ML Validations: {self.stats['ml_validations']}")
+      logger.info(f"   ├─ ML Data Collected: {self.stats['ml_data_collected']}")
+      logger.info(f"   ├─ Drift Detections: {self.stats['drift_detections']}")
+      logger.info(f"   └─ Manipulations Detected: {self.stats['manipulations_detected']}")
+
+    # ===== ERRORS & WARNINGS =====
+    logger.info("⚠️ ISSUES:")
+    logger.info(f"   ├─ Warnings: {self.stats['warnings']}")
+    logger.info(f"   └─ Errors: {self.stats['errors']}")
+
+    # ===== COMPONENT STATISTICS =====
+    if self.integrated_engine:
+      logger.info("-" * 80)
+      logger.info("🎯 INTEGRATED ENGINE STATS:")
+      engine_stats = self.integrated_engine.get_statistics()
+      for key, value in engine_stats.items():
+        logger.info(f"   ├─ {key}: {value}")
+
+    if self.adaptive_consensus:
+      logger.info("-" * 80)
+      logger.info("🔄 ADAPTIVE CONSENSUS STATS:")
+      adaptive_stats = self.adaptive_consensus.get_statistics()
+      for key, value in adaptive_stats.items():
+        logger.info(f"   ├─ {key}: {value}")
+
+    if self.mtf_manager:
+      logger.info("-" * 80)
+      logger.info("⏱️ MTF MANAGER STATS:")
+      mtf_stats = self.mtf_manager.get_statistics()
+      for key, value in mtf_stats.items():
+        logger.info(f"   ├─ {key}: {value}")
+
+    logger.info("=" * 80)
+
+  async def _send_critical_alert(self, title: str, message: str):
+    """
+    Отправка критического алерта.
+
+    Args:
+        title: Заголовок алерта
+        message: Сообщение
+    """
+    try:
+      logger.critical(f"🚨 CRITICAL ALERT: {title}")
+      logger.critical(f"   Message: {message}")
+
+      # Здесь можно добавить отправку в Telegram, Discord, Email и т.д.
+      # Например:
+      # if self.telegram_notifier:
+      #     await self.telegram_notifier.send_critical_alert(title, message)
+
+      # Или запись в специальную таблицу критических событий
+      # if self.alert_repository:
+      #     await self.alert_repository.create_critical_alert(
+      #         title=title,
+      #         message=message,
+      #         timestamp=datetime.now()
+      #     )
+
+    except Exception as e:
+      logger.error(f"Ошибка отправки критического алерта: {e}")
+
+  async def _send_drift_alert(self, symbol: str):
+    """
+    Отправка алерта о model drift.
+
+    Args:
+        symbol: Торговая пара
+    """
+    try:
+      logger.warning(f"🔔 DRIFT ALERT: {symbol}")
+      logger.warning("   Model drift обнаружен, рекомендуется переобучение")
+
+      # Здесь можно добавить отправку алерта
+      # if self.telegram_notifier:
+      #     await self.telegram_notifier.send_drift_alert(symbol)
+
+    except Exception as e:
+      logger.error(f"Ошибка отправки drift алерта: {e}")
+
+  def _handle_symbol_error(self, symbol: str, error: Exception, error_count: dict):
+    """
+    Обработка ошибки для конкретного символа.
+
+    Args:
+        symbol: Торговая пара
+        error: Exception
+        error_count: Словарь счетчиков ошибок
+    """
+    error_count[symbol] = error_count.get(symbol, 0) + 1
+
+    logger.error(
+      f"❌ [{symbol}] Ошибка анализа "
+      f"(#{error_count[symbol]}/{settings.MAX_CONSECUTIVE_ERRORS}): {error}"
+    )
+    logger.debug(traceback.format_exc())
+
+    self.stats['errors'] += 1
+
+    # Проверка превышения лимита
+    if error_count[symbol] >= settings.MAX_CONSECUTIVE_ERRORS:
+      logger.critical(
+        f"🚨 [{symbol}] Достигнут лимит последовательных ошибок "
+        f"({settings.MAX_CONSECUTIVE_ERRORS}), символ будет пропущен"
+      )
 
 # Глобальный контроллер бота
 bot_controller: Optional[BotController] = None
