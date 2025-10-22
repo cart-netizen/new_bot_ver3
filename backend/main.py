@@ -40,7 +40,7 @@ from strategy.candle_manager import CandleManager
 from strategy.correlation_manager import correlation_manager
 from strategy.daily_loss_killer import daily_loss_killer
 from strategy.orderbook_manager import OrderBookManager
-from strategy.analyzer import MarketAnalyzer
+from strategy.analyzer import MarketAnalyzer, OrderBookAnalyzer
 from strategy.position_monitor import PositionMonitor
 from strategy.reversal_detector import reversal_detector
 from strategy.risk_manager_ml_enhanced import RiskManagerMLEnhanced
@@ -173,6 +173,7 @@ class BotController:
     # ==================== БАЗОВЫЕ КОМПОНЕНТЫ ====================
     self.websocket_manager: Optional[BybitWebSocketManager] = None
     self.orderbook_managers: Dict[str, OrderBookManager] = {}
+    self.orderbook_analyzer: Optional[OrderBookAnalyzer] = None
     self.candle_managers: Dict[str, CandleManager] = {}
     self.market_analyzer: Optional[MarketAnalyzer] = None
     self.strategy_engine: Optional[StrategyEngine] = None
