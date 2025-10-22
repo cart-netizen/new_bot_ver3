@@ -6,6 +6,8 @@
 import asyncio
 import os
 import signal
+import time
+import traceback
 from datetime import datetime
 from typing import Dict, Optional, Any
 from contextlib import asynccontextmanager
@@ -152,100 +154,96 @@ class BotController:
   """Главный контроллер торгового бота."""
 
   def __init__(self):
-    """Инициализация контроллера."""
+    """
+    Инициализация контроллера с поддержкой всех фаз.
+
+    АРХИТЕКТУРА:
+    - Базовые компоненты (WebSocket, OrderBook, Candles)
+    - Strategy Manager (Фаза 1)
+    - Adaptive Consensus (Фаза 2)
+    - MTF Manager (Фаза 3)
+    - Integrated Engine (Фаза 4)
+    - ML Components
+    - Execution & Risk Management
+    """
     self.status = BotStatus.STOPPED
     self.symbols = settings.get_trading_pairs_list()
+    self.initialized = False
 
-    # Существующие компоненты
+    # ==================== БАЗОВЫЕ КОМПОНЕНТЫ ====================
     self.websocket_manager: Optional[BybitWebSocketManager] = None
     self.orderbook_managers: Dict[str, OrderBookManager] = {}
+    self.candle_managers: Dict[str, CandleManager] = {}
     self.market_analyzer: Optional[MarketAnalyzer] = None
     self.strategy_engine: Optional[StrategyEngine] = None
     self.risk_manager: Optional[RiskManager] = None
     self.execution_manager: Optional[ExecutionManager] = None
     self.balance_tracker = balance_tracker
 
-    # ===== НОВЫЕ ML КОМПОНЕНТЫ =====
-    self.candle_managers: Dict[str, CandleManager] = {}
+    # ==================== ML КОМПОНЕНТЫ ====================
     self.ml_feature_pipeline: Optional[MultiSymbolFeaturePipeline] = None
     self.ml_data_collector: Optional[MLDataCollector] = None
-
-    # Хранение последних признаков для каждого символа
     self.latest_features: Dict[str, FeatureVector] = {}
 
-    # Задачи
-    self.websocket_task: Optional[asyncio.Task] = None
-    self.analysis_task: Optional[asyncio.Task] = None
-    self.candle_update_task: Optional[asyncio.Task] = None  # НОВОЕ
+    # ==================== ФАЗА 1: EXTENDED STRATEGY MANAGER ====================
+    self.strategy_manager: Optional[ExtendedStrategyManager] = None
 
-    self.ml_stats_task: Optional[asyncio.Task] = None
+    # Флаги для включения/отключения компонентов
+    self.enable_orderbook_strategies = settings.ENABLE_ORDERBOOK_STRATEGIES if hasattr(settings,
+                                                                                       'ENABLE_ORDERBOOK_STRATEGIES') else True
+    self.enable_adaptive_consensus = settings.ENABLE_ADAPTIVE_CONSENSUS if hasattr(settings,
+                                                                                   'ENABLE_ADAPTIVE_CONSENSUS') else True
+    self.enable_mtf_analysis = settings.ENABLE_MTF_ANALYSIS if hasattr(settings, 'ENABLE_MTF_ANALYSIS') else True
+    self.enable_ml_validation = settings.ENABLE_ML_VALIDATION if hasattr(settings, 'ENABLE_ML_VALIDATION') else True
+    self.enable_paper_trading = settings.PAPER_TRADING if hasattr(settings, 'PAPER_TRADING') else False
 
-    # ============================================
-    # ML SIGNAL VALIDATOR - Создаём конфигурацию
-    # ============================================
+    # ==================== ФАЗА 2: ADAPTIVE CONSENSUS ====================
+    self.adaptive_consensus: Optional[AdaptiveConsensusManager] = None
+
+    # ==================== ФАЗА 3: MULTI-TIMEFRAME ====================
+    self.mtf_manager: Optional[MultiTimeframeManager] = None
+
+    # ==================== ФАЗА 4: INTEGRATED ENGINE ====================
+    self.integrated_engine: Optional[IntegratedAnalysisEngine] = None
+
+    # ==================== ML SIGNAL VALIDATOR ====================
+    # Создаём конфигурацию для ML Validator
     logger.info("🤖 Создание ML Signal Validator...")
-
     try:
-      # Создаём конфигурацию для ML Validator
       ml_validator_config = ValidationConfig(
-        # ML Server настройки
         model_server_url=settings.ML_SERVER_URL,
         model_version="latest",
         request_timeout=5.0,
-
-        # Health Check
         health_check_enabled=True,
         health_check_interval=30,
         health_check_timeout=2.0,
-
-        # Validation пороги
         min_ml_confidence=settings.ML_MIN_CONFIDENCE,
         confidence_boost_factor=1.2,
         confidence_penalty_factor=0.7,
-
-        # Hybrid decision веса
         ml_weight=settings.ML_WEIGHT,
         strategy_weight=settings.STRATEGY_WEIGHT,
-
-        # Fallback поведение
         use_fallback_on_error=True,
         fallback_to_strategy=True,
-
-        # Caching
         cache_predictions=True,
         cache_ttl_seconds=30,
-
-        # Advanced метрики (включаем ВСЕ)
         enable_mae_prediction=True,
         enable_manipulation_detection=True,
         enable_regime_detection=True,
         enable_feature_quality_check=True
       )
-
-      # Создаём экземпляр ML Validator (БЕЗ инициализации HTTP сессии)
       self.ml_validator = MLSignalValidator(config=ml_validator_config)
-
-      logger.info(
-        f"✓ ML Signal Validator создан: "
-        f"server={settings.ML_SERVER_URL}, "
-        f"min_confidence={settings.ML_MIN_CONFIDENCE:.2f}"
-      )
-
+      logger.info(f"✓ ML Signal Validator создан: server={settings.ML_SERVER_URL}")
     except Exception as e:
-      logger.warning(
-        f"⚠️ ML Signal Validator creation failed: {e}. "
-        f"Продолжаем без ML валидации."
-      )
+      logger.warning(f"⚠️ ML Signal Validator creation failed: {e}. Продолжаем без ML валидации.")
       self.ml_validator = None
 
+    # ==================== DETECTION SYSTEMS ====================
     # Drift Detector
     self.drift_detector = DriftDetector(
       window_size=10000,
       baseline_window_size=50000,
       drift_threshold=0.1
     )
-
-    # ==================== DETECTION SYSTEMS ====================
 
     # Spoofing Detector
     spoofing_config = SpoofingConfig(
@@ -271,126 +269,25 @@ class BotController:
     )
     self.sr_detector = SRLevelDetector(sr_config)
 
-    # ==================== STRATEGY MANAGER ====================
-
-    strategy_config = ExtendedStrategyManagerConfig(
-      consensus_mode="weighted",
-      min_strategies_for_signal=2,
-      min_consensus_confidence=0.6,
-
-      # Веса свечных стратегий
-      candle_strategy_weights={
-        'momentum': 0.20,
-        'sar_wave': 0.15,
-        'supertrend': 0.20,
-        'volume_profile': 0.15
-      },
-
-      # Веса OrderBook стратегий
-      orderbook_strategy_weights={
-        'imbalance': 0.10,
-        'volume_flow': 0.10,
-        'liquidity_zone': 0.10
-      },
-
-      # Веса Hybrid стратегий
-      hybrid_strategy_weights={
-        'smart_money': 0.15
-      },
-
-      # Включение новых стратегий
-      enable_orderbook_strategies=True,  # Включить OrderBook стратегии
-      enable_hybrid_strategies=True  # Включить Hybrid стратегии
-    )
-
-    self.strategy_manager = ExtendedStrategyManager(strategy_config)
-
-    # ========== ADAPTIVE CONSENSUS (НОВОЕ) ==========
-    if settings.ENABLE_ADAPTIVE_CONSENSUS:
-      logger.info("Инициализация Adaptive Consensus...")
-
-      # Конфигурация компонентов
-      adaptive_config = AdaptiveConsensusConfig(
-        # Enable/disable компонентов
-        enable_performance_tracking=True,
-        enable_regime_detection=True,
-        enable_weight_optimization=True,
-
-        # Performance Tracker Config
-        performance_tracker_config=PerformanceTrackerConfig(
-          data_dir="data/strategy_performance",
-          enable_persistence=True,
-          short_term_hours=24,
-          medium_term_days=7,
-          long_term_days=30,
-          min_signals_for_metrics=20,
-          min_closed_signals_for_metrics=10
-        ),
-
-        # Regime Detector Config
-        regime_detector_config=RegimeDetectorConfig(
-          adx_strong_threshold=25.0,
-          adx_weak_threshold=15.0,
-          update_frequency_seconds=300  # 5 минут
-        ),
-
-        # Weight Optimizer Config
-        weight_optimizer_config=WeightOptimizerConfig(
-          optimization_method=OptimizationMethod.HYBRID,  # Performance + Regime
-          min_weight=0.05,
-          max_weight=0.40,
-          update_frequency_seconds=21600,  # 6 часов
-          regime_weight_blend=0.6  # 60% performance, 40% regime
-        ),
-
-        # Consensus Config
-        consensus_mode="adaptive_weighted",
-        min_consensus_confidence=0.6,
-        conflict_resolution_mode="performance_priority",
-        enable_quality_metrics=True,
-        min_consensus_quality=0.6
-      )
-
-      # Инициализация AdaptiveConsensusManager
-      self.adaptive_consensus_manager = AdaptiveConsensusManager(
-        config=adaptive_config,
-        strategy_manager=self.strategy_manager
-      )
-
-      logger.info("✅ Adaptive Consensus инициализирован")
-    else:
-      self.adaptive_consensus_manager = None
-      logger.info("Adaptive Consensus отключен")
-
-    # Фаза 2: Adaptive Consensus
-    self.adaptive_consensus: Optional[AdaptiveConsensusManager] = None
-
-    # Фаза 3: Multi-Timeframe
-    self.mtf_manager: Optional[MultiTimeframeManager] = None
-
-    # Фаза 4: Integrated Engine
-    self.integrated_engine: Optional[IntegratedAnalysisEngine] = None
-
-    logger.info("BotController инициализирован с поддержкой Adaptive Consensus + MTF")
-
-    # ===== SCREENER MANAGER (НОВОЕ) =====
-    self.screener_manager: Optional[ScreenerManager] = None
+    # ==================== ЗАДАЧИ ====================
+    self.websocket_task: Optional[asyncio.Task] = None
+    self.analysis_task: Optional[asyncio.Task] = None
+    self.candle_update_task: Optional[asyncio.Task] = None
+    self.ml_stats_task: Optional[asyncio.Task] = None
     self.screener_broadcast_task: Optional[asyncio.Task] = None
-    # self.screener_manager = ScreenerManager()
-
-    self.dynamic_symbols_manager: Optional[DynamicSymbolsManager] = None
     self.symbols_refresh_task: Optional[asyncio.Task] = None
-
-    # Task для обновления корреляций ==========
     self.correlation_update_task: Optional[asyncio.Task] = None
-
-    # Position Monitor
-    self.position_monitor: Optional[PositionMonitor] = None
     self.position_monitor_task: Optional[asyncio.Task] = None
 
+    # ==================== ДРУГИЕ КОМПОНЕНТЫ ====================
+    self.screener_manager: Optional[ScreenerManager] = None
+    self.dynamic_symbols_manager: Optional[DynamicSymbolsManager] = None
+    self.position_monitor: Optional[PositionMonitor] = None
+    self.weight_optimization_task: Optional[asyncio.Task] = None
+    self.mtf_update_task: Optional[asyncio.Task] = None
     self.running = False
 
-    logger.info("Инициализирован контроллер бота с ML поддержкой")
+    logger.info("✅ BotController инициализирован с поддержкой Фаз 1-4")
 
   async def initialize(self):
     """Инициализация всех компонентов бота."""
@@ -399,9 +296,15 @@ class BotController:
       logger.info("ИНИЦИАЛИЗАЦИЯ КОМПОНЕНТОВ БОТА (ML-ENHANCED)")
       logger.info("=" * 80)
 
+      initialization_start = time.time()
+
       # Инициализируем REST клиент
       await rest_client.initialize()
       logger.info("✓ REST клиент инициализирован")
+
+      # Инициализируем анализатор рынка (пока без символов)
+      self.market_analyzer = MarketAnalyzer()
+      logger.info("✓ Анализатор рынка инициализирован")
 
       # Проверяем подключение к бирже
       server_time = await rest_client.get_server_time()
@@ -424,11 +327,6 @@ class BotController:
         )
         logger.info("✓ Dynamic Symbols Manager инициализирован")
 
-      # ===== ВАЖНО: НЕ создаем WebSocket Manager и ML Pipeline здесь! =====
-      # self.symbols пока не определены
-      # Эти компоненты будут созданы в start() после выбора пар
-      # WebSocket Manager - зависит от символов
-      # ML Feature Pipeline - зависит от символов
 
       # ===== ML DATA COLLECTOR =====
       self.ml_data_collector = MLDataCollector(
@@ -438,38 +336,317 @@ class BotController:
       await self.ml_data_collector.initialize()
       logger.info("✓ ML Data Collector инициализирован")
 
-      # Инициализируем анализатор рынка (пока без символов)
-      self.market_analyzer = MarketAnalyzer()
-      logger.info("✓ Анализатор рынка инициализирован")
+      # ========== ЭТАП 5: STRATEGY MANAGER (ФАЗА 1) ==========
+      logger.info("🎯 [5/10] Инициализация ExtendedStrategyManager (Фаза 1)...")
 
-      # Инициализируем стратегию
+      from strategies.strategy_manager import StrategyPriority
+
+      # Конфигурация Extended Strategy Manager
+      strategy_config = ExtendedStrategyManagerConfig(
+        consensus_mode="weighted",  # weighted / majority / unanimous
+        min_strategies_for_signal=2,
+        min_consensus_confidence=0.6,
+
+        # Веса CANDLE стратегий
+        candle_strategy_weights={
+          'momentum': 0.20,
+          'sar_wave': 0.15,
+          'supertrend': 0.20,
+          'volume_profile': 0.15
+        },
+
+        # Веса ORDERBOOK стратегий
+        orderbook_strategy_weights={
+          'imbalance': 0.10,
+          'volume_flow': 0.10,
+          'liquidity_zone': 0.10
+        } if self.enable_orderbook_strategies else {},
+
+        # Веса HYBRID стратегий
+        hybrid_strategy_weights={
+          'smart_money': 0.15
+        } if self.enable_orderbook_strategies else {},
+
+        # Приоритеты стратегий
+        strategy_priorities={
+          'momentum': StrategyPriority.HIGH,
+          'supertrend': StrategyPriority.HIGH,
+          'liquidity_zone': StrategyPriority.HIGH,
+          'smart_money': StrategyPriority.HIGH,
+          'sar_wave': StrategyPriority.MEDIUM,
+          'volume_profile': StrategyPriority.MEDIUM,
+          'imbalance': StrategyPriority.MEDIUM,
+          'volume_flow': StrategyPriority.MEDIUM
+        },
+
+        # Включение типов стратегий
+        enable_orderbook_strategies=self.enable_orderbook_strategies,
+        enable_hybrid_strategies=self.enable_orderbook_strategies
+      )
+
+      self.strategy_manager = ExtendedStrategyManager(strategy_config)
+      logger.info("✅ ExtendedStrategyManager инициализирован")
+      logger.info(f"📊 Активные стратегии: {list(self.strategy_manager.get_all_strategy_names())}")
+
+      # ========== ЭТАП 6: ADAPTIVE CONSENSUS (ФАЗА 2) ==========
+      if self.enable_adaptive_consensus:
+        logger.info("🔄 [6/10] Инициализация Adaptive Consensus Manager (Фаза 2)...")
+
+        try:
+          adaptive_config = AdaptiveConsensusConfig(
+            # Enable/disable компонентов
+            enable_performance_tracking=True,
+            enable_regime_detection=True,
+            enable_weight_optimization=True,
+
+            # Performance Tracker Config
+            performance_tracker_config=PerformanceTrackerConfig(
+              data_dir="data/strategy_performance",
+              enable_persistence=True,
+              short_term_hours=24,
+              medium_term_days=7,
+              long_term_days=30,
+              min_signals_for_metrics=settings.ADAPTIVE_MIN_SIGNALS_FOR_EVALUATION if hasattr(settings,
+                                                                                              'ADAPTIVE_MIN_SIGNALS_FOR_EVALUATION') else 20,
+              min_closed_signals_for_metrics=10
+            ),
+
+            # Regime Detector Config
+            regime_detector_config=RegimeDetectorConfig(
+              adx_strong_threshold=25.0,
+              adx_weak_threshold=15.0,
+              update_frequency_seconds=300  # 5 минут
+            ),
+
+            # Weight Optimizer Config
+            weight_optimizer_config=WeightOptimizerConfig(
+              optimization_method=OptimizationMethod.HYBRID,  # Performance + Regime
+              min_weight=0.05,
+              max_weight=0.40,
+              update_frequency_seconds=settings.ADAPTIVE_WEIGHT_UPDATE_FREQUENCY_SECONDS if hasattr(settings,
+                                                                                                    'ADAPTIVE_WEIGHT_UPDATE_FREQUENCY_SECONDS') else 21600,
+              regime_weight_blend=0.6,  # 60% performance, 40% regime
+              min_signals_for_optimization=30
+            ),
+
+            # Consensus Config
+            consensus_mode="adaptive_weighted",
+            min_consensus_confidence=0.6,
+            conflict_resolution_mode="performance_priority",
+            enable_quality_metrics=True,
+            min_consensus_quality=0.6
+          )
+
+          self.adaptive_consensus = AdaptiveConsensusManager(
+            config=adaptive_config,
+            strategy_manager=self.strategy_manager
+          )
+
+          logger.info("✅ Adaptive Consensus Manager инициализирован")
+
+        except Exception as e:
+          logger.error(f"❌ Ошибка инициализации Adaptive Consensus: {e}")
+          logger.warning("⚠️ Продолжаем без Adaptive Consensus")
+          self.adaptive_consensus = None
+      else:
+        logger.info("ℹ️ [6/10] Adaptive Consensus отключен в настройках")
+
+      # ========== ЭТАП 7: MTF MANAGER (ФАЗА 3) ==========
+      if self.enable_mtf_analysis:
+        logger.info("⏱️ [7/10] Инициализация Multi-Timeframe Manager (Фаза 3)...")
+
+        try:
+          # Парсинг таймфреймов из настроек
+          mtf_active_tfs = settings.MTF_ACTIVE_TIMEFRAMES if hasattr(settings,
+                                                                     'MTF_ACTIVE_TIMEFRAMES') else "1m,5m,15m,1h"
+          mtf_primary_tf = settings.MTF_PRIMARY_TIMEFRAME if hasattr(settings, 'MTF_PRIMARY_TIMEFRAME') else "1h"
+          mtf_execution_tf = settings.MTF_EXECUTION_TIMEFRAME if hasattr(settings, 'MTF_EXECUTION_TIMEFRAME') else "1m"
+          mtf_synthesis_mode = settings.MTF_SYNTHESIS_MODE if hasattr(settings, 'MTF_SYNTHESIS_MODE') else "top_down"
+          mtf_min_quality = settings.MTF_MIN_QUALITY if hasattr(settings, 'MTF_MIN_QUALITY') else 0.60
+          mtf_staggered_interval = settings.MTF_STAGGERED_UPDATE_INTERVAL if hasattr(settings,
+                                                                                     'MTF_STAGGERED_UPDATE_INTERVAL') else 5
+
+          active_tfs_str = mtf_active_tfs.split(',')
+          active_timeframes = [Timeframe(tf.strip()) for tf in active_tfs_str]
+          primary_tf = Timeframe(mtf_primary_tf)
+          execution_tf = Timeframe(mtf_execution_tf)
+
+          logger.info(f"📊 MTF Таймфреймы: {[tf.value for tf in active_timeframes]}")
+          logger.info(f"🎯 Primary TF: {primary_tf.value}, Execution TF: {execution_tf.value}")
+
+          # Конфигурация MTF Manager
+          mtf_config = MTFManagerConfig(
+            enabled=True,
+
+            # Coordinator Config
+            coordinator_config=MultiTimeframeConfig(
+              active_timeframes=active_timeframes,
+              primary_timeframe=primary_tf,
+              execution_timeframe=execution_tf,
+              enable_caching=True,
+              staggered_update_interval=mtf_staggered_interval,
+              enable_validation=True
+            ),
+
+            # Aligner Config
+            aligner_config=AlignmentConfig(
+              htf_weight=0.50,  # Higher Timeframe weight
+              mtf_weight=0.30,  # Medium Timeframe weight
+              ltf_weight=0.20,  # Lower Timeframe weight
+              min_alignment_score=0.65,
+              enable_confluence_detection=True,
+              min_confluence_zones=1,
+              enable_divergence_detection=True
+            ),
+
+            # Synthesizer Config
+            synthesizer_config=SynthesizerConfig(
+              synthesis_mode=SynthesisMode(mtf_synthesis_mode),
+              min_signal_quality=mtf_min_quality,
+              enable_dynamic_sizing=True,
+              position_size_multiplier_range=(0.3, 1.5),
+              enable_smart_sl=True,
+              default_risk_reward_ratio=2.0
+            ),
+
+            # Quality Control
+            min_quality_threshold=mtf_min_quality,
+            enable_quality_scoring=True,
+
+            # Fallback
+            fallback_to_single_tf=True,
+            min_timeframes_for_signal=2
+          )
+
+          self.mtf_manager = MultiTimeframeManager(
+            strategy_manager=self.strategy_manager,
+            config=mtf_config
+          )
+
+          # Инициализация символов в MTF Manager
+          for symbol in self.symbols:
+            await self.mtf_manager.initialize_symbol(symbol)
+            logger.info(f"✅ {symbol}: MTF Manager инициализирован")
+
+          logger.info("✅ Multi-Timeframe Manager инициализирован")
+
+        except Exception as e:
+          logger.error(f"❌ Ошибка инициализации MTF Manager: {e}")
+          logger.warning("⚠️ Продолжаем без MTF Analysis")
+          self.mtf_manager = None
+      else:
+        logger.info("ℹ️ [7/10] Multi-Timeframe Analysis отключен в настройках")
+
+      # ========== ЭТАП 8: INTEGRATED ENGINE (ФАЗА 4) ==========
+      logger.info("🎯 [8/10] Инициализация Integrated Analysis Engine (Фаза 4)...")
+
+      try:
+        integrated_mode = settings.INTEGRATED_ANALYSIS_MODE if hasattr(settings,
+                                                                       'INTEGRATED_ANALYSIS_MODE') else "hybrid"
+        hybrid_mtf_priority = settings.HYBRID_MTF_PRIORITY if hasattr(settings, 'HYBRID_MTF_PRIORITY') else 0.6
+        hybrid_min_agreement = settings.HYBRID_MIN_AGREEMENT if hasattr(settings, 'HYBRID_MIN_AGREEMENT') else True
+        hybrid_conflict_resolution = settings.HYBRID_CONFLICT_RESOLUTION if hasattr(settings,
+                                                                                    'HYBRID_CONFLICT_RESOLUTION') else "highest_quality"
+        min_combined_quality = settings.MIN_COMBINED_QUALITY if hasattr(settings, 'MIN_COMBINED_QUALITY') else 0.65
+
+        integrated_config = IntegratedAnalysisConfig(
+          # Режим анализа
+          analysis_mode=AnalysisMode(integrated_mode),
+
+          # Доступность компонентов
+          enable_adaptive_consensus=(self.adaptive_consensus is not None),
+          enable_mtf_analysis=(self.mtf_manager is not None),
+
+          # Hybrid режим настройки
+          hybrid_mtf_priority=hybrid_mtf_priority,
+          hybrid_min_agreement=hybrid_min_agreement,
+          hybrid_conflict_resolution=hybrid_conflict_resolution,
+
+          # Quality control
+          min_combined_quality=min_combined_quality,
+          enable_quality_scoring=True,
+
+          # Fallback
+          fallback_to_single_tf=True,
+          fallback_to_basic_consensus=True
+        )
+
+        self.integrated_engine = IntegratedAnalysisEngine(integrated_config)
+
+        # Инициализация символов в Integrated Engine
+        for symbol in self.symbols:
+          await self.integrated_engine.initialize_symbol(symbol)
+          logger.info(f"✅ {symbol}: Integrated Engine инициализирован")
+
+        logger.info("✅ Integrated Analysis Engine инициализирован")
+        logger.info(f"📊 Режим анализа: {integrated_mode}")
+
+      except Exception as e:
+        logger.error(f"❌ Критическая ошибка инициализации Integrated Engine: {e}")
+        raise  # Критическая ошибка - прерываем инициализацию
+
+
+      # Инициализируем базовую стратегию
       self.strategy_engine = StrategyEngine()
       logger.info("✓ Торговая стратегия инициализирована")
 
-      # # Инициализируем риск-менеджер
-      # self.risk_manager = RiskManager(default_leverage=settings.DEFAULT_LEVERAGE)
-      # logger.info("✓ Риск-менеджер инициализирован")
-
-      # Инициализируем менеджер исполнения
-
       # # Передаем список торгуемых символов
       # await correlation_manager.initialize(self.symbols)
-
-      logger.info("✓ CorrelationManager инициализирован")
-
 
 
       logger.info("=" * 80)
       logger.info("БАЗОВЫЕ КОМПОНЕНТЫ ИНИЦИАЛИЗИРОВАНЫ (БЕЗ WEBSOCKET)")
       logger.info("=" * 80)
+      self.initialized = True
+      self.startup_timestamp = datetime.now()
+
+      initialization_time = time.time() - initialization_start
+      logger.info("=" * 80)
+      logger.info(f"✅ ИНИЦИАЛИЗАЦИЯ ЗАВЕРШЕНА за {initialization_time:.2f}с")
+      logger.info("=" * 80)
+      logger.info(f"📊 Компоненты инициализированы:")
+      logger.info(f"   - Базовые сервисы: ✅")
+      logger.info(f"   - Market Data Managers: ✅ ({len(self.symbols)} пар)")
+      logger.info(f"   - Strategy Manager: ✅")
+      logger.info(f"   - Adaptive Consensus: {'✅' if self.adaptive_consensus else '❌'}")
+      logger.info(f"   - MTF Manager: {'✅' if self.mtf_manager else '❌'}")
+      logger.info(f"   - Integrated Engine: ✅")
+      logger.info(f"   - ML Components: {'✅' if self.ml_validator else '⚠️'}")
+      logger.info(f"   - Execution & Risk: ⏳ (в start())")
+      logger.info("=" * 80)
 
     except Exception as e:
-      logger.error(f"Ошибка инициализации бота: {e}")
+      logger.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА ИНИЦИАЛИЗАЦИИ: {e}")
+      logger.error(traceback.format_exc())
       log_exception(logger, e, "Инициализация бота")
-      raise
+
+      # Cleanup частично инициализированных компонентов
+      await self._cleanup_on_error()
+
+      raise RuntimeError(f"Не удалось инициализировать BotController: {e}") from e
 
   async def start(self):
-    """Запуск бота с правильной последовательностью инициализации."""
+    """Запуск бота с правильной последовательностью инициализации.
+    ПОСЛЕДОВАТЕЛЬНОСТЬ:
+    1. ML Signal Validator - инициализация HTTP сессии
+    2. Risk Manager - получение баланса и инициализация
+    3. Execution Manager - создание и запуск
+    4. Balance Tracker - запуск
+    5. Daily Loss Killer - запуск
+    6. Screener Manager (опционально) - запуск
+    7. Dynamic Symbols (опционально) - выбор пар
+    8. Correlation Manager - инициализация
+    9. ML Feature Pipeline - создание для финальных символов
+    10. OrderBook/Candle Managers - создание для финальных символов
+    11. Market Analyzer - добавление символов
+    12. Position Monitor - создание
+    13. WebSocket Manager - создание и подключение
+    14. Historical Candles - загрузка
+    15. Analysis Loop - запуск
+    16. Position Monitor - запуск
+    17. Вспомогательные задачи - запуск
+
+    """
     if self.status == BotStatus.RUNNING:
       logger.warning("Бот уже запущен")
       return
@@ -480,9 +657,7 @@ class BotController:
       logger.info("ЗАПУСК ТОРГОВОГО БОТА (ML-ENHANCED)")
       logger.info("=" * 80)
 
-      # ============================================
-      # ML SIGNAL VALIDATOR - Инициализация
-      # ============================================
+      # ========== 1. ML SIGNAL VALIDATOR - ИНИЦИАЛИЗАЦИЯ ==========
       # ВАЖНО: Инициализируем HTTP сессию и health check
       if self.ml_validator:
         logger.info("🤖 Инициализация ML Signal Validator...")
@@ -498,8 +673,12 @@ class BotController:
       else:
         logger.warning("⚠️ ML Signal Validator не создан, пропускаем инициализацию")
 
+      # ========== 2. RISK MANAGER - ИНИЦИАЛИЗАЦИЯ ==========
+
       # Инициализация риск-менеджера с реальным балансом
       await self._initialize_risk_manager()
+
+      # ========== 3. EXECUTION MANAGER - СОЗДАНИЕ И ЗАПУСК ==========
 
       self.execution_manager = ExecutionManager(self.risk_manager)
       logger.info("✓ Менеджер исполнения инициализирован")
@@ -508,19 +687,17 @@ class BotController:
       await self.execution_manager.start()
       logger.info("✓ Менеджер исполнения запущен")
 
+      # ========== 4. BALANCE TRACKER - ЗАПУСК ==========
+
       # Запускаем трекер баланса
       await self.balance_tracker.start()
       logger.info("✓ Трекер баланса запущен")
 
-      # ========== Запускаем Daily Loss Killer ==========
+      # ========== 5. DAILY LOSS KILLER - ЗАПУСК ===========
       await daily_loss_killer.start()
       logger.info("✓ Daily Loss Killer запущен")
 
-      # # Инициализация ML Validator
-      # await self.ml_validator.initialize()
-      # logger.info("✅ ML Signal Validator инициализирован")
-
-      # ===== SCREENER MANAGER - Запускаем =====
+      # ========== 6. SCREENER MANAGER (ОПЦИОНАЛЬНО) - ЗАПУСК ==========
       if self.screener_manager:
         logger.info("Запуск Screener Manager...")
         await self.screener_manager.start()
@@ -534,7 +711,7 @@ class BotController:
 
         logger.info("✓ Screener Manager запущен")
 
-        # ===== DYNAMIC SYMBOLS - Выбираем финальный список пар =====
+        # ========== 7. DYNAMIC SYMBOLS (ОПЦИОНАЛЬНО) - ВЫБОР ПАР ==========
         if settings.DYNAMIC_SYMBOLS_ENABLED and self.dynamic_symbols_manager:
           logger.info("Динамический отбор торговых пар...")
 
@@ -554,7 +731,7 @@ class BotController:
         self.symbols = settings.get_trading_pairs_list()
         logger.info(f"✓ Screener отключен, статический список: {len(self.symbols)} пар")
 
-
+      # ========== 8. CORRELATION MANAGER - ИНИЦИАЛИЗАЦИЯ ==========
 
       logger.info("=" * 80)
       logger.info("ИНИЦИАЛИЗАЦИЯ CORRELATION MANAGER")
@@ -569,7 +746,7 @@ class BotController:
       )
 
 
-      # ===== КРИТИЧЕСКИ ВАЖНО: СОЗДАЕМ ML Feature Pipeline ЗДЕСЬ =====
+      # ========== 9. ML FEATURE PIPELINE - СОЗДАНИЕ ДЛЯ ФИНАЛЬНЫХ СИМВОЛОВ ==========
       logger.info("Создание ML Feature Pipeline...")
       self.ml_feature_pipeline = MultiSymbolFeaturePipeline(
         symbols=self.symbols,  # ← Правильные динамические символы!
@@ -578,7 +755,7 @@ class BotController:
       )
       logger.info(f"✓ ML Feature Pipeline создан для {len(self.symbols)} символов")
 
-      # ===== Создаем менеджеры стакана для ФИНАЛЬНЫХ пар =====
+      # ========== 10. ORDERBOOK/CANDLE MANAGERS - СОЗДАНИЕ ДЛЯ ФИНАЛЬНЫХ ПАР ==========
       logger.info(f"Создание менеджеров стакана для {len(self.symbols)} пар...")
       for symbol in self.symbols:
         self.orderbook_managers[symbol] = OrderBookManager(symbol)
@@ -594,11 +771,12 @@ class BotController:
         )
       logger.info(f"✓ Создано {len(self.candle_managers)} менеджеров свечей")
 
-
-      # ===== Добавляем символы в анализатор =====
+      # ========== 11. MARKET ANALYZER - ДОБАВЛЕНИЕ СИМВОЛОВ ==========
       for symbol in self.symbols:
         self.market_analyzer.add_symbol(symbol)
       logger.info(f"✓ {len(self.symbols)} символов добавлено в анализатор")
+
+      # ========== 12. POSITION MONITOR - СОЗДАНИЕ ==========
 
       # НОВОЕ: Создание Position Monitor (ПОСЛЕ создания всех менеджеров)
       # ВАЖНО: Создаем ПОСЛЕ того, как все зависимости готовы:
@@ -630,7 +808,8 @@ class BotController:
         f"candle managers и {len(self.orderbook_managers)} orderbook managers"
       )
 
-      # ===== ТЕПЕРЬ создаем WebSocket Manager с ПРАВИЛЬНЫМИ символами =====
+      # ========== 13. WEBSOCKET MANAGER - СОЗДАНИЕ И ПОДКЛЮЧЕНИЕ ==========
+
       logger.info("Создание WebSocket Manager...")
       logger.info(f"Символы для WebSocket: {self.symbols[:5]}..." if len(
         self.symbols) > 5 else f"Символы для WebSocket: {self.symbols}")
@@ -641,31 +820,39 @@ class BotController:
       )
       logger.info("✓ WebSocket менеджер создан с правильными символами")
 
-      # ===== Загружаем исторические свечи =====
+      # ========== 14. HISTORICAL CANDLES - ЗАГРУЗКА ==========
+
       await self._load_historical_candles()
       logger.info("✓ Исторические свечи загружены")
 
-      # ===== Запускаем WebSocket соединения =====
+      # ========== 15. WEBSOCKET CONNECTIONS - ЗАПУСК ==========
+
       self.websocket_task = asyncio.create_task(
         self.websocket_manager.start()
       )
       logger.info("✓ WebSocket соединения запущены")
 
-      # ===== Запускаем остальные задачи =====
+      # ========== 16. CANDLE UPDATE LOOP - ЗАПУСК ==========
+
       self.candle_update_task = asyncio.create_task(
         self._candle_update_loop()
       )
       logger.info("✓ Цикл обновления свечей запущен")
 
+      # ========== 17. ML STATS LOOP - ЗАПУСК ==========
+
       self.ml_stats_task = asyncio.create_task(
         self._ml_stats_loop()
       )
+
+      # ========== 18. ANALYSIS LOOP - ЗАПУСК ==========
 
       self.analysis_task = asyncio.create_task(
         self._analysis_loop_ml_enhanced()
       )
       logger.info("✓ Цикл анализа (ML-Enhanced) запущен")
 
+      # ========== 19. POSITION MONITOR - ЗАПУСК ==========
 
       # ========== ЗАПУСК POSITION MONITOR ==========
       # ВАЖНО: Запускаем ПОСЛЕ analysis_task, так как:
@@ -673,15 +860,16 @@ class BotController:
       # 2. execution_manager открывает позиции
       # 3. position_monitor мониторит открытые позиции
 
-
       if self.position_monitor:
         await self.position_monitor.start()
         logger.info("✓ Position Monitor запущен")
 
+      # ========== 20. FSM CLEANUP TASK - ЗАПУСК ==========
+
       asyncio.create_task(fsm_cleanup_task())
       logger.info("✓ FSM Cleanup Task запланирован")
 
-      # ===== Запускаем задачу обновления списка пар =====
+      # ========== 21. SYMBOLS REFRESH (ОПЦИОНАЛЬНО) - ЗАПУСК ==========
       if settings.DYNAMIC_SYMBOLS_ENABLED and self.dynamic_symbols_manager:
         logger.info("Запуск задачи обновления списка пар...")
         self.symbols_refresh_task = asyncio.create_task(
@@ -689,7 +877,7 @@ class BotController:
         )
         logger.info("✓ Задача обновления списка пар запущена")
 
-      # ========== НОВОЕ: Запуск периодического обновления корреляций ==========
+      # ========== 22. CORRELATION UPDATE - ЗАПУСК ==========
       if correlation_manager.enabled:
         logger.info("Запуск периодического обновления корреляций...")
         self.correlation_update_task = asyncio.create_task(
@@ -699,16 +887,35 @@ class BotController:
 
       logger.info("✓ Запущено периодическое обновление корреляций")
 
-      # ==========================================
-      # ЗАПУСК TRAILING STOP MANAGER
-      # ==========================================
+      # ========== 23. TRAILING STOP MANAGER - ЗАПУСК ==========
+
       logger.info("Запуск Trailing Stop Manager...")
       await trailing_stop_manager.start()
+
+      # ========== 24. ЗАПУСК ADAPTIVE WEIGHT OPTIMIZATION ==========
+
+      # Периодическая оптимизация весов стратегий
+      self.weight_optimization_task = asyncio.create_task(
+        self._weight_optimization_loop(),
+        name="weight_optimization"
+      )
+      logger.info("✅ Adaptive Weight Optimization запущен")
+
+      # ========== 25. ЗАПУСК MTF UPDATES ==========
+
+      # Staggered обновления таймфреймов
+      self.mtf_update_task = asyncio.create_task(
+        self._mtf_update_loop(),
+        name="mtf_updates"
+      )
 
       # Уведомляем фронтенд
       from api.websocket import broadcast_bot_status
       await broadcast_bot_status("running", {
         "symbols": self.symbols,
+        "integrated_mode": True,
+        "adaptive_consensus_enabled": self.adaptive_consensus is not None,
+        "mtf_enabled": self.mtf_manager is not None,
         "ml_enabled": True,
         "position_monitor_enabled": self.position_monitor.enabled if self.position_monitor else False,
         "message": "Бот успешно запущен с ML поддержкой"
@@ -2103,6 +2310,109 @@ class BotController:
         logger.error(f"Ошибка в screener broadcast loop: {e}")
         await asyncio.sleep(interval)
 
+  # ============================================================================
+  # BACKGROUND TASK: Weight Optimization Loop
+  # ============================================================================
+
+  async def _weight_optimization_loop(self):
+    """
+    Фоновый цикл оптимизации весов стратегий (Adaptive Consensus).
+
+    Частота: Каждые 6 часов (по умолчанию)
+    """
+    logger.info("🔄 Weight Optimization Loop started")
+
+    if not self.adaptive_consensus:
+      logger.warning("⚠️ Adaptive Consensus не инициализирован, loop остановлен")
+      return
+
+    error_count = 0
+    max_errors = 5
+
+    while self.status == BotStatus.RUNNING:
+      try:
+        # Оптимизация весов для каждого символа
+        for symbol in self.symbols:
+          try:
+            update_result = await self.adaptive_consensus.optimize_weights(symbol)
+
+            if update_result:
+              logger.info(
+                f"⚖️ [{symbol}] Веса обновлены: "
+                f"изменено {update_result['strategies_updated']} стратегий"
+              )
+              self.stats['adaptive_weight_updates'] += 1
+
+          except Exception as e:
+            logger.error(f"❌ Ошибка оптимизации весов для {symbol}: {e}")
+
+        # Reset error counter
+        error_count = 0
+
+        # Интервал обновления (по умолчанию 6 часов)
+        await asyncio.sleep(settings.ADAPTIVE_WEIGHT_UPDATE_FREQUENCY_SECONDS)
+
+      except Exception as e:
+        error_count += 1
+        logger.error(f"❌ Ошибка в Weight Optimization Loop: {e}")
+
+        if error_count >= max_errors:
+          logger.critical(f"🚨 Weight Optimization Loop: превышен лимит ошибок")
+          break
+
+        await asyncio.sleep(3600)  # 1 hour
+
+    logger.warning("⚠️ Weight Optimization Loop остановлен")
+
+  # ============================================================================
+  # BACKGROUND TASK: MTF Update Loop
+  # ============================================================================
+
+  async def _mtf_update_loop(self):
+    """
+    Фоновый цикл staggered обновления MTF таймфреймов.
+
+    Функции:
+    - Обновление свечей на разных таймфреймах
+    - Staggered updates (не все TF одновременно)
+    - Валидация данных
+    """
+    logger.info("🔄 MTF Update Loop started")
+
+    if not self.mtf_manager:
+      logger.warning("⚠️ MTF Manager не инициализирован, loop остановлен")
+      return
+
+    error_count = 0
+    max_errors = 10
+
+    while self.status == BotStatus.RUNNING:
+      try:
+        # Обновление таймфреймов для всех символов
+        for symbol in self.symbols:
+          try:
+            await self.mtf_manager.update_all_timeframes(symbol)
+          except Exception as e:
+            logger.error(f"❌ Ошибка MTF update для {symbol}: {e}")
+
+        # Reset error counter
+        error_count = 0
+
+        # Staggered interval (небольшая задержка между обновлениями)
+        await asyncio.sleep(settings.MTF_STAGGERED_UPDATE_INTERVAL)
+
+      except Exception as e:
+        error_count += 1
+        logger.error(f"❌ Ошибка в MTF Update Loop: {e}")
+
+        if error_count >= max_errors:
+          logger.critical(f"🚨 MTF Update Loop: превышен лимит ошибок")
+          break
+
+        await asyncio.sleep(60)
+
+    logger.warning("⚠️ MTF Update Loop остановлен")
+
   # async def _initialize_risk_manager(self):
   #   """Инициализация Risk Manager."""
   #   # Создаём без баланса
@@ -2208,6 +2518,30 @@ class BotController:
     except Exception as e:
         logger.error(f"❌ Ошибка инициализации Risk Manager: {e}", exc_info=True)
         raise
+
+  async def _cleanup_on_error(self):
+    """Cleanup частично инициализированных компонентов при ошибке."""
+    logger.warning("⚠️ Выполняется cleanup после ошибки инициализации...")
+
+    try:
+      # Закрываем WebSocket соединения
+      if self.websocket_manager:
+        try:
+          await self.websocket_manager.stop()
+        except Exception as e:
+          logger.error(f"Ошибка при cleanup WebSocket: {e}")
+
+      # Закрываем ML Validator
+      if hasattr(self, 'ml_validator') and self.ml_validator:
+        try:
+          await self.ml_validator.cleanup()
+        except Exception as e:
+          logger.error(f"Ошибка при cleanup ML Validator: {e}")
+
+      logger.info("✓ Cleanup завершен")
+
+    except Exception as e:
+      logger.error(f"Ошибка в процессе cleanup: {e}")
 
 # Глобальный контроллер бота
 bot_controller: Optional[BotController] = None

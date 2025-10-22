@@ -140,6 +140,9 @@ class Settings(BaseSettings):
     description="Включить адаптивный консенсус стратегий"
   )
 
+  ADAPTIVE_MIN_SIGNALS_FOR_EVALUATION: int = Field(default=20, env="ADAPTIVE_MIN_SIGNALS_FOR_EVALUATION")
+  ADAPTIVE_WEIGHT_UPDATE_FREQUENCY_SECONDS: int = Field(default=21600, env="ADAPTIVE_WEIGHT_UPDATE_FREQUENCY_SECONDS")
+
   # Performance Tracking
   PERFORMANCE_DATA_DIR: str = Field(
     default="data/strategy_performance",
@@ -217,6 +220,8 @@ class Settings(BaseSettings):
     description="Минимальное качество MTF сигнала"
   )
 
+  MTF_STAGGERED_UPDATE_INTERVAL: int = Field(default=30, env="MTF_STAGGERED_UPDATE_INTERVAL")
+
   # ==================== INTEGRATED ENGINE SETTINGS ====================
 
   # Integrated Analysis Engine
@@ -249,6 +254,16 @@ class Settings(BaseSettings):
     env="MIN_COMBINED_QUALITY",
     description="Минимальное качество интегрированного сигнала"
   )
+
+  # === ДОПОЛНИТЕЛЬНЫЕ ===
+  ANALYSIS_WARNING_THRESHOLD: float = Field(default=2.0, env="ANALYSIS_WARNING_THRESHOLD")
+  MIN_CANDLES_FOR_ANALYSIS: int = Field(default=50, env="MIN_CANDLES_FOR_ANALYSIS")
+  POSITION_CHECK_INTERVAL: int = Field(default=30, env="POSITION_CHECK_INTERVAL")
+  RECOVERY_CHECK_INTERVAL: int = Field(default=300, env="RECOVERY_CHECK_INTERVAL")
+  AUTO_CLOSE_ON_STOP: bool = Field(default=False, env="AUTO_CLOSE_ON_STOP")
+  ENABLE_NOTIFICATIONS: bool = Field(default=False, env="ENABLE_NOTIFICATIONS")
+  ENABLE_CRITICAL_ALERTS: bool = Field(default=True, env="ENABLE_CRITICAL_ALERTS")
+
 
   @field_validator("CONSENSUS_MODE", mode="before")
   @classmethod
