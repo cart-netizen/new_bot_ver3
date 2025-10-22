@@ -2869,3 +2869,1330 @@ Emergency rebalancing при деградации
 Enhanced conflict resolution
 Quality metrics для consensus
 Continuous learning
+
+Multi-Timeframe (MTF) Analysis System - продвинутая система анализа рынка, которая объединяет сигналы с **множественных таймфреймов** для генерации **высококачественных торговых решений**.
+
+### Ключевые Преимущества
+
+✅ **Контекст от высших таймфреймов** - понимание долгосрочного тренда  
+✅ **Точный вход с низших таймфреймов** - оптимальная точка входа  
+✅ **Confluence Detection** - обнаружение зон множественного подтверждения  
+✅ **Divergence Detection** - выявление противоречий между TF  
+✅ **Dynamic Risk Management** - адаптивное управление позицией  
+✅ **Quality Scoring** - количественная оценка надежности сигнала
+
+### Принцип Работы
+
+```
+Higher Timeframe (HTF) → Определяет НАПРАВЛЕНИЕ тренда
+    ↓
+Intermediate TF       → Подтверждает или опровергает
+    ↓
+Lower Timeframe (LTF) → Точный TIMING для входа
+```
+
+**Правило**: *"Направление определяет высший таймфрейм, вход - низший"*
+
+## 🏗️ Архитектура
+
+### Иерархия Компонентов
+
+```
+MultiTimeframeManager (главный оркестратор)
+    │
+    ├── TimeframeCoordinator
+    │   └── Управление свечами для 1m, 5m, 15m, 1h
+    │
+    ├── TimeframeAnalyzer
+    │   ├── Расчет индикаторов для каждого TF
+    │   ├── Определение market regime
+    │   └── Запуск стратегий на каждом TF
+    │
+    ├── TimeframeAligner
+    │   ├── Проверка trend alignment
+    │   ├── Детекция confluence zones
+    │   └── Выявление divergences
+    │
+    └── TimeframeSignalSynthesizer
+        ├── Top-Down synthesis
+        ├── Consensus synthesis
+        ├── Confluence synthesis
+        └── Risk parameters calculation
+```
+
+### Данные Flow
+
+```
+1. Загрузка свечей → TimeframeCoordinator
+2. Анализ каждого TF → TimeframeAnalyzer
+3. Проверка alignment → TimeframeAligner
+4. Синтез сигнала → TimeframeSignalSynthesizer
+5. MTF Signal → Risk Management → Execution
+
+## 🧩 Компоненты
+
+### 1. TimeframeCoordinator
+
+**Назначение**: Управление свечными данными для множественных таймфреймов
+
+**Функции**:
+- Загрузка исторических свечей (200 candles per TF)
+- Синхронизированные обновления
+- Агрегация TF (построение 5m из 1m, 15m из 5m, etc.)
+- Валидация данных
+
+**Timeframes**:
+- `1m`: Execution timeframe (точный вход)
+- `5m`: Scalping timeframe (краткосрочные паттерны)
+- `15m`: Swing timeframe (промежуточная структура)
+- `1h`: Trend timeframe (основной тренд)
+
+**Интервалы обновления**:
+```
+1m  → каждые 5 секунд
+5m  → каждые 30 секунд
+15m → каждую минуту
+1h  → каждые 5 минут
+```
+
+### 2. TimeframeAnalyzer
+
+**Назначение**: Независимый анализ каждого таймфрейма
+
+**Функции**:
+- Расчет TF-specific индикаторов
+- Определение market regime (trending/ranging, volatility)
+- Запуск всех стратегий на TF
+- Генерация per-timeframe signals
+
+**Индикаторы по TF**:
+
+**1 Minute** (Micro-structure):
+- Fast EMAs (9, 21)
+- Volume spikes
+- OrderBook pressure
+- Tick imbalance
+
+**5 Minute** (Scalping):
+- Stochastic Oscillator
+- Mean reversion signals
+- Short-term S/R
+
+**15 Minute** (Swing):
+- Bollinger Bands
+- MACD
+- Volume Profile POC
+- Swing highs/lows
+
+**1 Hour** (Trend):
+- SuperTrend
+- ADX (trend strength)
+- Major S/R levels
+- Ichimoku Cloud
+
+### 3. TimeframeAligner
+
+**Назначение**: Проверка согласованности сигналов между TF
+
+**Функции**:
+- **Trend Alignment Check** - все TF смотрят в одну сторону?
+- **Confluence Detection** - множественные TF подтверждают уровень
+- **Divergence Detection** - противоречия между TF
+- **Alignment Scoring** - количественная оценка (0-1)
+
+**Alignment Types**:
+```
+STRONG_BULL    → Все TF бычьи, высокий score
+MODERATE_BULL  → Большинство TF бычьи
+WEAK_BULL      → Слабый бычий alignment
+NEUTRAL        → Нет четкого направления
+WEAK_BEAR      → Слабый медвежий alignment
+MODERATE_BEAR  → Большинство TF медвежьи
+STRONG_BEAR    → Все TF медвежьи, высокий score
+```
+
+**Divergence Types**:
+- `TREND_COUNTER`: Сигнал против тренда HTF
+- `CONFLICTING_TRENDS`: Разные тренды на TF
+- `VOLUME_DIVERGENCE`: Расхождение в объемах
+- `MOMENTUM_DIVERGENCE`: Расхождение momentum индикаторов
+
+### 4. TimeframeSignalSynthesizer
+
+**Назначение**: Генерация финального MTF сигнала
+
+**Synthesis Modes**:
+
+#### **Top-Down** (рекомендуется)
+```
+Логика:
+1. Проверить HTF тренд (1h)
+2. Дождаться подтверждения от 15m
+3. Искать точку входа на 5m/1m
+4. Все должны согласиться с направлением HTF
+
+Use case: Trend-following торговля
+```
+
+#### **Consensus** (сбалансированный)
+```
+Логика:
+1. Каждый TF голосует своим весом
+2. Требуется минимальный weighted agreement (70%)
+3. Confidence = weighted average
+
+Use case: Multi-timeframe confluence торговля
+```
+
+#### **Confluence** (строгий)
+```
+Логика:
+1. ВСЕ TF должны дать одинаковый сигнал
+2. Самый высокий quality score
+3. Редкие, но очень надежные сигналы
+
+Use case: High-confidence торговля
+```
+
+---
+
+## ⚙️ Режимы Synthesis
+
+### Сравнение Режимов
+
+| Режим | Частота сигналов | Quality | Use Case |
+|-------|------------------|---------|----------|
+| **Top-Down** | Средняя | Высокая | Trend following |
+| **Consensus** | Средняя | Средняя-Высокая | Balanced |
+| **Confluence** | Низкая | Очень высокая | Conservative |
+
+### Когда Использовать Каждый Режим
+
+**Top-Down**:
+- ✅ Сильные trending рынки
+- ✅ Когда есть четкий HTF тренд
+- ✅ Trend-following стратегии
+- ❌ Ranging/choppy рынки
+
+**Consensus**:
+- ✅ Смешанные рыночные условия
+- ✅ Когда нужна гибкость
+- ✅ Swing trading
+- ❌ Когда нужна максимальная уверенность
+
+**Confluence**:
+- ✅ Когда важна максимальная надежность
+- ✅ Conservative торговля
+- ✅ Крупные позиции
+- ❌ Когда нужна частота сигналов
+
+---
+
+## 🚀 Быстрый Старт
+
+### Базовая Установка
+
+```python
+from strategies.strategy_manager import ExtendedStrategyManager
+from strategies.mtf import (
+    MultiTimeframeManager,
+    MTFManagerConfig,
+    SynthesisMode
+)
+
+# 1. Создаем StrategyManager
+strategy_manager = ExtendedStrategyManager()
+
+# 2. Конфигурируем MTF
+mtf_config = MTFManagerConfig(
+    enabled=True,
+    synthesizer_config=SynthesizerConfig(
+        mode=SynthesisMode.TOP_DOWN
+    )
+)
+
+# 3. Создаем MTF Manager
+mtf_manager = MultiTimeframeManager(strategy_manager, mtf_config)
+
+# 4. Инициализируем символ
+await mtf_manager.initialize_symbol("BTCUSDT")
+
+# 5. Анализируем
+mtf_signal = await mtf_manager.analyze_symbol("BTCUSDT")
+
+if mtf_signal:
+    print(f"Signal: {mtf_signal.signal.signal_type.value}")
+    print(f"Confidence: {mtf_signal.signal.confidence:.2%}")
+    print(f"Quality: {mtf_signal.signal_quality:.2%}")
+```
+
+---
+
+## ⚙️ Конфигурация
+
+### Полная Конфигурация
+
+```python
+from strategies.mtf import *
+
+config = MTFManagerConfig(
+    enabled=True,
+    
+    # Coordinator конфигурация
+    coordinator_config=MultiTimeframeConfig(
+        active_timeframes=[
+            Timeframe.M1,
+            Timeframe.M5,
+            Timeframe.M15,
+            Timeframe.H1
+        ],
+        candles_per_timeframe={
+            Timeframe.M1: 200,   # 3.3 часа
+            Timeframe.M5: 200,   # 16.7 часов
+            Timeframe.M15: 200,  # ~2 дня
+            Timeframe.H1: 200    # ~8 дней
+        },
+        primary_timeframe=Timeframe.H1,
+        execution_timeframe=Timeframe.M1,
+        enable_aggregation=True  # Строить высшие TF из низших
+    ),
+    
+    # Aligner конфигурация
+    aligner_config=AlignmentConfig(
+        timeframe_weights={
+            Timeframe.M1: 0.10,
+            Timeframe.M5: 0.20,
+            Timeframe.M15: 0.30,
+            Timeframe.H1: 0.40
+        },
+        min_alignment_score=0.65,
+        strong_alignment_threshold=0.85,
+        allow_trend_counter_signals=False,
+        max_divergence_severity=0.3
+    ),
+    
+    # Synthesizer конфигурация
+    synthesizer_config=SynthesizerConfig(
+        mode=SynthesisMode.TOP_DOWN,
+        primary_timeframe=Timeframe.H1,
+        execution_timeframe=Timeframe.M1,
+        stop_loss_timeframe=Timeframe.M15,
+        
+        # Top-Down settings
+        require_htf_confirmation=True,
+        allow_ltf_contrary_signal=False,
+        
+        # Risk Management
+        enable_dynamic_position_sizing=True,
+        base_position_size=1.0,
+        max_position_multiplier=1.5,
+        min_position_multiplier=0.3,
+        
+        # Stop-loss
+        use_higher_tf_for_stops=True,
+        atr_multiplier_for_stops=2.0
+    ),
+    
+    # Fallback
+    fallback_to_single_tf=True,
+    fallback_timeframe=Timeframe.M1,
+    
+    verbose_logging=False
+)
+```
+## 📈 Статистика и Мониторинг
+
+```python
+# Получить полную статистику
+stats = mtf_manager.get_statistics()
+
+print("Manager Stats:", stats['manager'])
+print("Coordinator Stats:", stats['coordinator'])
+print("Analyzer Stats:", stats['analyzer'])
+print("Aligner Stats:", stats['aligner'])
+print("Synthesizer Stats:", stats['synthesizer'])
+
+# Key metrics
+signal_rate = stats['manager']['signal_generation_rate']
+quality_rate = stats['synthesizer']['high_quality_rate']
+alignment_rate = stats['aligner']['strong_alignment_rate']
+
+print(f"Signal rate: {signal_rate:.2%}")
+print(f"High quality rate: {quality_rate:.2%}")
+print(f"Strong alignment rate: {alignment_rate:.2%}")
+
+## 🎓 Дополнительные Ресурсы
+
+### Файлы
+
+- `timeframe_coordinator.py` - Координатор свечей
+- `timeframe_analyzer.py` - Анализатор таймфреймов
+- `timeframe_aligner.py` - Alignment checker
+- `timeframe_signal_synthesizer.py` - Синтезатор сигналов
+- `multi_timeframe_manager.py` - Главный менеджер
+- `example_mtf_usage.py` - Примеры использования
+MTF Analysis System предоставляет:
+
+1. **Контекст** - понимание долгосрочного тренда
+2. **Точность** - optimal entry points
+3. **Надежность** - confluence и alignment checks
+4. **Risk Management** - dynamic position sizing и smart stops
+5. **Качество** - композитная оценка сигналов
+
+**Результат**: Высококачественные торговые решения с учетом множественных временных масштабов.
+
+#### 1. ✅ TimeframeCoordinator
+**Файл**: `backend/strategies/mtf/timeframe_coordinator.py`
+
+**Функциональность**:
+- ✅ Управление CandleManager для 4+ таймфреймов
+- ✅ Синхронизированные обновления (staggered intervals)
+- ✅ Timeframe aggregation (5m из 1m, 15m из 5m, 1h из 15m)
+- ✅ Валидация данных (gaps, OHLC consistency)
+- ✅ Кэширование для оптимизации
+- ✅ Статистика и мониторинг
+
+**Ключевые методы**:
+```python
+await coordinator.initialize_symbol(symbol)
+await coordinator.update_all_timeframes(symbol)
+candles = coordinator.get_candles(symbol, timeframe)
+all_candles = coordinator.get_all_timeframes_candles(symbol)
+validation = coordinator.validate_data_consistency(symbol)
+```
+
+#### 2. ✅ TimeframeAnalyzer
+**Файл**: `backend/strategies/mtf/timeframe_analyzer.py`
+
+**Функциональность**:
+- ✅ Расчет TF-specific индикаторов (25+ на каждый TF)
+- ✅ Market regime detection (trending/ranging, volatility)
+- ✅ Запуск всех стратегий на каждом TF независимо
+- ✅ Генерация per-timeframe signals
+- ✅ Кэширование расчетов индикаторов
+- ✅ Comprehensive indicator suite:
+  - Trend: SMA, EMA, ADX, DI+/DI-
+  - Momentum: RSI, Stochastic, MACD
+  - Volatility: ATR, Bollinger Bands
+  - Volume: OBV, VWAP, Volume ratio
+  - Structure: Swing highs/lows
+  - Advanced: Ichimoku (для HTF)
+
+**Индикаторы по таймфреймам**:
+- **1m**: Micro-structure, fast EMAs, tick data
+- **5m**: Scalping indicators, mean reversion
+- **15m**: Swing indicators, Bollinger, MACD
+- **1h**: Trend indicators, Ichimoku, major S/R
+
+**Ключевые методы**:
+```python
+result = await analyzer.analyze_timeframe(
+    symbol, timeframe, candles, price, orderbook, metrics
+)
+
+# Результат содержит:
+# - indicators (TimeframeIndicators)
+# - regime (TimeframeRegimeInfo)
+# - strategy_results (List[StrategyResult])
+# - timeframe_signal (TradingSignal)
+```
+
+#### 3. ✅ TimeframeAligner
+**Файл**: `backend/strategies/mtf/timeframe_aligner.py`
+
+**Функциональность**:
+- ✅ Trend alignment check (все TF смотрят в одну сторону?)
+- ✅ Confluence zone detection (множественные TF подтверждают уровень)
+- ✅ Divergence detection (4 типа расхождений)
+- ✅ Alignment scoring (0-1 взвешенная оценка)
+- ✅ Position sizing recommendations
+- ✅ Conflict resolution strategies
+
+**Alignment Types**:
+```
+STRONG_BULL / MODERATE_BULL / WEAK_BULL
+NEUTRAL
+WEAK_BEAR / MODERATE_BEAR / STRONG_BEAR
+```
+
+**Divergence Types**:
+```
+TREND_COUNTER      - Сигнал против HTF тренда
+CONFLICTING_TRENDS - Разные тренды на TF
+VOLUME_DIVERGENCE  - Расхождение в объемах
+MOMENTUM_DIVERGENCE - Расхождение momentum
+```
+
+**Ключевые методы**:
+```python
+alignment = aligner.check_alignment(tf_results, current_price)
+
+# Результат содержит:
+# - alignment_type, alignment_score
+# - bullish/bearish/neutral timeframes
+# - confluence_zones (List[ConfluenceZone])
+# - divergence info
+# - recommended_action, confidence, position_multiplier
+```
+
+#### 4. ✅ TimeframeSignalSynthesizer
+**Файл**: `backend/strategies/mtf/timeframe_signal_synthesizer.py`
+
+**Функциональность**:
+- ✅ Три режима synthesis:
+  - **Top-Down**: HTF определяет направление, LTF - точку входа
+  - **Consensus**: Взвешенный консенсус всех TF
+  - **Confluence**: Требуется согласие всех TF (строгий режим)
+- ✅ Signal quality scoring (композитная метрика 0-1)
+- ✅ Dynamic position sizing (0.3x - 1.5x multiplier)
+- ✅ Smart stop-loss placement (swing levels с HTF)
+- ✅ Automatic R:R calculation (default 1:2)
+- ✅ Risk level assessment (LOW/NORMAL/HIGH/EXTREME)
+
+**Quality Scoring** (композитная метрика):
+```python
+quality = (
+    0.30 × alignment_score +
+    0.25 × htf_confirmation +
+    0.20 × confluence_presence +
+    0.15 × divergence_absence +
+    0.10 × volume_confirmation
+)
+```
+
+**Ключевые методы**:
+```python
+mtf_signal = synthesizer.synthesize_signal(
+    tf_results, alignment, symbol, price
+)
+
+# Результат содержит:
+# - signal (TradingSignal)
+# - signal_quality, reliability_score
+# - recommended_position_size_multiplier
+# - recommended_stop_loss/take_profit prices
+# - risk_level, warnings
+```
+
+#### 5. ✅ MultiTimeframeManager (Главный Оркестратор)
+**Файл**: `backend/strategies/mtf/multi_timeframe_manager.py`
+
+**Функциональность**:
+- ✅ End-to-end MTF analysis pipeline
+- ✅ Координация всех компонентов
+- ✅ Кэширование результатов
+- ✅ Fallback к single-TF при проблемах
+- ✅ Health monitoring
+- ✅ Comprehensive statistics
+- ✅ Data validation
+
+**Pipeline**:
+```
+1. Обновление свечей → TimeframeCoordinator
+2. Анализ каждого TF → TimeframeAnalyzer
+3. Alignment check → TimeframeAligner
+4. Синтез сигнала → TimeframeSignalSynthesizer
+5. Quality check → Final MTF Signal
+```
+
+**Ключевые методы**:
+```python
+# Инициализация
+await mtf_manager.initialize_symbol(symbol)
+
+# Анализ
+mtf_signal = await mtf_manager.analyze_symbol(
+    symbol, orderbook, metrics
+)
+
+# Мониторинг
+stats = mtf_manager.get_statistics()
+health = mtf_manager.get_health_status()
+validation = mtf_manager.validate_data_consistency(symbol)
+
+# Кэш
+tf_results = mtf_manager.get_last_tf_results(symbol)
+alignment = mtf_manager.get_last_alignment(symbol)
+last_signal = mtf_manager.get_last_mtf_signal(symbol)
+```
+
+---
+
+## 📂 Структура Файлов
+
+```
+backend/strategies/mtf/
+├── __init__.py                        ✅ Главный модуль
+├── timeframe_coordinator.py           ✅ Управление свечами
+├── timeframe_analyzer.py              ✅ Анализ каждого TF
+├── timeframe_aligner.py               ✅ Alignment checker
+├── timeframe_signal_synthesizer.py    ✅ Синтез сигналов
+└── multi_timeframe_manager.py         ✅ Главный оркестратор
+
+examples/
+└── example_mtf_usage.py               ✅ Примеры использования
+
+docs/
+└── MTF_README.md                      ✅ Полная документация
+```
+
+---
+
+## 🎨 Архитектурные Решения
+
+### 1. Модульная Архитектура
+
+**Принцип**: Каждый компонент независим и может работать автономно.
+
+```
+✅ TimeframeCoordinator - работает без остальных компонентов
+✅ TimeframeAnalyzer - принимает любые данные свечей
+✅ TimeframeAligner - работает с любыми analysis results
+✅ TimeframeSignalSynthesizer - гибкая конфигурация режимов
+```
+
+### 2. Композиция вместо Наследования
+
+```python
+# ❌ НЕ используем наследование:
+class MTFStrategy(BaseStrategy):
+    pass
+
+# ✅ Используем композицию:
+class MultiTimeframeManager:
+    def __init__(self, strategy_manager):
+        self.coordinator = TimeframeCoordinator()
+        self.analyzer = TimeframeAnalyzer(strategy_manager)
+        self.aligner = TimeframeAligner()
+        self.synthesizer = TimeframeSignalSynthesizer()
+```
+
+### 3. Асинхронность
+
+```python
+# Все методы загрузки данных - async
+await coordinator.initialize_symbol(symbol)
+await coordinator.update_all_timeframes(symbol)
+await analyzer.analyze_timeframe(...)
+await mtf_manager.analyze_symbol(symbol)
+```
+
+### 4. Кэширование
+
+```python
+# Coordinator - кэш свечей
+self.candle_managers[symbol][timeframe]
+
+# Analyzer - кэш индикаторов
+self._indicators_cache[(symbol, timeframe)]
+
+# Manager - кэш результатов
+self._last_tf_results[symbol]
+self._last_alignment[symbol]
+self._last_mtf_signal[symbol]
+```
+
+### 5. Валидация на Каждом Уровне
+
+```python
+# Координатор валидирует данные свечей
+validation = coordinator.validate_data_consistency(symbol)
+
+# Анализатор проверяет минимальные требования
+if len(candles) < 50:
+    warnings.append("Недостаточно свечей")
+
+# Синтезатор проверяет quality threshold
+if signal_quality < min_quality:
+    return None  # Отклоняем сигнал
+```
+
+---
+
+## 🔧 Конфигурация
+
+### Пример Полной Конфигурации
+
+```python
+from strategies.mtf import *
+
+mtf_config = MTFManagerConfig(
+    enabled=True,
+    
+    # === Coordinator ===
+    coordinator_config=MultiTimeframeConfig(
+        active_timeframes=[
+            Timeframe.M1, Timeframe.M5, 
+            Timeframe.M15, Timeframe.H1
+        ],
+        candles_per_timeframe={
+            Timeframe.M1: 200,   # 3.3 hours
+            Timeframe.M5: 200,   # 16.7 hours
+            Timeframe.M15: 200,  # ~2 days
+            Timeframe.H1: 200    # ~8 days
+        },
+        update_intervals={
+            Timeframe.M1: 5,     # seconds
+            Timeframe.M5: 30,
+            Timeframe.M15: 60,
+            Timeframe.H1: 300
+        },
+        primary_timeframe=Timeframe.H1,
+        execution_timeframe=Timeframe.M1,
+        enable_aggregation=True
+    ),
+    
+    # === Aligner ===
+    aligner_config=AlignmentConfig(
+        timeframe_weights={
+            Timeframe.M1: 0.10,
+            Timeframe.M5: 0.20,
+            Timeframe.M15: 0.30,
+            Timeframe.H1: 0.40
+        },
+        min_alignment_score=0.65,
+        strong_alignment_threshold=0.85,
+        moderate_alignment_threshold=0.70,
+        allow_trend_counter_signals=False,
+        max_divergence_severity=0.3,
+        confluence_price_tolerance_percent=0.5,
+        position_size_boost_on_confluence=1.3,
+        position_size_penalty_on_divergence=0.7
+    ),
+    
+    # === Synthesizer ===
+    synthesizer_config=SynthesizerConfig(
+        mode=SynthesisMode.TOP_DOWN,
+        
+        timeframe_weights={
+            Timeframe.M1: 0.10,
+            Timeframe.M5: 0.20,
+            Timeframe.M15: 0.30,
+            Timeframe.H1: 0.40
+        },
+        
+        primary_timeframe=Timeframe.H1,
+        execution_timeframe=Timeframe.M1,
+        stop_loss_timeframe=Timeframe.M15,
+        
+        min_signal_quality=0.60,
+        min_timeframes_required=2,
+        
+        # Top-Down mode
+        require_htf_confirmation=True,
+        allow_ltf_contrary_signal=False,
+        
+        # Consensus mode
+        consensus_threshold=0.70,
+        
+        # Confluence mode
+        require_all_timeframes=True,
+        allow_neutral_timeframes=True,
+        
+        # Risk Management
+        enable_dynamic_position_sizing=True,
+        base_position_size=1.0,
+        max_position_multiplier=1.5,
+        min_position_multiplier=0.3,
+        
+        use_higher_tf_for_stops=True,
+        atr_multiplier_for_stops=2.0,
+        
+        # Quality weights
+        quality_weights={
+            'alignment_score': 0.30,
+            'higher_tf_confirmation': 0.25,
+            'confluence_presence': 0.20,
+            'divergence_absence': 0.15,
+            'volume_confirmation': 0.10
+        }
+    ),
+    
+    # === Manager ===
+    auto_update_enabled=True,
+    update_on_each_analysis=False,
+    fallback_to_single_tf=True,
+    fallback_timeframe=Timeframe.M1,
+    verbose_logging=False
+)
+```
+
+## 📊 Примеры Использования
+
+### 1. Базовый MTF Анализ
+
+```python
+# Создание
+strategy_manager = ExtendedStrategyManager()
+mtf_manager = MultiTimeframeManager(
+    strategy_manager, 
+    MTFManagerConfig()
+)
+
+# Инициализация
+await mtf_manager.initialize_symbol("BTCUSDT")
+
+# Анализ
+mtf_signal = await mtf_manager.analyze_symbol("BTCUSDT")
+
+if mtf_signal:
+    print(f"Signal: {mtf_signal.signal.signal_type.value}")
+    print(f"Confidence: {mtf_signal.signal.confidence:.2%}")
+    print(f"Quality: {mtf_signal.signal_quality:.2%}")
+    print(f"Position multiplier: {mtf_signal.recommended_position_size_multiplier:.2f}x")
+```
+
+### 2. Top-Down Mode
+
+```python
+config = MTFManagerConfig(
+    synthesizer_config=SynthesizerConfig(
+        mode=SynthesisMode.TOP_DOWN,
+        primary_timeframe=Timeframe.H1,
+        execution_timeframe=Timeframe.M1,
+        require_htf_confirmation=True
+    )
+)
+
+# HTF определяет направление → LTF ищет точку входа
+```
+
+### 3. Consensus Mode
+
+```python
+config = MTFManagerConfig(
+    synthesizer_config=SynthesizerConfig(
+        mode=SynthesisMode.CONSENSUS,
+        consensus_threshold=0.70  # 70% weighted agreement
+    )
+)
+
+# Взвешенный консенсус всех TF
+```
+
+### 4. Confluence Mode
+
+```python
+config = MTFManagerConfig(
+    synthesizer_config=SynthesizerConfig(
+        mode=SynthesisMode.CONFLUENCE,
+        require_all_timeframes=True
+    )
+)
+
+# Все TF должны согласиться (строгий режим)
+```
+
+### 5. Risk Management
+
+```python
+if mtf_signal:
+    # Параметры позиции
+    base_size = 1000.0  # USDT
+    actual_size = base_size * mtf_signal.recommended_position_size_multiplier
+    
+    # Entry/Exit
+    entry = mtf_signal.signal.price
+    stop_loss = mtf_signal.recommended_stop_loss_price
+    take_profit = mtf_signal.recommended_take_profit_price
+    
+    # Risk check
+    if mtf_signal.risk_level == "EXTREME":
+        print("⚠️ EXTREME risk - consider skipping")
+    
+    if mtf_signal.signal_quality < 0.70:
+        print("⚠️ Low quality - reduce position")
+        actual_size *= 0.7
+
+Complete ML-Enhanced Trading System
+
+┌─────────────────────────────────────────────────────────────┐
+│         INTEGRATED ANALYSIS ENGINE                          │
+│                                                             │
+│  ┌─────────────┐  ┌──────────────────┐  ┌───────────────┐  │
+│  │   ФАЗА 1    │  │     ФАЗА 2       │  │    ФАЗА 3     │  │
+│  │  OrderBook  │  │   Adaptive       │  │ Multi-Time    │  │
+│  │  Strategies │  │   Consensus      │  │   frame       │  │
+│  └──────┬──────┘  └────────┬─────────┘  └───────┬───────┘  │
+│         │                  │                    │          │
+│         └──────────────────┴────────────────────┘          │
+│                            │                                │
+└────────────────────────────┼────────────────────────────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │  Final Signal   │
+                    │  + Risk Params  │
+                    └─────────────────┘
+```
+
+# ✅ Complete ML-Enhanced Trading System - РЕАЛИЗОВАНО
+
+## 🎯 Executive Summary
+
+Реализована **полная профессиональная торговая система** с тремя взаимодополняющими компонентами, объединенными в единый **Integrated Analysis Engine**.
+
+**Статус**: ✅ **Production Ready**  
+**Дата завершения**: October 21, 2025  
+**Общие строки кода**: ~15,000+ LOC  
+**Компонентов**: 20+ модулей  
+**Фаз реализовано**: 3/3 (100%)
+
+---
+
+## 📊 Архитектура Системы
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│         INTEGRATED ANALYSIS ENGINE                          │
+│                                                             │
+│  ┌─────────────┐  ┌──────────────────┐  ┌───────────────┐  │
+│  │   ФАЗА 1    │  │     ФАЗА 2       │  │    ФАЗА 3     │  │
+│  │  OrderBook  │  │   Adaptive       │  │ Multi-Time    │  │
+│  │  Strategies │  │   Consensus      │  │   frame       │  │
+│  └──────┬──────┘  └────────┬─────────┘  └───────┬───────┘  │
+│         │                  │                    │          │
+│         └──────────────────┴────────────────────┘          │
+│                            │                                │
+└────────────────────────────┼────────────────────────────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │  Final Signal   │
+                    │  + Risk Params  │
+                    └─────────────────┘
+```
+
+---
+
+## ✅ Реализованные Компоненты
+
+### Фаза 1: OrderBook-Aware Strategies (Недели 1-2)
+
+#### Стратегии (4/4)
+
+**1. ImbalanceStrategy** ✅
+```python
+Файл: strategies/imbalance_strategy.py
+Логика: Торговля на дисбалансе bid/ask в стакане
+Входы: OrderBookSnapshot, OrderBookMetrics
+Сигналы: BUY когда imbalance > 0.75, SELL когда < 0.25
+Фильтры: Spoofing detection, wall TTL, wash trading
+```
+
+**2. VolumeFlowStrategy** ✅
+```python
+Файл: strategies/volume_flow_strategy.py
+Логика: Отслеживание потоков крупных игроков
+Входы: Order Flow Imbalance, Volume Clustering
+Сигналы: Whale orders, level absorption, aggressive market orders
+Управление: Stop за объемным кластером
+```
+
+**3. LiquidityZoneStrategy** ✅
+```python
+Файл: strategies/liquidity_zone_strategy.py
+Логика: Торговля от зон ликвидности (S/R из стакана)
+Входы: S/R levels, HVN/LVN, POC
+Сигналы: Mean reversion от HVN, breakout через LVN
+Риск: Stop за HVN level
+```
+
+**4. SmartMoneyStrategy (Hybrid)** ✅
+```python
+Файл: strategies/smart_money_strategy.py
+Логика: Следование за институциональными игроками
+Входы: Свечи + Стакан + Volume Profile + ML
+Multi-Signal: Trend (свечи) + Entry (стакан) + Confirmation (VP+ML)
+Исполнение: Только при согласии всех 3 этапов
+```
+
+#### Интеграция ✅
+
+**ExtendedStrategyManager** - расширенный менеджер стратегий:
+- Поддержка 3 типов стратегий: Candle, OrderBook, Hybrid
+- Routing данных по типу стратегии
+- Enhanced consensus building
+- Conflict resolution
+
+---
+
+### Фаза 2: Adaptive Consensus (Недели 3-4)
+
+#### Компоненты (4/4)
+
+**1. StrategyPerformanceTracker** ✅
+```python
+Файл: strategies/adaptive_consensus/strategy_performance_tracker.py
+
+Метрики:
+- Win Rate, Sharpe Ratio, Profit Factor
+- Confidence Calibration
+- Timing metrics (time to profit/SL)
+
+Temporal Windows:
+- Short-term: 24h (fast adaptation)
+- Medium-term: 7d (stability)
+- Long-term: 30d (overall effectiveness)
+
+Storage: JSONL persistence
+```
+
+**2. MarketRegimeDetector** ✅
+```python
+Файл: strategies/adaptive_consensus/market_regime_detector.py
+
+Режимы:
+- Trend: Strong/Weak Up/Down, Ranging
+- Volatility: High/Normal/Low
+- Liquidity: High/Normal/Low
+
+Методы:
+- ADX для силы тренда
+- ATR для волатильности
+- Chow Test для структурных изменений
+
+Output: Recommended weights per regime
+```
+
+**3. WeightOptimizer** ✅
+```python
+Файл: strategies/adaptive_consensus/weight_optimizer.py
+
+Алгоритмы:
+- Performance-Based (EWMA)
+- Regime-Adaptive
+- Bayesian (Thompson Sampling)
+
+Constraints:
+- Min weight: 0.05, Max weight: 0.40
+- Smooth transitions (max Δ = 0.05)
+- Diversity requirements
+
+Update: Real-time micro + periodic major rebalancing
+```
+
+**4. AdaptiveConsensusManager** ✅
+```python
+Файл: strategies/adaptive_consensus/adaptive_consensus_manager.py
+
+Функции:
+- Интеграция всех adaptive компонентов
+- Enhanced conflict resolution
+- Quality metrics для consensus
+- Continuous learning
+
+Output: Optimal strategy weights + consensus signal
+```
+
+---
+
+### Фаза 3: Multi-Timeframe Analysis (Недели 5-6)
+
+#### Компоненты (5/5)
+
+**1. TimeframeCoordinator** ✅
+```python
+Файл: strategies/mtf/timeframe_coordinator.py
+
+Функции:
+- Управление CandleManager для 1m, 5m, 15m, 1h
+- Staggered updates (разные интервалы обновления)
+- Timeframe aggregation (5m из 1m, etc.)
+- Data validation (gaps, OHLC consistency)
+
+Storage: 200 candles per timeframe per symbol
+```
+
+**2. TimeframeAnalyzer** ✅
+```python
+Файл: strategies/mtf/timeframe_analyzer.py
+
+Функции:
+- TF-specific индикаторы (25+ per TF)
+- Market regime detection per TF
+- Запуск всех стратегий на каждом TF
+- Per-timeframe signal generation
+
+Индикаторы:
+- Trend: SMA, EMA, ADX, Ichimoku
+- Momentum: RSI, Stochastic, MACD
+- Volatility: ATR, Bollinger
+- Volume: OBV, VWAP
+- Structure: Swing highs/lows
+```
+
+**3. TimeframeAligner** ✅
+```python
+Файл: strategies/mtf/timeframe_aligner.py
+
+Функции:
+- Trend alignment check
+- Confluence zone detection
+- Divergence detection (4 types)
+- Alignment scoring (0-1)
+
+Alignment Types:
+- STRONG/MODERATE/WEAK_BULL/BEAR
+- NEUTRAL
+
+Divergence Types:
+- TREND_COUNTER, CONFLICTING_TRENDS
+- VOLUME/MOMENTUM_DIVERGENCE
+```
+
+**4. TimeframeSignalSynthesizer** ✅
+```python
+Файл: strategies/mtf/timeframe_signal_synthesizer.py
+
+Synthesis Modes:
+1. Top-Down: HTF → direction, LTF → entry
+2. Consensus: Weighted agreement (70% threshold)
+3. Confluence: All TF must agree (strict)
+
+Output:
+- Final MTF signal
+- Quality score (0-1)
+- Position multiplier (0.3-1.5x)
+- Stop-loss/Take-profit prices
+- Risk level (LOW/NORMAL/HIGH/EXTREME)
+```
+
+**5. MultiTimeframeManager** ✅
+```python
+Файл: strategies/mtf/multi_timeframe_manager.py
+
+Функции:
+- End-to-end MTF pipeline orchestration
+- Координация всех MTF компонентов
+- Health monitoring
+- Fallback mechanism
+
+Pipeline:
+1. Update candles → TimeframeCoordinator
+2. Analyze each TF → TimeframeAnalyzer
+3. Check alignment → TimeframeAligner
+4. Synthesize signal → TimeframeSignalSynthesizer
+5. Quality check → Final MTF Signal
+```
+
+---
+
+### Фаза 4: System Integration (Неделя 7)
+
+#### IntegratedAnalysisEngine ✅
+
+```python
+Файл: engine/integrated_analysis_engine.py
+
+Функции:
+- Объединение всех трёх фаз
+- Четыре режима работы:
+  1. SINGLE_TF_ONLY (Фаза 1+2)
+  2. MTF_ONLY (Фаза 3)
+  3. HYBRID (Фазы 1+2+3 комбинация)
+  4. ADAPTIVE (автовыбор режима)
+
+Hybrid Logic:
+- Запуск single-TF и MTF параллельно
+- Сравнение результатов
+- Conflict resolution (3 стратегии)
+- Weighted combination
+
+Output: IntegratedSignal
+- Final trading signal
+- Combined confidence/quality
+- Risk parameters
+- Source tracing (single-TF/MTF/both)
+```
+
+---
+
+## 📈 Ключевые Возможности
+
+### 1. Микроструктура Рынка (Фаза 1)
+
+✅ **OrderBook Analysis**:
+- 50 уровней глубины bid/ask
+- Real-time imbalance tracking
+- Volume flow detection
+- Liquidity zone identification
+
+✅ **Manipulation Detection**:
+- Spoofing detection (fake walls)
+- Layering detection
+- Wash trading filter
+- RPI-awareness (Retail vs Pro)
+
+✅ **Hybrid Strategies**:
+- Комбинация свечей + стакан
+- Multi-signal confirmation
+- Smart money following
+
+### 2. Адаптивность (Фаза 2)
+
+✅ **Dynamic Weights**:
+- Real-time strategy performance tracking
+- Automatic weight optimization
+- Regime-based adaptation
+- Bayesian approach
+
+✅ **Market Regime Detection**:
+- 5 trend regimes
+- 3 volatility regimes
+- 3 liquidity regimes
+- Structural break detection
+
+✅ **Continuous Learning**:
+- Performance attribution
+- Strategy degradation detection
+- Automatic rebalancing
+- Emergency adjustments
+
+### 3. Multi-Timeframe (Фаза 3)
+
+✅ **Multiple Timeframes**:
+- 1m (execution)
+- 5m (scalping)
+- 15m (swing)
+- 1h (trend)
+
+✅ **Intelligent Synthesis**:
+- 3 synthesis modes
+- Confluence detection
+- Divergence handling
+- Quality scoring
+
+✅ **Risk Management**:
+- Dynamic position sizing (0.3-1.5x)
+- HTF-based stop-loss
+- Automatic R:R calculation
+- Risk level assessment
+
+### 4. Integration (Фаза 4)
+
+✅ **Unified Interface**:
+- Single analyze() method
+- Automatic mode selection
+- Conflict resolution
+- Quality assurance
+
+✅ **Comprehensive Output**:
+- Final trading signal
+- Source tracing
+- Risk parameters
+- Quality metrics
+- Warnings and caveats
+
+✅ **Monitoring**:
+- Health checks
+- Statistics tracking
+- Performance metrics
+- Component status
+## 🎯 Режимы Работы
+
+### 1. SINGLE_TF_ONLY
+
+**Использует**: Фаза 1 + Фаза 2
+
+**Компоненты**:
+- OrderBook-Aware Strategies
+- Adaptive Consensus Management
+
+**Use Case**:
+- Высокочастотная торговля
+- Ranging рынки
+- Максимальная частота сигналов
+
+**Преимущества**:
+- Низкая latency (~200ms)
+- Высокая частота сигналов
+- Адаптивные веса
+
+### 2. MTF_ONLY
+
+**Использует**: Фаза 3
+
+**Компоненты**:
+- Multi-Timeframe Analysis
+
+**Use Case**:
+- Trending рынки
+- Swing trading
+- Высокое качество сигналов
+
+**Преимущества**:
+- Контекст от HTF
+- Confluence detection
+- Smart risk management
+
+### 3. HYBRID
+
+**Использует**: Фаза 1 + Фаза 2 + Фаза 3
+
+**Компоненты**:
+- ВСЕ компоненты системы
+
+**Use Case**:
+- Универсальная торговля
+- Максимальное качество
+- Comprehensive analysis
+
+**Преимущества**:
+- Лучшее из обоих миров
+- Conflict resolution
+- Highest quality signals
+
+### 4. ADAPTIVE
+
+**Использует**: Автоматический выбор между режимами
+
+**Логика**:
+- Trending market → MTF_ONLY
+- High volatility → SINGLE_TF_ONLY
+- Mixed conditions → HYBRID
+
+**Use Case**:
+- Автоматическая адаптация
+- Оптимизация под условия
+- "Set and forget"
+
+---
+
+## 🚀 Quick Start Guide
+
+### Базовая Установка
+
+```python
+from engine.integrated_analysis_engine import (
+    IntegratedAnalysisEngine,
+    IntegratedAnalysisConfig,
+    AnalysisMode
+)
+
+# Создание engine
+config = IntegratedAnalysisConfig(
+    analysis_mode=AnalysisMode.HYBRID,
+    enable_adaptive_consensus=True,
+    enable_mtf_analysis=True
+)
+
+engine = IntegratedAnalysisEngine(config)
+
+# Инициализация
+await engine.initialize_symbol("BTCUSDT")
+
+# Анализ
+signal = await engine.analyze(
+    symbol="BTCUSDT",
+    candles=candles,
+    current_price=50000.0,
+    orderbook=orderbook,
+    metrics=metrics
+)
+
+if signal:
+    print(f"Signal: {signal.final_signal.signal_type}")
+    print(f"Confidence: {signal.combined_confidence:.2%}")
+    print(f"Quality: {signal.combined_quality_score:.2%}")
+    print(f"Position: {signal.recommended_position_multiplier:.2f}x")

@@ -604,7 +604,7 @@ class ExtendedStrategyManager:
       source=SignalSource.CONSENSUS,
       strength=signal_strength,
       price=current_price,
-      confidence=final_confidence,
+      confidence=float(final_confidence),
       timestamp=int(datetime.now().timestamp() * 1000),
       reason=f"Majority consensus: {agreement_count}/{total_strategies}",
       metadata={'consensus_mode': 'majority'}
@@ -648,7 +648,7 @@ class ExtendedStrategyManager:
       source=SignalSource.CONSENSUS,
       strength=SignalStrength.STRONG,
       price=current_price,
-      confidence=avg_confidence,
+      confidence=float(avg_confidence),
       timestamp=int(datetime.now().timestamp() * 1000),
       reason=f"Unanimous consensus: all {len(results_with_signals)} strategies agree",
       metadata={'consensus_mode': 'unanimous'}

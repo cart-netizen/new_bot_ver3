@@ -55,7 +55,7 @@ class SignalOutcome:
     
     def to_dict(self) -> Dict:
         """Конвертация в словарь."""
-        return asdict(self)
+        return asdict(self)  # type: ignore
 
 
 @dataclass
@@ -526,14 +526,14 @@ class StrategyPerformanceTracker:
             breakeven_count=breakeven_count,
             win_rate=win_rate,
             total_return_pct=total_return_pct,
-            avg_return_pct=avg_return_pct,
+            avg_return_pct=float(avg_return_pct),
             avg_win_pct=avg_win_pct,
             avg_loss_pct=avg_loss_pct,
             sharpe_ratio=sharpe_ratio,
             profit_factor=profit_factor,
             max_drawdown_pct=max_drawdown_pct,
             confidence_calibration_score=confidence_calibration_score,
-            avg_confidence=avg_confidence,
+            avg_confidence=float(avg_confidence),
             avg_hold_duration_seconds=avg_hold_duration,
             avg_time_to_profit_seconds=avg_time_to_profit,
             avg_time_to_loss_seconds=avg_time_to_loss,

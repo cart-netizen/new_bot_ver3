@@ -59,6 +59,32 @@ from ml_engine.features import (
 )
 from ml_engine.data_collection import MLDataCollector  # НОВОЕ
 
+# Фаза 2: Adaptive Consensus
+from strategies.adaptive import (
+    AdaptiveConsensusManager,
+    AdaptiveConsensusConfig,
+
+    WeightOptimizerConfig
+)
+
+# Фаза 3: Multi-Timeframe
+from strategies.mtf import (
+    MultiTimeframeManager,
+    MTFManagerConfig,
+    MultiTimeframeConfig,
+    AlignmentConfig,
+    SynthesizerConfig,
+    SynthesisMode,
+    Timeframe
+)
+
+# Фаза 4: Integrated Engine
+from engine.integrated_analysis_engine import (
+    IntegratedAnalysisEngine,
+    IntegratedAnalysisConfig,
+    AnalysisMode
+)
+
 from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
 
 # Сохраняем оригинальный __post_init__
@@ -335,6 +361,17 @@ class BotController:
     else:
       self.adaptive_consensus_manager = None
       logger.info("Adaptive Consensus отключен")
+
+    # Фаза 2: Adaptive Consensus
+    self.adaptive_consensus: Optional[AdaptiveConsensusManager] = None
+
+    # Фаза 3: Multi-Timeframe
+    self.mtf_manager: Optional[MultiTimeframeManager] = None
+
+    # Фаза 4: Integrated Engine
+    self.integrated_engine: Optional[IntegratedAnalysisEngine] = None
+
+    logger.info("BotController инициализирован с поддержкой Adaptive Consensus + MTF")
 
     # ===== SCREENER MANAGER (НОВОЕ) =====
     self.screener_manager: Optional[ScreenerManager] = None
@@ -969,6 +1006,35 @@ class BotController:
               await broadcast_metrics_update(symbol, metrics.to_dict())
             except Exception as e:
               logger.error(f"{symbol} | Ошибка broadcast metrics: {e}")
+
+            # Шаг 4a: Multi-Timeframe Analysis
+            if config.enable_mtf:
+              mtf_signal = await mtf_manager.analyze_symbol(
+                symbol=symbol,
+                orderbook=orderbook,
+                metrics=metrics
+              )
+
+              if mtf_signal:
+                # Используем MTF сигнал вместо single-TF
+                final_signal = mtf_signal.signal
+
+                # Модифицируем risk parameters
+                position_size *= mtf_signal.recommended_position_size_multiplier
+                stop_loss_price = mtf_signal.recommended_stop_loss_price
+                take_profit_price = mtf_signal.recommended_take_profit_price
+
+                # Quality check
+                if mtf_signal.signal_quality < config.min_mtf_quality:
+                  logger.info("MTF signal quality too low, skipping")
+                  continue
+
+                if mtf_signal.risk_level == "EXTREME":
+                  logger.warning("EXTREME risk, skipping trade")
+                  continue
+              else:
+                # Fallback к single-TF analysis
+                logger.debug("No MTF signal, using single-TF")
 
             # ==================== 5. ML ИЗВЛЕЧЕНИЕ ПРИЗНАКОВ ====================
             feature_vector = None

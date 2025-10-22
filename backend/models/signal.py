@@ -31,6 +31,7 @@ class SignalSource(str, Enum):
   COMBINED = "COMBINED"  # Комбинированный анализ
   ML_VALIDATED = "ml_validated"
   STRATEGY = "strategy"
+  CONSENSUS = "consensus"
 
 @dataclass
 class TradingSignal:

@@ -6,7 +6,7 @@
 import os
 from typing import List, Literal, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, validator, field_validator
+from pydantic import Field, field_validator
 from dotenv import load_dotenv
 
 # from core.logger import get_logger
@@ -130,22 +130,182 @@ class Settings(BaseSettings):
       description="Минимальная уверенность для консенсуса"
   )
 
-  # Adaptive Consensus Settings
-  ENABLE_ADAPTIVE_CONSENSUS: bool = env.bool("ENABLE_ADAPTIVE_CONSENSUS", True)
+  # ========================================
+  # ✅ ИСПРАВЛЕНО: Adaptive Consensus Settings
+  # ========================================
+
+  # Основные настройки
+  ENABLE_ADAPTIVE_CONSENSUS: bool = Field(
+    default=True,
+    description="Включить адаптивный консенсус стратегий"
+  )
 
   # Performance Tracking
-  PERFORMANCE_DATA_DIR: str = env.str("PERFORMANCE_DATA_DIR", "data/strategy_performance")
-  PERFORMANCE_TRACKING_ENABLED: bool = env.bool("PERFORMANCE_TRACKING_ENABLED", True)
+  PERFORMANCE_DATA_DIR: str = Field(
+    default="data/strategy_performance",
+    description="Директория для хранения данных о производительности"
+  )
+  PERFORMANCE_TRACKING_ENABLED: bool = Field(
+    default=True,
+    description="Включить отслеживание производительности стратегий"
+  )
 
   # Regime Detection
-  REGIME_DETECTION_ENABLED: bool = env.bool("REGIME_DETECTION_ENABLED", True)
-  REGIME_UPDATE_FREQUENCY_SECONDS: int = env.int("REGIME_UPDATE_FREQUENCY_SECONDS", 300)
+  REGIME_DETECTION_ENABLED: bool = Field(
+    default=True,
+    description="Включить детекцию рыночных режимов"
+  )
+  REGIME_UPDATE_FREQUENCY_SECONDS: int = Field(
+    default=300,
+    ge=60,
+    le=3600,
+    description="Частота обновления режима рынка (секунды)"
+  )
 
   # Weight Optimization
-  WEIGHT_OPTIMIZATION_ENABLED: bool = env.bool("WEIGHT_OPTIMIZATION_ENABLED", True)
-  WEIGHT_OPTIMIZATION_METHOD: str = env.str("WEIGHT_OPTIMIZATION_METHOD", "HYBRID")
-  WEIGHT_UPDATE_FREQUENCY_SECONDS: int = env.int("WEIGHT_UPDATE_FREQUENCY_SECONDS", 21600)
+  WEIGHT_OPTIMIZATION_ENABLED: bool = Field(
+    default=True,
+    description="Включить оптимизацию весов стратегий"
+  )
+  WEIGHT_OPTIMIZATION_METHOD: Literal["PERFORMANCE", "REGIME", "HYBRID", "BAYESIAN"] = Field(
+    default="HYBRID",
+    description="Метод оптимизации весов"
+  )
+  WEIGHT_UPDATE_FREQUENCY_SECONDS: int = Field(
+    default=21600,  # 6 часов
+    ge=3600,
+    le=86400,
+    description="Частота обновления весов стратегий (секунды)"
+  )
 
+  # ==================== MULTI-TIMEFRAME SETTINGS ====================
+
+  # Multi-Timeframe Analysis
+  ENABLE_MTF_ANALYSIS: bool = Field(
+    default=True,
+    env="ENABLE_MTF_ANALYSIS",
+    description="Включить multi-timeframe анализ"
+  )
+
+  MTF_ACTIVE_TIMEFRAMES: str = Field(
+    default="1m,5m,15m,1h",
+    env="MTF_ACTIVE_TIMEFRAMES",
+    description="Активные таймфреймы (через запятую)"
+  )
+
+  MTF_PRIMARY_TIMEFRAME: str = Field(
+    default="1h",
+    env="MTF_PRIMARY_TIMEFRAME",
+    description="Основной таймфрейм для тренда"
+  )
+
+  MTF_EXECUTION_TIMEFRAME: str = Field(
+    default="1m",
+    env="MTF_EXECUTION_TIMEFRAME",
+    description="Таймфрейм для точного входа"
+  )
+
+  MTF_SYNTHESIS_MODE: str = Field(
+    default="top_down",
+    env="MTF_SYNTHESIS_MODE",
+    description="Режим синтеза: top_down, consensus, confluence"
+  )
+
+  MTF_MIN_QUALITY: float = Field(
+    default=0.60,
+    env="MTF_MIN_QUALITY",
+    description="Минимальное качество MTF сигнала"
+  )
+
+  # ==================== INTEGRATED ENGINE SETTINGS ====================
+
+  # Integrated Analysis Engine
+  INTEGRATED_ANALYSIS_MODE: str = Field(
+    default="hybrid",
+    env="INTEGRATED_ANALYSIS_MODE",
+    description="Режим анализа: single_tf_only, mtf_only, hybrid, adaptive"
+  )
+
+  HYBRID_MTF_PRIORITY: float = Field(
+    default=0.6,
+    env="HYBRID_MTF_PRIORITY",
+    description="Вес MTF в hybrid режиме (0-1)"
+  )
+
+  HYBRID_MIN_AGREEMENT: bool = Field(
+    default=True,
+    env="HYBRID_MIN_AGREEMENT",
+    description="Требовать согласия между single-TF и MTF"
+  )
+
+  HYBRID_CONFLICT_RESOLUTION: str = Field(
+    default="highest_quality",
+    env="HYBRID_CONFLICT_RESOLUTION",
+    description="Стратегия разрешения конфликтов: mtf, single_tf, highest_quality"
+  )
+
+  MIN_COMBINED_QUALITY: float = Field(
+    default=0.65,
+    env="MIN_COMBINED_QUALITY",
+    description="Минимальное качество интегрированного сигнала"
+  )
+
+  @field_validator("CONSENSUS_MODE", mode="before")
+  @classmethod
+  def validate_consensus_mode(cls, v):
+    """
+    Валидация и очистка CONSENSUS_MODE.
+    """
+    if not v:
+      print("⚠️ CONSENSUS_MODE не задан, используется значение по умолчанию: weighted")
+      return "weighted"
+
+    # Очистка от комментариев (если есть)
+    if isinstance(v, str) and '#' in v:
+      v = v.split('#')[0].strip()
+
+    # Проверка допустимых значений
+    valid_modes = ["weighted", "majority", "unanimous"]
+    if v not in valid_modes:
+      error_msg = (
+        f"❌ Неизвестный CONSENSUS_MODE: '{v}'. "
+        f"Допустимые значения: {', '.join(valid_modes)}"
+      )
+      print(error_msg)
+      raise ValueError(
+        f"Invalid CONSENSUS_MODE: '{v}'. "
+        f"Must be one of: {', '.join(valid_modes)}"
+      )
+
+    print(f"✓ CONSENSUS_MODE: {v}")
+    return v
+
+  @field_validator("WEIGHT_OPTIMIZATION_METHOD", mode="before")
+  @classmethod
+  def validate_optimization_method(cls, v):
+    """
+    Валидация метода оптимизации весов.
+    """
+    if not v:
+      return "HYBRID"
+
+    # Очистка от комментариев
+    if isinstance(v, str) and '#' in v:
+      v = v.split('#')[0].strip()
+
+    # Приведение к верхнему регистру
+    v = v.upper()
+
+    valid_methods = ["PERFORMANCE", "REGIME", "HYBRID", "BAYESIAN"]
+    if v not in valid_methods:
+      print(
+        f"⚠️ Неизвестный WEIGHT_OPTIMIZATION_METHOD: '{v}'. "
+        f"Используется HYBRID"
+      )
+      return "HYBRID"
+
+    print(f"✓ WEIGHT_OPTIMIZATION_METHOD: {v}")
+    return v
 
   @field_validator("CONSENSUS_MODE", mode="before")
   @classmethod
@@ -610,7 +770,7 @@ class Settings(BaseSettings):
     env_file=".env",
     env_file_encoding="utf-8",
     case_sensitive=True,
-    extra="ignore"
+    extra="allow"
   )
 
   @field_validator("SLTP_MAX_STOP_LOSS_PERCENT", "DAILY_LOSS_MAX_PERCENT", mode="before")

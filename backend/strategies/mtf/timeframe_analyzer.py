@@ -1,0 +1,1010 @@
+"""
+Timeframe Analyzer - независимый анализ каждого таймфрейма.
+
+Функциональность:
+- Запуск всех стратегий на каждом таймфрейме независимо
+- Извлечение timeframe-specific features
+- Генерация per-timeframe signals с контекстом
+- Timeframe-specific indicator calculation
+- Regime detection для каждого таймфрейма
+
+Архитектура:
+    TimeframeAnalyzer
+    ├── _calculate_tf_specific_indicators() - индикаторы для каждого TF
+    ├── _detect_tf_regime() - определение режима рынка
+    ├── _extract_tf_features() - извлечение признаков
+    └── analyze_timeframe() - полный анализ TF
+
+Путь: backend/strategies/mtf/timeframe_analyzer.py
+"""
+
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+import numpy as np
+
+from core.logger import get_logger
+from strategy.candle_manager import Candle
+from models.orderbook import OrderBookSnapshot, OrderBookMetrics
+from models.signal import TradingSignal, SignalType
+from strategies.strategy_manager import ExtendedStrategyManager, StrategyResult
+from strategies.mtf.timeframe_coordinator import Timeframe
+
+logger = get_logger(__name__)
+
+
+class MarketRegime(Enum):
+  """Режимы рынка для таймфрейма."""
+  STRONG_UPTREND = "strong_uptrend"
+  WEAK_UPTREND = "weak_uptrend"
+  RANGING = "ranging"
+  WEAK_DOWNTREND = "weak_downtrend"
+  STRONG_DOWNTREND = "strong_downtrend"
+
+
+class VolatilityRegime(Enum):
+  """Режимы волатильности."""
+  HIGH = "high"
+  NORMAL = "normal"
+  LOW = "low"
+
+
+@dataclass
+class TimeframeIndicators:
+  """Индикаторы для конкретного таймфрейма."""
+  # Trend indicators
+  sma_fast: Optional[float] = None  # Быстрая SMA
+  sma_slow: Optional[float] = None  # Медленная SMA
+  ema_fast: Optional[float] = None  # Быстрая EMA
+  ema_slow: Optional[float] = None  # Медленная EMA
+
+  # Trend strength
+  adx: Optional[float] = None  # Average Directional Index
+  adx_di_plus: Optional[float] = None  # +DI
+  adx_di_minus: Optional[float] = None  # -DI
+
+  # Momentum
+  rsi: Optional[float] = None  # Relative Strength Index
+  stochastic_k: Optional[float] = None  # Stochastic %K
+  stochastic_d: Optional[float] = None  # Stochastic %D
+  macd: Optional[float] = None  # MACD line
+  macd_signal: Optional[float] = None  # MACD signal line
+  macd_histogram: Optional[float] = None  # MACD histogram
+
+  # Volatility
+  atr: Optional[float] = None  # Average True Range
+  atr_percent: Optional[float] = None  # ATR as % of price
+  bollinger_upper: Optional[float] = None
+  bollinger_middle: Optional[float] = None
+  bollinger_lower: Optional[float] = None
+  bollinger_width: Optional[float] = None  # Band width
+
+  # Volume
+  volume_sma: Optional[float] = None  # Volume SMA
+  volume_ratio: Optional[float] = None  # Current / SMA
+  obv: Optional[float] = None  # On-Balance Volume
+  vwap: Optional[float] = None  # Volume Weighted Average Price
+
+  # Price structure
+  swing_high: Optional[float] = None  # Последний swing high
+  swing_low: Optional[float] = None  # Последний swing low
+
+  # Ichimoku (для высших TF)
+  ichimoku_conversion: Optional[float] = None  # Tenkan-sen
+  ichimoku_base: Optional[float] = None  # Kijun-sen
+  ichimoku_span_a: Optional[float] = None  # Senkou Span A
+  ichimoku_span_b: Optional[float] = None  # Senkou Span B
+
+
+@dataclass
+class TimeframeRegimeInfo:
+  """Информация о режиме рынка на таймфрейме."""
+  market_regime: MarketRegime
+  volatility_regime: VolatilityRegime
+
+  # Детали тренда
+  trend_direction: int  # 1 = up, -1 = down, 0 = ranging
+  trend_strength: float  # 0.0-1.0
+
+  # Детали волатильности
+  volatility_percentile: float  # Процентиль относительно истории
+  normalized_atr: float  # Нормализованный ATR
+
+  # Дополнительные флаги
+  is_breakout: bool = False  # Пробой уровня
+  is_consolidation: bool = False  # Консолидация
+  is_reversal_pattern: bool = False  # Паттерн разворота
+
+  # Confidence в определении режима
+  regime_confidence: float = 0.0
+
+
+@dataclass
+class TimeframeAnalysisResult:
+  """Результат анализа одного таймфрейма."""
+  timeframe: Timeframe
+  timestamp: int
+
+  # Данные свечей
+  current_price: float
+  candles_analyzed: int
+
+  # Индикаторы
+  indicators: TimeframeIndicators
+
+  # Режим рынка
+  regime: TimeframeRegimeInfo
+
+  # Сигналы от стратегий
+  strategy_results: List[StrategyResult]
+
+  # Агрегированный сигнал таймфрейма
+  timeframe_signal: Optional[TradingSignal] = None
+
+  # Метаданные
+  analysis_duration_ms: float = 0.0
+  warnings: List[str] = field(default_factory=list)
+
+
+class TimeframeAnalyzer:
+  """
+  Анализатор таймфреймов - независимый анализ каждого TF.
+
+  Для каждого таймфрейма:
+  1. Рассчитывает специфичные индикаторы
+  2. Определяет рыночный режим
+  3. Запускает все стратегии
+  4. Генерирует агрегированный сигнал
+  """
+
+  def __init__(
+      self,
+      strategy_manager: ExtendedStrategyManager,
+      lookback_periods: Dict[Timeframe, int] = None
+  ):
+    """
+    Инициализация анализатора.
+
+    Args:
+        strategy_manager: Менеджер стратегий для запуска
+        lookback_periods: Периоды для индикаторов (по таймфреймам)
+    """
+    self.strategy_manager = strategy_manager
+
+    # Периоды lookback для расчета индикаторов
+    # Разные TF требуют разные периоды
+    self.lookback_periods = lookback_periods or {
+      Timeframe.M1: {
+        'sma_fast': 9, 'sma_slow': 21,
+        'ema_fast': 12, 'ema_slow': 26,
+        'rsi': 14, 'atr': 14,
+        'adx': 14, 'stochastic': 14,
+        'volume_sma': 20, 'bollinger': 20
+      },
+      Timeframe.M5: {
+        'sma_fast': 20, 'sma_slow': 50,
+        'ema_fast': 12, 'ema_slow': 26,
+        'rsi': 14, 'atr': 14,
+        'adx': 14, 'stochastic': 14,
+        'volume_sma': 20, 'bollinger': 20
+      },
+      Timeframe.M15: {
+        'sma_fast': 50, 'sma_slow': 100,
+        'ema_fast': 12, 'ema_slow': 26,
+        'rsi': 14, 'atr': 14,
+        'adx': 14, 'stochastic': 14,
+        'volume_sma': 20, 'bollinger': 20
+      },
+      Timeframe.H1: {
+        'sma_fast': 50, 'sma_slow': 200,
+        'ema_fast': 12, 'ema_slow': 26,
+        'rsi': 14, 'atr': 14,
+        'adx': 14, 'stochastic': 14,
+        'volume_sma': 20, 'bollinger': 20,
+        'ichimoku': True  # Включаем Ichimoku для высших TF
+      }
+    }
+
+    # Кэш расчетов (для оптимизации)
+    self._indicators_cache: Dict[Tuple[str, Timeframe], TimeframeIndicators] = {}
+    self._regime_cache: Dict[Tuple[str, Timeframe], TimeframeRegimeInfo] = {}
+
+    # Статистика
+    self.total_analyses = 0
+    self.analyses_by_timeframe = {tf: 0 for tf in Timeframe}
+
+    logger.info(
+      f"Инициализирован TimeframeAnalyzer с lookback periods для "
+      f"{len(self.lookback_periods)} таймфреймов"
+    )
+
+  async def analyze_timeframe(
+      self,
+      symbol: str,
+      timeframe: Timeframe,
+      candles: List[Candle],
+      current_price: float,
+      orderbook: Optional[OrderBookSnapshot] = None,
+      metrics: Optional[OrderBookMetrics] = None
+  ) -> TimeframeAnalysisResult:
+    """
+    Полный анализ одного таймфрейма.
+
+    Args:
+        symbol: Торговая пара
+        timeframe: Анализируемый таймфрейм
+        candles: Свечи для этого таймфрейма
+        current_price: Текущая цена
+        orderbook: Стакан (опционально, для гибридных стратегий)
+        metrics: Метрики стакана (опционально)
+
+    Returns:
+        TimeframeAnalysisResult с полным контекстом
+    """
+    import time
+    start_time = time.time()
+
+    warnings = []
+
+    # Валидация данных
+    if not candles or len(candles) < 50:
+      warnings.append(f"Недостаточно свечей: {len(candles)} < 50")
+      logger.warning(
+        f"[{timeframe.value}] {symbol}: "
+        f"Недостаточно данных для анализа"
+      )
+
+    try:
+      # Шаг 1: Расчет индикаторов
+      indicators = self._calculate_tf_specific_indicators(
+        symbol, timeframe, candles
+      )
+
+      # Шаг 2: Определение режима рынка
+      regime = self._detect_tf_regime(
+        symbol, timeframe, candles, indicators
+      )
+
+      # Шаг 3: Запуск всех стратегий
+      strategy_results = self.strategy_manager.analyze_all_strategies(
+        symbol=symbol,
+        candles=candles,
+        current_price=current_price,
+        orderbook=orderbook,
+        metrics=metrics,
+        sr_levels=None,  # TODO: интегрировать SRLevelDetector
+        volume_profile=None,  # TODO: интегрировать Volume Profile
+        ml_prediction=None  # TODO: интегрировать ML predictions
+      )
+
+      # Шаг 4: Генерация агрегированного сигнала TF
+      timeframe_signal = self._generate_timeframe_signal(
+        symbol, timeframe, strategy_results, regime, current_price
+      )
+
+      # Статистика
+      self.total_analyses += 1
+      self.analyses_by_timeframe[timeframe] += 1
+
+      analysis_duration = (time.time() - start_time) * 1000
+
+      result = TimeframeAnalysisResult(
+        timeframe=timeframe,
+        timestamp=int(datetime.now().timestamp() * 1000),
+        current_price=current_price,
+        candles_analyzed=len(candles),
+        indicators=indicators,
+        regime=regime,
+        strategy_results=strategy_results,
+        timeframe_signal=timeframe_signal,
+        analysis_duration_ms=analysis_duration,
+        warnings=warnings
+      )
+
+      logger.debug(
+        f"✅ [{timeframe.value}] {symbol} анализ завершен: "
+        f"regime={regime.market_regime.value}, "
+        f"signal={timeframe_signal.signal_type.value if timeframe_signal else 'NONE'}, "
+        f"duration={analysis_duration:.1f}ms"
+      )
+
+      return result
+
+    except Exception as e:
+      logger.error(
+        f"Ошибка анализа [{timeframe.value}] {symbol}: {e}",
+        exc_info=True
+      )
+
+      # Возвращаем пустой результат с ошибкой
+      return TimeframeAnalysisResult(
+        timeframe=timeframe,
+        timestamp=int(datetime.now().timestamp() * 1000),
+        current_price=current_price,
+        candles_analyzed=len(candles),
+        indicators=TimeframeIndicators(),
+        regime=TimeframeRegimeInfo(
+          market_regime=MarketRegime.RANGING,
+          volatility_regime=VolatilityRegime.NORMAL,
+          trend_direction=0,
+          trend_strength=0.0,
+          volatility_percentile=0.5,
+          normalized_atr=0.0
+        ),
+        strategy_results=[],
+        warnings=[f"Analysis error: {str(e)}"]
+      )
+
+  def _calculate_tf_specific_indicators(
+      self,
+      symbol: str,
+      timeframe: Timeframe,
+      candles: List[Candle]
+  ) -> TimeframeIndicators:
+    """
+    Рассчитать индикаторы, специфичные для таймфрейма.
+
+    Разные таймфреймы используют разные периоды и индикаторы:
+    - 1m: быстрые EMA, micro-структура
+    - 5m: стандартные oscillators
+    - 15m: средние MA, Bollinger
+    - 1h: долгосрочные MA, Ichimoku
+
+    Args:
+        symbol: Торговая пара
+        timeframe: Таймфрейм
+        candles: Свечи
+
+    Returns:
+        TimeframeIndicators с рассчитанными значениями
+    """
+    # Проверяем кэш
+    cache_key = (symbol, timeframe)
+
+    # Используем timestamp последней свечи для валидации кэша
+    if candles:
+      last_candle_ts = candles[-1].timestamp
+      cached = self._indicators_cache.get(cache_key)
+      # TODO: добавить timestamp в кэш для валидации
+
+    if not candles or len(candles) < 20:
+      logger.warning(
+        f"Недостаточно данных для индикаторов: {len(candles)} свечей"
+      )
+      return TimeframeIndicators()
+
+    indicators = TimeframeIndicators()
+
+    # Извлекаем OHLCV
+    closes = np.array([c.close for c in candles])
+    highs = np.array([c.high for c in candles])
+    lows = np.array([c.low for c in candles])
+    volumes = np.array([c.volume for c in candles])
+
+    periods = self.lookback_periods.get(timeframe, {})
+
+    try:
+      # === Trend Indicators ===
+      sma_fast_period = periods.get('sma_fast', 20)
+      sma_slow_period = periods.get('sma_slow', 50)
+
+      if len(closes) >= sma_fast_period:
+        indicators.sma_fast = float(np.mean(closes[-sma_fast_period:]))
+
+      if len(closes) >= sma_slow_period:
+        indicators.sma_slow = float(np.mean(closes[-sma_slow_period:]))
+
+      # EMA
+      ema_fast_period = periods.get('ema_fast', 12)
+      ema_slow_period = periods.get('ema_slow', 26)
+
+      if len(closes) >= ema_fast_period:
+        indicators.ema_fast = self._calculate_ema(closes, ema_fast_period)
+
+      if len(closes) >= ema_slow_period:
+        indicators.ema_slow = self._calculate_ema(closes, ema_slow_period)
+
+      # === Momentum Indicators ===
+      rsi_period = periods.get('rsi', 14)
+      if len(closes) >= rsi_period + 1:
+        indicators.rsi = self._calculate_rsi(closes, rsi_period)
+
+      # Stochastic
+      stoch_period = periods.get('stochastic', 14)
+      if len(highs) >= stoch_period:
+        indicators.stochastic_k = self._calculate_stochastic_k(
+          closes, highs, lows, stoch_period
+        )
+        # %D - 3-period SMA of %K
+        if indicators.stochastic_k is not None:
+          # Упрощенно - можно улучшить
+          indicators.stochastic_d = indicators.stochastic_k
+
+      # MACD
+      if indicators.ema_fast and indicators.ema_slow:
+        indicators.macd = indicators.ema_fast - indicators.ema_slow
+        # Signal line - EMA(9) of MACD
+        # Упрощенно - в production использовать полный расчет
+        indicators.macd_signal = indicators.macd * 0.9
+        indicators.macd_histogram = indicators.macd - indicators.macd_signal
+
+      # === Volatility Indicators ===
+      atr_period = periods.get('atr', 14)
+      if len(candles) >= atr_period + 1:
+        indicators.atr = self._calculate_atr(candles, atr_period)
+        if indicators.atr and closes[-1] > 0:
+          indicators.atr_percent = (indicators.atr / closes[-1]) * 100
+
+      # Bollinger Bands
+      bb_period = periods.get('bollinger', 20)
+      if len(closes) >= bb_period:
+        bb_middle = np.mean(closes[-bb_period:])
+        bb_std = np.std(closes[-bb_period:])
+
+        indicators.bollinger_middle = float(bb_middle)
+        indicators.bollinger_upper = float(bb_middle + 2 * bb_std)
+        indicators.bollinger_lower = float(bb_middle - 2 * bb_std)
+        indicators.bollinger_width = float(
+          (indicators.bollinger_upper - indicators.bollinger_lower) / bb_middle * 100
+        )
+
+      # === Volume Indicators ===
+      vol_sma_period = periods.get('volume_sma', 20)
+      if len(volumes) >= vol_sma_period:
+        indicators.volume_sma = float(np.mean(volumes[-vol_sma_period:]))
+        if indicators.volume_sma > 0:
+          indicators.volume_ratio = float(volumes[-1] / indicators.volume_sma)
+
+      # OBV (On-Balance Volume)
+      indicators.obv = self._calculate_obv(candles)
+
+      # VWAP (Volume Weighted Average Price)
+      indicators.vwap = self._calculate_vwap(candles)
+
+      # === ADX (для определения силы тренда) ===
+      adx_period = periods.get('adx', 14)
+      if len(candles) >= adx_period + 1:
+        adx_result = self._calculate_adx(candles, adx_period)
+        if adx_result:
+          indicators.adx = adx_result['adx']
+          indicators.adx_di_plus = adx_result['di_plus']
+          indicators.adx_di_minus = adx_result['di_minus']
+
+      # === Swing Highs/Lows ===
+      swing_lookback = 10
+      if len(candles) >= swing_lookback:
+        indicators.swing_high = self._find_swing_high(highs, swing_lookback)
+        indicators.swing_low = self._find_swing_low(lows, swing_lookback)
+
+      # === Ichimoku (только для высших TF) ===
+      if periods.get('ichimoku') and timeframe in [Timeframe.H1, Timeframe.H4, Timeframe.D1]:
+        if len(candles) >= 52:  # Минимум для Ichimoku
+          ichimoku = self._calculate_ichimoku(candles)
+          if ichimoku:
+            indicators.ichimoku_conversion = ichimoku['conversion']
+            indicators.ichimoku_base = ichimoku['base']
+            indicators.ichimoku_span_a = ichimoku['span_a']
+            indicators.ichimoku_span_b = ichimoku['span_b']
+
+      # Кэшируем результат
+      self._indicators_cache[cache_key] = indicators
+
+    except Exception as e:
+      logger.error(f"Ошибка расчета индикаторов {timeframe.value}: {e}")
+
+    return indicators
+
+  def _detect_tf_regime(
+      self,
+      symbol: str,
+      timeframe: Timeframe,
+      candles: List[Candle],
+      indicators: TimeframeIndicators
+  ) -> TimeframeRegimeInfo:
+    """
+    Определить режим рынка для таймфрейма.
+
+    Использует:
+    - ADX для силы тренда
+    - MA для направления
+    - ATR для волатильности
+    - Price action patterns
+
+    Args:
+        symbol: Торговая пара
+        timeframe: Таймфрейм
+        candles: Свечи
+        indicators: Рассчитанные индикаторы
+
+    Returns:
+        TimeframeRegimeInfo с режимом рынка
+    """
+    if not candles or len(candles) < 20:
+      return TimeframeRegimeInfo(
+        market_regime=MarketRegime.RANGING,
+        volatility_regime=VolatilityRegime.NORMAL,
+        trend_direction=0,
+        trend_strength=0.0,
+        volatility_percentile=0.5,
+        normalized_atr=0.0,
+        regime_confidence=0.0
+      )
+
+    current_price = candles[-1].close
+
+    # === Определение Тренда ===
+    trend_direction = 0
+    trend_strength = 0.0
+
+    # Используем SMA для направления
+    if indicators.sma_fast and indicators.sma_slow:
+      if indicators.sma_fast > indicators.sma_slow:
+        trend_direction = 1  # Uptrend
+      elif indicators.sma_fast < indicators.sma_slow:
+        trend_direction = -1  # Downtrend
+
+    # Используем ADX для силы тренда
+    if indicators.adx:
+      # ADX интерпретация:
+      # < 20: weak/no trend
+      # 20-25: developing trend
+      # 25-50: strong trend
+      # > 50: very strong trend
+      trend_strength = min(indicators.adx / 50.0, 1.0)
+
+    # Определяем market regime
+    market_regime = MarketRegime.RANGING
+
+    if indicators.adx:
+      if indicators.adx > 25:  # Strong trend
+        if trend_direction > 0:
+          market_regime = MarketRegime.STRONG_UPTREND
+        elif trend_direction < 0:
+          market_regime = MarketRegime.STRONG_DOWNTREND
+      elif indicators.adx > 15:  # Weak trend
+        if trend_direction > 0:
+          market_regime = MarketRegime.WEAK_UPTREND
+        elif trend_direction < 0:
+          market_regime = MarketRegime.WEAK_DOWNTREND
+      else:  # ADX < 15
+        market_regime = MarketRegime.RANGING
+
+    # === Определение Волатильности ===
+    volatility_regime = VolatilityRegime.NORMAL
+    volatility_percentile = 0.5
+    normalized_atr = 0.0
+
+    if indicators.atr and indicators.atr_percent:
+      normalized_atr = indicators.atr_percent
+
+      # Рассчитываем percentile ATR относительно истории
+      if len(candles) >= 100:
+        # Вычисляем ATR для последних 100 периодов
+        historical_atrs = []
+        for i in range(len(candles) - 100, len(candles)):
+          if i >= 14:  # Минимум для ATR
+            atr_val = self._calculate_atr(candles[i - 13:i + 1], 14)
+            if atr_val:
+              historical_atrs.append(atr_val)
+
+        if historical_atrs:
+          # Percentile текущего ATR
+          current_atr = indicators.atr
+          volatility_percentile = (
+              sum(1 for x in historical_atrs if x < current_atr) /
+              len(historical_atrs)
+          )
+
+          # Классификация
+          if volatility_percentile > 0.80:
+            volatility_regime = VolatilityRegime.HIGH
+          elif volatility_percentile < 0.20:
+            volatility_regime = VolatilityRegime.LOW
+          else:
+            volatility_regime = VolatilityRegime.NORMAL
+
+    # === Детекция паттернов ===
+    is_breakout = False
+    is_consolidation = False
+    is_reversal_pattern = False
+
+    # Breakout detection
+    if indicators.bollinger_upper and indicators.bollinger_lower:
+      if current_price > indicators.bollinger_upper:
+        is_breakout = True
+      elif current_price < indicators.bollinger_lower:
+        is_breakout = True
+
+    # Consolidation detection (узкие Bollinger Bands)
+    if indicators.bollinger_width:
+      if indicators.bollinger_width < 2.0:  # Узкие bands
+        is_consolidation = True
+
+    # Reversal pattern (простая версия - MACD divergence)
+    if indicators.macd_histogram:
+      # Если histogram меняет знак - возможный разворот
+      # Упрощенная логика
+      pass
+
+    # === Confidence в определении режима ===
+    regime_confidence = 0.5  # Base
+
+    # Повышаем confidence если есть подтверждение от нескольких индикаторов
+    confirmations = 0
+
+    if indicators.adx and indicators.adx > 20:
+      confirmations += 1
+
+    if indicators.sma_fast and indicators.sma_slow:
+      if abs(indicators.sma_fast - indicators.sma_slow) / indicators.sma_slow > 0.02:
+        confirmations += 1
+
+    if indicators.rsi:
+      if (trend_direction > 0 and indicators.rsi > 50) or \
+          (trend_direction < 0 and indicators.rsi < 50):
+        confirmations += 1
+
+    regime_confidence = min(0.5 + (confirmations * 0.15), 0.95)
+
+    regime_info = TimeframeRegimeInfo(
+      market_regime=market_regime,
+      volatility_regime=volatility_regime,
+      trend_direction=trend_direction,
+      trend_strength=trend_strength,
+      volatility_percentile=volatility_percentile,
+      normalized_atr=normalized_atr,
+      is_breakout=is_breakout,
+      is_consolidation=is_consolidation,
+      is_reversal_pattern=is_reversal_pattern,
+      regime_confidence=regime_confidence
+    )
+
+    logger.debug(
+      f"[{timeframe.value}] {symbol} режим: "
+      f"{market_regime.value}, volatility={volatility_regime.value}, "
+      f"confidence={regime_confidence:.2f}"
+    )
+
+    return regime_info
+
+  def _generate_timeframe_signal(
+      self,
+      symbol: str,
+      timeframe: Timeframe,
+      strategy_results: List[StrategyResult],
+      regime: TimeframeRegimeInfo,
+      current_price: float
+  ) -> Optional[TradingSignal]:
+    """
+    Генерировать агрегированный сигнал таймфрейма.
+
+    Комбинирует сигналы от стратегий с учетом рыночного режима.
+
+    Args:
+        symbol: Торговая пара
+        timeframe: Таймфрейм
+        strategy_results: Результаты стратегий
+        regime: Режим рынка
+        current_price: Текущая цена
+
+    Returns:
+        TradingSignal или None
+    """
+    # Фильтруем только стратегии с сигналами
+    results_with_signals = [
+      r for r in strategy_results
+      if r.signal and r.signal.signal_type != SignalType.HOLD
+    ]
+
+    if not results_with_signals:
+      return None
+
+    # Подсчитываем голоса
+    buy_signals = [r for r in results_with_signals if r.signal.signal_type == SignalType.BUY]
+    sell_signals = [r for r in results_with_signals if r.signal.signal_type == SignalType.SELL]
+
+    # Простое большинство
+    if len(buy_signals) > len(sell_signals):
+      signal_type = SignalType.BUY
+      contributing = buy_signals
+    elif len(sell_signals) > len(buy_signals):
+      signal_type = SignalType.SELL
+      contributing = sell_signals
+    else:
+      # Равенство - нет консенсуса
+      return None
+
+    # Вычисляем среднюю confidence
+    avg_confidence = np.mean([r.signal.confidence for r in contributing])
+
+    # Модифицируем confidence на основе режима рынка
+    regime_modifier = 1.0
+
+    # Если сигнал согласуется с трендом - увеличиваем confidence
+    if signal_type == SignalType.BUY and regime.trend_direction > 0:
+      regime_modifier = 1.0 + (regime.trend_strength * 0.2)
+    elif signal_type == SignalType.SELL and regime.trend_direction < 0:
+      regime_modifier = 1.0 + (regime.trend_strength * 0.2)
+    # Если против тренда - снижаем
+    elif signal_type == SignalType.BUY and regime.trend_direction < 0:
+      regime_modifier = 0.8
+    elif signal_type == SignalType.SELL and regime.trend_direction > 0:
+      regime_modifier = 0.8
+
+    final_confidence = min(avg_confidence * regime_modifier, 0.95)
+
+    # Создаем агрегированный сигнал
+    from models.signal import SignalSource, SignalStrength
+
+    signal = TradingSignal(
+      symbol=symbol,
+      signal_type=signal_type,
+      source=SignalSource.STRATEGY,
+      strength=SignalStrength.MEDIUM,  # TODO: определять по confidence
+      price=current_price,
+      confidence=final_confidence,
+      timestamp=int(datetime.now().timestamp() * 1000),
+      reason=(
+        f"[{timeframe.value}] Consensus: {len(contributing)}/{len(results_with_signals)} "
+        f"strategies agree, regime={regime.market_regime.value}"
+      ),
+      metadata={
+        'timeframe': timeframe.value,
+        'regime': regime.market_regime.value,
+        'regime_confidence': regime.regime_confidence,
+        'trend_strength': regime.trend_strength,
+        'contributing_strategies': [r.strategy_name for r in contributing]
+      }
+    )
+
+    return signal
+
+  # ==================== Helper Methods ====================
+
+  def _calculate_ema(self, values: np.ndarray, period: int) -> float:
+    """Экспоненциальная скользящая средняя."""
+    if len(values) < period:
+      return float(np.mean(values))
+
+    multiplier = 2 / (period + 1)
+    ema = np.mean(values[:period])  # Начальная SMA
+
+    for price in values[period:]:
+      ema = (price * multiplier) + (ema * (1 - multiplier))
+
+    return float(ema)
+
+  def _calculate_rsi(self, closes: np.ndarray, period: int = 14) -> float:
+    """Relative Strength Index."""
+    if len(closes) < period + 1:
+      return 50.0
+
+    deltas = np.diff(closes)
+    gains = np.where(deltas > 0, deltas, 0)
+    losses = np.where(deltas < 0, -deltas, 0)
+
+    avg_gain = np.mean(gains[-period:])
+    avg_loss = np.mean(losses[-period:])
+
+    if avg_loss == 0:
+      return 100.0
+
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+
+    return float(rsi)
+
+  def _calculate_stochastic_k(
+      self,
+      closes: np.ndarray,
+      highs: np.ndarray,
+      lows: np.ndarray,
+      period: int = 14
+  ) -> float:
+    """Stochastic %K."""
+    if len(closes) < period:
+      return 50.0
+
+    lowest_low = np.min(lows[-period:])
+    highest_high = np.max(highs[-period:])
+    current_close = closes[-1]
+
+    if highest_high == lowest_low:
+      return 50.0
+
+    k = ((current_close - lowest_low) / (highest_high - lowest_low)) * 100
+
+    return float(k)
+
+  def _calculate_atr(self, candles: List[Candle], period: int = 14) -> Optional[float]:
+    """Average True Range."""
+    if len(candles) < period + 1:
+      return None
+
+    true_ranges = []
+
+    for i in range(1, len(candles)):
+      high = candles[i].high
+      low = candles[i].low
+      prev_close = candles[i - 1].close
+
+      tr = max(
+        high - low,
+        abs(high - prev_close),
+        abs(low - prev_close)
+      )
+
+      true_ranges.append(tr)
+
+    if len(true_ranges) < period:
+      return None
+
+    atr = np.mean(true_ranges[-period:])
+
+    return float(atr)
+
+  def _calculate_adx(
+      self,
+      candles: List[Candle],
+      period: int = 14
+  ) -> Optional[Dict]:
+    """Average Directional Index с +DI и -DI."""
+    if len(candles) < period + 1:
+      return None
+
+    # Расчет +DM и -DM
+    plus_dm_values = []
+    minus_dm_values = []
+
+    for i in range(1, len(candles)):
+      high_diff = candles[i].high - candles[i - 1].high
+      low_diff = candles[i - 1].low - candles[i].low
+
+      plus_dm = high_diff if high_diff > low_diff and high_diff > 0 else 0
+      minus_dm = low_diff if low_diff > high_diff and low_diff > 0 else 0
+
+      plus_dm_values.append(plus_dm)
+      minus_dm_values.append(minus_dm)
+
+    # Сглаживание через SMA (упрощенно)
+    smoothed_plus_dm = np.mean(plus_dm_values[-period:])
+    smoothed_minus_dm = np.mean(minus_dm_values[-period:])
+
+    # Расчет ATR
+    atr = self._calculate_atr(candles, period)
+    if not atr or atr == 0:
+      return None
+
+    # +DI и -DI
+    di_plus = (smoothed_plus_dm / atr) * 100
+    di_minus = (smoothed_minus_dm / atr) * 100
+
+    # DX
+    di_diff = abs(di_plus - di_minus)
+    di_sum = di_plus + di_minus
+
+    if di_sum == 0:
+      return None
+
+    dx = (di_diff / di_sum) * 100
+
+    # ADX - сглаживание DX (упрощенно используем текущий DX)
+    adx = dx
+
+    return {
+      'adx': float(adx),
+      'di_plus': float(di_plus),
+      'di_minus': float(di_minus)
+    }
+
+  def _calculate_obv(self, candles: List[Candle]) -> float:
+    """On-Balance Volume."""
+    if len(candles) < 2:
+      return 0.0
+
+    obv = 0.0
+
+    for i in range(1, len(candles)):
+      if candles[i].close > candles[i - 1].close:
+        obv += candles[i].volume
+      elif candles[i].close < candles[i - 1].close:
+        obv -= candles[i].volume
+
+    return float(obv)
+
+  def _calculate_vwap(self, candles: List[Candle]) -> float:
+    """Volume Weighted Average Price."""
+    if not candles:
+      return 0.0
+
+    total_volume = sum(c.volume for c in candles)
+
+    if total_volume == 0:
+      return candles[-1].close
+
+    vwap = sum(
+      ((c.high + c.low + c.close) / 3) * c.volume
+      for c in candles
+    ) / total_volume
+
+    return float(vwap)
+
+  def _find_swing_high(self, highs: np.ndarray, lookback: int = 10) -> Optional[float]:
+    """Найти последний swing high."""
+    if len(highs) < lookback * 2:
+      return None
+
+    # Простая логика: локальный максимум в окне lookback
+    for i in range(len(highs) - lookback - 1, lookback, -1):
+      is_swing_high = all(
+        highs[i] > highs[j]
+        for j in range(i - lookback, i + lookback + 1)
+        if j != i
+      )
+
+      if is_swing_high:
+        return float(highs[i])
+
+    return None
+
+  def _find_swing_low(self, lows: np.ndarray, lookback: int = 10) -> Optional[float]:
+    """Найти последний swing low."""
+    if len(lows) < lookback * 2:
+      return None
+
+    for i in range(len(lows) - lookback - 1, lookback, -1):
+      is_swing_low = all(
+        lows[i] < lows[j]
+        for j in range(i - lookback, i + lookback + 1)
+        if j != i
+      )
+
+      if is_swing_low:
+        return float(lows[i])
+
+    return None
+
+  def _calculate_ichimoku(self, candles: List[Candle]) -> Optional[Dict]:
+    """Ichimoku Cloud (упрощенная версия)."""
+    if len(candles) < 52:
+      return None
+
+    # Tenkan-sen (Conversion Line): (9-period high + 9-period low) / 2
+    highs_9 = [c.high for c in candles[-9:]]
+    lows_9 = [c.low for c in candles[-9:]]
+    conversion = (max(highs_9) + min(lows_9)) / 2
+
+    # Kijun-sen (Base Line): (26-period high + 26-period low) / 2
+    highs_26 = [c.high for c in candles[-26:]]
+    lows_26 = [c.low for c in candles[-26:]]
+    base = (max(highs_26) + min(lows_26)) / 2
+
+    # Senkou Span A (Leading Span A): (Conversion + Base) / 2
+    span_a = (conversion + base) / 2
+
+    # Senkou Span B (Leading Span B): (52-period high + 52-period low) / 2
+    highs_52 = [c.high for c in candles[-52:]]
+    lows_52 = [c.low for c in candles[-52:]]
+    span_b = (max(highs_52) + min(lows_52)) / 2
+
+    return {
+      'conversion': float(conversion),
+      'base': float(base),
+      'span_a': float(span_a),
+      'span_b': float(span_b)
+    }
+
+  def get_statistics(self) -> Dict:
+    """Получить статистику анализатора."""
+    return {
+      'total_analyses': self.total_analyses,
+      'analyses_by_timeframe': {
+        tf.value: count
+        for tf, count in self.analyses_by_timeframe.items()
+      },
+      'cache_size': {
+        'indicators': len(self._indicators_cache),
+        'regime': len(self._regime_cache)
+      }
+    }

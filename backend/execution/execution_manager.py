@@ -30,7 +30,8 @@ from infrastructure.resilience.rate_limiter import rate_limited
 from models.signal import TradingSignal, SignalType
 from models.market_data import OrderSide, OrderType, TimeInForce
 from exchange.rest_client import rest_client
-from strategies.adaptive import adaptive_consensus_manager
+from strategies.adaptive import adaptive_consensus_manager, AdaptiveConsensusManager
+
 from strategy.risk_manager import RiskManager
 from strategy.risk_models import MarketRegime
 from strategy.signal_deduplicator import signal_deduplicator
@@ -45,7 +46,7 @@ logger = get_logger(__name__)
 class ExecutionManager:
     """Менеджер исполнения торговых ордеров с полным управлением позициями."""
 
-    def __init__(self, risk_manager: RiskManager):
+    def __init__(self, risk_manager: RiskManager, adaptive_consensus_manager: Optional[AdaptiveConsensusManager] = None):
         """
         Инициализация менеджера исполнения.
 
@@ -53,6 +54,7 @@ class ExecutionManager:
             risk_manager: Менеджер рисков
         """
         self.risk_manager = risk_manager
+        self.adaptive_consensus_manager = adaptive_consensus_manager
         self.rest_client = rest_client
 
         # Очередь сигналов для исполнения
@@ -774,26 +776,60 @@ class ExecutionManager:
                     f"Позиция {symbol} удалена из Trailing Stop Manager"
                 )
 
-                if adaptive_consensus_manager:
-                    # Получаем информацию о позиции
-                    contributing_strategies = position.metadata.get('contributing_strategies', [])
-                    signal_timestamp = position.metadata.get('signal_timestamp')
+                # ========================================
+                # ✅ ШАГ 6.5: ИНТЕГРАЦИЯ С ADAPTIVE CONSENSUS MANAGER
+                # ========================================
+                if self.adaptive_consensus_manager:
+                    try:
+                        # Получаем метаданные из позиции
+                        contributing_strategies = position.metadata.get('contributing_strategies', [])
+                        signal_timestamp = position.metadata.get('signal_timestamp')
 
-                    if contributing_strategies and signal_timestamp:
-                        # Записываем outcome
-                        adaptive_consensus_manager.record_signal_outcome(
-                            symbol=position.symbol,
-                            signal_timestamp=signal_timestamp,
-                            contributing_strategies=contributing_strategies,
-                            exit_price=exit_price,
-                            exit_timestamp=int(datetime.now().timestamp() * 1000),
-                            pnl_usdt=realized_pnl
+                        # Логируем полученные метаданные
+                        logger.debug(
+                            f"📊 Position metadata: "
+                            f"strategies={contributing_strategies}, "
+                            f"signal_ts={signal_timestamp}"
                         )
 
-                        logger.info(
-                            f"📊 Performance recorded: {position.symbol}, "
-                            f"PnL={realized_pnl:.2f} USDT, "
-                            f"strategies={contributing_strategies}"
+                        # Проверяем наличие необходимых данных
+                        if contributing_strategies and signal_timestamp:
+                            # Текущий timestamp выхода
+                            exit_timestamp = int(datetime.now().timestamp() * 1000)
+
+                            # Вызываем метод записи результата
+                            self.adaptive_consensus_manager.record_signal_outcome(
+                                symbol=position.symbol,
+                                signal_timestamp=signal_timestamp,
+                                contributing_strategies=contributing_strategies,
+                                exit_price=exit_price,
+                                exit_timestamp=exit_timestamp,
+                                pnl_usdt=realized_pnl
+                            )
+
+                            logger.info(
+                                f"📊 Performance recorded for Adaptive Consensus: "
+                                f"{position.symbol}, "
+                                f"PnL={realized_pnl:+.2f} USDT, "
+                                f"strategies={', '.join(contributing_strategies)}, "
+                                f"hold_time={(exit_timestamp - signal_timestamp) / 1000:.0f}s"
+                            )
+                        else:
+                            # Логируем отсутствие данных
+                            if not contributing_strategies:
+                                logger.debug(
+                                    f"📊 No contributing_strategies in position metadata for {symbol}"
+                                )
+                            if not signal_timestamp:
+                                logger.debug(
+                                    f"📊 No signal_timestamp in position metadata for {symbol}"
+                                )
+
+                    except Exception as e:
+                        # Не падаем, если запись в adaptive consensus не удалась
+                        logger.error(
+                            f"❌ Ошибка при записи результата в Adaptive Consensus: {e}",
+                            exc_info=True
                         )
 
                 # 7. АУДИТ
