@@ -155,14 +155,13 @@ class TimeframeCoordinator:
         for timeframe in self.config.active_timeframes:
             try:
                 # Создаем CandleManager
-                candle_manager = CandleManager(
-                    symbol=symbol,
-                    interval=timeframe.value
-                )
-                
                 # Загружаем исторические данные
                 candles_count = self.config.candles_per_timeframe.get(timeframe, 200)
-                
+                candle_manager = CandleManager(
+                    symbol=symbol,
+                    timeframe=timeframe.value,  # ✅ ПРАВИЛЬНО
+                    max_candles=candles_count
+                )
                 success = await self._load_historical_candles(
                     candle_manager,
                     symbol,
@@ -374,7 +373,17 @@ class TimeframeCoordinator:
                     close=candle_data['close'],
                     volume=candle_data['volume']
                 )
-                candle_manager.add_candle(candle)
+                await candle_manager.update_candle(
+                    candle_data={
+                        'timestamp': candle_data['timestamp'],
+                        'open': candle_data['open'],
+                        'high': candle_data['high'],
+                        'low': candle_data['low'],
+                        'close': candle_data['close'],
+                        'volume': candle_data['volume']
+                    },
+                    is_closed=True  # Исторические свечи всегда закрыты
+                )
             
             return True
         
@@ -389,115 +398,102 @@ class TimeframeCoordinator:
         symbol: str,
         timeframe: Timeframe
     ) -> bool:
-        """
-        Обновить свечи напрямую из API.
-        """
+        """Обновить свечи напрямую из API."""
         try:
             manager = self.candle_managers[symbol][timeframe]
-            
-            # Получаем последнюю свечу
+
             existing_candles = manager.get_candles()
-            
             if not existing_candles:
                 return False
-            
+
             last_candle = existing_candles[-1]
-            
-            # Запрашиваем новые свечи
+
             candles_data = await rest_client.get_klines(
                 symbol=symbol,
                 interval=timeframe.value,
-                limit=10,  # Последние 10 свечей
+                limit=10,
                 start_time=last_candle.timestamp
             )
-            
+
             if not candles_data:
                 return False
-            
-            # Обновляем/добавляем свечи
+
+            # Обновляем свечи
             for candle_data in candles_data:
-                candle = Candle(
-                    timestamp=candle_data['timestamp'],
-                    open=candle_data['open'],
-                    high=candle_data['high'],
-                    low=candle_data['low'],
-                    close=candle_data['close'],
-                    volume=candle_data['volume']
+                await manager.update_candle(  # ✅ ИСПРАВЛЕНО: manager вместо candle_manager
+                    candle_data=candle_data,
+                    is_closed=True
                 )
-                
-                # add_candle автоматически обновляет существующие
-                manager.add_candle(candle)
-            
+
             return True
-        
+
         except Exception as e:
-            logger.error(
-                f"Ошибка обновления {symbol} {timeframe.value}: {e}"
-            )
+            logger.error(f"Ошибка обновления {symbol} {timeframe.value}: {e}")
             return False
 
-    def _aggregate_from_lower_timeframe(
+    async def _aggregate_from_lower_timeframe(  # ✅ ДОБАВИТЬ async
         self,
         symbol: str,
         target_timeframe: Timeframe
     ) -> bool:
-        """
-        Построить свечи высшего таймфрейма из низшего.
-        
-        Например: 5m из 1m (агрегация 5 свечей)
-        """
+        """Построить свечи высшего таймфрейма из низшего."""
         try:
             source_timeframe = self.config.aggregation_mapping.get(target_timeframe)
-            
+
             if not source_timeframe:
                 return False
-            
-            # Получаем source свечи
+
             source_candles = self.get_candles(symbol, source_timeframe)
-            
+
             if not source_candles:
                 return False
-            
-            # Вычисляем коэффициент агрегации
+
             aggregation_factor = self._get_aggregation_factor(
                 source_timeframe, target_timeframe
             )
-            
+
             if aggregation_factor <= 1:
                 return False
-            
-            # Группируем свечи
+
             aggregated_candles = self._aggregate_candles(
                 source_candles,
                 aggregation_factor
             )
-            
-            # Получаем target manager
+
             if target_timeframe not in self.candle_managers[symbol]:
                 self.candle_managers[symbol][target_timeframe] = CandleManager(
                     symbol=symbol,
-                    interval=target_timeframe.value
+                    timeframe=target_timeframe.value,
+                    max_candles=self.config.candles_per_timeframe.get(target_timeframe, 200)
                 )
-            
+
             target_manager = self.candle_managers[symbol][target_timeframe]
-            
-            # Добавляем агрегированные свечи
+
+            # Теперь await работает
             for candle in aggregated_candles:
-                target_manager.add_candle(candle)
-            
+                await target_manager.update_candle(
+                    candle_data={
+                        'timestamp': candle.timestamp,
+                        'open': candle.open,
+                        'high': candle.high,
+                        'low': candle.low,
+                        'close': candle.close,
+                        'volume': candle.volume
+                    },
+                    is_closed=True
+                )
+
             self.aggregations_performed += 1
-            
+
             logger.debug(
                 f"Агрегация {symbol}: {source_timeframe.value} → {target_timeframe.value}, "
                 f"свечей: {len(aggregated_candles)}"
             )
-            
+
             return True
-        
+
         except Exception as e:
-            logger.error(
-                f"Ошибка агрегации {symbol} {target_timeframe.value}: {e}"
-            )
+            logger.error(f"Ошибка агрегации {symbol} {target_timeframe.value}: {e}")
             return False
 
     def _aggregate_candles(

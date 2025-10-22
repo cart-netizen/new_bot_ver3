@@ -180,6 +180,7 @@ class BotController:
     self.execution_manager: Optional[ExecutionManager] = None
     self.balance_tracker = balance_tracker
 
+
     # ==================== ML КОМПОНЕНТЫ ====================
     self.ml_feature_pipeline: Optional[MultiSymbolFeaturePipeline] = None
     self.ml_data_collector: Optional[MLDataCollector] = None
@@ -285,6 +286,7 @@ class BotController:
     self.position_monitor: Optional[PositionMonitor] = None
     self.weight_optimization_task: Optional[asyncio.Task] = None
     self.mtf_update_task: Optional[asyncio.Task] = None
+
     self.running = False
 
     logger.info("✅ BotController инициализирован с поддержкой Фаз 1-4")
@@ -386,7 +388,7 @@ class BotController:
 
       self.strategy_manager = ExtendedStrategyManager(strategy_config)
       logger.info("✅ ExtendedStrategyManager инициализирован")
-      logger.info(f"📊 Активные стратегии: {list(self.strategy_manager.get_all_strategy_names())}")
+      logger.info(f"📊 Активные стратегии: {list(self.strategy_manager.all_strategies.keys())}")
 
       # ========== ЭТАП 6: ADAPTIVE CONSENSUS (ФАЗА 2) ==========
       if self.enable_adaptive_consensus:
@@ -483,39 +485,42 @@ class BotController:
               active_timeframes=active_timeframes,
               primary_timeframe=primary_tf,
               execution_timeframe=execution_tf,
-              enable_caching=True,
-              staggered_update_interval=mtf_staggered_interval,
-              enable_validation=True
+
             ),
 
             # Aligner Config
             aligner_config=AlignmentConfig(
-              htf_weight=0.50,  # Higher Timeframe weight
-              mtf_weight=0.30,  # Medium Timeframe weight
-              ltf_weight=0.20,  # Lower Timeframe weight
+              timeframe_weights={  # ✅ Вместо htf_weight, mtf_weight, ltf_weight
+                Timeframe.H1: 0.50,
+                Timeframe.M15: 0.30,
+                Timeframe.M5: 0.15,
+                Timeframe.M1: 0.05
+              },  # Lower Timeframe weight
               min_alignment_score=0.65,
-              enable_confluence_detection=True,
-              min_confluence_zones=1,
-              enable_divergence_detection=True
+              confluence_price_tolerance_percent=0.5,
+              min_timeframes_for_confluence=1,  # ✅ Вместо min_confluence_zones
+              allow_trend_counter_signals=False
             ),
 
             # Synthesizer Config
             synthesizer_config=SynthesizerConfig(
-              synthesis_mode=SynthesisMode(mtf_synthesis_mode),
-              min_signal_quality=mtf_min_quality,
-              enable_dynamic_sizing=True,
-              position_size_multiplier_range=(0.3, 1.5),
-              enable_smart_sl=True,
-              default_risk_reward_ratio=2.0
+              mode=SynthesisMode(mtf_synthesis_mode),  # ✅ mode, НЕ synthesis_mode
+              min_signal_quality=mtf_min_quality,  # ✅ Вместо min_quality_threshold
+              min_timeframes_required=2,  # ✅ Вместо min_timeframes_for_signal
+              enable_dynamic_position_sizing=True,
+              max_position_multiplier=1.5,  # ✅ Вместо position_size_multiplier_range
+              min_position_multiplier=0.3,  # ✅
+              use_higher_tf_for_stops=True,  # ✅ Вместо enable_smart_sl
+              atr_multiplier_for_stops=2.0  # ✅ Вместо default_risk_reward_ratio
+
             ),
 
             # Quality Control
-            min_quality_threshold=mtf_min_quality,
-            enable_quality_scoring=True,
+
 
             # Fallback
             fallback_to_single_tf=True,
-            min_timeframes_for_signal=2
+
           )
 
           self.mtf_manager = MultiTimeframeManager(
@@ -564,11 +569,10 @@ class BotController:
 
           # Quality control
           min_combined_quality=min_combined_quality,
-          enable_quality_scoring=True,
+
 
           # Fallback
-          fallback_to_single_tf=True,
-          fallback_to_basic_consensus=True
+
         )
 
         self.integrated_engine = IntegratedAnalysisEngine(integrated_config)
@@ -580,6 +584,43 @@ class BotController:
 
         logger.info("✅ Integrated Analysis Engine инициализирован")
         logger.info(f"📊 Режим анализа: {integrated_mode}")
+
+        # ========== STATISTICS & DIAGNOSTICS ==========
+        self.stats = {
+          'signals_generated': 0,
+          'signals_executed': 0,
+          'orders_placed': 0,
+          'positions_opened': 0,
+          'positions_closed': 0,
+          'total_pnl': 0.0,
+          'consensus_achieved': 0,
+          'consensus_failed': 0,
+          'mtf_signals': 0,
+          'adaptive_weight_updates': 0,
+          'ml_validations': 0,
+          'analysis_cycles': 0,
+          'errors': 0,
+          'warnings': 0
+        }
+
+        # ========== CONFIGURATION SNAPSHOT ==========
+        # Сохраняем ключевые настройки для диагностики
+        self.config_snapshot = {
+          'trading_pairs': settings.TRADING_PAIRS,
+          'default_leverage': settings.DEFAULT_LEVERAGE,
+          'analysis_interval': settings.ANALYSIS_INTERVAL,
+          'candle_limit': settings.CANDLE_LIMIT,
+          'enable_orderbook_strategies': self.enable_orderbook_strategies,
+          'enable_adaptive_consensus': self.enable_adaptive_consensus,
+          'enable_mtf_analysis': self.enable_mtf_analysis,
+          'enable_ml_validation': self.enable_ml_validation,
+          'paper_trading': self.enable_paper_trading,
+          'mtf_timeframes': settings.MTF_ACTIVE_TIMEFRAMES if self.enable_mtf_analysis else None,
+          'mtf_synthesis_mode': settings.MTF_SYNTHESIS_MODE if self.enable_mtf_analysis else None,
+          'integrated_analysis_mode': settings.INTEGRATED_ANALYSIS_MODE,
+          'timestamp': datetime.now().isoformat()
+        }
+
 
       except Exception as e:
         logger.error(f"❌ Критическая ошибка инициализации Integrated Engine: {e}")
@@ -1326,13 +1367,21 @@ class BotController:
               continue
 
             # 1.3 OrderBook Metrics
-            orderbook_metrics = self.market_analyzer.analyze_symbol(symbol, ob_manager)
+            # orderbook_metrics = self.market_analyzer.analyze_symbol(symbol, ob_manager)
+            #
+            # # 1.4 Market Metrics
+            # market_metrics = self.market_analyzer.analyze_symbol(
+            #   symbol=symbol,
+            #   candles=candles,
+            #   orderbook=orderbook_snapshot
+            # )
+
+            orderbook_metrics = self.orderbook_analyzer.analyze(orderbook_snapshot)
 
             # 1.4 Market Metrics
             market_metrics = self.market_analyzer.analyze_symbol(
-              symbol=symbol,
-              candles=candles,
-              orderbook=orderbook_snapshot
+              symbol,
+              ob_manager
             )
 
             logger.debug(
@@ -1887,7 +1936,7 @@ class BotController:
               from api.websocket import broadcast_metrics_update
               await broadcast_metrics_update(
                 symbol=symbol,
-                metrics=orderbook_metrics.to_dict()
+                metrics=market_metrics.to_dict()
               )
 
               # Broadcast Signal (если был)

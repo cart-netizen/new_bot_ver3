@@ -383,10 +383,10 @@ class IntegratedAnalysisEngine:
         logger.debug(f"{symbol}: Trending market detected → MTF")
 
     # High volatility check
-    if metrics and metrics.volatility:
-      if metrics.volatility > 0.015:  # 1.5%
-        use_single_tf = True
-        logger.debug(f"{symbol}: High volatility → Single-TF")
+    if metrics and hasattr(metrics, 'spread_pct'):
+      volatility = metrics.spread_pct / metrics.mid_price if metrics.mid_price > 0 else 0
+      if volatility > 0.015:
+        return AnalysisMode.SINGLE_TF_ONLY
 
     # Fallback
     if not use_mtf and not use_single_tf:
@@ -425,9 +425,9 @@ class IntegratedAnalysisEngine:
     if self.adaptive_consensus:
       adaptive_weights = self.adaptive_consensus.get_optimal_weights(symbol)
 
-      # Обновляем веса в strategy manager
-      if adaptive_weights:
-        self.strategy_manager.update_weights(adaptive_weights)
+      # # Обновляем веса в strategy manager
+      # if adaptive_weights:
+      #   self.strategy_manager.update_weights(adaptive_weights)
 
     # Запускаем стратегии с adaptive consensus
     consensus = self.strategy_manager.analyze_with_consensus(
