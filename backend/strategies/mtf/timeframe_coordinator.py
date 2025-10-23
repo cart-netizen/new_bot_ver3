@@ -254,16 +254,16 @@ class TimeframeCoordinator:
             
             try:
                 # Проверяем использовать ли агрегацию
-                if (self.config.enable_aggregation and 
+                if (self.config.enable_aggregation and
                     timeframe in self.config.aggregation_mapping):
-                    
-                    # Строим из низшего TF
-                    success = self._aggregate_from_lower_timeframe(
+
+                    # Строим из низшего TF (НЕ async метод!)
+                    success = self._aggregate_from_lower_timeframe(  # ✅ БЕЗ await - это правильно
                         symbol, timeframe
                     )
                 else:
-                    # Обновляем напрямую из API
-                    success = await self._update_from_api(
+                    # Обновляем напрямую из API (async метод!)
+                    success = await self._update_from_api(  # ✅ С await - это async
                         symbol, timeframe
                     )
                 

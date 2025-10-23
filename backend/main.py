@@ -399,9 +399,9 @@ class BotController:
         enable_hybrid_strategies=self.enable_orderbook_strategies
       )
 
-      self.strategy_manager = ExtendedStrategyManager(strategy_config)
-      logger.info("✅ ExtendedStrategyManager инициализирован")
-      logger.info(f"📊 Активные стратегии: {list(self.strategy_manager.all_strategies.keys())}")
+      # self.strategy_manager = ExtendedStrategyManager(strategy_config)
+      # logger.info("✅ ExtendedStrategyManager инициализирован")
+      # logger.info(f"📊 Активные стратегии: {list(self.strategy_manager.all_strategies.keys())}")
 
       # ========== ЭТАП 6: ADAPTIVE CONSENSUS (ФАЗА 2) ==========
       if self.enable_adaptive_consensus:
@@ -452,10 +452,10 @@ class BotController:
             min_consensus_quality=0.6
           )
 
-          self.adaptive_consensus = AdaptiveConsensusManager(
-            config=adaptive_config,
-            strategy_manager=self.strategy_manager
-          )
+          # self.adaptive_consensus = AdaptiveConsensusManager(
+          #   config=adaptive_config,
+          #   strategy_manager=self.strategy_manager
+          # )
 
           logger.info("✅ Adaptive Consensus Manager инициализирован")
 
@@ -536,31 +536,12 @@ class BotController:
 
           )
 
-          self.mtf_manager = MultiTimeframeManager(
-            strategy_manager=self.strategy_manager,
-            config=mtf_config
-          )
+          # self.mtf_manager = MultiTimeframeManager(
+          #   strategy_manager=self.strategy_manager,
+          #   config=mtf_config
+          # )
 
-          if hasattr(self, 'ml_validator') and self.ml_validator is not None:
-            logger.info("🔗 Привязка ML Validator к TimeframeAnalyzer...")
 
-            # Доступ к analyzer через mtf_manager
-            self.mtf_manager.analyzer.ml_validator = self.ml_validator
-
-            # Доступ к feature_pipeline (если есть)
-            if hasattr(self, 'feature_pipeline') and self.ml_feature_pipeline  is not None:
-              self.mtf_manager.analyzer.feature_pipeline = self.feature_pipeline
-              logger.info("✅ ML Validator и Feature Pipeline привязаны к TimeframeAnalyzer")
-            else:
-              logger.warning(
-                "⚠️ Feature Pipeline недоступен - "
-                "ML predictions будут ограничены"
-              )
-          else:
-            logger.info(
-              "ℹ️ ML Validator недоступен - "
-              "TimeframeAnalyzer работает без ML"
-            )
 
           # Инициализация символов в MTF Manager
           # for symbol in self.symbols:
@@ -588,28 +569,124 @@ class BotController:
                                                                                     'HYBRID_CONFLICT_RESOLUTION') else "highest_quality"
         min_combined_quality = settings.MIN_COMBINED_QUALITY if hasattr(settings, 'MIN_COMBINED_QUALITY') else 0.65
 
+        # integrated_config = IntegratedAnalysisConfig(
+        #   # Режим анализа
+        #   analysis_mode=AnalysisMode(integrated_mode),
+        #
+        #   # Доступность компонентов
+        #   enable_adaptive_consensus=(self.adaptive_consensus is not None),
+        #   enable_mtf_analysis=(self.mtf_manager is not None),
+        #
+        #   # Hybrid режим настройки
+        #   hybrid_mtf_priority=hybrid_mtf_priority,
+        #   hybrid_min_agreement=hybrid_min_agreement,
+        #   hybrid_conflict_resolution=hybrid_conflict_resolution,
+        #
+        #   # Quality control
+        #   min_combined_quality=min_combined_quality,
+        #
+        #
+        #   # Fallback
+        #
+        # )
+        active_tfs_str = settings.MTF_ACTIVE_TIMEFRAMES.split(',')
+        active_timeframes = [Timeframe(tf.strip()) for tf in active_tfs_str]
+        primary_tf = Timeframe(settings.MTF_PRIMARY_TIMEFRAME)
+        execution_tf = Timeframe(settings.MTF_EXECUTION_TIMEFRAME)
+
         integrated_config = IntegratedAnalysisConfig(
-          # Режим анализа
-          analysis_mode=AnalysisMode(integrated_mode),
+          analysis_mode=AnalysisMode.HYBRID,
 
-          # Доступность компонентов
-          enable_adaptive_consensus=(self.adaptive_consensus is not None),
-          enable_mtf_analysis=(self.mtf_manager is not None),
+          # Strategy Manager Config
+          strategy_manager_config=ExtendedStrategyManagerConfig(
+            enable_orderbook_strategies=True,
+            enable_hybrid_strategies=True,
+            consensus_mode="weighted"
+          ),
 
-          # Hybrid режим настройки
-          hybrid_mtf_priority=hybrid_mtf_priority,
-          hybrid_min_agreement=hybrid_min_agreement,
-          hybrid_conflict_resolution=hybrid_conflict_resolution,
+          # Adaptive Consensus Config
+          adaptive_consensus_config=AdaptiveConsensusConfig(
+            # ✅ Используем enable_*, НЕ enabled
+            enable_performance_tracking=settings.PERFORMANCE_TRACKING_ENABLED,
+            enable_regime_detection=settings.REGIME_DETECTION_ENABLED,
+            enable_weight_optimization=settings.WEIGHT_OPTIMIZATION_ENABLED,
 
-          # Quality control
-          min_combined_quality=min_combined_quality,
+            # ✅ Вложенные конфигурации
+            performance_tracker_config=PerformanceTrackerConfig(),
+            regime_detector_config=RegimeDetectorConfig(),
+            weight_optimizer_config=WeightOptimizerConfig(
+              # ✅ Используем OptimizationMethod[value], НЕ WeightOptimizationMethod
+              optimization_method=OptimizationMethod[settings.WEIGHT_OPTIMIZATION_METHOD],
+              update_frequency_seconds=settings.WEIGHT_UPDATE_FREQUENCY_SECONDS
+            )
+          ),
 
+          # MTF Config
+          mtf_config=MTFManagerConfig(
+            enabled=settings.ENABLE_MTF_ANALYSIS,
+            coordinator_config=MultiTimeframeConfig(
+              active_timeframes=active_timeframes,  # ✅ Теперь определена
+              primary_timeframe=primary_tf,  # ✅ Теперь определена
+              execution_timeframe=execution_tf  # ✅ Теперь определена
+            ),
+            aligner_config=AlignmentConfig(
+              timeframe_weights={
+                Timeframe.H1: 0.50,
+                Timeframe.M15: 0.30,
+                Timeframe.M5: 0.15,
+                Timeframe.M1: 0.05
+              },
+              min_alignment_score=0.65,
+              confluence_price_tolerance_percent=0.5,
+              min_timeframes_for_confluence=1,
+              allow_trend_counter_signals=False
+            ),
+            synthesizer_config=SynthesizerConfig(
+              mode=SynthesisMode(settings.MTF_SYNTHESIS_MODE),
+              min_signal_quality=settings.MTF_MIN_QUALITY,
+              min_timeframes_required=2,
+              enable_dynamic_position_sizing=True,
+              max_position_multiplier=1.5,
+              min_position_multiplier=0.3,
+              use_higher_tf_for_stops=True,
+              atr_multiplier_for_stops=2.0
+            ),
+            fallback_to_single_tf=True
+          ),
 
-          # Fallback
-
+          # Hybrid config
+          hybrid_conflict_resolution=settings.HYBRID_CONFLICT_RESOLUTION,  # НЕ ConflictResolutionMode!
+          hybrid_mtf_priority=settings.HYBRID_MTF_PRIORITY,
+          hybrid_min_agreement=settings.HYBRID_MIN_AGREEMENT,
+          min_combined_quality=settings.MIN_COMBINED_QUALITY
         )
 
         self.integrated_engine = IntegratedAnalysisEngine(integrated_config)
+
+        self.strategy_manager = self.integrated_engine.strategy_manager
+        self.adaptive_consensus = self.integrated_engine.adaptive_consensus
+        self.mtf_manager = self.integrated_engine.mtf_manager
+
+        if hasattr(self, 'ml_validator') and self.ml_validator is not None:
+          logger.info("🔗 Привязка ML Validator к TimeframeAnalyzer...")
+
+          # Доступ к analyzer через mtf_manager
+          self.mtf_manager.analyzer.ml_validator = self.ml_validator
+
+          # Доступ к feature_pipeline (если есть)
+          if hasattr(self, 'feature_pipeline') and self.ml_feature_pipeline is not None:
+            self.mtf_manager.analyzer.feature_pipeline = self.feature_pipeline
+            logger.info("✅ ML Validator и Feature Pipeline привязаны к TimeframeAnalyzer")
+          else:
+            logger.warning(
+              "⚠️ Feature Pipeline недоступен - "
+              "ML predictions будут ограничены"
+            )
+        else:
+          logger.info(
+            "ℹ️ ML Validator недоступен - "
+            "TimeframeAnalyzer работает без ML"
+          )
 
         # # Инициализация символов в Integrated Engine
         # for symbol in self.symbols:
@@ -1005,6 +1082,44 @@ class BotController:
 
       logger.info("Запуск Trailing Stop Manager...")
       await trailing_stop_manager.start()
+
+      # ===========23/5 ИНИЦИАЛИЗАЦИЯ СИМВОЛОВ В MTF ==========
+      logger.info("=" * 80)
+      logger.info("ИНИЦИАЛИЗАЦИЯ СИМВОЛОВ В MTF MANAGER")
+      logger.info("=" * 80)
+
+      success_count = 0
+      failed_symbols = []
+
+      for symbol in self.symbols:
+        try:
+          logger.info(f"Инициализация MTF для {symbol}...")
+          success = await self.mtf_manager.initialize_symbol(symbol)
+
+          if success:
+            success_count += 1
+            logger.info(f"✅ {symbol}: MTF инициализирован")
+          else:
+            failed_symbols.append(symbol)
+            logger.error(f"❌ {symbol}: Ошибка инициализации MTF")
+
+        except Exception as e:
+          failed_symbols.append(symbol)
+          logger.error(f"❌ {symbol}: Исключение при инициализации MTF: {e}")
+
+      logger.info("=" * 80)
+      logger.info(
+        f"MTF ИНИЦИАЛИЗАЦИЯ ЗАВЕРШЕНА: "
+        f"✅ {success_count} успешно, ❌ {len(failed_symbols)} ошибок"
+      )
+      if failed_symbols:
+        logger.warning(f"Не удалось инициализировать: {failed_symbols}")
+      logger.info("=" * 80)
+
+      # Верификация состояния
+      logger.info("🔍 Верификация состояния MTF Manager:")
+      logger.info(f"   - Initialized symbols: {self.mtf_manager._initialized_symbols}")
+      logger.info(f"   - Symbols in coordinator: {list(self.mtf_manager.coordinator.candle_managers.keys())}")
 
       # ========== 24. ЗАПУСК ADAPTIVE WEIGHT OPTIMIZATION ==========
 
@@ -3181,7 +3296,7 @@ class BotController:
 
   async def _mtf_update_loop(self):
     """
-    Фоновый цикл staggered обновления MTF таймфреймов.
+    Цикл обновления Multi-Timeframe данных.
 
     Функции:
     - Обновление свечей на разных таймфреймах
@@ -3190,9 +3305,15 @@ class BotController:
     """
     logger.info("🔄 MTF Update Loop started")
 
+    # ✅ ПРОВЕРКА: Убедимся, что используем правильный экземпляр
     if not self.mtf_manager:
       logger.warning("⚠️ MTF Manager не инициализирован, loop остановлен")
       return
+
+    # ✅ ДОБАВИТЬ: Логирование для отладки
+    logger.info(f"🔍 MTF Manager ID: {id(self.mtf_manager)}")
+    logger.info(f"🔍 Coordinator ID: {id(self.mtf_manager.coordinator)}")
+    logger.info(f"🔍 Initialized symbols в MTF Manager: {self.mtf_manager._initialized_symbols}")
 
     error_count = 0
     max_errors = 10
@@ -3202,7 +3323,15 @@ class BotController:
         # Обновление таймфреймов для всех символов
         for symbol in self.symbols:
           try:
-            # ✅ ПРАВИЛЬНО: Используем update_timeframes (не update_all_timeframes)
+            # ✅ ДОБАВИТЬ: Проверка перед обновлением
+            if symbol not in self.mtf_manager._initialized_symbols:
+              logger.warning(
+                f"⚠️ [{symbol}] Не найден в _initialized_symbols, "
+                f"пропускаем обновление"
+              )
+              continue
+
+            # ✅ Вызываем update через MTF Manager
             success = await self.mtf_manager.update_timeframes(symbol)
 
             if success:
@@ -3216,7 +3345,7 @@ class BotController:
         # Reset error counter
         error_count = 0
 
-        # Staggered interval (небольшая задержка между обновлениями)
+        # Staggered interval
         await asyncio.sleep(settings.MTF_STAGGERED_UPDATE_INTERVAL)
 
       except Exception as e:
