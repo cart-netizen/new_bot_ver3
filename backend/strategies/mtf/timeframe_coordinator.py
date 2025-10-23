@@ -346,18 +346,13 @@ class TimeframeCoordinator:
         Загрузить исторические свечи через REST API.
         """
         try:
-            # Вычисляем start_time
-            interval_seconds = self._get_interval_seconds(timeframe)
-            start_time = int(
-                (datetime.now() - timedelta(seconds=interval_seconds * count)).timestamp() * 1000
-            )
-            
+
             # Загружаем через REST API
-            candles_data = await rest_client.get_klines(
+            candles_data = await rest_client.get_kline(
                 symbol=symbol,
                 interval=timeframe.value,
                 limit=count,
-                start_time=start_time
+
             )
             
             if not candles_data:

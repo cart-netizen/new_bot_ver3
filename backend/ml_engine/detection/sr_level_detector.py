@@ -11,7 +11,15 @@ Support/Resistance Level Detection с динамическим трекинго�
 Путь: backend/ml_engine/detection/sr_level_detector.py
 """
 
+
 from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from strategy.candle_manager import Candle
+else:
+    Candle = None
+
 from dataclasses import dataclass
 from datetime import datetime
 from collections import defaultdict
@@ -23,6 +31,7 @@ from core.logger import get_logger
 from core.periodic_logger import periodic_logger
 from models.orderbook import OrderBookSnapshot
 from strategy.candle_manager import Candle
+
 
 logger = get_logger(__name__)
 

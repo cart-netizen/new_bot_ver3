@@ -11,7 +11,7 @@ Imbalance Strategy - торговля на дисбалансе спроса/п�
 Путь: backend/strategies/imbalance_strategy.py
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from datetime import datetime
 import numpy as np

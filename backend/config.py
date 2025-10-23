@@ -140,8 +140,8 @@ class Settings(BaseSettings):
     description="Включить адаптивный консенсус стратегий"
   )
 
-  ADAPTIVE_MIN_SIGNALS_FOR_EVALUATION: int = Field(default=20, env="ADAPTIVE_MIN_SIGNALS_FOR_EVALUATION")
-  ADAPTIVE_WEIGHT_UPDATE_FREQUENCY_SECONDS: int = Field(default=21600, env="ADAPTIVE_WEIGHT_UPDATE_FREQUENCY_SECONDS")
+  ADAPTIVE_MIN_SIGNALS_FOR_EVALUATION: int = Field(default=20)
+  ADAPTIVE_WEIGHT_UPDATE_FREQUENCY_SECONDS: int = Field(default=21600)
 
   # Performance Tracking
   PERFORMANCE_DATA_DIR: str = Field(
@@ -186,84 +186,86 @@ class Settings(BaseSettings):
   # Multi-Timeframe Analysis
   ENABLE_MTF_ANALYSIS: bool = Field(
     default=True,
-    env="ENABLE_MTF_ANALYSIS",
+
     description="Включить multi-timeframe анализ"
   )
 
   MTF_ACTIVE_TIMEFRAMES: str = Field(
     default="1m,5m,15m,1h",
-    env="MTF_ACTIVE_TIMEFRAMES",
+
     description="Активные таймфреймы (через запятую)"
   )
 
   MTF_PRIMARY_TIMEFRAME: str = Field(
     default="1h",
-    env="MTF_PRIMARY_TIMEFRAME",
+
     description="Основной таймфрейм для тренда"
   )
 
   MTF_EXECUTION_TIMEFRAME: str = Field(
     default="1m",
-    env="MTF_EXECUTION_TIMEFRAME",
+
     description="Таймфрейм для точного входа"
   )
 
   MTF_SYNTHESIS_MODE: str = Field(
     default="top_down",
-    env="MTF_SYNTHESIS_MODE",
+
     description="Режим синтеза: top_down, consensus, confluence"
   )
 
   MTF_MIN_QUALITY: float = Field(
     default=0.60,
-    env="MTF_MIN_QUALITY",
+
     description="Минимальное качество MTF сигнала"
   )
 
-  MTF_STAGGERED_UPDATE_INTERVAL: int = Field(default=30, env="MTF_STAGGERED_UPDATE_INTERVAL")
+  MTF_STAGGERED_UPDATE_INTERVAL: int = Field(default=30)
 
   # ==================== INTEGRATED ENGINE SETTINGS ====================
 
   # Integrated Analysis Engine
   INTEGRATED_ANALYSIS_MODE: str = Field(
     default="hybrid",
-    env="INTEGRATED_ANALYSIS_MODE",
+
     description="Режим анализа: single_tf_only, mtf_only, hybrid, adaptive"
   )
 
   HYBRID_MTF_PRIORITY: float = Field(
     default=0.6,
-    env="HYBRID_MTF_PRIORITY",
+
     description="Вес MTF в hybrid режиме (0-1)"
   )
 
   HYBRID_MIN_AGREEMENT: bool = Field(
     default=True,
-    env="HYBRID_MIN_AGREEMENT",
+
     description="Требовать согласия между single-TF и MTF"
   )
 
   HYBRID_CONFLICT_RESOLUTION: str = Field(
     default="highest_quality",
-    env="HYBRID_CONFLICT_RESOLUTION",
+
     description="Стратегия разрешения конфликтов: mtf, single_tf, highest_quality"
   )
 
   MIN_COMBINED_QUALITY: float = Field(
     default=0.65,
-    env="MIN_COMBINED_QUALITY",
+
     description="Минимальное качество интегрированного сигнала"
   )
 
   # === ДОПОЛНИТЕЛЬНЫЕ ===
-  ANALYSIS_WARNING_THRESHOLD: float = Field(default=2.0, env="ANALYSIS_WARNING_THRESHOLD")
-  MIN_CANDLES_FOR_ANALYSIS: int = Field(default=50, env="MIN_CANDLES_FOR_ANALYSIS")
-  POSITION_CHECK_INTERVAL: int = Field(default=30, env="POSITION_CHECK_INTERVAL")
-  RECOVERY_CHECK_INTERVAL: int = Field(default=300, env="RECOVERY_CHECK_INTERVAL")
-  AUTO_CLOSE_ON_STOP: bool = Field(default=False, env="AUTO_CLOSE_ON_STOP")
-  ENABLE_NOTIFICATIONS: bool = Field(default=False, env="ENABLE_NOTIFICATIONS")
-  ENABLE_CRITICAL_ALERTS: bool = Field(default=True, env="ENABLE_CRITICAL_ALERTS")
+  ANALYSIS_WARNING_THRESHOLD: float = Field(default=2.0)
+  MIN_CANDLES_FOR_ANALYSIS: int = Field(default=50)
+  POSITION_CHECK_INTERVAL: int = Field(default=30)
+  RECOVERY_CHECK_INTERVAL: int = Field(default=300)
+  AUTO_CLOSE_ON_STOP: bool = Field(default=False)
+  ENABLE_NOTIFICATIONS: bool = Field(default=False)
+  ENABLE_CRITICAL_ALERTS: bool = Field(default=True)
 
+  CANDLE_LIMIT: int = Field(default=200)  # ✅ ДОБАВИТЬ
+  CANDLE_UPDATE_INTERVAL: int = Field(default=5)  # Секунды между обновлениями
 
   @field_validator("CONSENSUS_MODE", mode="before")
   @classmethod

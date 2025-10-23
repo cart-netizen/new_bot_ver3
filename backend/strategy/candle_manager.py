@@ -10,7 +10,7 @@ from collections import deque
 from datetime import datetime
 
 from core.logger import get_logger
-from ml_engine.features.candle_feature_extractor import Candle
+from models.candle import Candle
 
 logger = get_logger(__name__)
 

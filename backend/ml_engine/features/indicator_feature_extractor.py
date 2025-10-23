@@ -582,9 +582,9 @@ class IndicatorFeatureExtractor:
 
     true_ranges = []
     for i in range(1, len(closes)):
-      high_low = highs[i] - lows[i]
-      high_close = abs(highs[i] - closes[i - 1])
-      low_close = abs(lows[i] - closes[i - 1])
+      high_low = float(highs[i] - lows[i])
+      high_close = float(abs(highs[i] - closes[i - 1]))
+      low_close = float(abs(lows[i] - closes[i - 1]))
       true_ranges.append(max(high_low, high_close, low_close))
 
     atr = np.mean(true_ranges[-period:])
@@ -624,9 +624,9 @@ class IndicatorFeatureExtractor:
         minus_dm.append(0)
 
       # TR
-      high_low = highs[i] - lows[i]
-      high_close = abs(highs[i] - closes[i - 1])
-      low_close = abs(lows[i] - closes[i - 1])
+      high_low = float(highs[i] - lows[i])
+      high_close = float(abs(highs[i] - closes[i - 1]))
+      low_close = float(abs(lows[i] - closes[i - 1]))
       tr_values.append(max(high_low, high_close, low_close))
 
     # Сглаживание

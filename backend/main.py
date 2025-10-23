@@ -541,6 +541,27 @@ class BotController:
             config=mtf_config
           )
 
+          if hasattr(self, 'ml_validator') and self.ml_validator is not None:
+            logger.info("🔗 Привязка ML Validator к TimeframeAnalyzer...")
+
+            # Доступ к analyzer через mtf_manager
+            self.mtf_manager.analyzer.ml_validator = self.ml_validator
+
+            # Доступ к feature_pipeline (если есть)
+            if hasattr(self, 'feature_pipeline') and self.ml_feature_pipeline  is not None:
+              self.mtf_manager.analyzer.feature_pipeline = self.feature_pipeline
+              logger.info("✅ ML Validator и Feature Pipeline привязаны к TimeframeAnalyzer")
+            else:
+              logger.warning(
+                "⚠️ Feature Pipeline недоступен - "
+                "ML predictions будут ограничены"
+              )
+          else:
+            logger.info(
+              "ℹ️ ML Validator недоступен - "
+              "TimeframeAnalyzer работает без ML"
+            )
+
           # Инициализация символов в MTF Manager
           for symbol in self.symbols:
             await self.mtf_manager.initialize_symbol(symbol)
@@ -2280,11 +2301,20 @@ class BotController:
 
               # Broadcast Signal (если был)
               if integrated_signal:
-                from api.websocket import broadcast_signal_update
-                await broadcast_signal_update(
-                  symbol=symbol,
-                  signal=integrated_signal.final_signal.to_dict()
-                )
+                from api.websocket import broadcast_signal
+
+                try:
+                  await broadcast_signal(
+                    signal=integrated_signal.final_signal.to_dict()
+                  )
+
+                  logger.debug(
+                    f"[{symbol}] Сигнал успешно отправлен через WebSocket: "
+                    f"{integrated_signal.final_signal.signal_type.value}"
+                  )
+
+                except Exception as e:
+                  logger.debug(f"[{symbol}] Ошибка broadcasting сигнала: {e}")
 
             except Exception as e:
               # Broadcasting errors не критичны
@@ -3532,6 +3562,43 @@ class BotController:
         f"🚨 [{symbol}] Достигнут лимит последовательных ошибок "
         f"({settings.MAX_CONSECUTIVE_ERRORS}), символ будет пропущен"
       )
+
+  def attach_ml_to_timeframe_analyzer(self):
+      """
+      Привязать ML компоненты к TimeframeAnalyzer.
+      Полезно для динамического обновления или перезагрузки ML моделей.
+      """
+      if not hasattr(self, 'mtf_manager') or self.mtf_manager is None:
+        logger.warning("MTF Manager не инициализирован")
+        return False
+
+      if not hasattr(self, 'ml_validator') or self.ml_validator is None:
+        logger.warning("ML Validator не инициализирован")
+        return False
+
+      try:
+        # Привязываем к analyzer
+        self.mtf_manager.analyzer.ml_validator = self.ml_validator
+
+        if hasattr(self, 'feature_pipeline') and self.feature_pipeline:
+          self.mtf_manager.analyzer.ml_feature_pipeline  = self.feature_pipeline
+
+        logger.info("✅ ML компоненты успешно привязаны к TimeframeAnalyzer")
+        return True
+
+      except Exception as e:
+        logger.error(f"Ошибка привязки ML компонентов: {e}")
+        return False
+
+  def detach_ml_from_timeframe_analyzer(self):
+    """
+    Отвязать ML компоненты от TimeframeAnalyzer.
+    Полезно при переходе в режим без ML или при ошибках ML моделей.
+    """
+    if hasattr(self, 'mtf_manager') and self.mtf_manager:
+      self.mtf_manager.analyzer.ml_validator = None
+      self.mtf_manager.analyzer.ml_feature_pipeline  = None
+      logger.info("ML компоненты отвязаны от TimeframeAnalyzer")
 
 # Глобальный контроллер бота
 bot_controller: Optional[BotController] = None

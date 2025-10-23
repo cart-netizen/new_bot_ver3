@@ -19,12 +19,17 @@ Timeframe Analyzer - независимый анализ каждого тайм
 """
 
 from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING
+
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 import numpy as np
 
 from core.logger import get_logger
+from ml_engine.detection.sr_level_detector import SRLevelDetector, SRLevelConfig, SRLevel
+from strategies.volume_profile_strategy import VolumeProfile, VolumeProfileAnalyzer
 from strategy.candle_manager import Candle
 from models.orderbook import OrderBookSnapshot, OrderBookMetrics
 from models.signal import TradingSignal, SignalType
@@ -162,6 +167,7 @@ class TimeframeAnalyzer:
       self,
       strategy_manager: ExtendedStrategyManager,
       lookback_periods: Dict[Timeframe, int] = None
+
   ):
     """
     Инициализация анализатора.
@@ -214,127 +220,469 @@ class TimeframeAnalyzer:
     self.total_analyses = 0
     self.analyses_by_timeframe = {tf: 0 for tf in Timeframe}
 
+    # ============================================================
+    # ИНИЦИАЛИЗАЦИЯ S/R LEVEL DETECTOR
+    # ============================================================
+    self.sr_detector = SRLevelDetector(
+      config=SRLevelConfig(
+        price_tolerance_pct=0.001,  # 0.1% для кластеризации
+        min_touches=2,  # Минимум 2 касания для валидного уровня
+        lookback_candles=200,  # Анализ последних 200 свечей
+        max_age_hours=24,  # Уровни старше 24ч игнорируются
+        breakout_confirmation_candles=2,  # Подтверждение пробоя
+        breakout_volume_threshold=1.5  # 1.5x средний объем
+      )
+    )
+
+    # ============================================================
+    # КЭШИ ДЛЯ VOLUME PROFILE
+    # ============================================================
+    # symbol -> VolumeProfile
+    self.volume_profiles: Dict[str, VolumeProfile] = {}
+
+    # symbol -> timestamp последнего обновления
+    self.last_vp_update: Dict[str, int] = {}
+
+    # Интервал обновления Volume Profile (30 минут в ms)
+    self.vp_update_interval = 30 * 60 * 1000
+
+    self.ml_validator = None  # Будет установлен из main.py
+    self.feature_pipeline = None  # Будет установлен из main.py
+
+    # Статистика
+    self.total_analyses = 0
+    self.analyses_by_timeframe = {tf: 0 for tf in Timeframe}
+
     logger.info(
       f"Инициализирован TimeframeAnalyzer с lookback periods для "
       f"{len(self.lookback_periods)} таймфреймов"
     )
 
   async def analyze_timeframe(
+        self,
+        symbol: str,
+        timeframe: Timeframe,
+        candles: List[Candle],
+        current_price: float,
+        orderbook: Optional[OrderBookSnapshot] = None,
+        metrics: Optional[OrderBookMetrics] = None
+    ) -> TimeframeAnalysisResult:
+      """
+      Полный анализ одного таймфрейма с интеграцией S/R, VP и ML.
+
+      РАСШИРЕННЫЙ PIPELINE:
+      1. Валидация данных
+      2. Расчет индикаторов
+      3. Определение режима рынка
+      4. ✅ НОВОЕ: S/R Level Detection
+      5. ✅ НОВОЕ: Volume Profile Analysis
+      6. ✅ НОВОЕ: ML Predictions (опционально)
+      7. Запуск всех стратегий (с новыми данными)
+      8. Генерация агрегированного сигнала
+
+      Args:
+          symbol: Торговая пара
+          timeframe: Анализируемый таймфрейм
+          candles: Свечи для этого таймфрейма
+          current_price: Текущая цена
+          orderbook: Стакан (опционально)
+          metrics: Метрики стакана (опционально)
+
+      Returns:
+          TimeframeAnalysisResult с полным контекстом
+      """
+      import time
+      start_time = time.time()
+
+      warnings = []
+
+      # ============================================================
+      # ВАЛИДАЦИЯ ДАННЫХ
+      # ============================================================
+      if not candles or len(candles) < 50:
+        warnings.append(f"Недостаточно свечей: {len(candles)} < 50")
+        logger.warning(
+          f"[{timeframe.value}] {symbol}: "
+          f"Недостаточно данных для анализа"
+        )
+
+      try:
+        # ============================================================
+        # ШАГ 1: РАСЧЕТ ИНДИКАТОРОВ
+        # ============================================================
+        indicators = self._calculate_tf_specific_indicators(
+          symbol, timeframe, candles
+        )
+
+        # ============================================================
+        # ШАГ 2: ОПРЕДЕЛЕНИЕ РЕЖИМА РЫНКА
+        # ============================================================
+        regime = self._detect_tf_regime(
+          symbol, timeframe, candles, indicators
+        )
+
+        # ============================================================
+        # ШАГ 3: S/R LEVEL DETECTION (НОВОЕ)
+        # ============================================================
+        sr_levels: Optional[List[SRLevel]] = None
+
+        try:
+          # Обновляем историю свечей в детекторе
+          self.sr_detector.update_candles(symbol, candles)
+
+          # Детектируем уровни
+          sr_levels = self.sr_detector.detect_levels(symbol)
+
+          if sr_levels:
+            logger.debug(
+              f"[{timeframe.value}] {symbol}: "
+              f"Обнаружено {len(sr_levels)} S/R уровней"
+            )
+
+            # Получаем ближайшие уровни для контекста
+            nearest = self.sr_detector.get_nearest_levels(
+              symbol,
+              current_price,
+              max_distance_pct=0.02  # В пределах 2%
+            )
+
+            if nearest.get("support"):
+              support = nearest["support"]
+              logger.debug(
+                f"[{timeframe.value}] {symbol} - "
+                f"Nearest Support: ${support.price:.2f} "
+                f"(strength={support.strength:.2f})"
+              )
+
+            if nearest.get("resistance"):
+              resistance = nearest["resistance"]
+              logger.debug(
+                f"[{timeframe.value}] {symbol} - "
+                f"Nearest Resistance: ${resistance.price:.2f} "
+                f"(strength={resistance.strength:.2f})"
+              )
+
+        except Exception as e:
+          logger.error(
+            f"[{timeframe.value}] {symbol} - "
+            f"Ошибка S/R Detection: {e}"
+          )
+          sr_levels = None  # Продолжаем без S/R уровней
+          warnings.append(f"S/R Detection failed: {str(e)}")
+
+        # ============================================================
+        # ШАГ 4: VOLUME PROFILE ANALYSIS (НОВОЕ)
+        # ============================================================
+        volume_profile: Optional[Dict] = None
+
+        try:
+          # Инициализируем структуры если нужно
+          if symbol not in self.volume_profiles:
+            self.volume_profiles[symbol] = {}
+            self.last_vp_update[symbol] = {}
+
+          # Проверяем нужно ли обновление
+          current_time = int(candles[-1].timestamp)
+          should_update = (
+              timeframe not in self.volume_profiles[symbol] or
+              timeframe not in self.last_vp_update[symbol] or
+              (current_time - self.last_vp_update[symbol][timeframe]) > self.vp_update_interval
+          )
+
+          if should_update:
+            # Берем последние 100 свечей для профиля
+            profile_candles = candles[-100:]
+
+            # Строим Volume Profile
+            vp = VolumeProfileAnalyzer.build_profile(
+              candles=profile_candles,
+              price_bins=50,  # 50 ценовых уровней
+              value_area_percent=0.70  # 70% объема для VA
+            )
+
+            # Обнаруживаем HVN/LVN nodes
+            hvn_nodes, lvn_nodes = VolumeProfileAnalyzer.detect_nodes(
+              profile=vp,
+              hvn_percentile=80,  # Top 20% = HVN
+              lvn_percentile=20  # Bottom 20% = LVN
+            )
+
+            vp.hvn_nodes = hvn_nodes
+            vp.lvn_nodes = lvn_nodes
+
+            # Сохраняем
+            self.volume_profiles[symbol][timeframe] = vp
+            self.last_vp_update[symbol][timeframe] = current_time
+
+            logger.debug(
+              f"[{timeframe.value}] {symbol} - "
+              f"Volume Profile обновлен: "
+              f"POC=${vp.poc_price:.2f}, "
+              f"VA=[${vp.value_area_low:.2f}, ${vp.value_area_high:.2f}], "
+              f"HVN={len(hvn_nodes)}, LVN={len(lvn_nodes)}"
+            )
+          else:
+            # Используем кэшированный профиль
+            vp = self.volume_profiles[symbol].get(timeframe)
+
+          # Конвертируем в dict для передачи в стратегии
+          if vp:
+            volume_profile = {
+              'poc_price': vp.poc_price,
+              'poc_volume': vp.poc_volume,
+              'value_area_high': vp.value_area_high,
+              'value_area_low': vp.value_area_low,
+              'hvn_nodes': [
+                {
+                  'price': node.price,
+                  'volume': node.volume,
+                  'node_type': node.node_type
+                }
+                for node in vp.hvn_nodes
+              ],
+              'lvn_nodes': [
+                {
+                  'price': node.price,
+                  'volume': node.volume,
+                  'node_type': node.node_type
+                }
+                for node in vp.lvn_nodes
+              ]
+            }
+
+        except Exception as e:
+          logger.error(
+            f"[{timeframe.value}] {symbol} - "
+            f"Ошибка Volume Profile: {e}"
+          )
+          volume_profile = None  # Продолжаем без VP
+          warnings.append(f"Volume Profile failed: {str(e)}")
+
+        # ============================================================
+        # ШАГ 5: ML PREDICTION (НОВОЕ, ОПЦИОНАЛЬНО)
+        # ============================================================
+        ml_prediction: Optional[Dict] = None
+
+        try:
+          # Проверяем доступность ML модуля
+          if self.ml_validator is not None:
+            # Проверяем что ML validator не в fallback режиме
+            if hasattr(self.ml_validator, 'model_available') and \
+                self.ml_validator.model_available:
+
+              # Извлекаем признаки (если feature_pipeline доступен)
+              if self.feature_pipeline is not None:
+                feature_vector = await self.feature_pipeline.extract(
+                  symbol=symbol,
+                  orderbook_snapshot=orderbook,
+                  orderbook_metrics=metrics,
+                  candles=candles,
+                  sr_levels=sr_levels
+                )
+
+                # Получаем предсказание
+                prediction_response = await self.ml_validator.get_prediction(
+                  symbol=symbol,
+                  feature_vector=feature_vector
+                )
+
+                if prediction_response:
+                  ml_prediction = {
+                    'prediction': prediction_response.get('direction'),  # 'bullish'/'bearish'
+                    'confidence': prediction_response.get('confidence', 0.0),
+                    'expected_return': prediction_response.get('expected_return', 0.0),
+                    'manipulation_risk': prediction_response.get('manipulation_risk', 0.0)
+                  }
+
+                  logger.debug(
+                    f"[{timeframe.value}] {symbol} - "
+                    f"ML Prediction: {ml_prediction['prediction']} "
+                    f"(conf={ml_prediction['confidence']:.2f})"
+                  )
+              else:
+                logger.debug(
+                  f"[{timeframe.value}] {symbol} - "
+                  f"Feature pipeline недоступен"
+                )
+            else:
+              logger.debug(
+                f"[{timeframe.value}] {symbol} - "
+                f"ML модель недоступна"
+              )
+          else:
+            logger.debug(
+              f"[{timeframe.value}] {symbol} - "
+              f"ML validator не инициализирован"
+            )
+
+        except Exception as e:
+          logger.error(
+            f"[{timeframe.value}] {symbol} - "
+            f"Ошибка ML Prediction: {e}"
+          )
+          ml_prediction = None  # Продолжаем без ML
+          warnings.append(f"ML Prediction failed: {str(e)}")
+
+        # ============================================================
+        # ШАГ 6: ЗАПУСК ВСЕХ СТРАТЕГИЙ (С НОВЫМИ ДАННЫМИ)
+        # ============================================================
+        strategy_results = self.strategy_manager.analyze_all_strategies(
+          symbol=symbol,
+          candles=candles,
+          current_price=current_price,
+          orderbook=orderbook,
+          metrics=metrics,
+          sr_levels=sr_levels,  # ✅ ИНТЕГРИРОВАНО
+          volume_profile=volume_profile,  # ✅ ИНТЕГРИРОВАНО
+          ml_prediction=ml_prediction  # ✅ ИНТЕГРИРОВАНО
+        )
+
+        # ============================================================
+        # ШАГ 7: ГЕНЕРАЦИЯ АГРЕГИРОВАННОГО СИГНАЛА ТАЙМФРЕЙМА
+        # ============================================================
+        timeframe_signal = self._generate_timeframe_signal(
+          symbol, timeframe, strategy_results, regime, current_price
+        )
+
+        # Обогащаем сигнал контекстом (если сигнал есть)
+        if timeframe_signal and timeframe_signal.metadata is None:
+          timeframe_signal.metadata = {}
+
+        if timeframe_signal:
+          # Добавляем S/R контекст
+          if sr_levels:
+            nearest = self.sr_detector.get_nearest_levels(symbol, current_price)
+            if nearest.get("support"):
+              timeframe_signal.metadata['nearest_support'] = {
+                'price': nearest["support"].price,
+                'strength': nearest["support"].strength
+              }
+            if nearest.get("resistance"):
+              timeframe_signal.metadata['nearest_resistance'] = {
+                'price': nearest["resistance"].price,
+                'strength': nearest["resistance"].strength
+              }
+
+          # Добавляем VP контекст
+          if volume_profile:
+            timeframe_signal.metadata['volume_profile'] = {
+              'poc_price': volume_profile.get('poc_price'),
+              'in_value_area': (
+                  volume_profile['value_area_low'] <= current_price <=
+                  volume_profile['value_area_high']
+              )
+            }
+
+          # Добавляем ML контекст
+          if ml_prediction:
+            timeframe_signal.metadata['ml_prediction'] = ml_prediction
+
+        # ============================================================
+        # ФИНАЛИЗАЦИЯ
+        # ============================================================
+        # Статистика
+        self.total_analyses += 1
+        self.analyses_by_timeframe[timeframe] += 1
+
+        analysis_duration = (time.time() - start_time) * 1000
+
+        result = TimeframeAnalysisResult(
+          timeframe=timeframe,
+          timestamp=int(datetime.now().timestamp() * 1000),
+          current_price=current_price,
+          candles_analyzed=len(candles),
+          indicators=indicators,
+          regime=regime,
+          strategy_results=strategy_results,
+          timeframe_signal=timeframe_signal,
+          analysis_duration_ms=analysis_duration,
+          warnings=warnings
+        )
+
+        logger.debug(
+          f"✅ [{timeframe.value}] {symbol} анализ завершен: "
+          f"regime={regime.market_regime.value}, "
+          f"signal={timeframe_signal.signal_type.value if timeframe_signal else 'NONE'}, "
+          f"duration={analysis_duration:.1f}ms, "
+          f"sr_levels={len(sr_levels) if sr_levels else 0}, "
+          f"vp={'yes' if volume_profile else 'no'}, "
+          f"ml={'yes' if ml_prediction else 'no'}"
+        )
+
+        return result
+
+      except Exception as e:
+        logger.error(
+          f"Ошибка анализа [{timeframe.value}] {symbol}: {e}",
+          exc_info=True
+        )
+
+        # Возвращаем пустой результат с ошибкой
+        return TimeframeAnalysisResult(
+          timeframe=timeframe,
+          timestamp=int(datetime.now().timestamp() * 1000),
+          current_price=current_price,
+          candles_analyzed=len(candles),
+          indicators=TimeframeIndicators(),
+          regime=TimeframeRegimeInfo(
+            market_regime=MarketRegime.RANGING,
+            volatility_regime=VolatilityRegime.NORMAL,
+            trend_direction=0,
+            trend_strength=0.0,
+            volatility_percentile=0.5,
+            normalized_atr=0.0
+          ),
+          strategy_results=[],
+          warnings=[f"Analysis error: {str(e)}"]
+        )
+
+  def get_sr_statistics(self) -> Dict:
+    """Получить статистику S/R Detector."""
+    return self.sr_detector.get_statistics()
+
+  def get_volume_profile(
       self,
       symbol: str,
-      timeframe: Timeframe,
-      candles: List[Candle],
-      current_price: float,
-      orderbook: Optional[OrderBookSnapshot] = None,
-      metrics: Optional[OrderBookMetrics] = None
-  ) -> TimeframeAnalysisResult:
+      timeframe: Timeframe
+  ) -> Optional[VolumeProfile]:
+    """Получить Volume Profile для символа и таймфрейма."""
+    return self.volume_profiles.get(symbol, {}).get(timeframe)
+
+  def clear_cache(self, symbol: Optional[str] = None):
     """
-    Полный анализ одного таймфрейма.
+    Очистить кэш индикаторов и профилей.
 
     Args:
-        symbol: Торговая пара
-        timeframe: Анализируемый таймфрейм
-        candles: Свечи для этого таймфрейма
-        current_price: Текущая цена
-        orderbook: Стакан (опционально, для гибридных стратегий)
-        metrics: Метрики стакана (опционально)
-
-    Returns:
-        TimeframeAnalysisResult с полным контекстом
+        symbol: Если указан - очистить только для этого символа
     """
-    import time
-    start_time = time.time()
+    if symbol:
+      # Очистка для конкретного символа
+      keys_to_remove = [
+        key for key in self._indicators_cache.keys()
+        if key[0] == symbol
+      ]
+      for key in keys_to_remove:
+        del self._indicators_cache[key]
 
-    warnings = []
+      keys_to_remove = [
+        key for key in self._regime_cache.keys()
+        if key[0] == symbol
+      ]
+      for key in keys_to_remove:
+        del self._regime_cache[key]
 
-    # Валидация данных
-    if not candles or len(candles) < 50:
-      warnings.append(f"Недостаточно свечей: {len(candles)} < 50")
-      logger.warning(
-        f"[{timeframe.value}] {symbol}: "
-        f"Недостаточно данных для анализа"
-      )
+      if symbol in self.volume_profiles:
+        del self.volume_profiles[symbol]
+      if symbol in self.last_vp_update:
+        del self.last_vp_update[symbol]
+    else:
+      # Полная очистка
+      self._indicators_cache.clear()
+      self._regime_cache.clear()
+      self.volume_profiles.clear()
+      self.last_vp_update.clear()
 
-    try:
-      # Шаг 1: Расчет индикаторов
-      indicators = self._calculate_tf_specific_indicators(
-        symbol, timeframe, candles
-      )
-
-      # Шаг 2: Определение режима рынка
-      regime = self._detect_tf_regime(
-        symbol, timeframe, candles, indicators
-      )
-
-      # Шаг 3: Запуск всех стратегий
-      strategy_results = self.strategy_manager.analyze_all_strategies(
-        symbol=symbol,
-        candles=candles,
-        current_price=current_price,
-        orderbook=orderbook,
-        metrics=metrics,
-        sr_levels=None,  # TODO: интегрировать SRLevelDetector
-        volume_profile=None,  # TODO: интегрировать Volume Profile
-        ml_prediction=None  # TODO: интегрировать ML predictions
-      )
-
-      # Шаг 4: Генерация агрегированного сигнала TF
-      timeframe_signal = self._generate_timeframe_signal(
-        symbol, timeframe, strategy_results, regime, current_price
-      )
-
-      # Статистика
-      self.total_analyses += 1
-      self.analyses_by_timeframe[timeframe] += 1
-
-      analysis_duration = (time.time() - start_time) * 1000
-
-      result = TimeframeAnalysisResult(
-        timeframe=timeframe,
-        timestamp=int(datetime.now().timestamp() * 1000),
-        current_price=current_price,
-        candles_analyzed=len(candles),
-        indicators=indicators,
-        regime=regime,
-        strategy_results=strategy_results,
-        timeframe_signal=timeframe_signal,
-        analysis_duration_ms=analysis_duration,
-        warnings=warnings
-      )
-
-      logger.debug(
-        f"✅ [{timeframe.value}] {symbol} анализ завершен: "
-        f"regime={regime.market_regime.value}, "
-        f"signal={timeframe_signal.signal_type.value if timeframe_signal else 'NONE'}, "
-        f"duration={analysis_duration:.1f}ms"
-      )
-
-      return result
-
-    except Exception as e:
-      logger.error(
-        f"Ошибка анализа [{timeframe.value}] {symbol}: {e}",
-        exc_info=True
-      )
-
-      # Возвращаем пустой результат с ошибкой
-      return TimeframeAnalysisResult(
-        timeframe=timeframe,
-        timestamp=int(datetime.now().timestamp() * 1000),
-        current_price=current_price,
-        candles_analyzed=len(candles),
-        indicators=TimeframeIndicators(),
-        regime=TimeframeRegimeInfo(
-          market_regime=MarketRegime.RANGING,
-          volatility_regime=VolatilityRegime.NORMAL,
-          trend_direction=0,
-          trend_strength=0.0,
-          volatility_percentile=0.5,
-          normalized_atr=0.0
-        ),
-        strategy_results=[],
-        warnings=[f"Analysis error: {str(e)}"]
-      )
+    logger.info(f"Кэш очищен" + (f" для {symbol}" if symbol else ""))
 
   def _calculate_tf_specific_indicators(
       self,

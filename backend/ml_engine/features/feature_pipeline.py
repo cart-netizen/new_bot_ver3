@@ -6,7 +6,10 @@ Feature Pipeline - оркестратор всех feature extractors.
 """
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
-
+if TYPE_CHECKING:
+    from ml_engine.detection.sr_level_detector import SRLevel
+else:
+    SRLevel = None
 
 from dataclasses import dataclass, field
 import numpy as np
