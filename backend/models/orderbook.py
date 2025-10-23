@@ -125,6 +125,32 @@ class OrderBookMetrics:
   largest_ask_cluster_price: Optional[float] = None
   largest_ask_cluster_volume: float = 0.0
 
+  @property
+  def spread_bps(self) -> Optional[float]:
+    """
+    Спред в базисных пунктах (basis points).
+
+    Returns:
+        float: Спред в bps (1 bp = 0.01%)
+        None: Если невозможно рассчитать
+    """
+    if self.spread and self.mid_price and self.mid_price > 0:
+      return (self.spread / self.mid_price) * 10000
+    return None
+
+  @property
+  def spread_percentage(self) -> Optional[float]:
+    """
+    Спред в процентах.
+
+    Returns:
+        float: Спред в % от mid_price
+        None: Если невозможно рассчитать
+    """
+    if self.spread and self.mid_price and self.mid_price > 0:
+      return (self.spread / self.mid_price) * 100
+    return None
+
   def to_dict(self) -> dict:
     """Преобразование в словарь для API."""
     return {

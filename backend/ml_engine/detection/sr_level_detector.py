@@ -268,7 +268,7 @@ class SRLevelDetector:
         if idx < len(candles):
           candle = candles[idx]
           volumes.append(candle.volume)
-          touch_timestamps.append(candle.timestamp)
+          touch_timestamps.append(int(candle.timestamp))
           touch_prices.append(price)
 
       total_volume = sum(volumes)
@@ -484,7 +484,7 @@ class SRLevelDetector:
         )
 
         if closes_above and high_volume:
-          return ("up", confirmation_candles[-1].timestamp)
+          return ("up", int(confirmation_candles[-1].timestamp))
 
       elif level.level_type == "support":
         # Пробой вниз через поддержку
@@ -495,7 +495,7 @@ class SRLevelDetector:
         )
 
         if closes_below and high_volume:
-          return ("down", confirmation_candles[-1].timestamp)
+          return ("down", int(confirmation_candles[-1].timestamp))
 
       return None
 

@@ -4,16 +4,19 @@ Feature Pipeline - оркестратор всех feature extractors.
 Объединяет признаки из OrderBook, Candles и Indicators в единый вектор.
 Поддерживает Multi-Channel Representation для ML моделей.
 """
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
-from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass
+
+from dataclasses import dataclass, field
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 import asyncio
 
 from core.logger import get_logger
 from core.periodic_logger import periodic_logger
-from models.orderbook import OrderBookSnapshot
+from ml_engine.detection.sr_level_detector import SRLevel
+from models.orderbook import OrderBookSnapshot, OrderBookMetrics
 from ml_engine.features.orderbook_feature_extractor import (
   OrderBookFeatureExtractor,
   OrderBookFeatures
@@ -27,7 +30,10 @@ from ml_engine.features.indicator_feature_extractor import (
   IndicatorFeatureExtractor,
   IndicatorFeatures
 )
-
+# Для type hints без circular imports
+if TYPE_CHECKING:
+    from models.orderbook import OrderBookMetrics
+    from ml_engine.detection.sr_level_detector import SRLevel
 logger = get_logger(__name__)
 
 
@@ -49,6 +55,8 @@ class FeatureVector:
   # Метаданные
   feature_count: int
   version: str = "v1.0.0"
+
+  metadata: Dict = field(default_factory=dict)  # ← Дополнительный контекст
 
   def to_array(self) -> np.ndarray:
     """
@@ -214,7 +222,8 @@ class FeaturePipeline:
         orderbook_features=orderbook_features,
         candle_features=candle_features,
         indicator_features=indicator_features,
-        feature_count=50 + 25 + 35  # 110 признаков
+        feature_count=50 + 25 + 35,  # 110 признаков
+        metadata={}
       )
 
       # 5. Нормализация (если включена)
@@ -250,6 +259,8 @@ class FeaturePipeline:
     except Exception as e:
       logger.error(f"{self.symbol} | Ошибка в pipeline: {e}")
       raise
+
+
 
   async def _normalize_features(
       self,
@@ -452,6 +463,275 @@ class MultiSymbolFeaturePipeline:
     )
 
     return feature_vectors
+
+  async def extract_features_enhanced(
+        self,
+        symbol: str,
+        orderbook_snapshot: OrderBookSnapshot,
+        candles: List[Candle],
+        orderbook_metrics: Optional['OrderBookMetrics'] = None,
+        sr_levels: Optional[List['SRLevel']] = None,
+        prev_orderbook: Optional[OrderBookSnapshot] = None,
+        prev_candle: Optional[Candle] = None
+    ) -> Optional[FeatureVector]:
+      """
+      Расширенная версия извлечения признаков с дополнительными метриками.
+
+      Извлекает базовые 110 признаков + добавляет enriched metadata:
+      - OrderBook метрики (imbalance, spread, vwap)
+      - S/R уровни (поддержка/сопротивление)
+      - Расстояния до ключевых уровней
+
+      Args:
+          symbol: Торговая пара
+          orderbook_snapshot: Снимок стакана
+          candles: История свечей (минимум 50 для индикаторов)
+          orderbook_metrics: Рассчитанные метрики стакана (из OrderBookAnalyzer)
+          sr_levels: Список уровней поддержки/сопротивления (из SRLevelDetector)
+          prev_orderbook: Предыдущий снимок для временных признаков
+          prev_candle: Предыдущая свеча для momentum признаков
+
+      Returns:
+          FeatureVector с 110 признаками + enriched metadata или None
+
+      Example:
+          feature_vector = await pipeline.extract_features_enhanced(
+          ...     symbol="BTCUSDT",
+          ...     orderbook_snapshot=snapshot,
+          ...     candles=candles,
+          ...     orderbook_metrics=metrics,
+          ...     sr_levels=levels
+          ... )
+          print(f"Features: {feature_vector.feature_count}")
+          print(f"Metadata: {feature_vector.metadata}")
+      """
+      # Проверка наличия pipeline для символа
+      if symbol not in self.pipelines:
+        logger.warning(
+          f"{symbol} | Pipeline не найден в MultiSymbolFeaturePipeline"
+        )
+        return None
+
+      try:
+        # ============================================================
+        # ШАГ 1: БАЗОВОЕ ИЗВЛЕЧЕНИЕ ПРИЗНАКОВ (110 features)
+        # ============================================================
+
+        pipeline = self.pipelines[symbol]
+        feature_vector = await pipeline.extract_features(
+          orderbook_snapshot=orderbook_snapshot,
+          candles=candles,
+          prev_orderbook=prev_orderbook,
+          prev_candle=prev_candle
+        )
+
+        if not feature_vector:
+          logger.warning(f"{symbol} | Не удалось извлечь базовые признаки")
+          return None
+
+        logger.debug(
+          f"{symbol} | Базовое извлечение: {feature_vector.feature_count} признаков"
+        )
+
+        # ============================================================
+        # ШАГ 2: ENRICHMENT - ORDERBOOK METRICS
+        # ============================================================
+
+        if orderbook_metrics:
+          try:
+            # Извлекаем ключевые метрики
+            enriched_metrics = {
+              'imbalance': float(orderbook_metrics.imbalance),
+              'spread': float(orderbook_metrics.spread) if orderbook_metrics.spread else 0.0,
+              'mid_price': float(orderbook_metrics.mid_price) if orderbook_metrics.mid_price else 0.0,
+              'total_bid_volume': float(orderbook_metrics.total_bid_volume),
+              'total_ask_volume': float(orderbook_metrics.total_ask_volume),
+              'total_volume': float(
+                orderbook_metrics.total_bid_volume +
+                orderbook_metrics.total_ask_volume
+              ),
+            }
+
+            # VWAP метрики (если доступны)
+            if orderbook_metrics.vwap_bid:
+              enriched_metrics['vwap_bid'] = float(orderbook_metrics.vwap_bid)
+
+            if orderbook_metrics.vwap_ask:
+              enriched_metrics['vwap_ask'] = float(orderbook_metrics.vwap_ask)
+
+            if orderbook_metrics.vwmp:
+              enriched_metrics['vwmp'] = float(orderbook_metrics.vwmp)
+
+            # Кластеры объема (если есть)
+            if orderbook_metrics.largest_bid_cluster_volume > 0:
+              enriched_metrics['bid_cluster_volume'] = float(
+                orderbook_metrics.largest_bid_cluster_volume
+              )
+
+            if orderbook_metrics.largest_ask_cluster_volume > 0:
+              enriched_metrics['ask_cluster_volume'] = float(
+                orderbook_metrics.largest_ask_cluster_volume
+              )
+
+            # Добавляем в metadata
+            feature_vector.metadata['orderbook_metrics'] = enriched_metrics
+
+            logger.debug(
+              f"{symbol} | OrderBook metrics enriched: "
+              f"imbalance={enriched_metrics['imbalance']:.3f}, "
+              f"spread={enriched_metrics['spread']:.8f}"
+            )
+
+          except Exception as e:
+            logger.error(
+              f"{symbol} | Ошибка enrichment orderbook_metrics: {e}",
+              exc_info=True
+            )
+
+        # ============================================================
+        # ШАГ 3: ENRICHMENT - S/R LEVELS
+        # ============================================================
+
+        if sr_levels:
+          try:
+            # Разделяем по типу
+            supports = [
+              lvl for lvl in sr_levels
+              if lvl.level_type == "support" and not lvl.is_broken
+            ]
+            resistances = [
+              lvl for lvl in sr_levels
+              if lvl.level_type == "resistance" and not lvl.is_broken
+            ]
+
+            # Базовая информация
+            sr_context = {
+              'num_supports': len(supports),
+              'num_resistances': len(resistances),
+              'total_levels': len(sr_levels),
+              'active_levels': len(supports) + len(resistances)
+            }
+
+            # Находим сильнейшие уровни
+            if supports:
+              strongest_support = max(supports, key=lambda x: x.strength)
+              sr_context['strongest_support'] = {
+                'price': float(strongest_support.price),
+                'strength': float(strongest_support.strength),
+                'touch_count': int(strongest_support.touch_count),
+                'total_volume': float(strongest_support.total_volume)
+              }
+
+              # Расстояние до сильнейшей поддержки
+              current_price = orderbook_snapshot.mid_price
+              if current_price:
+                distance_pct = (
+                    (current_price - strongest_support.price) /
+                    current_price * 100
+                )
+                sr_context['strongest_support']['distance_pct'] = float(distance_pct)
+
+            if resistances:
+              strongest_resistance = max(resistances, key=lambda x: x.strength)
+              sr_context['strongest_resistance'] = {
+                'price': float(strongest_resistance.price),
+                'strength': float(strongest_resistance.strength),
+                'touch_count': int(strongest_resistance.touch_count),
+                'total_volume': float(strongest_resistance.total_volume)
+              }
+
+              # Расстояние до сильнейшего сопротивления
+              current_price = orderbook_snapshot.mid_price
+              if current_price:
+                distance_pct = (
+                    (strongest_resistance.price - current_price) /
+                    current_price * 100
+                )
+                sr_context['strongest_resistance']['distance_pct'] = float(distance_pct)
+
+            # Ближайшие уровни (топ-3 по близости)
+            if supports:
+              current_price = orderbook_snapshot.mid_price or 0.0
+              nearest_supports = sorted(
+                supports,
+                key=lambda x: abs(x.price - current_price)
+              )[:3]
+
+              sr_context['nearest_supports'] = [
+                {
+                  'price': float(lvl.price),
+                  'strength': float(lvl.strength),
+                  'distance_pct': float(
+                    abs(lvl.price - current_price) / current_price * 100
+                  ) if current_price > 0 else 0.0
+                }
+                for lvl in nearest_supports
+              ]
+
+            if resistances:
+              current_price = orderbook_snapshot.mid_price or 0.0
+              nearest_resistances = sorted(
+                resistances,
+                key=lambda x: abs(x.price - current_price)
+              )[:3]
+
+              sr_context['nearest_resistances'] = [
+                {
+                  'price': float(lvl.price),
+                  'strength': float(lvl.strength),
+                  'distance_pct': float(
+                    abs(lvl.price - current_price) / current_price * 100
+                  ) if current_price > 0 else 0.0
+                }
+                for lvl in nearest_resistances
+              ]
+
+            # Добавляем в metadata
+            feature_vector.metadata['sr_levels'] = sr_context
+
+            logger.debug(
+              f"{symbol} | S/R levels enriched: "
+              f"supports={len(supports)}, resistances={len(resistances)}"
+            )
+
+          except Exception as e:
+            logger.error(
+              f"{symbol} | Ошибка enrichment sr_levels: {e}",
+              exc_info=True
+            )
+
+        # ============================================================
+        # ШАГ 4: ДОПОЛНИТЕЛЬНЫЕ КОНТЕКСТНЫЕ ДАННЫЕ
+        # ============================================================
+
+        # Timestamp для tracking
+        feature_vector.metadata['extraction_timestamp'] = int(
+          datetime.now().timestamp() * 1000
+        )
+
+        # Информация о качестве данных
+        feature_vector.metadata['data_quality'] = {
+          'num_candles': len(candles),
+          'has_prev_orderbook': prev_orderbook is not None,
+          'has_prev_candle': prev_candle is not None,
+          'has_orderbook_metrics': orderbook_metrics is not None,
+          'has_sr_levels': sr_levels is not None and len(sr_levels) > 0
+        }
+
+        logger.info(
+          f"{symbol} | Enhanced extraction complete: "
+          f"{feature_vector.feature_count} features + "
+          f"{len(feature_vector.metadata)} metadata keys"
+        )
+
+        return feature_vector
+
+      except Exception as e:
+        logger.error(
+          f"{symbol} | Критическая ошибка в extract_features_enhanced: {e}",
+          exc_info=True
+        )
+        return None
 
   async def extract_features_single(
       self,

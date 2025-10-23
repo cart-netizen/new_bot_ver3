@@ -31,6 +31,7 @@ from ml_engine.detection.spoofing_detector import SpoofingConfig, SpoofingDetect
 from ml_engine.detection.sr_level_detector import SRLevelConfig, SRLevelDetector
 from ml_engine.integration.ml_signal_validator import ValidationConfig, MLSignalValidator
 from ml_engine.monitoring.drift_detector import DriftDetector
+from models.orderbook import OrderBookSnapshot
 # from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
 from screener.screener_manager import ScreenerManager
 from strategies.adaptive import AdaptiveConsensusManager, WeightOptimizerConfig, OptimizationMethod, \
@@ -56,8 +57,8 @@ from tasks.cleanup_tasks import cleanup_tasks
 from utils.helpers import safe_enum_value
 # ML FEATURE PIPELINE - НОВОЕ
 from ml_engine.features import (
-    MultiSymbolFeaturePipeline,
-    FeatureVector
+  MultiSymbolFeaturePipeline,
+  FeatureVector, Candle
 )
 from ml_engine.data_collection import MLDataCollector  # НОВОЕ
 
@@ -175,6 +176,15 @@ class BotController:
     self.orderbook_managers: Dict[str, OrderBookManager] = {}
     self.orderbook_analyzer: Optional[OrderBookAnalyzer] = None
     self.candle_managers: Dict[str, CandleManager] = {}
+
+    # Tracking предыдущих состояний
+    self.prev_orderbook_snapshots: Dict[str, OrderBookSnapshot] = {}
+    self.prev_candles: Dict[str, Candle] = {}
+
+    # Timestamps для tracking обновлений
+    self.last_snapshot_update: Dict[str, int] = {}
+    self.last_candle_update: Dict[str, int] = {}
+
     self.market_analyzer: Optional[MarketAnalyzer] = None
     self.strategy_engine: Optional[StrategyEngine] = None
     self.risk_manager: Optional[RiskManager] = None
@@ -287,6 +297,8 @@ class BotController:
     self.position_monitor: Optional[PositionMonitor] = None
     self.weight_optimization_task: Optional[asyncio.Task] = None
     self.mtf_update_task: Optional[asyncio.Task] = None
+
+
 
     self.running = False
 
@@ -1080,44 +1092,112 @@ class BotController:
       except Exception as e:
         logger.warning(f"{symbol} | Ошибка загрузки свечей: {e}")
 
-  async def _candle_update_loop(self):
-    """Цикл обновления свечей (каждую минуту)."""
-    logger.info("Запущен цикл обновления свечей")
+  # async def _candle_update_loop(self):
+  #   """Цикл обновления свечей (каждую минуту)."""
+  #   logger.info("Запущен цикл обновления свечей")
+  #
+  #   while self.status == BotStatus.RUNNING:
+  #     try:
+  #       for symbol in self.symbols:
+  #         try:
+  #           # Получаем последнюю свечу
+  #           candles_data = await rest_client.get_kline(
+  #             symbol=symbol,
+  #             interval="1",
+  #             limit=2  # Последние 2 свечи (закрытая + текущая)
+  #           )
+  #
+  #           if candles_data and len(candles_data) >= 2:
+  #             candle_manager = self.candle_managers[symbol]
+  #
+  #             # Обновляем закрытую свечу
+  #             closed_candle = candles_data[-2]
+  #             await candle_manager.update_candle(closed_candle, is_closed=True)
+  #
+  #             # Обновляем текущую свечу
+  #             current_candle = candles_data[-1]
+  #             await candle_manager.update_candle(current_candle, is_closed=False)
+  #
+  #         except Exception as e:
+  #           logger.error(f"{symbol} | Ошибка обновления свечи: {e}")
+  #
+  #       # Обновляем каждые 5 секунд
+  #       await asyncio.sleep(5)
+  #
+  #     except asyncio.CancelledError:
+  #       logger.info("Цикл обновления свечей отменен")
+  #       break
+  #     except Exception as e:
+  #       logger.error(f"Ошибка в цикле обновления свечей: {e}")
+  #       await asyncio.sleep(10)
 
-    while self.status == BotStatus.RUNNING:
+  async def _candle_update_loop(self):
+    """
+    Периодическое обновление свечей через REST API.
+    Обновляет CandleManager и сохраняет предыдущую свечу.
+    """
+    logger.info("Запуск цикла обновления свечей (каждые 5 секунд)")
+
+    while self.running:
       try:
-        for symbol in self.symbols:
+        symbols = list(self.candle_managers.keys())
+
+        for symbol in symbols:
           try:
-            # Получаем последнюю свечу
+            candle_manager = self.candle_managers[symbol]
+
+            # ✅ ДОБАВИТЬ: Сохраняем предыдущую свечу
+            # ПЕРЕД обновлением новой
+            candles = candle_manager.get_candles()
+            if candles and len(candles) >= 2:
+              # Сохраняем закрытую свечу (предпоследнюю)
+              prev_candle = candles[-2]
+              self.prev_candles[symbol] = prev_candle
+              self.last_candle_update[symbol] = prev_candle.timestamp
+
+              logger.debug(
+                f"[{symbol}] Сохранена предыдущая свеча: "
+                f"close={prev_candle.close:.2f}"
+              )
+
+            # Получаем свежие данные с биржи
             candles_data = await rest_client.get_kline(
               symbol=symbol,
-              interval="1",
-              limit=2  # Последние 2 свечи (закрытая + текущая)
+              interval="1",  # 1 минута
+              limit=2  # Последние 2 свечи
             )
 
-            if candles_data and len(candles_data) >= 2:
-              candle_manager = self.candle_managers[symbol]
+            if not candles_data or len(candles_data) < 2:
+              logger.warning(f"[{symbol}] Нет данных свечей от биржи")
+              continue
 
-              # Обновляем закрытую свечу
-              closed_candle = candles_data[-2]
-              await candle_manager.update_candle(closed_candle, is_closed=True)
+            # Обновляем закрытую свечу
+            closed_candle = candles_data[-2]
+            await candle_manager.update_candle(closed_candle, is_closed=True)
 
-              # Обновляем текущую свечу
-              current_candle = candles_data[-1]
-              await candle_manager.update_candle(current_candle, is_closed=False)
+            # Обновляем текущую свечу
+            current_candle = candles_data[-1]
+            await candle_manager.update_candle(current_candle, is_closed=False)
+
+            logger.debug(
+              f"[{symbol}] Свечи обновлены: "
+              f"closed={closed_candle.get('close')}, "
+              f"current={current_candle.get('close')}"
+            )
 
           except Exception as e:
-            logger.error(f"{symbol} | Ошибка обновления свечи: {e}")
+            logger.error(
+              f"[{symbol}] Ошибка обновления свечей: {e}",
+              exc_info=True
+            )
+            continue
 
-        # Обновляем каждые 5 секунд
+        # Пауза перед следующей итерацией
         await asyncio.sleep(5)
 
-      except asyncio.CancelledError:
-        logger.info("Цикл обновления свечей отменен")
-        break
       except Exception as e:
-        logger.error(f"Ошибка в цикле обновления свечей: {e}")
-        await asyncio.sleep(10)
+        logger.error(f"Критическая ошибка в candle_update_loop: {e}", exc_info=True)
+        await asyncio.sleep(5)
 
   async def _analysis_loop_ml_enhanced(self):
     """
@@ -1377,7 +1457,7 @@ class BotController:
             #   orderbook=orderbook_snapshot
             # )
 
-            orderbook_metrics = self.orderbook_analyzer.analyze(orderbook_snapshot)
+            orderbook_metrics = self.orderbook_analyzer.analyze(ob_manager)
 
             # 1.4 Market Metrics
             market_metrics = self.market_analyzer.analyze_symbol(
@@ -1389,10 +1469,38 @@ class BotController:
               f"[{symbol}] Market Data: "
               f"price={current_price:.2f}, "
               f"candles={len(candles)}, "
-              f"spread={orderbook_metrics.spread_bps:.2f}bps, "
+              f"spread={orderbook_metrics.spread:.2f}bps, "
               f"imbalance={orderbook_metrics.imbalance:.3f}, "
-              f"volatility={market_metrics.volatility:.4f}"
+              f"volatility={orderbook_features.orderbook_volatility:.4f}"
             )
+            # ============================================================
+            # ШАГ 2: ПОЛУЧЕНИЕ ПРЕДЫДУЩИХ СОСТОЯНИЙ
+            # ============================================================
+
+            # ✅ Получаем предыдущий snapshot (если есть)
+            prev_orderbook = self.prev_orderbook_snapshots.get(symbol)
+
+            # ✅ Получаем предыдущую свечу (если есть)
+            prev_candle = self.prev_candles.get(symbol)
+
+            # Логируем наличие исторических данных
+            if prev_orderbook:
+              logger.debug(
+                f"[{symbol}] Предыдущий snapshot доступен: "
+                f"age={(orderbook_snapshot.timestamp - prev_orderbook.timestamp) / 1000:.1f}s"
+              )
+            else:
+              logger.debug(f"[{symbol}] Предыдущий snapshot отсутствует (первая итерация)")
+
+            if prev_candle:
+              logger.debug(
+                f"[{symbol}] Предыдущая свеча доступна: "
+                f"close={prev_candle.close:.2f}"
+              )
+            else:
+              logger.debug(f"[{symbol}] Предыдущая свеча отсутствует")
+
+
             # ==================== BROADCAST ORDERBOOK (КРИТИЧНО ДЛЯ ФРОНТЕНДА) ====================
             # try:
             #   from api.websocket import broadcast_orderbook_update
@@ -1456,24 +1564,28 @@ class BotController:
             # ШАГ 3: S/R LEVELS DETECTION & UPDATE (опционально)
             # ============================================================
 
-            sr_levels = None
-            if has_sr_detector:
-              try:
-                # Обновляем S/R детектор свежими свечами
-                self.sr_detector.update_candles(symbol, candles)
+            # Детекция уровней
+            sr_levels: List[SRLevel] = self.sr_detector.detect_levels(symbol)
 
-                # Детектируем уровни
-                sr_levels = self.sr_detector.detect_levels(symbol)
+            if sr_levels:
+              # Разделяем по типу
+              supports = [lvl for lvl in sr_levels if lvl.level_type == "support"]
+              resistances = [lvl for lvl in sr_levels if lvl.level_type == "resistance"]
 
-                if sr_levels:
-                  logger.debug(
-                    f"[{symbol}] S/R Levels: "
-                    f"{len(sr_levels.get('support', []))} supports, "
-                    f"{len(sr_levels.get('resistance', []))} resistances"
-                  )
+              logger.debug(
+                f"[{symbol}] S/R Levels: "
+                f"{len(supports)} supports, {len(resistances)} resistances"
+              )
 
-              except Exception as e:
-                logger.error(f"[{symbol}] Ошибка S/R Detector: {e}")
+              # Получение ближайших уровней (возвращает dict!)
+              nearest = self.sr_detector.get_nearest_levels(symbol, current_price)
+
+              # ✅ Здесь можно использовать .get(), т.к. nearest - это dict
+              if nearest.get("support"):
+                logger.info(f"Nearest support: {nearest['support'].price}")
+
+              if nearest.get("resistance"):
+                logger.info(f"Nearest resistance: {nearest['resistance'].price}")
 
             # ==================== 4. ТРАДИЦИОННЫЙ АНАЛИЗ ====================
             # ПРАВИЛЬНО: передаём OrderBookManager, НЕ OrderBookSnapshot
@@ -1496,20 +1608,42 @@ class BotController:
             if has_ml_feature_pipeline:
               try:
                 # Извлекаем признаки из всех доступных источников
-                feature_vector = await self.ml_feature_pipeline.extract_features(
+                feature_vector = await self.ml_feature_pipeline.extract_features_enhanced(
                   symbol=symbol,
-                  candles=candles,
                   orderbook_snapshot=orderbook_snapshot,
+                  candles=candles,
                   orderbook_metrics=orderbook_metrics,
-                  market_metrics=market_metrics,
-                  sr_levels=sr_levels  # Может быть None
+                  sr_levels=sr_levels if sr_levels else None,
+                  prev_orderbook=prev_orderbook,  # ✅ Передаем предыдущий snapshot
+                  prev_candle=prev_candle  # ✅ Передаем предыдущую свечу
                 )
 
                 if feature_vector:
+                  # Проверяем наличие временных признаков
+                  data_quality = feature_vector.metadata.get('data_quality', {})
+
                   logger.debug(
-                    f"[{symbol}] Извлечено {feature_vector.feature_count} ML признаков, "
-                    f"качество: {feature_vector.quality_score:.3f}"
+                    f"[{symbol}] Feature extraction успешно: "
+                    f"{feature_vector.feature_count} признаков, "
+                    f"prev_snapshot={data_quality.get('has_prev_orderbook', False)}, "
+                    f"prev_candle={data_quality.get('has_prev_candle', False)}"
                   )
+
+                  # Статистика по enrichment
+                  if 'orderbook_metrics' in feature_vector.metadata:
+                    ob_meta = feature_vector.metadata['orderbook_metrics']
+                    logger.debug(
+                      f"[{symbol}] OrderBook enrichment: "
+                      f"imbalance={ob_meta['imbalance']:.3f}"
+                    )
+
+                  if 'sr_levels' in feature_vector.metadata:
+                    sr_meta = feature_vector.metadata['sr_levels']
+                    logger.debug(
+                      f"[{symbol}] S/R enrichment: "
+                      f"{sr_meta['num_supports']} supports, "
+                      f"{sr_meta['num_resistances']} resistances"
+                    )
 
                   # Опционально: получаем ML prediction (если нужно для обогащения)
                   # НЕ используем для блокировки торговли, только для метаданных
@@ -1585,6 +1719,21 @@ class BotController:
                   # ========================================================
                   # ШАГ 6: ENRICHMENT SIGNAL METADATA
                   # ========================================================
+                  spread_bps = None
+                  if orderbook_metrics.spread and orderbook_metrics.mid_price and orderbook_metrics.mid_price > 0:
+                    spread_bps = (orderbook_metrics.spread / orderbook_metrics.mid_price) * 10000
+
+                  # Получение волатильности (если есть market_metrics из другого источника)
+                  market_volatility = None
+                  if hasattr(self, 'indicator_features') and self.indicator_features:
+                    # Вариант 1: Из ATR индикатора
+                    market_volatility = self.indicator_features.get('atr_normalized', None)
+                  elif hasattr(self, 'orderbook_features') and self.orderbook_features:
+                    # Вариант 2: Из OrderBook Feature Extractor
+                    market_volatility = self.orderbook_features.orderbook_volatility
+
+
+
 
                   # Инициализация metadata если нужно
                   if not final_signal.metadata:
@@ -1615,18 +1764,31 @@ class BotController:
                     # Market context
                     'current_price': current_price,
                     'orderbook_imbalance': orderbook_metrics.imbalance,
-                    'spread_bps': orderbook_metrics.spread_bps,
-                    'market_volatility': market_metrics.volatility if market_metrics else None
+                    'spread_bps': spread_bps,
+                    'market_volatility': market_volatility
                   })
 
                   # Single-TF Consensus Info
                   if integrated_signal.single_tf_consensus:
                     consensus = integrated_signal.single_tf_consensus
+
+                    consensus_mode = consensus.final_signal.metadata.get('consensus_mode', 'unknown')
+
                     final_signal.metadata['single_tf_consensus'] = {
-                      'mode': consensus.consensus_mode,
+                      'mode': consensus_mode,  # ✅ Теперь работает
                       'confidence': consensus.consensus_confidence,
                       'agreement_count': consensus.agreement_count,
-                      'disagreement_count': consensus.disagreement_count
+                      'disagreement_count': consensus.disagreement_count,
+
+                      # Дополнительные полезные поля
+                      'contributing_strategies': consensus.contributing_strategies,
+                      'candle_strategies': consensus.candle_strategies_count,
+                      'orderbook_strategies': consensus.orderbook_strategies_count,
+                      'hybrid_strategies': consensus.hybrid_strategies_count,
+
+                      # Детали из metadata
+                      'buy_score': consensus.final_signal.metadata.get('buy_score'),
+                      'sell_score': consensus.final_signal.metadata.get('sell_score'),
                     }
 
                     # Contributing strategies для Performance Tracker
@@ -1636,14 +1798,114 @@ class BotController:
                   # MTF Signal Info
                   if integrated_signal.mtf_signal:
                     mtf = integrated_signal.mtf_signal
-                    final_signal.metadata['mtf_signal'] = {
+
+                    # Базовые данные из MultiTimeframeSignal
+                    mtf_data = {
+                      # Доступные атрибуты
                       'quality': mtf.signal_quality,
                       'risk_level': mtf.risk_level,
                       'alignment_score': mtf.alignment_score,
-                      'confluence_detected': mtf.confluence_detected,
-                      'divergence_type': mtf.divergence_type,
-                      'recommended_position_multiplier': mtf.recommended_position_size_multiplier
+                      'alignment_type': mtf.alignment_type.value if hasattr(mtf.alignment_type, 'value') else str(
+                        mtf.alignment_type),
+                      'recommended_position_multiplier': mtf.recommended_position_size_multiplier,
+
+                      # Дополнительная информация
+                      'synthesis_mode': mtf.synthesis_mode.value if hasattr(mtf.synthesis_mode, 'value') else str(
+                        mtf.synthesis_mode),
+                      'timeframes_analyzed': mtf.timeframes_analyzed,
+                      'timeframes_agreeing': mtf.timeframes_agreeing,
+                      'reliability_score': mtf.reliability_score,
+
+                      # Risk management
+                      'recommended_stop_loss': mtf.recommended_stop_loss_price,
+                      'recommended_take_profit': mtf.recommended_take_profit_price,
+                      'stop_loss_timeframe': mtf.stop_loss_timeframe.value if mtf.stop_loss_timeframe and hasattr(
+                        mtf.stop_loss_timeframe, 'value') else None,
+
+                      # Warnings
+                      'warnings': mtf.warnings if mtf.warnings else []
                     }
+
+                    # ============================================================
+                    # CONFLUENCE И DIVERGENCE - ПРАВИЛЬНОЕ ИЗВЛЕЧЕНИЕ
+                    # ============================================================
+
+                    # Вариант A: Если confluence/divergence добавлены в MultiTimeframeSignal (после расширения класса)
+                    if hasattr(mtf, 'has_confluence'):
+                      mtf_data['confluence_detected'] = mtf.has_confluence
+                      mtf_data['confluence_zones_count'] = mtf.confluence_zones_count
+
+                    if hasattr(mtf, 'divergence_type'):
+                      mtf_data['divergence_detected'] = mtf.divergence_detected
+                      mtf_data['divergence_type'] = mtf.divergence_type.value if mtf.divergence_type and hasattr(
+                        mtf.divergence_type, 'value') else 'no_divergence'
+                      mtf_data['divergence_severity'] = mtf.divergence_severity
+
+                    # Вариант B: Если alignment доступен через IntegratedSignal
+                    elif hasattr(integrated_signal, 'mtf_alignment') and integrated_signal.mtf_alignment:
+                      alignment = integrated_signal.mtf_alignment
+
+                      mtf_data['confluence_detected'] = alignment.has_strong_confluence
+                      mtf_data['confluence_zones_count'] = len(alignment.confluence_zones)
+
+                      mtf_data['divergence_detected'] = (alignment.divergence_type != DivergenceType.NO_DIVERGENCE)
+                      mtf_data['divergence_type'] = alignment.divergence_type.value if hasattr(
+                        alignment.divergence_type, 'value') else str(alignment.divergence_type)
+                      mtf_data['divergence_severity'] = alignment.divergence_severity
+
+                      logger.debug(
+                        f"[{symbol}] MTF Alignment extracted: "
+                        f"confluence={alignment.has_strong_confluence}, "
+                        f"divergence={alignment.divergence_type.value}"
+                      )
+
+                    # Вариант C: Если доступен MultiTimeframeManager
+                    elif hasattr(self, 'mtf_manager') and self.mtf_manager:
+                      try:
+                        alignment = self.mtf_manager.get_last_alignment(symbol)
+
+                        if alignment:
+                          mtf_data['confluence_detected'] = alignment.has_strong_confluence
+                          mtf_data['confluence_zones_count'] = len(alignment.confluence_zones)
+
+                          mtf_data['divergence_detected'] = (alignment.divergence_type != DivergenceType.NO_DIVERGENCE)
+                          mtf_data['divergence_type'] = alignment.divergence_type.value if hasattr(
+                            alignment.divergence_type, 'value') else str(alignment.divergence_type)
+                          mtf_data['divergence_severity'] = alignment.divergence_severity
+
+                          logger.debug(f"[{symbol}] Alignment retrieved from MTF Manager")
+                        else:
+                          logger.warning(f"[{symbol}] No alignment found in MTF Manager")
+                          # Значения по умолчанию
+                          mtf_data['confluence_detected'] = False
+                          mtf_data['divergence_type'] = 'unknown'
+
+                      except Exception as e:
+                        logger.error(f"[{symbol}] Ошибка при получении alignment: {e}")
+                        mtf_data['confluence_detected'] = False
+                        mtf_data['divergence_type'] = 'error'
+
+                    # Вариант D: Если ничего недоступно - значения по умолчанию
+                    else:
+                      logger.warning(
+                        f"[{symbol}] MTF alignment data not accessible, "
+                        "using default values"
+                      )
+                      mtf_data['confluence_detected'] = False
+                      mtf_data['confluence_zones_count'] = 0
+                      mtf_data['divergence_detected'] = False
+                      mtf_data['divergence_type'] = 'not_available'
+                      mtf_data['divergence_severity'] = 0.0
+
+                    # Добавляем в metadata
+                    final_signal.metadata['mtf_signal'] = mtf_data
+
+                    logger.info(
+                      f"[{symbol}] MTF Signal metadata added: "
+                      f"quality={mtf.signal_quality:.2f}, "
+                      f"confluence={mtf_data.get('confluence_detected', False)}, "
+                      f"divergence={mtf_data.get('divergence_type', 'unknown')}"
+                    )
 
                     if mtf.warnings:
                       final_signal.metadata['mtf_warnings'] = mtf.warnings
@@ -1802,7 +2064,7 @@ class BotController:
                   try:
                     logger.info(
                       f"📤 [{symbol}] Отправка сигнала на исполнение: "
-                      f"{final_signal.signal_type.value} @ {final_signal.entry_price:.2f}"
+                      f"{final_signal.signal_type.value} @ {final_signal.price:.2f}"
                     )
 
                     # Отправляем сигнал в ExecutionManager
@@ -1852,25 +2114,82 @@ class BotController:
             # ШАГ 11: DRIFT MONITORING (опционально)
             # ============================================================
 
-            if has_drift_detector and feature_vector:
+            if has_drift_detector and feature_vector and signal:
               try:
-                drift_detected = self.drift_detector.detect_drift(
-                  feature_vector=feature_vector
+                # Убедимся, что signal - это TradingSignal (добавляем type hint)
+                from models.signal import TradingSignal, SignalType
+
+                # Type guard для проверки типа
+                if not isinstance(signal, TradingSignal):
+                  logger.warning(f"{symbol} | Signal не является TradingSignal, пропускаем drift monitoring")
+                else:
+                  # ✅ БЕЗОПАСНЫЙ ДОСТУП к signal_type
+                  signal_type_value = None
+
+                  # Вариант 1: Через hasattr
+                  if hasattr(signal, 'signal_type'):
+                    signal_type_value = safe_enum_value(signal.signal_type)
+
+                  # Вариант 2: Через getattr с fallback
+                  # signal_type_enum = getattr(signal, 'signal_type', None)
+                  # if signal_type_enum:
+                  #     signal_type_value = safe_enum_value(signal_type_enum)
+
+                  if not signal_type_value:
+                    logger.warning(f"{symbol} | Не удалось извлечь signal_type, пропускаем drift monitoring")
+                  else:
+                    # Конвертируем SignalType в int для drift detector
+                    signal_type_map = {
+                      "BUY": 1,
+                      "SELL": 2,
+                      "HOLD": 0
+                    }
+
+                    prediction_int = signal_type_map.get(signal_type_value, 0)
+
+                    logger.debug(
+                      f"{symbol} | Drift monitoring: signal_type={signal_type_value}, "
+                      f"prediction_int={prediction_int}"
+                    )
+
+                    # Добавляем наблюдение в drift detector
+                    self.drift_detector.add_observation(
+                      features=feature_vector.to_array(),
+                      prediction=prediction_int,
+                      label=None  # Label будет установлен позже
+                    )
+
+                    # Периодическая проверка drift
+                    if self.drift_detector.should_check_drift():
+                      drift_metrics = self.drift_detector.check_drift()
+
+                      if drift_metrics and drift_metrics.drift_detected:
+                        logger.warning(
+                          f"⚠️  MODEL DRIFT ОБНАРУЖЕН [{symbol}]:\n"
+                          f"   Severity: {drift_metrics.severity}\n"
+                          f"   Feature drift: {drift_metrics.feature_drift_score:.4f}\n"
+                          f"   Prediction drift: {drift_metrics.prediction_drift_score:.4f}\n"
+                          f"   Recommendation: {drift_metrics.recommendation}"
+                        )
+
+                        # Сохраняем drift history
+                        try:
+                          self.drift_detector.save_drift_history(
+                            f"logs/drift_history_{symbol}.json"
+                          )
+                        except Exception as e:
+                          logger.error(f"{symbol} | Ошибка сохранения drift history: {e}")
+                      else:
+                        logger.debug(f"{symbol} | Drift check passed, no drift detected")
+
+              except AttributeError as e:
+                logger.error(
+                  f"{symbol} | AttributeError в drift monitoring: {e}. "
+                  "Проверьте, что signal имеет атрибут signal_type",
+                  exc_info=True
                 )
-
-                if drift_detected:
-                  logger.warning(
-                    f"🔔 [{symbol}] Model Drift обнаружен! "
-                    f"Требуется переобучение модели."
-                  )
-                  self.stats['drift_detections'] += 1
-
-                  # Опционально: отправить алерт
-                  if settings.ENABLE_DRIFT_ALERTS:
-                    await self._send_drift_alert(symbol)
-
               except Exception as e:
-                logger.error(f"[{symbol}] Ошибка Drift Detection: {e}")
+                logger.error(f"{symbol} | Ошибка drift monitoring: {e}", exc_info=True)
 
             # ============================================================
             # ШАГ 12: ML DATA COLLECTION (для обучения)
@@ -1887,18 +2206,24 @@ class BotController:
                     'features': feature_vector,
                     'price': current_price,
                     'orderbook_snapshot': {
-                      'best_bid': orderbook_snapshot.best_bid_price,
-                      'best_ask': orderbook_snapshot.best_ask_price,
+                      'best_bid': orderbook_snapshot.best_bid,
+                      'best_ask': orderbook_snapshot.best_ask,
                       'mid_price': orderbook_snapshot.mid_price,
                       'spread': orderbook_snapshot.spread,
                       'imbalance': orderbook_metrics.imbalance
                     },
                     'market_metrics': {
-                      'volatility': market_metrics.volatility if market_metrics else None,
-                      'volume': market_metrics.volume if market_metrics else None,
-                      'momentum': market_metrics.momentum if market_metrics else None
+                      'volatility': market_volatility if market_metrics else None,
+                      'volume': (candles[-1].volume if candles and len(candles) > 0 else None) ,
+                      'momentum': (
+                          ((candles[-1].close - candles[-2].close) / candles[-2].close) * 100
+                          if candles and len(candles) > 1 and candles[-2].close > 0
+                          else None
+                      )
                     }
                   }
+
+
 
                   # Если был сгенерирован сигнал - добавляем его
                   if integrated_signal:
@@ -1906,14 +2231,28 @@ class BotController:
                       'type': integrated_signal.final_signal.signal_type.value,
                       'confidence': integrated_signal.combined_confidence,
                       'quality': integrated_signal.combined_quality_score,
-                      'entry_price': integrated_signal.final_signal.entry_price,
-                      'stop_loss': integrated_signal.final_signal.stop_loss,
-                      'take_profit': integrated_signal.final_signal.take_profit,
+                      'entry_price': integrated_signal.final_signal.price,
+                      'stop_loss': (
+                            integrated_signal.recommended_stop_loss
+                            if hasattr(integrated_signal, 'recommended_stop_loss')
+                            else integrated_signal.final_signal.metadata.get('stop_loss', None)
+                        ),
+                      'take_profit': (
+                            integrated_signal.recommended_take_profit
+                            if hasattr(integrated_signal, 'recommended_take_profit')
+                            else integrated_signal.final_signal.metadata.get('take_profit', None)
+                        ),
                       'source_mode': integrated_signal.source_analysis_mode.value
                     }
 
                   # Сохранение sample
-                  await self.ml_data_collector.collect_sample(sample_data)
+                  await self.ml_data_collector.collect_sample(
+                    symbol=symbol,
+                    feature_vector=feature_vector,
+                    orderbook_snapshot=orderbook_snapshot,
+                    market_metrics=market_metrics,
+                    executed_signal=None
+                  )
 
                   self.stats['ml_data_collected'] += 1
                   logger.debug(f"[{symbol}] ML Data sample собран")
@@ -2006,26 +2345,26 @@ class BotController:
             # ОБНОВЛЕНИЕ СТАТИСТИКИ ЦИКЛА
             # ================================================================
 
-            self.stats['analysis_cycles'] += 1
+        self.stats['analysis_cycles'] += 1
 
-            # Периодическое логирование статистики (каждые 100 циклов)
-            if cycle_number % 100 == 0:
-              self._log_analysis_statistics()
+        # Периодическое логирование статистики (каждые 100 циклов)
+        if cycle_number % 100 == 0:
+          self._log_analysis_statistics()
 
-            # Расчет времени выполнения цикла
-          cycle_elapsed = time.time() - cycle_start
+          # Расчет времени выполнения цикла
+        cycle_elapsed = time.time() - cycle_start
 
-          # Warning если цикл занял слишком много времени
-          if cycle_elapsed > settings.ANALYSIS_INTERVAL:
-            logger.warning(
-              f"⏱️ Цикл анализа #{cycle_number} занял {cycle_elapsed:.2f}с "
-              f"(> интервал {settings.ANALYSIS_INTERVAL}с)"
-            )
+        # Warning если цикл занял слишком много времени
+        if cycle_elapsed > settings.ANALYSIS_INTERVAL:
+          logger.warning(
+            f"⏱️ Цикл анализа #{cycle_number} занял {cycle_elapsed:.2f}с "
+            f"(> интервал {settings.ANALYSIS_INTERVAL}с)"
+          )
 
-          # Ожидание до следующего цикла
-          sleep_time = max(0, settings.ANALYSIS_INTERVAL - cycle_elapsed)
-          if sleep_time > 0:
-            await asyncio.sleep(sleep_time)
+        # Ожидание до следующего цикла
+        sleep_time = max(0, settings.ANALYSIS_INTERVAL - cycle_elapsed)
+        if sleep_time > 0:
+          await asyncio.sleep(sleep_time)
 
       except asyncio.CancelledError:
         # Graceful shutdown
@@ -2345,54 +2684,97 @@ class BotController:
           exc_info=True
         )
 
-  async def _handle_orderbook_message(self, data: Dict[str, Any]):
+  # async def _handle_orderbook_message(self, data: Dict[str, Any]):
+  #   """
+  #   Обработка сообщения о стакане от WebSocket.
+  #
+  #   Args:
+  #       data: Данные от WebSocket
+  #   """
+  #   try:
+  #     topic = data.get("topic", "")
+  #     message_type = data.get("type", "")
+  #     message_data = data.get("data", {})
+  #
+  #     # Извлекаем символ из топика
+  #     if "orderbook" in topic:
+  #       parts = topic.split(".")
+  #       if len(parts) >= 3:
+  #         symbol = parts[2]
+  #
+  #         if symbol not in self.orderbook_managers:
+  #           logger.warning(f"Получены данные для неизвестного символа: {symbol}")
+  #           return
+  #
+  #         manager = self.orderbook_managers[symbol]
+  #
+  #         if message_type == "snapshot":
+  #           logger.info(f"{symbol} | Получен snapshot стакана")
+  #           manager.apply_snapshot(message_data)
+  #           logger.info(
+  #             f"{symbol} | Snapshot применен: "
+  #             f"{len(manager.bids)} bids, {len(manager.asks)} asks"
+  #           )
+  #
+  #         elif message_type == "delta":
+  #           if not manager.snapshot_received:
+  #             logger.debug(
+  #               f"{symbol} | Delta получена до snapshot, пропускаем"
+  #             )
+  #             return
+  #
+  #           manager.apply_delta(message_data)
+  #           logger.debug(f"{symbol} | Delta применена")
+  #         else:
+  #           logger.warning(f"{symbol} | Неизвестный тип сообщения: {message_type}")
+  #
+  #   except Exception as e:
+  #     logger.error(f"Ошибка обработки сообщения стакана: {e}")
+  #     if not isinstance(e, (OrderBookSyncError, OrderBookError)):
+  #       log_exception(logger, e, "Обработка сообщения стакана")
+
+  async def _handle_orderbook_message(self, message: Dict):
     """
-    Обработка сообщения о стакане от WebSocket.
+    Обработчик сообщений WebSocket для стакана.
+    Обновляет OrderBookManager и сохраняет предыдущий snapshot.
 
     Args:
-        data: Данные от WebSocket
+        message: Сообщение от WebSocket
     """
     try:
-      topic = data.get("topic", "")
-      message_type = data.get("type", "")
-      message_data = data.get("data", {})
+      symbol = message.get("s")
+      if not symbol or symbol not in self.orderbook_managers:
+        return
 
-      # Извлекаем символ из топика
-      if "orderbook" in topic:
-        parts = topic.split(".")
-        if len(parts) >= 3:
-          symbol = parts[2]
+      manager = self.orderbook_managers[symbol]
 
-          if symbol not in self.orderbook_managers:
-            logger.warning(f"Получены данные для неизвестного символа: {symbol}")
-            return
+      # ✅ ДОБАВИТЬ: Сохраняем текущий snapshot как предыдущий
+      # ПЕРЕД применением нового
+      if manager.snapshot_received:
+        current_snapshot = manager.get_snapshot()
+        if current_snapshot:
+          self.prev_orderbook_snapshots[symbol] = current_snapshot
+          self.last_snapshot_update[symbol] = current_snapshot.timestamp
 
-          manager = self.orderbook_managers[symbol]
+          logger.debug(
+            f"[{symbol}] Сохранен предыдущий snapshot: "
+            f"mid_price={current_snapshot.mid_price:.2f}"
+          )
 
-          if message_type == "snapshot":
-            logger.info(f"{symbol} | Получен snapshot стакана")
-            manager.apply_snapshot(message_data)
-            logger.info(
-              f"{symbol} | Snapshot применен: "
-              f"{len(manager.bids)} bids, {len(manager.asks)} asks"
-            )
+      # Применяем новые данные
+      msg_type = message.get("type")
+      data = message.get("data", {})
 
-          elif message_type == "delta":
-            if not manager.snapshot_received:
-              logger.debug(
-                f"{symbol} | Delta получена до snapshot, пропускаем"
-              )
-              return
+      if msg_type == "snapshot":
+        manager.apply_snapshot(data)
+        logger.debug(f"[{symbol}] Snapshot применен")
 
-            manager.apply_delta(message_data)
-            logger.debug(f"{symbol} | Delta применена")
-          else:
-            logger.warning(f"{symbol} | Неизвестный тип сообщения: {message_type}")
+      elif msg_type == "delta":
+        manager.apply_delta(data)
+        logger.debug(f"[{symbol}] Delta применен")
 
     except Exception as e:
-      logger.error(f"Ошибка обработки сообщения стакана: {e}")
-      if not isinstance(e, (OrderBookSyncError, OrderBookError)):
-        log_exception(logger, e, "Обработка сообщения стакана")
+      logger.error(f"Ошибка обработки orderbook message: {e}", exc_info=True)
 
   def get_status(self) -> Dict[str, Any]:
     """Получение статуса бота с расширенной ML аналитикой."""
@@ -2666,30 +3048,56 @@ class BotController:
 
     while self.status == BotStatus.RUNNING:
       try:
-        # Оптимизация весов для каждого символа
         for symbol in self.symbols:
           try:
-            update_result = await self.adaptive_consensus.optimize_weights(symbol)
+            # Проверяем наличие weight_optimizer
+            if not hasattr(self.adaptive_consensus, 'weight_optimizer') or not self.adaptive_consensus.weight_optimizer:
+              logger.warning(f"[{symbol}] Weight optimizer не доступен")
+              continue
 
-            if update_result:
+            # Получаем список стратегий
+            strategy_names = list(self.strategy_manager.all_strategies.keys())
+
+            # Получаем текущие веса
+            current_weights = {
+              **self.strategy_manager.config.candle_strategy_weights,
+              **self.strategy_manager.config.orderbook_strategy_weights,
+              **self.strategy_manager.config.hybrid_strategy_weights
+            }
+
+            # ✅ ПРАВИЛЬНО: Вызываем get_optimal_weights
+            optimal_weights = self.adaptive_consensus.weight_optimizer.get_optimal_weights(
+              symbol=symbol,
+              strategy_names=strategy_names,
+              current_weights=current_weights
+            )
+
+            # Подсчитываем количество обновленных стратегий
+            strategies_updated = sum(
+              1 for strategy in strategy_names
+              if abs(optimal_weights.get(strategy, 0) - current_weights.get(strategy, 0)) > 0.01
+            )
+
+            if strategies_updated > 0:
+              # Обновляем веса в strategy_manager
+              self.adaptive_consensus._update_strategy_weights(optimal_weights)
+
               logger.info(
                 f"⚖️ [{symbol}] Веса обновлены: "
-                f"изменено {update_result['strategies_updated']} стратегий"
+                f"изменено {strategies_updated} стратегий"
               )
               self.stats['adaptive_weight_updates'] += 1
+            else:
+              logger.debug(f"[{symbol}] Веса не требуют обновления")
 
           except Exception as e:
             logger.error(f"❌ Ошибка оптимизации весов для {symbol}: {e}")
 
-        # Reset error counter
-        error_count = 0
-
-        # Интервал обновления (по умолчанию 6 часов)
-        await asyncio.sleep(settings.ADAPTIVE_WEIGHT_UPDATE_FREQUENCY_SECONDS)
+        # Пауза между итерациями
+        await asyncio.sleep(21600)
 
       except Exception as e:
-        error_count += 1
-        logger.error(f"❌ Ошибка в Weight Optimization Loop: {e}")
+        logger.error(f"❌ Ошибка в цикле оптимизации весов: {e}")
 
         if error_count >= max_errors:
           logger.critical(f"🚨 Weight Optimization Loop: превышен лимит ошибок")
@@ -2726,9 +3134,16 @@ class BotController:
         # Обновление таймфреймов для всех символов
         for symbol in self.symbols:
           try:
-            await self.mtf_manager.update_all_timeframes(symbol)
+            # ✅ ПРАВИЛЬНО: Используем update_timeframes (не update_all_timeframes)
+            success = await self.mtf_manager.update_timeframes(symbol)
+
+            if success:
+              logger.debug(f"[{symbol}] MTF данные обновлены")
+            else:
+              logger.warning(f"[{symbol}] Не удалось обновить MTF данные")
+
           except Exception as e:
-            logger.error(f"❌ Ошибка MTF update для {symbol}: {e}")
+            logger.error(f"❌ [{symbol}] Ошибка обновления MTF данных: {e}")
 
         # Reset error counter
         error_count = 0
@@ -2878,7 +3293,7 @@ class BotController:
     except Exception as e:
       logger.error(f"Ошибка в процессе cleanup: {e}")
 
-    def _log_integrated_signal(self, symbol: str, integrated_signal):
+  def _log_integrated_signal(self, symbol: str, integrated_signal):
       """
       Детальное логирование интегрированного сигнала.
 

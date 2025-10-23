@@ -24,6 +24,7 @@ import numpy as np
 
 from core.logger import get_logger
 from models.signal import TradingSignal, SignalType, SignalSource, SignalStrength
+from strategies.mtf import ConfluenceZone
 from strategies.mtf.timeframe_coordinator import Timeframe
 from strategies.mtf.timeframe_analyzer import TimeframeAnalysisResult
 from strategies.mtf.timeframe_aligner import (
@@ -56,6 +57,18 @@ class MultiTimeframeSignal:
   # Alignment информация
   alignment_score: float
   alignment_type: AlignmentType
+
+  # Confluence detection
+  has_confluence: bool
+  confluence_zones_count: int
+  confluence_zones: List['ConfluenceZone']
+
+  # Divergence detection
+  divergence_detected: bool
+  divergence_type: Optional['DivergenceType']
+  divergence_severity: float
+  divergence_details: str
+
 
   # Quality metrics
   signal_quality: float  # 0.0-1.0, композитная метрика качества
@@ -382,6 +395,14 @@ class TimeframeSignalSynthesizer:
       timeframes_agreeing=len(agreeing_tfs),
       alignment_score=alignment.alignment_score,
       alignment_type=alignment.alignment_type,
+      has_confluence=alignment.has_strong_confluence,
+      confluence_zones_count=len(alignment.confluence_zones),
+      confluence_zones=alignment.confluence_zones,
+
+      divergence_detected=(alignment.divergence_type != DivergenceType.NO_DIVERGENCE),
+      divergence_type=alignment.divergence_type,
+      divergence_severity=alignment.divergence_severity,
+      divergence_details=alignment.divergence_details,
       signal_quality=0.0,  # Будет рассчитано позже
       reliability_score=0.0,
       recommended_position_size_multiplier=1.0,
@@ -522,6 +543,14 @@ class TimeframeSignalSynthesizer:
       timeframes_agreeing=len(agreeing_tfs),
       alignment_score=alignment.alignment_score,
       alignment_type=alignment.alignment_type,
+      has_confluence=alignment.has_strong_confluence,
+      confluence_zones_count=len(alignment.confluence_zones),
+      confluence_zones=alignment.confluence_zones,
+
+      divergence_detected=(alignment.divergence_type != DivergenceType.NO_DIVERGENCE),
+      divergence_type=alignment.divergence_type,
+      divergence_severity=alignment.divergence_severity,
+      divergence_details=alignment.divergence_details,
       signal_quality=0.0,
       reliability_score=0.0,
       recommended_position_size_multiplier=1.0,
@@ -644,6 +673,14 @@ class TimeframeSignalSynthesizer:
       timeframes_agreeing=len(agreeing_tfs),
       alignment_score=alignment.alignment_score,
       alignment_type=alignment.alignment_type,
+      has_confluence=alignment.has_strong_confluence,
+      confluence_zones_count=len(alignment.confluence_zones),
+      confluence_zones=alignment.confluence_zones,
+
+      divergence_detected=(alignment.divergence_type != DivergenceType.NO_DIVERGENCE),
+      divergence_type=alignment.divergence_type,
+      divergence_severity=alignment.divergence_severity,
+      divergence_details=alignment.divergence_details,
       signal_quality=0.0,
       reliability_score=0.0,
       recommended_position_size_multiplier=1.0,
