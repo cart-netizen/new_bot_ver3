@@ -9,7 +9,7 @@ import signal
 import time
 import traceback
 from datetime import datetime
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -28,7 +28,7 @@ from infrastructure.repositories.position_repository import position_repository
 from infrastructure.resilience.recovery_service import recovery_service
 from ml_engine.detection.layering_detector import LayeringConfig, LayeringDetector
 from ml_engine.detection.spoofing_detector import SpoofingConfig, SpoofingDetector
-from ml_engine.detection.sr_level_detector import SRLevelConfig, SRLevelDetector
+from ml_engine.detection.sr_level_detector import SRLevelConfig, SRLevelDetector, SRLevel
 from ml_engine.integration.ml_signal_validator import ValidationConfig, MLSignalValidator
 from ml_engine.monitoring.drift_detector import DriftDetector
 from models.orderbook import OrderBookSnapshot
@@ -72,13 +72,13 @@ from strategies.adaptive import (
 
 # Фаза 3: Multi-Timeframe
 from strategies.mtf import (
-    MultiTimeframeManager,
-    MTFManagerConfig,
-    MultiTimeframeConfig,
-    AlignmentConfig,
-    SynthesizerConfig,
-    SynthesisMode,
-    Timeframe
+  MultiTimeframeManager,
+  MTFManagerConfig,
+  MultiTimeframeConfig,
+  AlignmentConfig,
+  SynthesizerConfig,
+  SynthesisMode,
+  Timeframe, DivergenceType
 )
 
 # Фаза 4: Integrated Engine
@@ -1465,13 +1465,21 @@ class BotController:
               ob_manager
             )
 
+            market_volatility = None
+            if hasattr(self, 'indicator_features') and self.indicator_features:
+              # Вариант 1: Из ATR индикатора
+              market_volatility = self.indicator_features.get('atr_normalized', None)
+            elif hasattr(self, 'orderbook_features') and self.orderbook_features:
+              # Вариант 2: Из OrderBook Feature Extractor
+              market_volatility = self.orderbook_features.orderbook_volatility
+
             logger.debug(
               f"[{symbol}] Market Data: "
               f"price={current_price:.2f}, "
               f"candles={len(candles)}, "
               f"spread={orderbook_metrics.spread:.2f}bps, "
               f"imbalance={orderbook_metrics.imbalance:.3f}, "
-              f"volatility={orderbook_features.orderbook_volatility:.4f}"
+              f"volatility={market_volatility if market_metrics else None:.4f}"
             )
             # ============================================================
             # ШАГ 2: ПОЛУЧЕНИЕ ПРЕДЫДУЩИХ СОСТОЯНИЙ
@@ -1724,15 +1732,6 @@ class BotController:
                     spread_bps = (orderbook_metrics.spread / orderbook_metrics.mid_price) * 10000
 
                   # Получение волатильности (если есть market_metrics из другого источника)
-                  market_volatility = None
-                  if hasattr(self, 'indicator_features') and self.indicator_features:
-                    # Вариант 1: Из ATR индикатора
-                    market_volatility = self.indicator_features.get('atr_normalized', None)
-                  elif hasattr(self, 'orderbook_features') and self.orderbook_features:
-                    # Вариант 2: Из OrderBook Feature Extractor
-                    market_volatility = self.orderbook_features.orderbook_volatility
-
-
 
 
                   # Инициализация metadata если нужно
