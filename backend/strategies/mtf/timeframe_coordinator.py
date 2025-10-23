@@ -135,6 +135,43 @@ class TimeframeCoordinator:
             f"execution={config.execution_timeframe.value}"
         )
 
+    @staticmethod
+    def _timeframe_to_bybit_interval(timeframe: Timeframe) -> str:
+        """
+        Конвертирует внутренний Timeframe в формат Bybit API.
+
+        Bybit API принимает числовые значения интервала в минутах:
+        - "1" = 1 минута
+        - "5" = 5 минут
+        - "15" = 15 минут
+        - "60" = 1 час
+        - "240" = 4 часа
+        - "D" = 1 день
+
+        Args:
+            timeframe: Внутренний Timeframe enum
+
+        Returns:
+            Строка интервала для Bybit API
+
+        Raises:
+            ValueError: Если таймфрейм не поддерживается
+        """
+        # Маппинг таймфреймов
+        TIMEFRAME_TO_BYBIT: Dict[Timeframe, str] = {
+            Timeframe.M1: "1",  # 1 минута
+            Timeframe.M5: "5",  # 5 минут
+            Timeframe.M15: "15",  # 15 минут
+            Timeframe.H1: "60",  # 1 час = 60 минут
+            Timeframe.H4: "240",  # 4 часа = 240 минут
+            Timeframe.D1: "D",  # 1 день
+        }
+
+        if timeframe not in TIMEFRAME_TO_BYBIT:
+            raise ValueError(f"Неподдерживаемый таймфрейм: {timeframe}")
+
+        return TIMEFRAME_TO_BYBIT[timeframe]
+
     async def initialize_symbol(self, symbol: str) -> bool:
         """
         Инициализировать все таймфреймы для символа.
@@ -337,7 +374,7 @@ class TimeframeCoordinator:
 
     async def _load_historical_candles(
         self,
-        candle_manager: CandleManager,
+        candle_manager,  # CandleManager
         symbol: str,
         timeframe: Timeframe,
         count: int
@@ -345,13 +382,31 @@ class TimeframeCoordinator:
         """
         Загрузить исторические свечи через REST API.
 
-        ИСПРАВЛЕНО: Правильная обработка формата данных Bybit
+        ✅ ИСПРАВЛЕНО: Правильная конвертация таймфрейма в формат Bybit
+
+        Args:
+            candle_manager: Менеджер свечей для обновления
+            symbol: Торговая пара (BTCUSDT, ETHUSDT, etc.)
+            timeframe: Таймфрейм (Timeframe.M1, M5, etc.)
+            count: Количество свечей для загрузки
+
+        Returns:
+            True если загрузка успешна, False иначе
         """
         try:
-            # Загружаем через REST API
+            # ✅ ИСПРАВЛЕНИЕ: Конвертируем timeframe в формат Bybit API
+            bybit_interval = self._timeframe_to_bybit_interval(timeframe)
+
+            # Импорт внутри метода, чтобы избежать циклических зависимостей
+            from exchange.rest_client import rest_client
+            from core.logger import get_logger
+
+            logger = get_logger(__name__)
+
+            # Загружаем через REST API с правильным интервалом
             candles_data = await rest_client.get_kline(
                 symbol=symbol,
-                interval=timeframe.value,
+                interval=bybit_interval,  # ✅ "1", "5", "15", "60" вместо "1m", "5m", etc.
                 limit=count,
             )
 
@@ -360,11 +415,12 @@ class TimeframeCoordinator:
                 return False
 
             logger.debug(
-                f"Получено {len(candles_data)} свечей для {symbol} {timeframe.value}"
+                f"📊 Получено {len(candles_data)} свечей для {symbol} {timeframe.value} "
+                f"(API interval: {bybit_interval})"
             )
 
-            # ✅ ИСПРАВЛЕНО: Bybit возвращает список списков
-            # Формат: [timestamp, open, high, low, close, volume, turnover]
+            # ✅ ФОРМАТ ДАННЫХ: Bybit возвращает список списков
+            # Формат каждой свечи: [timestamp, open, high, low, close, volume, turnover]
             for kline in candles_data:
                 try:
                     # Парсим данные из списка
@@ -385,18 +441,22 @@ class TimeframeCoordinator:
 
                 except (IndexError, ValueError, TypeError) as e:
                     logger.warning(
-                        f"Ошибка парсинга свечи {symbol} {timeframe.value}: {e}"
+                        f"⚠️ Ошибка парсинга свечи {symbol} {timeframe.value}: {e}"
                     )
                     continue
 
-            logger.debug(
-                f"✅ Загружено {len(candles_data)} свечей для {symbol} {timeframe.value}"
+            # Проверяем успешность загрузки
+            loaded_candles = candle_manager.get_candles()
+            logger.info(
+                f"✅ {symbol} {timeframe.value}: Загружено {len(loaded_candles)} свечей "
+                f"(запрошено: {count})"
             )
-            return True
+
+            return len(loaded_candles) > 0
 
         except Exception as e:
             logger.error(
-                f"Ошибка загрузки {symbol} {timeframe.value}: {e}",
+                f"❌ Ошибка загрузки {symbol} {timeframe.value}: {e}",
                 exc_info=True
             )
             return False
@@ -406,32 +466,71 @@ class TimeframeCoordinator:
         symbol: str,
         timeframe: Timeframe
     ) -> bool:
-        """Обновить свечи напрямую из API."""
+        """
+        Обновить свечи напрямую из API.
+
+        ✅ ИСПРАВЛЕНО: Правильная конвертация таймфрейма
+        """
         try:
+            from exchange.rest_client import rest_client
+            from core.logger import get_logger
+
+            logger = get_logger(__name__)
+
+            # Получаем CandleManager
+            if symbol not in self.candle_managers:
+                return False
+            if timeframe not in self.candle_managers[symbol]:
+                return False
+
             manager = self.candle_managers[symbol][timeframe]
 
+            # Получаем последнюю свечу для определения start_time
             existing_candles = manager.get_candles()
             if not existing_candles:
+                logger.warning(f"Нет существующих свечей для {symbol} {timeframe.value}")
                 return False
 
             last_candle = existing_candles[-1]
 
-            candles_data = await rest_client.get_klines(
+            # ✅ ИСПРАВЛЕНИЕ: Конвертируем timeframe
+            bybit_interval = self._timeframe_to_bybit_interval(timeframe)
+
+            # Загружаем новые свечи
+            candles_data = await rest_client.get_kline(
                 symbol=symbol,
-                interval=timeframe.value,
+                interval=bybit_interval,  # ✅ Правильный формат
                 limit=10,
-                start_time=last_candle.timestamp
+                # start_time=last_candle.timestamp  # Опционально
             )
 
             if not candles_data:
                 return False
 
             # Обновляем свечи
-            for candle_data in candles_data:
-                await manager.update_candle(  # ✅ ИСПРАВЛЕНО: manager вместо candle_manager
-                    candle_data=candle_data,
-                    is_closed=True
-                )
+            for kline in candles_data:
+                try:
+                    candle_data = {
+                        'timestamp': int(kline[0]),
+                        'open': float(kline[1]),
+                        'high': float(kline[2]),
+                        'low': float(kline[3]),
+                        'close': float(kline[4]),
+                        'volume': float(kline[5])
+                    }
+
+                    await manager.update_candle(
+                        candle_data=candle_data,
+                        is_closed=True
+                    )
+
+                except (IndexError, ValueError, TypeError) as e:
+                    logger.warning(f"Ошибка парсинга обновления: {e}")
+                    continue
+
+            logger.debug(
+                f"🔄 Обновлено {len(candles_data)} свечей для {symbol} {timeframe.value}"
+            )
 
             return True
 

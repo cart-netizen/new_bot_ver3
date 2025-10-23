@@ -2420,19 +2420,19 @@ class BotController:
           self._log_analysis_statistics()
 
           # Расчет времени выполнения цикла
-        cycle_elapsed = time.time() - cycle_start
+        # cycle_elapsed = time.time() - cycle_start
 
         # Warning если цикл занял слишком много времени
-        if cycle_elapsed > settings.ANALYSIS_INTERVAL:
-          logger.warning(
-            f"⏱️ Цикл анализа #{cycle_number} занял {cycle_elapsed:.2f}с "
-            f"(> интервал {settings.ANALYSIS_INTERVAL}с)"
-          )
+        # if cycle_elapsed > settings.ANALYSIS_INTERVAL:
+        #   logger.warning(
+        #     f"⏱️ Цикл анализа #{cycle_number} занял {cycle_elapsed:.2f}с "
+        #     f"(> интервал {settings.ANALYSIS_INTERVAL}с)"
+        #   )
 
-        # Ожидание до следующего цикла
-        sleep_time = max(0, settings.ANALYSIS_INTERVAL - cycle_elapsed)
-        if sleep_time > 0:
-          await asyncio.sleep(sleep_time)
+        # # Ожидание до следующего цикла
+        # sleep_time = max(0, settings.ANALYSIS_INTERVAL - cycle_elapsed)
+        # if sleep_time > 0:
+        await asyncio.sleep(1)
 
       except asyncio.CancelledError:
         # Graceful shutdown
@@ -2473,7 +2473,7 @@ class BotController:
       logger.info(f"   ├─ Общий PnL: {self.stats['total_pnl']:.2f} USDT")
       logger.info(f"   ├─ MTF сигналов: {self.stats['mtf_signals']}")
       logger.info(f"   ├─ ML валидаций: {self.stats['ml_validations']}")
-      logger.info(f"   ├─ ML данных собрано: {self.stats['ml_data_collected']}")
+      # logger.info(f"   ├─ ML данных собрано: {self.stats['ml_data_collected']}")
       logger.info(f"   ├─ Манипуляций обнаружено: {self.stats['manipulations_detected']}")
       logger.info(f"   ├─ Drift детекций: {self.stats['drift_detections']}")
       logger.info(f"   ├─ Предупреждений: {self.stats['warnings']}")
