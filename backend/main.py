@@ -1038,6 +1038,9 @@ class BotController:
         self._ml_stats_loop()
       )
 
+      self.running = True  # ✅ УСТАНОВИТЬ ФЛАГ
+      logger.info("✅ Running flag установлен: True")
+
       # ========== 18. ANALYSIS LOOP - ЗАПУСК ==========
 
       self.analysis_task = asyncio.create_task(
@@ -1346,19 +1349,44 @@ class BotController:
     """
     Периодическое обновление свечей через REST API.
     Обновляет CandleManager и сохраняет предыдущую свечу.
+
+    ИСПРАВЛЕНИЯ:
+    1. Безопасное преобразование типов (str → float)
+    2. Использование load_historical_data вместо update_candle
+    3. Обработка всех ошибок без остановки цикла
     """
     logger.info("Запуск цикла обновления свечей (каждые 5 секунд)")
 
+    error_counts = {}  # Счетчик ошибок по символам
+    max_errors = 5  # Максимум последовательных ошибок
+    cycle_number = 0
+
     while self.running:
+      cycle_number += 1
+
       try:
         symbols = list(self.candle_managers.keys())
 
         for symbol in symbols:
+          # Инициализация счетчика ошибок
+          if symbol not in error_counts:
+            error_counts[symbol] = 0
+
+          # Пропуск символа с множественными ошибками
+          if error_counts[symbol] >= max_errors:
+            if cycle_number % 20 == 0:  # Лог каждые 20 циклов
+              logger.warning(
+                f"⚠️ [{symbol}] Пропуск обновления: "
+                f"{error_counts[symbol]} последовательных ошибок"
+              )
+            continue
+
           try:
+            # ============================================================
+            # 1. СОХРАНЕНИЕ ПРЕДЫДУЩЕЙ СВЕЧИ (ДО ОБНОВЛЕНИЯ)
+            # ============================================================
             candle_manager = self.candle_managers[symbol]
 
-            # ✅ ДОБАВИТЬ: Сохраняем предыдущую свечу
-            # ПЕРЕД обновлением новой
             candles = candle_manager.get_candles()
             if candles and len(candles) >= 2:
               # Сохраняем закрытую свечу (предпоследнюю)
@@ -1371,7 +1399,9 @@ class BotController:
                 f"close={prev_candle.close:.2f}"
               )
 
-            # Получаем свежие данные с биржи
+            # ============================================================
+            # 2. ПОЛУЧЕНИЕ СВЕЖИХ ДАННЫХ С БИРЖИ
+            # ============================================================
             candles_data = await rest_client.get_kline(
               symbol=symbol,
               interval="1",  # 1 минута
@@ -1382,33 +1412,101 @@ class BotController:
               logger.warning(f"[{symbol}] Нет данных свечей от биржи")
               continue
 
-            # Обновляем закрытую свечу
+            # ============================================================
+            # 3. БЕЗОПАСНОЕ ОБНОВЛЕНИЕ ЧЕРЕЗ load_historical_data
+            # ============================================================
+            # ✅ ИСПОЛЬЗУЕМ load_historical_data - ОН УЖЕ ОБРАБАТЫВАЕТ ВСЕ ФОРМАТЫ
+            await candle_manager.load_historical_data(candles_data)
+
+            # ============================================================
+            # 4. БЕЗОПАСНОЕ ЛОГИРОВАНИЕ (с преобразованием типов)
+            # ============================================================
             closed_candle = candles_data[-2]
-            await candle_manager.update_candle(closed_candle, is_closed=True)
-
-            # Обновляем текущую свечу
             current_candle = candles_data[-1]
-            await candle_manager.update_candle(current_candle, is_closed=False)
 
-            logger.debug(
-              f"[{symbol}] Свечи обновлены: "
-              f"closed={closed_candle.get('close')}, "
-              f"current={current_candle.get('close')}"
-            )
+            try:
+              # Определяем формат данных
+              if isinstance(closed_candle, list):
+                # Формат: [timestamp, open, high, low, close, volume, turnover]
+                if len(closed_candle) > 4:
+                  # ✅ БЕЗОПАСНОЕ преобразование в float
+                  closed_price = float(closed_candle[4])
+                  current_price = float(current_candle[4])
+
+                  logger.debug(
+                    f"[{symbol}] Свечи обновлены (list): "
+                    f"closed={closed_price:.2f}, "
+                    f"current={current_price:.2f}"
+                  )
+
+              elif isinstance(closed_candle, dict):
+                # Формат: {'timestamp': ..., 'close': ...}
+                # ✅ БЕЗОПАСНОЕ преобразование: str → float
+                closed_value = closed_candle.get('close', '0')
+                current_value = current_candle.get('close', '0')
+
+                closed_price = float(closed_value)
+                current_price = float(current_value)
+
+                logger.debug(
+                  f"[{symbol}] Свечи обновлены (dict): "
+                  f"closed={closed_price:.2f}, "
+                  f"current={current_price:.2f}"
+                )
+              else:
+                logger.debug(
+                  f"[{symbol}] Свечи обновлены "
+                  f"(неизвестный формат: {type(closed_candle)})"
+                )
+
+            except (ValueError, TypeError) as e:
+              # Ошибка форматирования - не критично
+              logger.debug(
+                f"[{symbol}] Свечи обновлены "
+                f"(ошибка форматирования лога: {e})"
+              )
+
+            # ✅ УСПЕХ - сбрасываем счетчик ошибок
+            error_counts[symbol] = 0
 
           except Exception as e:
+            # ============================================================
+            # ОБРАБОТКА ОШИБКИ ДЛЯ КОНКРЕТНОГО СИМВОЛА
+            # ============================================================
+            error_counts[symbol] += 1
+
             logger.error(
-              f"[{symbol}] Ошибка обновления свечей: {e}",
-              exc_info=True
+              f"❌ [{symbol}] Ошибка обновления свечей "
+              f"(#{error_counts[symbol]}/{max_errors}): {e}"
             )
+
+            # Детальный traceback только для первой ошибки
+            if error_counts[symbol] == 1:
+              logger.error(f"Traceback:\n{traceback.format_exc()}")
+
+            # ✅ ПРОДОЛЖАЕМ РАБОТУ (НЕ ОСТАНАВЛИВАЕМ ЦИКЛ)
             continue
 
         # Пауза перед следующей итерацией
         await asyncio.sleep(5)
 
+      except asyncio.CancelledError:
+        # Graceful shutdown
+        logger.info("🛑 Цикл обновления свечей остановлен (CancelledError)")
+        break
+
       except Exception as e:
-        logger.error(f"Критическая ошибка в candle_update_loop: {e}", exc_info=True)
-        await asyncio.sleep(5)
+        # ============================================================
+        # КРИТИЧЕСКАЯ ОШИБКА - НО ПРОДОЛЖАЕМ РАБОТУ
+        # ============================================================
+        logger.error(
+          f"❌ КРИТИЧЕСКАЯ ошибка в candle_update_loop: {e}",
+          exc_info=True
+        )
+        # Пауза перед повторной попыткой
+        await asyncio.sleep(10)
+
+    logger.warning("⚠️ Цикл обновления свечей завершен")
 
   async def _analysis_loop_ml_enhanced(self):
     """
@@ -1597,7 +1695,7 @@ class BotController:
     # БЛОК 2: ГЛАВНЫЙ ЦИКЛ АНАЛИЗА
     # ========================================================================
 
-    while self.status == BotStatus.RUNNING:
+    while self.running:
       cycle_start = time.time()
       cycle_number += 1
 
@@ -2536,7 +2634,7 @@ class BotController:
 
           except Exception as e:
             # Обработка ошибки для конкретного символа
-            error_count[symbol] += 1
+            # error_count[symbol] += 1
 
             logger.error(
               f"❌ [{symbol}] Ошибка в analysis loop "
@@ -2544,27 +2642,27 @@ class BotController:
             )
             logger.debug(traceback.format_exc())
 
-            self.stats['errors'] += 1
-
-            # Проверка превышения лимита ошибок
-            if error_count[symbol] >= max_consecutive_errors:
-              logger.critical(
-                f"🚨 [{symbol}] Достигнут лимит последовательных ошибок "
-                f"({max_consecutive_errors}), символ будет пропущен до рестарта"
-              )
-
-              # Отправка критического алерта
-              if settings.ENABLE_CRITICAL_ALERTS:
-                await self._send_critical_alert(
-                  f"[{symbol}] Множественные ошибки в analysis loop",
-                  f"Символ пропущен после {max_consecutive_errors} ошибок подряд"
-                )
+            # self.stats['errors'] += 1
+            #
+            # # Проверка превышения лимита ошибок
+            # if error_count[symbol] >= max_consecutive_errors:
+            #   logger.critical(
+            #     f"🚨 [{symbol}] Достигнут лимит последовательных ошибок "
+            #     f"({max_consecutive_errors}), символ будет пропущен до рестарта"
+            #   )
+            #
+            #   # Отправка критического алерта
+            #   if settings.ENABLE_CRITICAL_ALERTS:
+            #     await self._send_critical_alert(
+            #       f"[{symbol}] Множественные ошибки в analysis loop",
+            #       f"Символ пропущен после {max_consecutive_errors} ошибок подряд"
+            #     )
 
         # await asyncio.sleep(1)
 
-          continue  # Следующий символ
+            continue  # Следующий символ
 
-        self.stats['analysis_cycles'] += 1
+        # self.stats['analysis_cycles'] += 1
 
         # Периодическое логирование статистики (каждые 100 циклов)
         # if cycle_number % 100 == 0:
@@ -2642,6 +2740,7 @@ class BotController:
 
     try:
       self.status = BotStatus.STOPPING
+      self.running = False
       logger.info("=" * 80)
       logger.info("ОСТАНОВКА ТОРГОВОГО БОТА")
       logger.info("=" * 80)
