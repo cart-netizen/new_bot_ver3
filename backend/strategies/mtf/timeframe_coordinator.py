@@ -10,7 +10,7 @@ Timeframe Coordinator - управление свечными данными д�
 
 Путь: backend/strategies/mtf/timeframe_coordinator.py
 """
-
+import traceback
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -34,6 +34,25 @@ class Timeframe(Enum):
     H4 = "4h"
     D1 = "1d"
 
+    def to_api_format(self) -> str:
+        """
+        Конвертация в формат REST API (числовой).
+
+        Returns:
+            Числовой формат интервала для Bybit API
+        """
+        mapping = {
+            "1m": "1",
+            "5m": "5",
+            "15m": "15",
+            "30m": "30",
+            "1h": "60",
+            "2h": "120",
+            "4h": "240",
+            "1d": "D",
+            "1w": "W",
+        }
+        return mapping.get(self.value, self.value)
 
 @dataclass
 class TimeframeConfig:
@@ -173,61 +192,101 @@ class TimeframeCoordinator:
         return TIMEFRAME_TO_BYBIT[timeframe]
 
     async def initialize_symbol(self, symbol: str) -> bool:
-        """
-        Инициализировать все таймфреймы для символа.
+        """Инициализация символа для всех таймфреймов."""
 
-        Args:
-            symbol: Торговая пара
+        # ✅ ДОБАВИТЬ: Маппинг таймфреймов
+        TIMEFRAME_TO_API = {
+            "1m": "1",
+            "5m": "5",
+            "15m": "15",
+            "30m": "30",
+            "1h": "60",
+            "2h": "120",
+            "4h": "240",
+            "1d": "D",
+            "1w": "W",
+        }
 
-        Returns:
-            True если успешно
-        """
-        if symbol not in self.candle_managers:
-            self.candle_managers[symbol] = {}
-            self.last_update[symbol] = {}
-            self.initialized[symbol] = {}
-        
-        success_count = 0
-        
-        for timeframe in self.config.active_timeframes:
-            try:
-                # Создаем CandleManager
-                # Загружаем исторические данные
-                candles_count = self.config.candles_per_timeframe.get(timeframe, 200)
-                candle_manager = CandleManager(
-                    symbol=symbol,
-                    timeframe=timeframe.value,  # ✅ ПРАВИЛЬНО
-                    max_candles=candles_count
-                )
-                success = await self._load_historical_candles(
-                    candle_manager,
-                    symbol,
-                    timeframe,
-                    candles_count
-                )
-                
-                if success:
-                    self.candle_managers[symbol][timeframe] = candle_manager
-                    self.initialized[symbol][timeframe] = True
-                    self.last_update[symbol][timeframe] = int(datetime.now().timestamp())
-                    success_count += 1
-                    
+        try:
+            timeframes = self.config.active_timeframes
+            initialized_count = 0
+            total_timeframes = len(timeframes)
+
+            if symbol not in self.candle_managers:
+                self.candle_managers[symbol] = {}
+
+            for tf in timeframes:
+                try:
+                    # ✅ ИСПРАВЛЕНО: Конвертация формата
+                    api_interval = TIMEFRAME_TO_API.get(tf.value, tf.value)
+
                     logger.info(
-                        f"✅ Инициализирован {symbol} {timeframe.value}: "
-                        f"{len(candle_manager.get_candles())} свечей"
+                        f"[{symbol}] {tf.value}: Запрос свечей с биржи "
+                        f"(API interval={api_interval})..."
                     )
-                else:
-                    logger.error(f"Ошибка загрузки {symbol} {timeframe.value}")
-                    self.initialized[symbol][timeframe] = False
-            
-            except Exception as e:
-                logger.error(
-                    f"Ошибка инициализации {symbol} {timeframe.value}: {e}",
-                    exc_info=True
+
+                    candles = await rest_client.get_kline(
+                        symbol=symbol,
+                        interval=api_interval,  # ✅ Числовой формат!
+                        limit=200
+                    )
+
+                    logger.info(
+                        f"[{symbol}] {tf.value}: Биржа вернула "
+                        f"{len(candles) if candles else 0} свечей"
+                    )
+
+                    if not candles or len(candles) == 0:
+                        logger.error(
+                            f"❌ [{symbol}] {tf.value}: Биржа вернула 0 свечей! "
+                            f"Проверьте правильность символа или доступность пары."
+                        )
+                        continue
+
+                    # Создаем CandleManager
+                    candle_manager = CandleManager(
+                        symbol=symbol,
+                        timeframe=tf.value,  # Сохраняем в оригинальном формате
+                        max_candles=200
+                    )
+
+                    await candle_manager.load_historical_data(candles)
+
+                    self.candle_managers[symbol][tf] = candle_manager
+                    initialized_count += 1
+
+                    logger.info(
+                        f"✅ [{symbol}] {tf.value}: Инициализирован с {len(candles)} свечами"
+                    )
+
+                except Exception as e:
+                    logger.error(
+                        f"❌ [{symbol}] {tf.value}: Ошибка инициализации - {e}"
+                    )
+                    logger.debug(traceback.format_exc())
+
+            # Строгая проверка
+            if initialized_count < total_timeframes:
+                logger.warning(
+                    f"⚠️ [{symbol}]: Частичная инициализация "
+                    f"({initialized_count}/{total_timeframes}). "
+                    f"Удаляем частичные данные."
                 )
-                self.initialized[symbol][timeframe] = False
-        
-        return success_count == len(self.config.active_timeframes)
+
+                if symbol in self.candle_managers:
+                    del self.candle_managers[symbol]
+
+                return False
+
+            logger.info(
+                f"✅ [{symbol}]: Все {total_timeframes} TF инициализированы"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ [{symbol}]: Критическая ошибка - {e}")
+            logger.debug(traceback.format_exc())
+            return False
 
     async def update_all_timeframes(self, symbol: str) -> Dict[Timeframe, bool]:
         """
@@ -258,7 +317,7 @@ class TimeframeCoordinator:
                     timeframe in self.config.aggregation_mapping):
 
                     # Строим из низшего TF (НЕ async метод!)
-                    success = self._aggregate_from_lower_timeframe(  # ✅ БЕЗ await - это правильно
+                    success =await self._aggregate_from_lower_timeframe(
                         symbol, timeframe
                     )
                 else:

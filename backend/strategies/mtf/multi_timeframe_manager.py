@@ -16,7 +16,7 @@ Pipeline:
 
 Путь: backend/strategies/mtf/multi_timeframe_manager.py
 """
-
+import traceback
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -128,32 +128,38 @@ class MultiTimeframeManager:
 
   async def initialize_symbol(self, symbol: str) -> bool:
     """
-    Инициализировать символ для MTF анализа.
-
-    Args:
-        symbol: Торговая пара
-
-    Returns:
-        True если успешно
+    Инициализация символа для MTF анализа.
+    Доверяет логике TimeframeCoordinator.
     """
-    if not self.config.enabled:
-      logger.warning("MTF анализ отключен в конфигурации")
-      return False
+    if symbol in self._initialized_symbols:
+      logger.debug(f"[{symbol}] Уже инициализирован в MTF Manager")
+      return True
 
     try:
-      # Инициализация координатора (загрузка исторических данных)
+      logger.info(f"[{symbol}] Инициализация MTF...")
+
+      # ✅ ПРОСТОЕ РЕШЕНИЕ: Доверяем coordinator
       success = await self.coordinator.initialize_symbol(symbol)
 
-      if success:
-        self._initialized_symbols.add(symbol)
-        logger.info(f"✅ Символ {symbol} инициализирован для MTF анализа")
-      else:
-        logger.error(f"❌ Ошибка инициализации {symbol} для MTF")
+      if not success:
+        logger.error(
+          f"❌ [{symbol}] Coordinator вернул False"
+        )
+        return False
 
-      return success
+      # Coordinator вернул True = все CandleManager созданы
+      self._initialized_symbols.add(symbol)
+
+      timeframes_count = len(self.coordinator.config.active_timeframes)
+      logger.info(
+        f"✅ [{symbol}] MTF инициализирован: {timeframes_count} TF"
+      )
+
+      return True
 
     except Exception as e:
-      logger.error(f"Ошибка инициализации MTF для {symbol}: {e}", exc_info=True)
+      logger.error(f"❌ [{symbol}] Ошибка инициализации MTF: {e}")
+      logger.debug(traceback.format_exc())
       return False
 
   async def analyze_symbol(
@@ -405,7 +411,8 @@ class MultiTimeframeManager:
         recommended_position_size_multiplier=0.8,  # Пониженный для fallback
         warnings=[f"Fallback to single TF: {self.config.fallback_timeframe.value}"],
         risk_level="HIGH",
-        timestamp=int(datetime.now().timestamp() * 1000)
+        timestamp=int(datetime.now().timestamp() * 1000),
+
       )
 
       return mtf_signal

@@ -490,51 +490,51 @@ class BotController:
           logger.info(f"🎯 Primary TF: {primary_tf.value}, Execution TF: {execution_tf.value}")
 
           # Конфигурация MTF Manager
-          mtf_config = MTFManagerConfig(
-            enabled=True,
-
-            # Coordinator Config
-            coordinator_config=MultiTimeframeConfig(
-              active_timeframes=active_timeframes,
-              primary_timeframe=primary_tf,
-              execution_timeframe=execution_tf,
-
-            ),
-
-            # Aligner Config
-            aligner_config=AlignmentConfig(
-              timeframe_weights={  # ✅ Вместо htf_weight, mtf_weight, ltf_weight
-                Timeframe.H1: 0.50,
-                Timeframe.M15: 0.30,
-                Timeframe.M5: 0.15,
-                Timeframe.M1: 0.05
-              },  # Lower Timeframe weight
-              min_alignment_score=0.65,
-              confluence_price_tolerance_percent=0.5,
-              min_timeframes_for_confluence=1,  # ✅ Вместо min_confluence_zones
-              allow_trend_counter_signals=False
-            ),
-
-            # Synthesizer Config
-            synthesizer_config=SynthesizerConfig(
-              mode=SynthesisMode(mtf_synthesis_mode),  # ✅ mode, НЕ synthesis_mode
-              min_signal_quality=mtf_min_quality,  # ✅ Вместо min_quality_threshold
-              min_timeframes_required=2,  # ✅ Вместо min_timeframes_for_signal
-              enable_dynamic_position_sizing=True,
-              max_position_multiplier=1.5,  # ✅ Вместо position_size_multiplier_range
-              min_position_multiplier=0.3,  # ✅
-              use_higher_tf_for_stops=True,  # ✅ Вместо enable_smart_sl
-              atr_multiplier_for_stops=2.0  # ✅ Вместо default_risk_reward_ratio
-
-            ),
-
-            # Quality Control
-
-
-            # Fallback
-            fallback_to_single_tf=True,
-
-          )
+          # mtf_config = MTFManagerConfig(
+          #   enabled=True,
+          #
+          #   # Coordinator Config
+          #   coordinator_config=MultiTimeframeConfig(
+          #     active_timeframes=active_timeframes,
+          #     primary_timeframe=primary_tf,
+          #     execution_timeframe=execution_tf,
+          #
+          #   ),
+          #
+          #   # Aligner Config
+          #   aligner_config=AlignmentConfig(
+          #     timeframe_weights={  # ✅ Вместо htf_weight, mtf_weight, ltf_weight
+          #       Timeframe.H1: 0.50,
+          #       Timeframe.M15: 0.30,
+          #       Timeframe.M5: 0.15,
+          #       Timeframe.M1: 0.05
+          #     },  # Lower Timeframe weight
+          #     min_alignment_score=0.65,
+          #     confluence_price_tolerance_percent=0.5,
+          #     min_timeframes_for_confluence=1,  # ✅ Вместо min_confluence_zones
+          #     allow_trend_counter_signals=False
+          #   ),
+          #
+          #   # Synthesizer Config
+          #   synthesizer_config=SynthesizerConfig(
+          #     mode=SynthesisMode(mtf_synthesis_mode),  # ✅ mode, НЕ synthesis_mode
+          #     min_signal_quality=mtf_min_quality,  # ✅ Вместо min_quality_threshold
+          #     min_timeframes_required=2,  # ✅ Вместо min_timeframes_for_signal
+          #     enable_dynamic_position_sizing=True,
+          #     max_position_multiplier=1.5,  # ✅ Вместо position_size_multiplier_range
+          #     min_position_multiplier=0.3,  # ✅
+          #     use_higher_tf_for_stops=True,  # ✅ Вместо enable_smart_sl
+          #     atr_multiplier_for_stops=2.0  # ✅ Вместо default_risk_reward_ratio
+          #
+          #   ),
+          #
+          #   # Quality Control
+          #
+          #
+          #   # Fallback
+          #   fallback_to_single_tf=True,
+          #
+          # )
 
           # self.mtf_manager = MultiTimeframeManager(
           #   strategy_manager=self.strategy_manager,
@@ -1150,6 +1150,40 @@ class BotController:
         "message": "Бот успешно запущен с ML поддержкой"
       })
 
+      # ========== ВЕРИФИКАЦИЯ MTF СОСТОЯНИЯ ==========
+      logger.info("🔍 Верификация состояния MTF Manager:")
+
+      # Получаем оба списка
+      initialized = self.mtf_manager._initialized_symbols
+      coordinator_symbols = set(self.mtf_manager.coordinator.candle_managers.keys())
+
+      logger.info(f"   - Initialized symbols: {initialized}")
+      logger.info(f"   - Coordinator symbols: {coordinator_symbols}")
+
+      # ✅ ДОБАВИТЬ: Проверка на совпадение
+      if initialized != coordinator_symbols:
+        logger.critical("🚨 НЕСООТВЕТСТВИЕ СПИСКОВ СИМВОЛОВ!")
+
+        only_in_initialized = initialized - coordinator_symbols
+        only_in_coordinator = coordinator_symbols - initialized
+
+        if only_in_initialized:
+          logger.error(f"   ❌ Только в _initialized_symbols: {only_in_initialized}")
+
+        if only_in_coordinator:
+          logger.error(f"   ❌ Только в coordinator: {only_in_coordinator}")
+
+        # Можно либо raise, либо очистить несоответствия
+        logger.warning("⚠️ Очистка несоответствий...")
+
+        # Удаляем из _initialized_symbols символы без CandleManager
+        for symbol in only_in_initialized:
+          self.mtf_manager._initialized_symbols.remove(symbol)
+          logger.warning(f"   🗑️ Удален {symbol} из _initialized_symbols")
+
+      else:
+        logger.info("✅ Списки символов совпадают!")
+
       self.status = BotStatus.RUNNING
       logger.info("=" * 80)
       logger.info("БОТ УСПЕШНО ЗАПУЩЕН (ML-READY)")
@@ -1565,13 +1599,17 @@ class BotController:
       cycle_start = time.time()
       cycle_number += 1
 
+      if not self.websocket_manager.is_all_connected():
+        await asyncio.sleep(1)
+        continue
+
       try:
         # async with self.analysis_lock:
 
         # Ждем пока все WebSocket соединения установятся
-        if not self.websocket_manager.is_all_connected():
-          await asyncio.sleep(1)
-          continue
+        # if not self.websocket_manager.is_all_connected():
+        #   await asyncio.sleep(1)
+        #   continue
 
         # Анализируем каждую пару
         for symbol in self.symbols:
@@ -2520,13 +2558,13 @@ class BotController:
                   f"Символ пропущен после {max_consecutive_errors} ошибок подряд"
                 )
 
-            continue  # Следующий символ
+          continue  # Следующий символ
 
-            # Конец цикла по символам
+        # Конец цикла по символам
 
-            # ================================================================
-            # ОБНОВЛЕНИЕ СТАТИСТИКИ ЦИКЛА
-            # ================================================================
+        # ================================================================
+        # ОБНОВЛЕНИЕ СТАТИСТИКИ ЦИКЛА
+        # ================================================================
 
         self.stats['analysis_cycles'] += 1
 
