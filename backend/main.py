@@ -806,44 +806,44 @@ class BotController:
         self.symbols = settings.get_trading_pairs_list()
         logger.info(f"✓ Screener отключен, статический список: {len(self.symbols)} пар")
 
-        # ========== 7.5 НОВАЯ СЕКЦИЯ: ИНИЦИАЛИЗАЦИЯ ДЛЯ ФИНАЛЬНЫХ ПАР ==========
-        logger.info("=" * 80)
-        logger.info(f"ИНИЦИАЛИЗАЦИЯ КОМПОНЕНТОВ ДЛЯ {len(self.symbols)} ПАР")
-        logger.info("=" * 80)
+      # ========== 7.5 НОВАЯ СЕКЦИЯ: ИНИЦИАЛИЗАЦИЯ ДЛЯ ФИНАЛЬНЫХ ПАР ==========
+      logger.info("=" * 80)
+      logger.info(f"ИНИЦИАЛИЗАЦИЯ КОМПОНЕНТОВ ДЛЯ {len(self.symbols)} ПАР")
+      logger.info("=" * 80)
 
-        # Инициализация Integrated Engine для всех отобранных пар
-        initialized_count = 0
-        failed_count = 0
+      # Инициализация Integrated Engine для всех отобранных пар
+      initialized_count = 0
+      failed_count = 0
 
-        for symbol in self.symbols:
-          try:
-            logger.info(f"Инициализация {symbol}...")
+      for symbol in self.symbols:
+        try:
+          logger.info(f"Инициализация {symbol}...")
 
-            # Инициализация Integrated Engine (включает MTF)
-            success = await self.integrated_engine.initialize_symbol(symbol)
+          # Инициализация Integrated Engine (включает MTF)
+          success = await self.integrated_engine.initialize_symbol(symbol)
 
-            if success:
-              initialized_count += 1
-              logger.info(f"✅ {symbol}: Успешно инициализирован")
-            else:
-              failed_count += 1
-              logger.warning(f"⚠️ {symbol}: Инициализация не удалась")
-
-          except Exception as e:
+          if success:
+            initialized_count += 1
+            logger.info(f"✅ {symbol}: Успешно инициализирован")
+          else:
             failed_count += 1
-            logger.error(f"❌ {symbol}: Ошибка инициализации - {e}")
+            logger.warning(f"⚠️ {symbol}: Инициализация не удалась")
 
-        logger.info("=" * 80)
-        logger.info(
-          f"ИНИЦИАЛИЗАЦИЯ ЗАВЕРШЕНА: "
-          f"✅ {initialized_count} успешно, "
-          f"❌ {failed_count} ошибок"
-        )
-        logger.info("=" * 80)
+        except Exception as e:
+          failed_count += 1
+          logger.error(f"❌ {symbol}: Ошибка инициализации - {e}")
 
-        # Продолжаем только если есть хотя бы одна инициализированная пара
-        if initialized_count == 0:
-          raise RuntimeError("Не удалось инициализировать ни одной торговой пары")
+      logger.info("=" * 80)
+      logger.info(
+        f"ИНИЦИАЛИЗАЦИЯ ЗАВЕРШЕНА: "
+        f"✅ {initialized_count} успешно, "
+        f"❌ {failed_count} ошибок"
+      )
+      logger.info("=" * 80)
+
+      # Продолжаем только если есть хотя бы одна инициализированная пара
+      if initialized_count == 0:
+        raise RuntimeError("Не удалось инициализировать ни одной торговой пары")
 
       # ========== 8. CORRELATION MANAGER - ИНИЦИАЛИЗАЦИЯ ==========
 
