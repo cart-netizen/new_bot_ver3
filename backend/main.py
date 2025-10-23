@@ -2560,13 +2560,9 @@ class BotController:
                   f"Символ пропущен после {max_consecutive_errors} ошибок подряд"
                 )
 
-          continue  # Следующий символ
+        await asyncio.sleep(1)
 
-        # Конец цикла по символам
-
-        # ================================================================
-        # ОБНОВЛЕНИЕ СТАТИСТИКИ ЦИКЛА
-        # ================================================================
+          # continue  # Следующий символ
 
         self.stats['analysis_cycles'] += 1
 
@@ -2587,7 +2583,7 @@ class BotController:
         # # Ожидание до следующего цикла
         # sleep_time = max(0, settings.ANALYSIS_INTERVAL - cycle_elapsed)
         # if sleep_time > 0:
-        await asyncio.sleep(1)
+        # await asyncio.sleep(1)
 
       except asyncio.CancelledError:
         # Graceful shutdown
