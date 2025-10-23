@@ -344,47 +344,60 @@ class TimeframeCoordinator:
     ) -> bool:
         """
         Загрузить исторические свечи через REST API.
+
+        ИСПРАВЛЕНО: Правильная обработка формата данных Bybit
         """
         try:
-
             # Загружаем через REST API
             candles_data = await rest_client.get_kline(
                 symbol=symbol,
                 interval=timeframe.value,
                 limit=count,
-
             )
-            
+
             if not candles_data:
+                logger.warning(f"Нет данных для {symbol} {timeframe.value}")
                 return False
-            
-            # Добавляем в CandleManager
-            for candle_data in candles_data:
-                candle = Candle(
-                    timestamp=candle_data['timestamp'],
-                    open=candle_data['open'],
-                    high=candle_data['high'],
-                    low=candle_data['low'],
-                    close=candle_data['close'],
-                    volume=candle_data['volume']
-                )
-                await candle_manager.update_candle(
-                    candle_data={
-                        'timestamp': candle_data['timestamp'],
-                        'open': candle_data['open'],
-                        'high': candle_data['high'],
-                        'low': candle_data['low'],
-                        'close': candle_data['close'],
-                        'volume': candle_data['volume']
-                    },
-                    is_closed=True  # Исторические свечи всегда закрыты
-                )
-            
+
+            logger.debug(
+                f"Получено {len(candles_data)} свечей для {symbol} {timeframe.value}"
+            )
+
+            # ✅ ИСПРАВЛЕНО: Bybit возвращает список списков
+            # Формат: [timestamp, open, high, low, close, volume, turnover]
+            for kline in candles_data:
+                try:
+                    # Парсим данные из списка
+                    candle_data = {
+                        'timestamp': int(kline[0]),
+                        'open': float(kline[1]),
+                        'high': float(kline[2]),
+                        'low': float(kline[3]),
+                        'close': float(kline[4]),
+                        'volume': float(kline[5])
+                    }
+
+                    # Обновляем CandleManager
+                    await candle_manager.update_candle(
+                        candle_data=candle_data,
+                        is_closed=True  # Исторические свечи всегда закрыты
+                    )
+
+                except (IndexError, ValueError, TypeError) as e:
+                    logger.warning(
+                        f"Ошибка парсинга свечи {symbol} {timeframe.value}: {e}"
+                    )
+                    continue
+
+            logger.debug(
+                f"✅ Загружено {len(candles_data)} свечей для {symbol} {timeframe.value}"
+            )
             return True
-        
+
         except Exception as e:
             logger.error(
-                f"Ошибка загрузки исторических данных {symbol} {timeframe.value}: {e}"
+                f"Ошибка загрузки {symbol} {timeframe.value}: {e}",
+                exc_info=True
             )
             return False
 

@@ -563,9 +563,9 @@ class BotController:
             )
 
           # Инициализация символов в MTF Manager
-          for symbol in self.symbols:
-            await self.mtf_manager.initialize_symbol(symbol)
-            logger.info(f"✅ {symbol}: MTF Manager инициализирован")
+          # for symbol in self.symbols:
+          #   await self.mtf_manager.initialize_symbol(symbol)
+          #   logger.info(f"✅ {symbol}: MTF Manager инициализирован")
 
           logger.info("✅ Multi-Timeframe Manager инициализирован")
 
@@ -611,10 +611,10 @@ class BotController:
 
         self.integrated_engine = IntegratedAnalysisEngine(integrated_config)
 
-        # Инициализация символов в Integrated Engine
-        for symbol in self.symbols:
-          await self.integrated_engine.initialize_symbol(symbol)
-          logger.info(f"✅ {symbol}: Integrated Engine инициализирован")
+        # # Инициализация символов в Integrated Engine
+        # for symbol in self.symbols:
+        #   await self.integrated_engine.initialize_symbol(symbol)
+        #   logger.info(f"✅ {symbol}: Integrated Engine инициализирован")
 
         logger.info("✅ Integrated Analysis Engine инициализирован")
         logger.info(f"📊 Режим анализа: {integrated_mode}")
@@ -805,6 +805,45 @@ class BotController:
         # Если screener выключен - статический список
         self.symbols = settings.get_trading_pairs_list()
         logger.info(f"✓ Screener отключен, статический список: {len(self.symbols)} пар")
+
+        # ========== 7.5 НОВАЯ СЕКЦИЯ: ИНИЦИАЛИЗАЦИЯ ДЛЯ ФИНАЛЬНЫХ ПАР ==========
+        logger.info("=" * 80)
+        logger.info(f"ИНИЦИАЛИЗАЦИЯ КОМПОНЕНТОВ ДЛЯ {len(self.symbols)} ПАР")
+        logger.info("=" * 80)
+
+        # Инициализация Integrated Engine для всех отобранных пар
+        initialized_count = 0
+        failed_count = 0
+
+        for symbol in self.symbols:
+          try:
+            logger.info(f"Инициализация {symbol}...")
+
+            # Инициализация Integrated Engine (включает MTF)
+            success = await self.integrated_engine.initialize_symbol(symbol)
+
+            if success:
+              initialized_count += 1
+              logger.info(f"✅ {symbol}: Успешно инициализирован")
+            else:
+              failed_count += 1
+              logger.warning(f"⚠️ {symbol}: Инициализация не удалась")
+
+          except Exception as e:
+            failed_count += 1
+            logger.error(f"❌ {symbol}: Ошибка инициализации - {e}")
+
+        logger.info("=" * 80)
+        logger.info(
+          f"ИНИЦИАЛИЗАЦИЯ ЗАВЕРШЕНА: "
+          f"✅ {initialized_count} успешно, "
+          f"❌ {failed_count} ошибок"
+        )
+        logger.info("=" * 80)
+
+        # Продолжаем только если есть хотя бы одна инициализированная пара
+        if initialized_count == 0:
+          raise RuntimeError("Не удалось инициализировать ни одной торговой пары")
 
       # ========== 8. CORRELATION MANAGER - ИНИЦИАЛИЗАЦИЯ ==========
 
