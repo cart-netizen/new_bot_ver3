@@ -194,6 +194,16 @@ class TimeframeCoordinator:
     async def initialize_symbol(self, symbol: str) -> bool:
         """Инициализация символа для всех таймфреймов."""
 
+        # ✅ ИСПРАВЛЕНИЕ: Инициализируем вложенные словари ДО начала работы
+        if symbol not in self.candle_managers:
+            self.candle_managers[symbol] = {}
+
+        if symbol not in self.last_update:
+            self.last_update[symbol] = {}
+
+        if symbol not in self.initialized:
+            self.initialized[symbol] = {}
+
         # ✅ ДОБАВИТЬ: Маппинг таймфреймов
         TIMEFRAME_TO_API = {
             "1m": "1",
@@ -211,9 +221,6 @@ class TimeframeCoordinator:
             timeframes = self.config.active_timeframes
             initialized_count = 0
             total_timeframes = len(timeframes)
-
-            if symbol not in self.candle_managers:
-                self.candle_managers[symbol] = {}
 
             for tf in timeframes:
                 try:
@@ -241,6 +248,8 @@ class TimeframeCoordinator:
                             f"❌ [{symbol}] {tf.value}: Биржа вернула 0 свечей! "
                             f"Проверьте правильность символа или доступность пары."
                         )
+                        # ❌ Отмечаем как не инициализированный
+                        self.initialized[symbol][tf] = False
                         continue
 
                     # Создаем CandleManager
@@ -253,6 +262,13 @@ class TimeframeCoordinator:
                     await candle_manager.load_historical_data(candles)
 
                     self.candle_managers[symbol][tf] = candle_manager
+
+                    # ✅ ИСПРАВЛЕНИЕ: Отмечаем таймфрейм как инициализированный
+                    self.initialized[symbol][tf] = True
+
+                    # ✅ ИСПРАВЛЕНИЕ: Инициализируем timestamp последнего обновления
+                    self.last_update[symbol][tf] = int(datetime.now().timestamp())
+
                     initialized_count += 1
 
                     logger.info(
@@ -264,6 +280,8 @@ class TimeframeCoordinator:
                         f"❌ [{symbol}] {tf.value}: Ошибка инициализации - {e}"
                     )
                     logger.debug(traceback.format_exc())
+                    # ❌ Отмечаем как не инициализированный
+                    self.initialized[symbol][tf] = False
 
             # Строгая проверка
             if initialized_count < total_timeframes:
@@ -273,8 +291,15 @@ class TimeframeCoordinator:
                     f"Удаляем частичные данные."
                 )
 
+                # Очистка частично инициализированных данных
                 if symbol in self.candle_managers:
                     del self.candle_managers[symbol]
+
+                if symbol in self.last_update:
+                    del self.last_update[symbol]
+
+                if symbol in self.initialized:
+                    del self.initialized[symbol]
 
                 return False
 
@@ -286,6 +311,17 @@ class TimeframeCoordinator:
         except Exception as e:
             logger.error(f"❌ [{symbol}]: Критическая ошибка - {e}")
             logger.debug(traceback.format_exc())
+
+            # Очистка при критической ошибке
+            if symbol in self.candle_managers:
+                del self.candle_managers[symbol]
+
+            if symbol in self.last_update:
+                del self.last_update[symbol]
+
+            if symbol in self.initialized:
+                del self.initialized[symbol]
+
             return False
 
     async def update_all_timeframes(self, symbol: str) -> Dict[Timeframe, bool]:
@@ -301,7 +337,15 @@ class TimeframeCoordinator:
         if symbol not in self.candle_managers:
             logger.warning(f"{symbol} не инициализирован")
             return {}
-        
+
+        if symbol not in self.last_update:
+            logger.warning(f"{symbol} не инициализирован в last_update, создаём")
+            self.last_update[symbol] = {}
+
+        if symbol not in self.initialized:
+            logger.warning(f"{symbol} не инициализирован в initialized, создаём")
+            self.initialized[symbol] = {}
+
         results = {}
         current_time = int(datetime.now().timestamp())
         

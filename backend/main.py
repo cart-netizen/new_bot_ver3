@@ -302,6 +302,24 @@ class BotController:
 
     self.running = False
 
+    # ========== STATISTICS & DIAGNOSTICS ==========
+    self.stats = {
+      'signals_generated': 0,
+      'signals_executed': 0,
+      'orders_placed': 0,
+      'positions_opened': 0,
+      'positions_closed': 0,
+      'total_pnl': 0.0,
+      'consensus_achieved': 0,
+      'consensus_failed': 0,
+      'mtf_signals': 0,
+      'adaptive_weight_updates': 0,
+      'ml_validations': 0,
+      'analysis_cycles': 0,
+      'errors': 0,
+      'warnings': 0
+    }
+
     logger.info("✅ BotController инициализирован с поддержкой Фаз 1-4")
 
   async def initialize(self):
@@ -696,23 +714,7 @@ class BotController:
         logger.info("✅ Integrated Analysis Engine инициализирован")
         logger.info(f"📊 Режим анализа: {integrated_mode}")
 
-        # ========== STATISTICS & DIAGNOSTICS ==========
-        self.stats = {
-          'signals_generated': 0,
-          'signals_executed': 0,
-          'orders_placed': 0,
-          'positions_opened': 0,
-          'positions_closed': 0,
-          'total_pnl': 0.0,
-          'consensus_achieved': 0,
-          'consensus_failed': 0,
-          'mtf_signals': 0,
-          'adaptive_weight_updates': 0,
-          'ml_validations': 0,
-          'analysis_cycles': 0,
-          'errors': 0,
-          'warnings': 0
-        }
+
 
         # ========== CONFIGURATION SNAPSHOT ==========
         # Сохраняем ключевые настройки для диагностики
@@ -2609,29 +2611,28 @@ class BotController:
         # Небольшая задержка перед следующей попыткой
         await asyncio.sleep(5)
 
-      # ========================================================================
-      # ЗАВЕРШЕНИЕ LOOP
-      # ========================================================================
+    # ========================================================================
+    # ЗАВЕРШЕНИЕ LOOP
+    # ========================================================================
 
-      logger.warning("⚠️ Analysis Loop остановлен")
-      logger.info("=" * 80)
-      logger.info("📊 ФИНАЛЬНАЯ СТАТИСТИКА РАБОТЫ")
-      logger.info("=" * 80)
-      logger.info(f"   ├─ Циклов анализа: {self.stats['analysis_cycles']}")
-      logger.info(f"   ├─ Сигналов сгенерировано: {self.stats['signals_generated']}")
-      logger.info(f"   ├─ Сигналов выполнено: {self.stats['signals_executed']}")
-      logger.info(f"   ├─ Ордеров размещено: {self.stats['orders_placed']}")
-      logger.info(f"   ├─ Позиций открыто: {self.stats['positions_opened']}")
-      logger.info(f"   ├─ Позиций закрыто: {self.stats['positions_closed']}")
-      logger.info(f"   ├─ Общий PnL: {self.stats['total_pnl']:.2f} USDT")
-      logger.info(f"   ├─ MTF сигналов: {self.stats['mtf_signals']}")
-      logger.info(f"   ├─ ML валидаций: {self.stats['ml_validations']}")
-      # logger.info(f"   ├─ ML данных собрано: {self.stats['ml_data_collected']}")
-      logger.info(f"   ├─ Манипуляций обнаружено: {self.stats['manipulations_detected']}")
-      logger.info(f"   ├─ Drift детекций: {self.stats['drift_detections']}")
-      logger.info(f"   ├─ Предупреждений: {self.stats['warnings']}")
-      logger.info(f"   └─ Ошибок: {self.stats['errors']}")
-      logger.info("=" * 80)
+    logger.warning("⚠️ Analysis Loop остановлен")
+    logger.info("=" * 80)
+    logger.info("📊 ФИНАЛЬНАЯ СТАТИСТИКА РАБОТЫ")
+    logger.info("=" * 80)
+    logger.info(f"   ├─ Циклов анализа: {self.stats.get('analysis_cycles', 0)}")
+    logger.info(f"   ├─ Сигналов сгенерировано: {self.stats.get('signals_generated', 0)}")
+    logger.info(f"   ├─ Сигналов выполнено: {self.stats.get('signals_executed', 0)}")
+    logger.info(f"   ├─ Ордеров размещено: {self.stats.get('orders_placed', 0)}")
+    logger.info(f"   ├─ Позиций открыто: {self.stats.get('positions_opened', 0)}")
+    logger.info(f"   ├─ Позиций закрыто: {self.stats.get('positions_closed', 0)}")
+    logger.info(f"   ├─ Общий PnL: {self.stats.get('total_pnl', 0.0):.2f} USDT")
+    logger.info(f"   ├─ MTF сигналов: {self.stats.get('mtf_signals', 0)}")
+    logger.info(f"   ├─ ML валидаций: {self.stats.get('ml_validations', 0)}")
+    logger.info(f"   ├─ Манипуляций обнаружено: {self.stats.get('manipulations_detected', 0)}")
+    logger.info(f"   ├─ Drift детекций: {self.stats.get('drift_detections', 0)}")
+    logger.info(f"   ├─ Предупреждений: {self.stats.get('warnings', 0)}")
+    logger.info(f"   └─ Ошибок: {self.stats.get('errors', 0)}")
+    logger.info("=" * 80)
 
 
   async def stop(self):
