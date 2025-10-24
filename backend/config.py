@@ -255,6 +255,13 @@ class Settings(BaseSettings):
     description="Минимальное качество интегрированного сигнала"
   )
 
+  MIN_SIGNAL_CONFIDENCE: float = Field(
+    default=0.60,
+    ge=0.0,
+    le=1.0,
+    description="Минимальная уверенность сигнала для исполнения"
+  )
+
   # === ДОПОЛНИТЕЛЬНЫЕ ===
   ANALYSIS_WARNING_THRESHOLD: float = Field(default=2.0)
   MIN_CANDLES_FOR_ANALYSIS: int = Field(default=50)

@@ -2447,13 +2447,12 @@ class BotController:
                       logger.debug(f"[{symbol}] Запуск ML Validation...")
 
                       # ML Validator проверяет финальный сигнал
-                      validation_result = await self.ml_validator.validate_signal(
-                        symbol=symbol,
+                      validation_result = await self.ml_validator.validate(
                         signal=final_signal,
-                        features=feature_vector
+                        feature_vector=feature_vector
                       )
 
-                      ml_should_trade = validation_result.should_trade
+                      ml_should_trade = validation_result.validated
                       ml_validation_confidence = validation_result.ml_confidence
 
                       # Добавляем ML validation метаданные
