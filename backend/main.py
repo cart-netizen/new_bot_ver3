@@ -1911,10 +1911,18 @@ class BotController:
               continue
 
             current_price = orderbook_snapshot.mid_price
-            if not current_price:
+
+            # ДЕБАГ: Проверим значение current_price прямо перед проверкой
+            if cycle_number <= 5:
+              logger.info(
+                f"  🔍 [{symbol}] current_price ДО проверки: {current_price}, "
+                f"type={type(current_price)}, is_None={current_price is None}"
+              )
+
+            if current_price is None:
               if cycle_number <= 5:
                 logger.info(
-                  f"  ⏭️  [{symbol}] Нет текущей цены: "
+                  f"  ⏭️  [{symbol}] Нет текущей цены (current_price is None): "
                   f"bids={len(orderbook_snapshot.bids)}, "
                   f"asks={len(orderbook_snapshot.asks)}, "
                   f"best_bid={orderbook_snapshot.best_bid}, "
@@ -3882,9 +3890,21 @@ class BotController:
       logger.info(f"📊 Тип сигнала: {signal.signal_type.value}")
       logger.info(f"💯 Combined Confidence: {integrated_signal.combined_confidence:.3f}")
       logger.info(f"⭐ Combined Quality: {integrated_signal.combined_quality_score:.3f}")
-      logger.info(f"📈 Entry Price: ${signal.entry_price:.2f}")
-      logger.info(f"🛡️ Stop Loss: ${signal.stop_loss:.2f} ({signal.stop_loss_pct:.2f}%)")
-      logger.info(f"🎯 Take Profit: ${signal.take_profit:.2f} ({signal.take_profit_pct:.2f}%)")
+      logger.info(f"📈 Entry Price: ${signal.price:.2f}")
+
+      # Stop Loss (с безопасной обработкой)
+      if integrated_signal.recommended_stop_loss is not None:
+        stop_loss_pct = abs((integrated_signal.recommended_stop_loss - signal.price) / signal.price * 100)
+        logger.info(f"🛡️ Stop Loss: ${integrated_signal.recommended_stop_loss:.2f} ({stop_loss_pct:.2f}%)")
+      else:
+        logger.info(f"🛡️ Stop Loss: Not set")
+
+      # Take Profit (с безопасной обработкой)
+      if integrated_signal.recommended_take_profit is not None:
+        take_profit_pct = abs((integrated_signal.recommended_take_profit - signal.price) / signal.price * 100)
+        logger.info(f"🎯 Take Profit: ${integrated_signal.recommended_take_profit:.2f} ({take_profit_pct:.2f}%)")
+      else:
+        logger.info(f"🎯 Take Profit: Not set")
       logger.info(f"💰 Position Multiplier: {integrated_signal.recommended_position_multiplier:.2f}x")
       logger.info(f"⚠️ Risk Level: {integrated_signal.risk_level}")
 
