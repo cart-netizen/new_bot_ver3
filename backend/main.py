@@ -1832,6 +1832,10 @@ class BotController:
         for symbol in self.symbols:
           symbol_start = time.time()
 
+          # ДЕБАГ: Логирование начала анализа символа (первые 5 циклов)
+          if cycle_number <= 5:
+            logger.info(f"  🔍 [{symbol}] Начало анализа в цикле #{cycle_number}")
+
           # Инициализация error counter для символа
           if symbol not in error_count:
             error_count[symbol] = 0
@@ -1855,27 +1859,39 @@ class BotController:
 
             # Пропускаем если нет данных
             if not ob_manager.snapshot_received:
-              logger.debug(f"[{symbol}] OrderBook Manager не найден, пропускаем")
+              if cycle_number <= 5:
+                logger.info(f"  ⏭️  [{symbol}] OrderBook snapshot не получен, пропускаем")
               continue
 
             # Получаем снимок стакана
             orderbook_snapshot  = ob_manager.get_snapshot()
             if not orderbook_snapshot :
-              logger.debug(f"[{symbol}] OrderBook не готов или невалиден, пропускаем")
+              if cycle_number <= 5:
+                logger.info(f"  ⏭️  [{symbol}] OrderBook не готов или невалиден, пропускаем")
               continue
 
             # Получаем свечи
             candles = candle_manager.get_candles()
             if not candles or len(candles) < 50:
-              logger.debug(
-                f"[{symbol}] Недостаточно свечей: "
-                f"{len(candles)}/{settings.MIN_CANDLES_FOR_ANALYSIS}"
-              )
+              if cycle_number <= 5:
+                logger.info(
+                  f"  ⏭️  [{symbol}] Недостаточно свечей: "
+                  f"{len(candles) if candles else 0}/50"
+                )
               continue
 
             current_price = orderbook_snapshot.mid_price
             if not current_price:
+              if cycle_number <= 5:
+                logger.info(f"  ⏭️  [{symbol}] Нет текущей цены, пропускаем")
               continue
+
+            # ДЕБАГ: Успешная подготовка данных
+            if cycle_number <= 5:
+              logger.info(
+                f"  ✅ [{symbol}] Данные готовы: "
+                f"price={current_price:.2f}, candles={len(candles)}"
+              )
 
             # 1.3 OrderBook Metrics
             # orderbook_metrics = self.market_analyzer.analyze_symbol(symbol, ob_manager)
@@ -2123,7 +2139,9 @@ class BotController:
 
             if not manipulation_detected:  # Анализируем только если нет манипуляций
               try:
-                logger.debug(f"[{symbol}] Запуск IntegratedEngine.analyze()...")
+                # ДЕБАГ: Логирование перед вызовом IntegratedEngine
+                if cycle_number <= 5:
+                  logger.info(f"  🎯 [{symbol}] Запуск IntegratedEngine.analyze()...")
 
                 # Вызываем IntegratedEngine для полного анализа
                 integrated_signal = await self.integrated_engine.analyze(
@@ -2133,6 +2151,13 @@ class BotController:
                   orderbook=orderbook_snapshot,
                   metrics=orderbook_metrics
                 )
+
+                # ДЕБАГ: Результат IntegratedEngine
+                if cycle_number <= 5:
+                  if integrated_signal:
+                    logger.info(f"  ✅ [{symbol}] IntegratedSignal получен!")
+                  else:
+                    logger.info(f"  ❌ [{symbol}] IntegratedSignal = None (нет сигнала)")
 
                 if integrated_signal:
                   # ========================================================
