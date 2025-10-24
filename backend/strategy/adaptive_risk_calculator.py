@@ -325,6 +325,21 @@ class AdaptiveRiskCalculator:
     else:
       return 0.85
 
+  def calculate_risk_multiplier(self, confidence: float) -> float:
+    """
+    Публичный метод для расчета множителя риска на основе confidence.
+
+    Используется для fallback режима когда нужен только множитель
+    на основе уверенности сигнала без полного расчета позиции.
+
+    Args:
+        confidence: Уверенность сигнала 0.0-1.0
+
+    Returns:
+        float: Множитель риска [0.85, 1.3]
+    """
+    return self._get_ml_confidence_adj(confidence)
+
   def record_trade(self, is_win: bool, pnl: float):
     """
     Запись результата сделки для статистики.

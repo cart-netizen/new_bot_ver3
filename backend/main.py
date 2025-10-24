@@ -2577,16 +2577,21 @@ class BotController:
                       signal=final_signal
                     )
 
-                    if submission_result.success:
+                    if submission_result is not None and submission_result.success:
                       logger.info(
                         f"✅ [{symbol}] Сигнал принят ExecutionManager: "
                         f"order_id={submission_result.order_id or 'pending'}"
                       )
                       self.stats['signals_executed'] += 1
-                    else:
+                    elif submission_result is not None:
                       logger.warning(
                         f"⚠️ [{symbol}] Сигнал отклонен ExecutionManager: "
                         f"{submission_result.reason}"
+                      )
+                      self.stats['warnings'] += 1
+                    else:
+                      logger.warning(
+                        f"⚠️ [{symbol}] ExecutionManager вернул None (ошибка при обработке)"
                       )
                       self.stats['warnings'] += 1
 
