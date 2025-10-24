@@ -276,6 +276,13 @@ class ExtendedStrategyManager:
     """
     import time
 
+    logger.info(
+      f"[{symbol}] analyze_all_strategies: "
+      f"candle_strategies={len(self.candle_strategies)}, "
+      f"orderbook_strategies={len(self.orderbook_strategies)}, "
+      f"hybrid_strategies={len(self.hybrid_strategies)}"
+    )
+
     results = []
 
     # ========== Candle Strategies ==========
@@ -300,11 +307,13 @@ class ExtendedStrategyManager:
         results.append(result)
 
         if signal:
-          logger.debug(
+          logger.info(
             f"[CANDLE/{strategy_name}] {symbol}: "
             f"{safe_enum_value(signal.signal_type)}, "
             f"confidence={signal.confidence:.2f}"
           )
+        else:
+          logger.debug(f"[CANDLE/{strategy_name}] {symbol}: NO SIGNAL")
 
       except Exception as e:
         logger.error(f"Ошибка в candle стратегии {strategy_name}: {e}", exc_info=True)
@@ -344,11 +353,13 @@ class ExtendedStrategyManager:
           results.append(result)
 
           if signal:
-            logger.debug(
+            logger.info(
               f"[ORDERBOOK/{strategy_name}] {symbol}: "
               f"{safe_enum_value(signal.signal_type)}, "
               f"confidence={signal.confidence:.2f}"
             )
+          else:
+            logger.debug(f"[ORDERBOOK/{strategy_name}] {symbol}: NO SIGNAL")
 
         except Exception as e:
           logger.error(
@@ -389,11 +400,13 @@ class ExtendedStrategyManager:
           results.append(result)
 
           if signal:
-            logger.debug(
+            logger.info(
               f"[HYBRID/{strategy_name}] {symbol}: "
               f"{safe_enum_value(signal.signal_type)}, "
               f"confidence={signal.confidence:.2f}"
             )
+          else:
+            logger.debug(f"[HYBRID/{strategy_name}] {symbol}: NO SIGNAL")
 
         except Exception as e:
           logger.error(
@@ -403,6 +416,13 @@ class ExtendedStrategyManager:
           continue
 
     self.total_analyses += 1
+
+    signals_count = len([r for r in results if r.signal is not None])
+    logger.info(
+      f"[{symbol}] analyze_all_strategies завершён: "
+      f"total_results={len(results)}, "
+      f"with_signals={signals_count}"
+    )
 
     return results
 
@@ -423,7 +443,22 @@ class ExtendedStrategyManager:
     # Фильтруем только стратегии с сигналами
     results_with_signals = [r for r in strategy_results if r.signal is not None]
 
+    # ДЕБАГ: Подробное логирование
+    logger.info(
+      f"[{symbol}] build_consensus: "
+      f"total_strategies={len(strategy_results)}, "
+      f"with_signals={len(results_with_signals)}"
+    )
+
+    if len(strategy_results) > 0:
+      for result in strategy_results:
+        logger.info(
+          f"[{symbol}] Strategy '{result.strategy_name}': "
+          f"signal={'YES' if result.signal else 'NO'}"
+        )
+
     if not results_with_signals:
+      logger.info(f"[{symbol}] ❌ Нет сигналов от стратегий, возврат None")
       return None
 
     # Подсчет по типам
@@ -437,9 +472,9 @@ class ExtendedStrategyManager:
 
     # Проверка минимального количества стратегий
     if len(results_with_signals) < self.config.min_strategies_for_signal:
-      logger.debug(
-        f"{symbol} | Недостаточно стратегий: "
-        f"{len(results_with_signals)}/{self.config.min_strategies_for_signal}"
+      logger.info(
+        f"[{symbol}] ❌ Недостаточно стратегий с сигналами: "
+        f"{len(results_with_signals)}/{self.config.min_strategies_for_signal}, возврат None"
       )
       return None
 
@@ -506,8 +541,9 @@ class ExtendedStrategyManager:
 
     # Проверка минимальной consensus confidence
     if consensus_confidence < self.config.min_consensus_confidence:
-      logger.debug(
-        f"{symbol} | Consensus confidence слишком низкая: {consensus_confidence:.2f}"
+      logger.info(
+        f"[{symbol}] ❌ Consensus confidence слишком низкая: "
+        f"{consensus_confidence:.2f} < {self.config.min_consensus_confidence}, возврат None"
       )
       return None
 

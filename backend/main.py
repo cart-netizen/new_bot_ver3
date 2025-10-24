@@ -1693,8 +1693,26 @@ class BotController:
     - Feature flags позволяют гибко управлять компонентами
     - Все критические операции имеют try-catch обработку
     """
-    from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
-    from datetime import datetime
+    # ДЕБАГ: Логирование в самом начале метода
+    try:
+      logger.info("=" * 80)
+      logger.info("🚀 ANALYSIS LOOP МЕТОД ВЫЗВАН - НАЧАЛО ВЫПОЛНЕНИЯ")
+      logger.info(f"   self.status = {self.status}")
+      logger.info(f"   self.symbols = {len(self.symbols) if hasattr(self, 'symbols') else 'НЕТ'}")
+      logger.info("=" * 80)
+    except Exception as init_error:
+      logger.error(f"ОШИБКА ПРИ НАЧАЛЬНОМ ЛОГИРОВАНИИ: {init_error}", exc_info=True)
+      return
+
+    try:
+      from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
+      from datetime import datetime
+      import traceback
+
+      logger.info("✅ Импорты выполнены успешно")
+    except Exception as import_error:
+      logger.error(f"ОШИБКА ПРИ ИМПОРТЕ: {import_error}", exc_info=True)
+      return
     import traceback
 
     # ========================================================================
@@ -1781,14 +1799,27 @@ class BotController:
     # ========================================================================
     # БЛОК 2: ГЛАВНЫЙ ЦИКЛ АНАЛИЗА
     # ========================================================================
+    logger.info(
+      f"🔄 Проверка статуса перед циклом: self.status = {self.status}, BotStatus.RUNNING = {BotStatus.RUNNING}")
+    logger.info(f"🔄 Статус совпадает: {self.status == BotStatus.RUNNING}")
 
     while self.status == BotStatus.RUNNING:
       cycle_start = time.time()
       cycle_number += 1
 
+      # ДЕБАГ: Логирование каждого цикла (первые 5 циклов)
+      if cycle_number <= 5:
+        logger.info(f"🔄 Цикл #{cycle_number} начался")
+
       if not self.websocket_manager.is_all_connected():
+        if cycle_number <= 5:
+          logger.info(f"⏳ Цикл #{cycle_number}: WebSocket не подключен, ждём...")
         await asyncio.sleep(1)
         continue
+
+      # ДЕБАГ: Логирование при первом успешном прохождении проверки WebSocket
+      if cycle_number == 1 or (cycle_number <= 5):
+        logger.info(f"✅ Цикл #{cycle_number}: WebSocket подключен, начинаем анализ {len(self.symbols)} символов")
 
       try:
         # async with self.analysis_lock:
@@ -1801,6 +1832,9 @@ class BotController:
         # Анализируем каждую пару
         for symbol in self.symbols:
           symbol_start = time.time()
+
+          if cycle_number <= 5:
+            logger.info(f"  🔍 [{symbol}] Начало анализа в цикле #{cycle_number}")
 
           # Инициализация error counter для символа
           if symbol not in error_count:
@@ -1820,33 +1854,44 @@ class BotController:
             # ШАГ 1: ПОЛУЧЕНИЕ MARKET DATA
             # ============================================================
 
-            ob_manager = self.orderbook_managers[symbol]
+            # ob_manager = self.orderbook_managers[symbol]
+            ob_manager = self.orderbook_managers.get(symbol)
             candle_manager = self.candle_managers[symbol]
 
             # Пропускаем если нет данных
             if not ob_manager.snapshot_received:
-              logger.debug(f"[{symbol}] OrderBook Manager не найден, пропускаем")
+              if cycle_number <= 5:
+                logger.info(f"  ⏭️  [{symbol}] OrderBook snapshot не получен, пропускаем")
               continue
 
             # Получаем снимок стакана
             orderbook_snapshot  = ob_manager.get_snapshot()
             if not orderbook_snapshot :
-              logger.debug(f"[{symbol}] OrderBook не готов или невалиден, пропускаем")
+              if cycle_number <= 5:
+                logger.info(f"  ⏭️  [{symbol}] OrderBook не готов или невалиден, пропускаем")
               continue
 
             # Получаем свечи
             candles = candle_manager.get_candles()
             if not candles or len(candles) < 50:
-              logger.debug(
-                f"[{symbol}] Недостаточно свечей: "
-                f"{len(candles)}/{settings.MIN_CANDLES_FOR_ANALYSIS}"
-              )
+              if cycle_number <= 5:
+                logger.info(
+                  f"  ⏭️  [{symbol}] Недостаточно свечей: "
+                  f"{len(candles) if candles else 0}/50"
+                )
               continue
 
             current_price = orderbook_snapshot.mid_price
-            if not current_price:
+            if cycle_number <= 5:
+              logger.info(f"  ⏭️  [{symbol}] Нет текущей цены, пропускаем")
               continue
 
+            # ДЕБАГ: Успешная подготовка данных
+            if cycle_number <= 5:
+              logger.info(
+                f"  ✅ [{symbol}] Данные готовы: "
+                f"price={current_price:.2f}, candles={len(candles)}"
+              )
             # 1.3 OrderBook Metrics
             # orderbook_metrics = self.market_analyzer.analyze_symbol(symbol, ob_manager)
             #
@@ -2093,7 +2138,9 @@ class BotController:
 
             if not manipulation_detected:  # Анализируем только если нет манипуляций
               try:
-                logger.debug(f"[{symbol}] Запуск IntegratedEngine.analyze()...")
+                # ДЕБАГ: Логирование перед вызовом IntegratedEngine
+                if cycle_number <= 5:
+                  logger.info(f"  🎯 [{symbol}] Запуск IntegratedEngine.analyze()...")
 
                 # Вызываем IntegratedEngine для полного анализа
                 integrated_signal = await self.integrated_engine.analyze(
@@ -2103,6 +2150,13 @@ class BotController:
                   orderbook=orderbook_snapshot,
                   metrics=orderbook_metrics
                 )
+
+                # ДЕБАГ: Результат IntegratedEngine
+                if cycle_number <= 5:
+                  if integrated_signal:
+                    logger.info(f"  ✅ [{symbol}] IntegratedSignal получен!")
+                  else:
+                    logger.info(f"  ❌ [{symbol}] IntegratedSignal = None (нет сигнала)")
 
                 if integrated_signal:
                   # ========================================================
@@ -3178,7 +3232,7 @@ class BotController:
   #     if not isinstance(e, (OrderBookSyncError, OrderBookError)):
   #       log_exception(logger, e, "Обработка сообщения стакана")
 
-  async def _handle_orderbook_message(self, message: Dict):
+  async def _handle_orderbook_message(self, message: Dict[str, Any]):
     """
     Обработчик сообщений WebSocket для стакана.
     Обновляет OrderBookManager и сохраняет предыдущий snapshot.
@@ -3187,39 +3241,64 @@ class BotController:
         message: Сообщение от WebSocket
     """
     try:
-      symbol = message.get("s")
-      if not symbol or symbol not in self.orderbook_managers:
-        return
+        symbol = message.get("s")
+        msg_type = message.get("type")
+        topic = message.get("topic", "unknown")
+        data = message.get("data", {})
 
-      manager = self.orderbook_managers[symbol]
+        # ДЕБАГ: Логирование входящего сообщения
+        logger.info(f"📨 _handle_orderbook_message: symbol={symbol}, type={msg_type}, topic={topic}")
 
-      # ✅ ДОБАВИТЬ: Сохраняем текущий snapshot как предыдущий
-      # ПЕРЕД применением нового
-      if manager.snapshot_received:
-        current_snapshot = manager.get_snapshot()
-        if current_snapshot:
-          self.prev_orderbook_snapshots[symbol] = current_snapshot
-          self.last_snapshot_update[symbol] = current_snapshot.timestamp
+        # Если symbol отсутствует, пытаемся извлечь его из topic (для Bybit)
+        if symbol is None and topic.startswith("orderbook."):
+            parts = topic.split(".")
+            if len(parts) == 3:
+                symbol = parts[2]
+                logger.info(f"🔍 [{symbol}] Символ извлечен из topic")
+            else:
+                logger.warning(f"⚠️ Не удалось извлечь символ из topic: {topic}")
+                return
 
-          logger.debug(
-            f"[{symbol}] Сохранен предыдущий snapshot: "
-            f"mid_price={current_snapshot.mid_price:.2f}"
-          )
+        if not symbol or symbol not in self.orderbook_managers:
+            logger.warning(f"⚠️ Символ {symbol} не найден в orderbook_managers или пустой")
+            return
 
-      # Применяем новые данные
-      msg_type = message.get("type")
-      data = message.get("data", {})
+        manager = self.orderbook_managers[symbol]
 
-      if msg_type == "snapshot":
-        manager.apply_snapshot(data)
-        logger.debug(f"[{symbol}] Snapshot применен")
+        # Сохраняем текущий snapshot как предыдущий перед применением нового
+        if manager.snapshot_received:
+            current_snapshot = manager.get_snapshot()
+            if current_snapshot:
+                self.prev_orderbook_snapshots[symbol] = current_snapshot
+                self.last_snapshot_update[symbol] = current_snapshot.timestamp
+                logger.debug(
+                    f"[{symbol}] Сохранен предыдущий snapshot: "
+                    f"mid_price={current_snapshot.mid_price:.2f}"
+                )
 
-      elif msg_type == "delta":
-        manager.apply_delta(data)
-        logger.debug(f"[{symbol}] Delta применен")
+        # Применяем новые данные
+        if msg_type == "snapshot":
+            logger.info(f"✅ [{symbol}] Применяем snapshot...")
+            manager.apply_snapshot(data)
+            logger.info(
+                f"[{symbol}] Snapshot применен: "
+                f"{len(manager.bids)} bids, {len(manager.asks)} asks"
+            )
+
+        elif msg_type == "delta":
+            if not manager.snapshot_received:
+                logger.debug(f"[{symbol}] Delta получена до snapshot, пропускаем")
+                return
+            manager.apply_delta(data)
+            logger.debug(f"[{symbol}] Delta применена")
+
+        else:
+            logger.warning(f"⚠️ [{symbol}] Неизвестный тип сообщения: {msg_type}")
 
     except Exception as e:
-      logger.error(f"Ошибка обработки orderbook message: {e}", exc_info=True)
+        logger.error(f"Ошибка обработки orderbook message: {e}", exc_info=True)
+        if not isinstance(e, (OrderBookSyncError, OrderBookError)):
+            log_exception(logger, e, "Обработка сообщения стакана")  # Если log_exception существует
 
   def get_status(self) -> Dict[str, Any]:
     """Получение статуса бота с расширенной ML аналитикой."""
