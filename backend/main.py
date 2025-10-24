@@ -1868,11 +1868,37 @@ class BotController:
               continue
 
             # Получаем снимок стакана
-            orderbook_snapshot  = ob_manager.get_snapshot()
-            if not orderbook_snapshot :
+            orderbook_snapshot = ob_manager.get_snapshot()
+            if not orderbook_snapshot:
               if cycle_number <= 5:
                 logger.info(f"  ⏭️  [{symbol}] OrderBook не готов или невалиден, пропускаем")
               continue
+
+            # ДЕБАГ: Проверим snapshot детально
+            if cycle_number <= 5:
+              best_bid = orderbook_snapshot.best_bid
+              best_ask = orderbook_snapshot.best_ask
+              mid_price_val = orderbook_snapshot.mid_price
+
+              logger.info(
+                f"  🔍 [{symbol}] OrderBook snapshot debug: "
+                f"bids_len={len(orderbook_snapshot.bids)}, "
+                f"asks_len={len(orderbook_snapshot.asks)}"
+              )
+              logger.info(
+                f"  🔍 [{symbol}] Prices: "
+                f"best_bid={best_bid}, "
+                f"best_ask={best_ask}, "
+                f"mid_price={mid_price_val}"
+              )
+
+              # Проверим логику вручную
+              if best_bid and best_ask:
+                manual_mid = (best_bid + best_ask) / 2
+                logger.info(f"  🔍 [{symbol}] Manual mid_price calculation: {manual_mid}")
+              else:
+                logger.warning(f"  ⚠️  [{symbol}] best_bid or best_ask is falsy!")
+                logger.warning(f"  ⚠️  [{symbol}] best_bid bool: {bool(best_bid)}, best_ask bool: {bool(best_ask)}")
 
             # Получаем свечи
             candles = candle_manager.get_candles()
@@ -1929,13 +1955,16 @@ class BotController:
               # Вариант 2: Из OrderBook Feature Extractor
               market_volatility = self.orderbook_features.orderbook_volatility
 
+            # Безопасное форматирование volatility
+            volatility_str = f"{market_volatility:.4f}" if market_volatility is not None else "N/A"
+
             logger.debug(
               f"[{symbol}] Market Data: "
               f"price={current_price:.2f}, "
               f"candles={len(candles)}, "
               f"spread={orderbook_metrics.spread:.2f}bps, "
               f"imbalance={orderbook_metrics.imbalance:.3f}, "
-              f"volatility={market_volatility if market_metrics else None:.4f}"
+              f"volatility={volatility_str}"
             )
             # ============================================================
             # ШАГ 2: ПОЛУЧЕНИЕ ПРЕДЫДУЩИХ СОСТОЯНИЙ
