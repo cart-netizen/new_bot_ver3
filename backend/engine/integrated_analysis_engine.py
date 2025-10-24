@@ -423,10 +423,15 @@ class IntegratedAnalysisEngine:
     market_regime = None
 
     if self.adaptive_consensus:
-      self.adaptive_consensus.weight_optimizer.get_optimal_weights(symbol)
-      # # Обновляем веса в strategy manager
-      # if adaptive_weights:
-      #   self.strategy_manager.update_weights(adaptive_weights)
+      # Получаем список имен стратегий из strategy_manager
+      strategy_names = list(self.strategy_manager.candle_strategies.keys()) + \
+                       list(self.strategy_manager.orderbook_strategies.keys()) + \
+                       list(self.strategy_manager.hybrid_strategies.keys())
+
+      adaptive_weights = self.adaptive_consensus.weight_optimizer.get_optimal_weights(
+        symbol=symbol,
+        strategy_names=strategy_names
+      )
 
     # Запускаем стратегии с adaptive consensus
     consensus = self.strategy_manager.analyze_with_consensus(

@@ -315,6 +315,9 @@ class BotController:
       'mtf_signals': 0,
       'adaptive_weight_updates': 0,
       'ml_validations': 0,
+      'ml_data_collected': 0,
+      'manipulations_detected': 0,
+      'drift_detections': 0,
       'analysis_cycles': 0,
       'errors': 0,
       'warnings': 0
@@ -2447,13 +2450,14 @@ class BotController:
                       logger.debug(f"[{symbol}] Запуск ML Validation...")
 
                       # ML Validator проверяет финальный сигнал
-                      validation_result = await self.ml_validator.validate_signal(
-                        symbol=symbol,
+                      validation_result = await self.ml_validator.validate(
+
                         signal=final_signal,
-                        features=feature_vector
+                        feature_vector=feature_vector
                       )
 
-                      ml_should_trade = validation_result.should_trade
+                      ml_should_trade = validation_result.validated
+
                       ml_validation_confidence = validation_result.ml_confidence
 
                       # Добавляем ML validation метаданные
@@ -3917,15 +3921,15 @@ class BotController:
       logger.info(f"⭐ Combined Quality: {integrated_signal.combined_quality_score:.3f}")
       logger.info(f"📈 Entry Price: ${signal.price:.2f}")
       if integrated_signal.recommended_stop_loss is not None:
-        stop_loss_pct = abs((integrated_signal.recommended_stop_loss - signal.price) / signal.price * 100)
-        logger.info(f"🛡️ Stop Loss: ${integrated_signal.recommended_stop_loss:.2f} ({stop_loss_pct:.2f}%)")
+        stop_loss_pct = ((integrated_signal.recommended_stop_loss - signal.price) / signal.price) * 100
+        logger.info(f"🛡️ Stop Loss: ${integrated_signal.recommended_stop_loss:.2f} ({stop_loss_pct:+.2f}%)")
       else:
         logger.info(f"🛡️ Stop Loss: Not set")
 
         # Take Profit (с безопасной обработкой)
       if integrated_signal.recommended_take_profit is not None:
-        take_profit_pct = abs((integrated_signal.recommended_take_profit - signal.price) / signal.price * 100)
-        logger.info(f"🎯 Take Profit: ${integrated_signal.recommended_take_profit:.2f} ({take_profit_pct:.2f}%)")
+        take_profit_pct = ((integrated_signal.recommended_take_profit - signal.price) / signal.price) * 100
+        logger.info(f"🎯 Take Profit: ${integrated_signal.recommended_take_profit:.2f} ({take_profit_pct:+.2f}%)")
       else:
         logger.info(f"🎯 Take Profit: Not set")
       logger.info(f"💰 Position Multiplier: {integrated_signal.recommended_position_multiplier:.2f}x")
@@ -3943,7 +3947,8 @@ class BotController:
         consensus = integrated_signal.single_tf_consensus
         logger.info("-" * 80)
         logger.info("🔸 SINGLE-TF CONSENSUS:")
-        logger.info(f"   ├─ Consensus Mode: {consensus.consensus_mode}")
+        consensus_mode = consensus.final_signal.metadata.get('consensus_mode', 'unknown')
+        logger.info(f"   ├─ Consensus Mode: {consensus_mode}")
         logger.info(f"   ├─ Consensus Confidence: {consensus.consensus_confidence:.3f}")
         logger.info(f"   ├─ Agreement: {consensus.agreement_count} strategies")
         logger.info(f"   ├─ Disagreement: {consensus.disagreement_count} strategies")
@@ -3959,7 +3964,7 @@ class BotController:
         logger.info(f"   ├─ Signal Quality: {mtf.signal_quality:.3f}")
         logger.info(f"   ├─ Risk Level: {mtf.risk_level}")
         logger.info(f"   ├─ Alignment Score: {mtf.alignment_score:.3f}")
-        logger.info(f"   ├─ Confluence Detected: {'✅ YES' if mtf.confluence_detected else '❌ NO'}")
+        logger.info(f"   ├─ Confluence Detected: {'✅ YES' if mtf.has_confluence else '❌ NO'}")
         logger.info(f"   ├─ Recommended Position Multiplier: {mtf.recommended_position_size_multiplier:.2f}x")
 
         if mtf.divergence_type:

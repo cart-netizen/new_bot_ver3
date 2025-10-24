@@ -689,8 +689,8 @@ class SmartMoneyStrategy(BaseOrderBookStrategy):
         tr = np.maximum(
             highs[1:] - lows[1:],
             np.maximum(
-                np.abs(highs[1:] - closes[:-1]),
-                np.abs(lows[1:] - closes[:-1])
+                abs(highs[1:] - closes[:-1]),
+                abs(lows[1:] - closes[:-1])
             )
         )
 
@@ -698,40 +698,38 @@ class SmartMoneyStrategy(BaseOrderBookStrategy):
         up_move = highs[1:] - highs[:-1]
         down_move = lows[:-1] - lows[1:]
 
-        plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
-        minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+        plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0)
+        minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0)
 
-        # Инициализация с нулями
-        atr_smooth = np.zeros_like(tr)
-        plus_di_smooth = np.zeros_like(plus_dm)
-        minus_di_smooth = np.zeros_like(minus_dm)
+        # Smoothed values
+        atr_smooth = np.zeros(len(tr))
+        plus_di_smooth = np.zeros(len(plus_dm))
+        minus_di_smooth = np.zeros(len(minus_dm))
 
-        # Начальное значение (на индексе period - 1)
-        atr_smooth[period - 1] = np.mean(tr[:period])
-        plus_di_smooth[period - 1] = np.mean(plus_dm[:period])
-        minus_di_smooth[period - 1] = np.mean(minus_dm[:period])
+        atr_smooth[period-1] = np.mean(tr[:period])
+        plus_di_smooth[period-1] = np.mean(plus_dm[:period])
+        minus_di_smooth[period-1] = np.mean(minus_dm[:period])
 
-        # Сглаживание
         for i in range(period, len(tr)):
-            atr_smooth[i] = (atr_smooth[i - 1] * (period - 1) + tr[i]) / period
-            plus_di_smooth[i] = (plus_di_smooth[i - 1] * (period - 1) + plus_dm[i]) / period
-            minus_di_smooth[i] = (minus_di_smooth[i - 1] * (period - 1) + minus_dm[i]) / period
+            atr_smooth[i] = (atr_smooth[i-1] * (period - 1) + tr[i]) / period
+            plus_di_smooth[i] = (plus_di_smooth[i-1] * (period - 1) + plus_dm[i]) / period
+            minus_di_smooth[i] = (minus_di_smooth[i-1] * (period - 1) + minus_dm[i]) / period
 
-        # === Безопасное вычисление DI ===
-        # Избегаем деления на ноль: если atr_smooth == 0 → DI = 0
-        with np.errstate(divide='ignore', invalid='ignore'):
-            plus_di = np.where(atr_smooth > 0, 100 * plus_di_smooth / atr_smooth, 0.0)
-            minus_di = np.where(atr_smooth > 0, 100 * minus_di_smooth / atr_smooth, 0.0)
+        # DI (защита от деления на ноль)
+        # Заменяем нулевые значения atr_smooth на маленькое число
+        atr_smooth_safe = np.where(atr_smooth > 0, atr_smooth, 1e-10)
+        plus_di = 100 * plus_di_smooth / atr_smooth_safe
+        minus_di = 100 * minus_di_smooth / atr_smooth_safe
 
-        # DX: избегаем деления на ноль
+        # DX (защита от деления на ноль)
+        # np.where всё равно вычисляет оба условия, поэтому заменяем нули ДО деления
+
         dx_denom = plus_di + minus_di
-        dx = np.where(dx_denom > 0, 100 * np.abs(plus_di - minus_di) / dx_denom, 0.0)
+        dx_denom_safe = np.where(dx_denom > 0, dx_denom, 1e-10)
+        dx = 100 * np.abs(plus_di - minus_di) / dx_denom_safe
 
-        # ADX — среднее за последние `period` значений
-        if len(dx) >= period:
-            adx = np.mean(dx[-period:])
-        else:
-            adx = np.mean(dx) if len(dx) > 0 else 0.0
+        # ADX (сглаженный DX)
+        adx = np.mean(dx[-period:])
 
         return float(adx)
 
