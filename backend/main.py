@@ -3243,7 +3243,14 @@ class BotController:
     """
     try:
       symbol = message.get("s")
+
+      # ДЕБАГ: Логирование входящего сообщения
+      msg_type = message.get("type")
+      topic = message.get("topic", "unknown")
+      logger.info(f"📨 _handle_orderbook_message: symbol={symbol}, type={msg_type}, topic={topic}")
+
       if not symbol or symbol not in self.orderbook_managers:
+        logger.warning(f"⚠️ Символ {symbol} не найден в orderbook_managers или пустой")
         return
 
       manager = self.orderbook_managers[symbol]
@@ -3262,16 +3269,18 @@ class BotController:
           )
 
       # Применяем новые данные
-      msg_type = message.get("type")
       data = message.get("data", {})
 
       if msg_type == "snapshot":
+        logger.info(f"✅ [{symbol}] Применяем snapshot...")
         manager.apply_snapshot(data)
-        logger.debug(f"[{symbol}] Snapshot применен")
+        logger.info(f"✅ [{symbol}] Snapshot применен успешно!")
 
       elif msg_type == "delta":
         manager.apply_delta(data)
         logger.debug(f"[{symbol}] Delta применен")
+      else:
+        logger.warning(f"⚠️ [{symbol}] Неизвестный тип сообщения: {msg_type}")
 
     except Exception as e:
       logger.error(f"Ошибка обработки orderbook message: {e}", exc_info=True)
