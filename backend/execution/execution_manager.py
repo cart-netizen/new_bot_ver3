@@ -12,6 +12,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional, Dict, List
 from collections import deque
+from dataclasses import dataclass
 
 from config import settings
 from core.logger import get_logger
@@ -28,6 +29,15 @@ from infrastructure.repositories.position_repository import position_repository
 from infrastructure.resilience.circuit_breaker import circuit_breaker_manager
 from infrastructure.resilience.rate_limiter import rate_limited
 from models.signal import TradingSignal, SignalType
+
+
+@dataclass
+class SubmissionResult:
+    """Результат отправки сигнала на исполнение."""
+    success: bool
+    reason: str
+    order_id: Optional[str] = None
+    symbol: Optional[str] = None
 from models.market_data import OrderSide, OrderType, TimeInForce
 from exchange.rest_client import rest_client
 from strategies.adaptive import adaptive_consensus_manager, AdaptiveConsensusManager
@@ -119,16 +129,33 @@ class ExecutionManager:
             except asyncio.CancelledError:
                 pass
 
-    async def submit_signal(self, signal: TradingSignal):
+    async def submit_signal(self, signal: TradingSignal) -> SubmissionResult:
         """
         Отправка сигнала на исполнение.
 
         Args:
             signal: Торговый сигнал
+
+        Returns:
+            SubmissionResult: Результат добавления сигнала в очередь
         """
-        await self.signal_queue.put(signal)
-        self.stats["total_signals"] += 1
-        logger.debug(f"{signal.symbol} | Сигнал добавлен в очередь исполнения")
+        try:
+            await self.signal_queue.put(signal)
+            self.stats["total_signals"] += 1
+            logger.debug(f"{signal.symbol} | Сигнал добавлен в очередь исполнения")
+
+            return SubmissionResult(
+                success=True,
+                reason="Signal queued for execution",
+                symbol=signal.symbol
+            )
+        except Exception as e:
+            logger.error(f"{signal.symbol} | Ошибка добавления сигнала в очередь: {e}")
+            return SubmissionResult(
+                success=False,
+                reason=f"Queue error: {str(e)}",
+                symbol=signal.symbol
+            )
 
     async def _sync_positions_with_exchange(self):
         """
