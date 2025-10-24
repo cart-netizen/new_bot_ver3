@@ -423,8 +423,7 @@ class IntegratedAnalysisEngine:
     market_regime = None
 
     if self.adaptive_consensus:
-      adaptive_weights = self.adaptive_consensus.get_optimal_weights(symbol)
-
+      self.adaptive_consensus.weight_optimizer.get_optimal_weights(symbol)
       # # Обновляем веса в strategy manager
       # if adaptive_weights:
       #   self.strategy_manager.update_weights(adaptive_weights)

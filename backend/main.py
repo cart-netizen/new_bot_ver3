@@ -2151,20 +2151,22 @@ class BotController:
 
                   # Опционально: получаем ML prediction (если нужно для обогащения)
                   # НЕ используем для блокировки торговли, только для метаданных
-                  if self.ml_validator and not manipulation_detected:
-                    try:
-                      ml_prediction = await self.ml_validator.predict(
-                        feature_vector=feature_vector
-                      )
-
-                      if ml_prediction:
-                        logger.debug(
-                          f"[{symbol}] ML Prediction: "
-                          f"direction={ml_prediction.get('prediction')}, "
-                          f"confidence={ml_prediction.get('confidence', 0):.3f}"
-                        )
-                    except Exception as e:
-                      logger.error(f"[{symbol}] Ошибка ML Prediction: {e}")
+                  # ПРИМЕЧАНИЕ: MLSignalValidator не имеет метода predict, только validate
+                  # который требует signal. Это можно реализовать позже при необходимости.
+                  # if self.ml_validator and not manipulation_detected:
+                  #   try:
+                  #     ml_prediction = await self.ml_validator.predict(
+                  #       feature_vector=feature_vector
+                  #     )
+                  #
+                  #     if ml_prediction:
+                  #       logger.debug(
+                  #         f"[{symbol}] ML Prediction: "
+                  #         f"direction={ml_prediction.get('prediction')}, "
+                  #         f"confidence={ml_prediction.get('confidence', 0):.3f}"
+                  #       )
+                  #   except Exception as e:
+                  #     logger.error(f"[{symbol}] Ошибка ML Prediction: {e}")
                 else:
                   logger.warning(f"[{symbol}] Feature extraction вернул None")
 
@@ -2618,21 +2620,24 @@ class BotController:
             # ШАГ 11: DRIFT MONITORING (опционально)
             # ============================================================
 
-            if has_drift_detector and feature_vector and signal:
+            # Извлекаем final_signal из integrated_signal для drift monitoring
+            drift_signal = integrated_signal.final_signal if integrated_signal else None
+
+            if has_drift_detector and feature_vector and drift_signal:
               try:
-                # Убедимся, что signal - это TradingSignal (добавляем type hint)
+                # Убедимся, что drift_signal - это TradingSignal (добавляем type hint)
                 from models.signal import TradingSignal, SignalType
 
                 # Type guard для проверки типа
-                if not isinstance(signal, TradingSignal):
-                  logger.warning(f"{symbol} | Signal не является TradingSignal, пропускаем drift monitoring")
+                if not isinstance(drift_signal, TradingSignal):
+                  logger.warning(f"{symbol} | drift_signal не является TradingSignal, пропускаем drift monitoring")
                 else:
                   # ✅ БЕЗОПАСНЫЙ ДОСТУП к signal_type
                   signal_type_value = None
 
                   # Вариант 1: Через hasattr
-                  if hasattr(signal, 'signal_type'):
-                    signal_type_value = safe_enum_value(signal.signal_type)
+                  if hasattr(drift_signal, 'signal_type'):
+                    signal_type_value = safe_enum_value(drift_signal.signal_type)
 
                   # Вариант 2: Через getattr с fallback
                   # signal_type_enum = getattr(signal, 'signal_type', None)
