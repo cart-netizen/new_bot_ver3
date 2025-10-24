@@ -67,9 +67,6 @@ class ExecutionManager:
         self.adaptive_consensus_manager = adaptive_consensus_manager
         self.rest_client = rest_client
 
-        # Очередь сигналов для исполнения
-        self.signal_queue: asyncio.Queue = asyncio.Queue()
-
         # История исполнения
         self.execution_history: deque = deque(maxlen=1000)
 
@@ -79,7 +76,6 @@ class ExecutionManager:
 
         # Флаг работы
         self.is_running = False
-        self.execution_task: Optional[asyncio.Task] = None
 
         # Статистика
         self.stats = {
@@ -107,10 +103,7 @@ class ExecutionManager:
             return
 
         self.is_running = True
-        logger.info("Запуск менеджера исполнения")
-
-        # Запускаем задачу обработки очереди
-        self.execution_task = asyncio.create_task(self._process_queue())
+        logger.info("ExecutionManager запущен (режим немедленного исполнения)")
 
     async def stop(self):
         """Остановка менеджера исполнения."""
@@ -118,42 +111,105 @@ class ExecutionManager:
             logger.warning("Менеджер исполнения уже остановлен")
             return
 
-        logger.info("Остановка менеджера исполнения")
+        logger.info("Остановка ExecutionManager")
         self.is_running = False
-
-        # Отменяем задачу обработки
-        if self.execution_task and not self.execution_task.done():
-            self.execution_task.cancel()
-            try:
-                await self.execution_task
-            except asyncio.CancelledError:
-                pass
 
     async def submit_signal(self, signal: TradingSignal) -> SubmissionResult:
         """
-        Отправка сигнала на исполнение.
+        Немедленное исполнение сигнала с проверкой лимитов.
+
+        ИЗМЕНЕНИЯ:
+        - Убрана очередь - сигналы исполняются немедленно
+        - Проверка актуальности сигнала (возраст < 60 секунд)
+        - Синхронизация позиций с биржей перед проверкой лимитов
+        - Проверка лимита открытых позиций
+        - Немедленное исполнение или отклонение
 
         Args:
             signal: Торговый сигнал
 
         Returns:
-            SubmissionResult: Результат добавления сигнала в очередь
+            SubmissionResult: Результат немедленного исполнения
         """
         try:
-            await self.signal_queue.put(signal)
             self.stats["total_signals"] += 1
-            logger.debug(f"{signal.symbol} | Сигнал добавлен в очередь исполнения")
+
+            # ==========================================
+            # ШАГ 1: ПРОВЕРКА АКТУАЛЬНОСТИ СИГНАЛА
+            # ==========================================
+            if not signal.is_valid:
+                logger.warning(
+                    f"{signal.symbol} | ⏰ Сигнал устарел: "
+                    f"возраст={signal.age_seconds:.1f}s (лимит 60s)"
+                )
+                self.stats["rejected_orders"] += 1
+                return SubmissionResult(
+                    success=False,
+                    reason=f"Signal expired (age: {signal.age_seconds:.1f}s)",
+                    symbol=signal.symbol
+                )
+
+            # ==========================================
+            # ШАГ 2: СИНХРОНИЗАЦИЯ ПОЗИЦИЙ С БИРЖЕЙ
+            # ==========================================
+            await self._sync_positions_with_exchange()
+
+            # ==========================================
+            # ШАГ 3: ПРОВЕРКА ЛИМИТА ПОЗИЦИЙ
+            # ==========================================
+            current_positions = self.risk_manager.metrics.open_positions_count
+            max_positions = self.risk_manager.limits.max_open_positions
+
+            if current_positions >= max_positions:
+                logger.warning(
+                    f"{signal.symbol} | 🛑 Лимит позиций достигнут: "
+                    f"{current_positions}/{max_positions}"
+                )
+                self.stats["rejected_orders"] += 1
+                return SubmissionResult(
+                    success=False,
+                    reason=f"Position limit reached ({current_positions}/{max_positions})",
+                    symbol=signal.symbol
+                )
+
+            # Проверка дубликата по символу
+            if signal.symbol in self.risk_manager.open_positions:
+                logger.warning(
+                    f"{signal.symbol} | 🛑 Позиция по этому символу уже открыта"
+                )
+                self.stats["rejected_orders"] += 1
+                return SubmissionResult(
+                    success=False,
+                    reason="Position already exists for this symbol",
+                    symbol=signal.symbol
+                )
+
+            # ==========================================
+            # ШАГ 4: НЕМЕДЛЕННОЕ ИСПОЛНЕНИЕ
+            # ==========================================
+            logger.info(
+                f"{signal.symbol} | ✅ Немедленное исполнение сигнала "
+                f"(age={signal.age_seconds:.1f}s, positions={current_positions}/{max_positions})"
+            )
+
+            # Исполняем сигнал немедленно в текущем контексте
+            await self._execute_signal(signal)
 
             return SubmissionResult(
                 success=True,
-                reason="Signal queued for execution",
+                reason="Signal executed immediately",
                 symbol=signal.symbol
             )
+
         except Exception as e:
-            logger.error(f"{signal.symbol} | Ошибка добавления сигнала в очередь: {e}")
+            logger.error(
+                f"{signal.symbol} | ❌ Ошибка при исполнении сигнала: {e}",
+                exc_info=True
+            )
+            self.stats["failed_orders"] += 1
             return SubmissionResult(
                 success=False,
-                reason=f"Queue error: {str(e)}",
+                reason=f"Execution error: {str(e)}",
                 symbol=signal.symbol
             )
 
@@ -886,134 +942,6 @@ class ExecutionManager:
 
     # ==================== ПРИВАТНЫЕ МЕТОДЫ ====================
 
-    # async def _process_queue(self):
-    #     """Обработка очереди сигналов."""
-    #     logger.info("Запущена обработка очереди исполнения")
-    #
-    #     while self.is_running:
-    #         try:
-    #             # Получаем сигнал из очереди с таймаутом
-    #             try:
-    #                 signal = await asyncio.wait_for(
-    #                     self.signal_queue.get(),
-    #                     timeout=1.0
-    #                 )
-    #             except asyncio.TimeoutError:
-    #                 continue
-    #
-    #             # Обрабатываем сигнал
-    #             await self._execute_signal(signal)
-    #
-    #         except Exception as e:
-    #             logger.error(f"Ошибка обработки очереди исполнения: {e}")
-    #             await asyncio.sleep(1)
-
-    async def _process_queue(self):
-        """
-        Обработка очереди сигналов на исполнение.
-
-        ИСПРАВЛЕНИЯ:
-        - Проверка типа signal перед обработкой
-        - Обработка некорректных объектов в очереди
-        - Детальное логирование для диагностики
-        """
-        logger.info("Запущена обработка очереди исполнения")
-
-        while self.is_running:
-            try:
-                # ==========================================
-                # ШАГ 1: ПОЛУЧЕНИЕ СИГНАЛА ИЗ ОЧЕРЕДИ
-                # ==========================================
-                try:
-                    signal = await asyncio.wait_for(
-                        self.signal_queue.get(),
-                        timeout=1.0
-                    )
-                except asyncio.TimeoutError:
-                    # Таймаут - это нормально, просто продолжаем ждать
-                    continue
-
-                # ==========================================
-                # ШАГ 2: КРИТИЧЕСКАЯ ВАЛИДАЦИЯ ТИПА
-                # ==========================================
-                if signal is None:
-                    logger.warning("Получен None из очереди, пропускаем")
-                    continue
-
-                # КРИТИЧНО: Проверяем что это TradingSignal
-                if not isinstance(signal, TradingSignal):
-                    logger.error(
-                        f"❌ КРИТИЧЕСКАЯ ОШИБКА: Неверный тип объекта в очереди! "
-                        f"Ожидался: TradingSignal, "
-                        f"Получен: {type(signal).__name__}"
-                    )
-
-                    # Пытаемся вывести содержимое для диагностики
-                    try:
-                        logger.error(f"Содержимое объекта: {signal}")
-                    except Exception as e:
-                        logger.error(f"Не удалось вывести содержимое: {e}")
-
-                    # Пропускаем некорректный объект
-                    continue
-
-                # ==========================================
-                # ШАГ 3: ВАЛИДАЦИЯ ОБЯЗАТЕЛЬНЫХ АТРИБУТОВ
-                # ==========================================
-                try:
-                    # Проверяем наличие критических атрибутов
-                    required_attrs = ['symbol', 'signal_type', 'price']
-                    missing_attrs = [attr for attr in required_attrs if not hasattr(signal, attr)]
-
-                    if missing_attrs:
-                        logger.error(
-                            f"❌ TradingSignal не содержит обязательных атрибутов: {missing_attrs}. "
-                            f"Пропускаем сигнал."
-                        )
-                        continue
-
-                    # Проверяем что signal_type это Enum, а не строка
-                    if hasattr(signal.signal_type, 'value'):
-                        signal_type_value = signal.signal_type.value
-                    else:
-                        signal_type_value = str(signal.signal_type)
-
-                    logger.debug(
-                        f"✓ Валидный сигнал получен: "
-                        f"symbol={signal.symbol}, "
-                        f"type={signal_type_value}, "
-                        f"price={signal.price:.8f}"
-                    )
-
-                except Exception as e:
-                    logger.error(
-                        f"❌ Ошибка валидации атрибутов сигнала: {e}",
-                        exc_info=True
-                    )
-                    continue
-
-                # ==========================================
-                # ШАГ 4: ОБРАБОТКА СИГНАЛА
-                # ==========================================
-                try:
-                    await self._execute_signal(signal)
-                except Exception as e:
-                    logger.error(
-                        f"❌ Ошибка исполнения сигнала {signal.symbol}: {e}",
-                        exc_info=True
-                    )
-                    # Продолжаем обработку следующих сигналов
-
-            except Exception as e:
-                logger.error(
-                    f"❌ Критическая ошибка в цикле обработки очереди: {e}",
-                    exc_info=True
-                )
-                # Небольшая задержка для предотвращения зацикливания при критических ошибках
-                await asyncio.sleep(1)
-
-        logger.info("Обработка очереди исполнения остановлена")
-
     async def _execute_signal(self, signal: TradingSignal):
         """
         Исполнение торгового сигнала с ML-enhanced risk management.
@@ -1022,9 +950,10 @@ class ExecutionManager:
         - SL/TP рассчитывается ТОЛЬКО в validate_signal_ml_enhanced
         - Fallback расчет SL/TP если ML недоступна
         - Все .value заменены на safe_enum_value()
+        - Проверка лимитов позиций перенесена в submit_signal()
 
         Pipeline:
-        0. Проверка лимитов позиций и дедупликация
+        0. Дедупликация сигнала
         1. Получение информации об инструменте
         2. Проверка баланса
         2.5. Извлечение ML features
@@ -1038,31 +967,8 @@ class ExecutionManager:
         Args:
             signal: Торговый сигнал для исполнения
         """
-        # ============================================
-        # ШАГ 0.0: ПРОВЕРКА ЛИМИТА ПОЗИЦИЙ
-        # ============================================
-        await self._sync_positions_with_exchange()
-
-        current_positions = self.risk_manager.metrics.open_positions_count
-        max_positions = self.risk_manager.limits.max_open_positions
-
-        if current_positions >= max_positions:
-            logger.warning(
-                f"🛑 CIRCUIT BREAKER: Достигнут лимит позиций {current_positions}/{max_positions}. "
-                f"Сигнал {signal.symbol} отклонён."
-            )
-            self.stats["rejected_orders"] += 1
-            return
-
-        if signal.symbol in self.risk_manager.open_positions:
-            logger.warning(
-                f"⚠️ CIRCUIT BREAKER: По паре {signal.symbol} уже открыта позиция. Сигнал отклонён."
-            )
-            self.stats["rejected_orders"] += 1
-            return
-
         # ==========================================
-        # ШАГ 0.1: ДЕДУПЛИКАЦИЯ СИГНАЛА
+        # ШАГ 0: ДЕДУПЛИКАЦИЯ СИГНАЛА
         # ==========================================
         should_process, block_reason = signal_deduplicator.should_process_signal(signal)
 
@@ -1554,7 +1460,6 @@ class ExecutionManager:
         """Получение статистики исполнения."""
         return {
             **self.stats,
-            "queue_size": self.signal_queue.qsize(),
             "success_rate": (
                 (self.stats["executed_orders"] / self.stats["total_signals"] * 100)
                 if self.stats["total_signals"] > 0 else 0
@@ -1563,7 +1468,6 @@ class ExecutionManager:
                 (self.stats["rejected_orders"] / self.stats["total_signals"] * 100)
                 if self.stats["total_signals"] > 0 else 0
             ),
-
         }
 
         # ==================== НОВЫЕ ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
