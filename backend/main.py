@@ -339,6 +339,10 @@ class BotController:
       self.market_analyzer = MarketAnalyzer()
       logger.info("✓ Анализатор рынка инициализирован")
 
+      # Инициализируем анализатор стакана
+      self.orderbook_analyzer = OrderBookAnalyzer()
+      logger.info("✓ Анализатор стакана инициализирован")
+
       # Проверяем подключение к бирже
       server_time = await rest_client.get_server_time()
       logger.info(f"✓ Подключение к Bybit успешно. Серверное время: {server_time}")
@@ -1883,7 +1887,13 @@ class BotController:
             current_price = orderbook_snapshot.mid_price
             if not current_price:
               if cycle_number <= 5:
-                logger.info(f"  ⏭️  [{symbol}] Нет текущей цены, пропускаем")
+                logger.info(
+                  f"  ⏭️  [{symbol}] Нет текущей цены: "
+                  f"bids={len(orderbook_snapshot.bids)}, "
+                  f"asks={len(orderbook_snapshot.asks)}, "
+                  f"best_bid={orderbook_snapshot.best_bid}, "
+                  f"best_ask={orderbook_snapshot.best_ask}"
+                )
               continue
 
             # ДЕБАГ: Успешная подготовка данных
@@ -3242,15 +3252,24 @@ class BotController:
         message: Сообщение от WebSocket
     """
     try:
-      symbol = message.get("s")
+      # Извлекаем символ из topic (формат: "orderbook.200.SYMBOL")
+      topic = message.get("topic", "")
+      symbol = message.get("s")  # Пробуем получить из поля 's'
+
+      # Если 's' нет, извлекаем из topic
+      if not symbol and topic:
+        # topic формат: "orderbook.200.APRUSDT"
+        parts = topic.split(".")
+        if len(parts) >= 3:
+          symbol = parts[2]
 
       # ДЕБАГ: Логирование входящего сообщения
       msg_type = message.get("type")
-      topic = message.get("topic", "unknown")
       logger.info(f"📨 _handle_orderbook_message: symbol={symbol}, type={msg_type}, topic={topic}")
 
       if not symbol or symbol not in self.orderbook_managers:
         logger.warning(f"⚠️ Символ {symbol} не найден в orderbook_managers или пустой")
+        logger.info(f"   Доступные символы: {list(self.orderbook_managers.keys())}")
         return
 
       manager = self.orderbook_managers[symbol]
