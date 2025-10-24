@@ -722,8 +722,10 @@ class SmartMoneyStrategy(BaseOrderBookStrategy):
         minus_di = 100 * minus_di_smooth / atr_smooth_safe
 
         # DX (защита от деления на ноль)
+        # np.where всё равно вычисляет оба условия, поэтому заменяем нули ДО деления
         dx_denom = plus_di + minus_di
-        dx = np.where(dx_denom > 0, 100 * np.abs(plus_di - minus_di) / dx_denom, 0.0)
+        dx_denom_safe = np.where(dx_denom > 0, dx_denom, 1e-10)
+        dx = 100 * np.abs(plus_di - minus_di) / dx_denom_safe
         
         # ADX (сглаженный DX)
         adx = np.mean(dx[-period:])

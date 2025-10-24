@@ -315,6 +315,9 @@ class BotController:
       'mtf_signals': 0,
       'adaptive_weight_updates': 0,
       'ml_validations': 0,
+      'ml_data_collected': 0,
+      'manipulations_detected': 0,
+      'drift_detections': 0,
       'analysis_cycles': 0,
       'errors': 0,
       'warnings': 0
@@ -3927,7 +3930,8 @@ class BotController:
         consensus = integrated_signal.single_tf_consensus
         logger.info("-" * 80)
         logger.info("🔸 SINGLE-TF CONSENSUS:")
-        logger.info(f"   ├─ Consensus Mode: {consensus.consensus_mode}")
+        consensus_mode = consensus.final_signal.metadata.get('consensus_mode', 'unknown')
+        logger.info(f"   ├─ Consensus Mode: {consensus_mode}")
         logger.info(f"   ├─ Consensus Confidence: {consensus.consensus_confidence:.3f}")
         logger.info(f"   ├─ Agreement: {consensus.agreement_count} strategies")
         logger.info(f"   ├─ Disagreement: {consensus.disagreement_count} strategies")
