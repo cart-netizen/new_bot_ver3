@@ -3897,17 +3897,19 @@ class BotController:
       logger.info(f"⭐ Combined Quality: {integrated_signal.combined_quality_score:.3f}")
       logger.info(f"📈 Entry Price: ${signal.price:.2f}")
 
-      # Stop Loss (с безопасной обработкой)
+      # Stop Loss (с безопасной обработкой и правильным расчетом %)
       if integrated_signal.recommended_stop_loss is not None:
-        stop_loss_pct = abs((integrated_signal.recommended_stop_loss - signal.price) / signal.price * 100)
-        logger.info(f"🛡️ Stop Loss: ${integrated_signal.recommended_stop_loss:.2f} ({stop_loss_pct:.2f}%)")
+        # Рассчитываем процент изменения (с учетом знака)
+        stop_loss_pct = ((integrated_signal.recommended_stop_loss - signal.price) / signal.price) * 100
+        logger.info(f"🛡️ Stop Loss: ${integrated_signal.recommended_stop_loss:.2f} ({stop_loss_pct:+.2f}%)")
       else:
         logger.info(f"🛡️ Stop Loss: Not set")
 
-      # Take Profit (с безопасной обработкой)
+      # Take Profit (с безопасной обработкой и правильным расчетом %)
       if integrated_signal.recommended_take_profit is not None:
-        take_profit_pct = abs((integrated_signal.recommended_take_profit - signal.price) / signal.price * 100)
-        logger.info(f"🎯 Take Profit: ${integrated_signal.recommended_take_profit:.2f} ({take_profit_pct:.2f}%)")
+        # Рассчитываем процент изменения (с учетом знака)
+        take_profit_pct = ((integrated_signal.recommended_take_profit - signal.price) / signal.price) * 100
+        logger.info(f"🎯 Take Profit: ${integrated_signal.recommended_take_profit:.2f} ({take_profit_pct:+.2f}%)")
       else:
         logger.info(f"🎯 Take Profit: Not set")
       logger.info(f"💰 Position Multiplier: {integrated_signal.recommended_position_multiplier:.2f}x")
@@ -3941,7 +3943,7 @@ class BotController:
         logger.info(f"   ├─ Signal Quality: {mtf.signal_quality:.3f}")
         logger.info(f"   ├─ Risk Level: {mtf.risk_level}")
         logger.info(f"   ├─ Alignment Score: {mtf.alignment_score:.3f}")
-        logger.info(f"   ├─ Confluence Detected: {'✅ YES' if mtf.confluence_detected else '❌ NO'}")
+        logger.info(f"   ├─ Confluence Detected: {'✅ YES' if mtf.has_confluence else '❌ NO'}")
         logger.info(f"   ├─ Recommended Position Multiplier: {mtf.recommended_position_size_multiplier:.2f}x")
 
         if mtf.divergence_type:

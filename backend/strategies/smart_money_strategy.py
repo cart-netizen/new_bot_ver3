@@ -715,12 +715,15 @@ class SmartMoneyStrategy(BaseOrderBookStrategy):
             plus_di_smooth[i] = (plus_di_smooth[i-1] * (period - 1) + plus_dm[i]) / period
             minus_di_smooth[i] = (minus_di_smooth[i-1] * (period - 1) + minus_dm[i]) / period
         
-        # DI
-        plus_di = 100 * plus_di_smooth / atr_smooth
-        minus_di = 100 * minus_di_smooth / atr_smooth
-        
-        # DX
-        dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di + 1e-10)
+        # DI (защита от деления на ноль)
+        # Заменяем нулевые значения atr_smooth на маленькое число
+        atr_smooth_safe = np.where(atr_smooth > 0, atr_smooth, 1e-10)
+        plus_di = 100 * plus_di_smooth / atr_smooth_safe
+        minus_di = 100 * minus_di_smooth / atr_smooth_safe
+
+        # DX (защита от деления на ноль)
+        dx_denom = plus_di + minus_di
+        dx = np.where(dx_denom > 0, 100 * np.abs(plus_di - minus_di) / dx_denom, 0.0)
         
         # ADX (сглаженный DX)
         adx = np.mean(dx[-period:])
