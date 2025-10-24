@@ -339,6 +339,8 @@ class BotController:
       self.market_analyzer = MarketAnalyzer()
       logger.info("✓ Анализатор рынка инициализирован")
 
+
+
       # Проверяем подключение к бирже
       server_time = await rest_client.get_server_time()
       logger.info(f"✓ Подключение к Bybit успешно. Серверное время: {server_time}")
@@ -884,6 +886,10 @@ class BotController:
         # Если screener выключен - статический список
         self.symbols = settings.get_trading_pairs_list()
         logger.info(f"✓ Screener отключен, статический список: {len(self.symbols)} пар")
+
+      # Инициализируем анализатор стакана
+      self.orderbook_analyzer = OrderBookAnalyzer(self.symbols)
+      logger.info("✓ Анализатор стакана инициализирован")
 
       # ========== 7.5 НОВАЯ СЕКЦИЯ: ИНИЦИАЛИЗАЦИЯ ДЛЯ ФИНАЛЬНЫХ ПАР ==========
       logger.info("=" * 80)
@@ -1865,11 +1871,37 @@ class BotController:
               continue
 
             # Получаем снимок стакана
-            orderbook_snapshot  = ob_manager.get_snapshot()
-            if not orderbook_snapshot :
+            orderbook_snapshot = ob_manager.get_snapshot()
+            if not orderbook_snapshot:
               if cycle_number <= 5:
                 logger.info(f"  ⏭️  [{symbol}] OrderBook не готов или невалиден, пропускаем")
               continue
+
+            # ДЕБАГ: Проверим snapshot детально
+            if cycle_number <= 5:
+              best_bid = orderbook_snapshot.best_bid
+              best_ask = orderbook_snapshot.best_ask
+              mid_price_val = orderbook_snapshot.mid_price
+
+              logger.info(
+                f"  🔍 [{symbol}] OrderBook snapshot debug: "
+                f"bids_len={len(orderbook_snapshot.bids)}, "
+                f"asks_len={len(orderbook_snapshot.asks)}"
+              )
+              logger.info(
+                f"  🔍 [{symbol}] Prices: "
+                f"best_bid={best_bid}, "
+                f"best_ask={best_ask}, "
+                f"mid_price={mid_price_val}"
+              )
+
+              # Проверим логику вручную
+              if best_bid and best_ask:
+                manual_mid = (best_bid + best_ask) / 2
+                logger.info(f"  🔍 [{symbol}] Manual mid_price calculation: {manual_mid}")
+              else:
+                logger.warning(f"  ⚠️  [{symbol}] best_bid or best_ask is falsy!")
+                logger.warning(f"  ⚠️  [{symbol}] best_bid bool: {bool(best_bid)}, best_ask bool: {bool(best_ask)}")
 
             # Получаем свечи
             candles = candle_manager.get_candles()
@@ -1882,9 +1914,25 @@ class BotController:
               continue
 
             current_price = orderbook_snapshot.mid_price
+            # ДЕБАГ: Проверим значение current_price прямо перед проверкой
             if cycle_number <= 5:
-              logger.info(f"  ⏭️  [{symbol}] Нет текущей цены, пропускаем")
-              continue
+              logger.info(
+                f"  🔍 [{symbol}] current_price ДО проверки: {current_price}, "
+                f"type={type(current_price)}, is_None={current_price is None}"
+              )
+
+            if current_price is None:
+
+
+              if cycle_number <= 5:
+                logger.info(
+                  f"  ⏭️  [{symbol}] Нет текущей цены: "
+                  f"bids={len(orderbook_snapshot.bids)}, "
+                  f"asks={len(orderbook_snapshot.asks)}, "
+                  f"best_bid={orderbook_snapshot.best_bid}, "
+                  f"best_ask={orderbook_snapshot.best_ask}"
+                )
+                continue
 
             # ДЕБАГ: Успешная подготовка данных
             if cycle_number <= 5:
@@ -1918,13 +1966,16 @@ class BotController:
               # Вариант 2: Из OrderBook Feature Extractor
               market_volatility = self.orderbook_features.orderbook_volatility
 
+            # Безопасное форматирование volatility
+            volatility_str = f"{market_volatility:.4f}" if market_volatility is not None else "N/A"
+
             logger.debug(
               f"[{symbol}] Market Data: "
               f"price={current_price:.2f}, "
               f"candles={len(candles)}, "
               f"spread={orderbook_metrics.spread:.2f}bps, "
               f"imbalance={orderbook_metrics.imbalance:.3f}, "
-              f"volatility={market_volatility if market_metrics else None:.4f}"
+              f"volatility={volatility_str}"
             )
             # ============================================================
             # ШАГ 2: ПОЛУЧЕНИЕ ПРЕДЫДУЩИХ СОСТОЯНИЙ
@@ -3241,9 +3292,18 @@ class BotController:
         message: Сообщение от WebSocket
     """
     try:
-        symbol = message.get("s")
+        # symbol = message.get("s")
+        topic = message.get("topic", "")
+        symbol = message.get("s")  # Пробуем получить из поля 's'
+
+        # Если 's' нет, извлекаем из topic
+        if not symbol and topic:
+          # topic формат: "orderbook.200.APRUSDT"
+          parts = topic.split(".")
+          if len(parts) >= 3:
+            symbol = parts[2]
         msg_type = message.get("type")
-        topic = message.get("topic", "unknown")
+        # topic = message.get("topic", "unknown")
         data = message.get("data", {})
 
         # ДЕБАГ: Логирование входящего сообщения
@@ -3261,6 +3321,7 @@ class BotController:
 
         if not symbol or symbol not in self.orderbook_managers:
             logger.warning(f"⚠️ Символ {symbol} не найден в orderbook_managers или пустой")
+            logger.info(f"   Доступные символы: {list(self.orderbook_managers.keys())}")
             return
 
         manager = self.orderbook_managers[symbol]
@@ -3849,9 +3910,19 @@ class BotController:
       logger.info(f"📊 Тип сигнала: {signal.signal_type.value}")
       logger.info(f"💯 Combined Confidence: {integrated_signal.combined_confidence:.3f}")
       logger.info(f"⭐ Combined Quality: {integrated_signal.combined_quality_score:.3f}")
-      logger.info(f"📈 Entry Price: ${signal.entry_price:.2f}")
-      logger.info(f"🛡️ Stop Loss: ${signal.stop_loss:.2f} ({signal.stop_loss_pct:.2f}%)")
-      logger.info(f"🎯 Take Profit: ${signal.take_profit:.2f} ({signal.take_profit_pct:.2f}%)")
+      logger.info(f"📈 Entry Price: ${signal.price:.2f}")
+      if integrated_signal.recommended_stop_loss is not None:
+        stop_loss_pct = abs((integrated_signal.recommended_stop_loss - signal.price) / signal.price * 100)
+        logger.info(f"🛡️ Stop Loss: ${integrated_signal.recommended_stop_loss:.2f} ({stop_loss_pct:.2f}%)")
+      else:
+        logger.info(f"🛡️ Stop Loss: Not set")
+
+        # Take Profit (с безопасной обработкой)
+      if integrated_signal.recommended_take_profit is not None:
+        take_profit_pct = abs((integrated_signal.recommended_take_profit - signal.price) / signal.price * 100)
+        logger.info(f"🎯 Take Profit: ${integrated_signal.recommended_take_profit:.2f} ({take_profit_pct:.2f}%)")
+      else:
+        logger.info(f"🎯 Take Profit: Not set")
       logger.info(f"💰 Position Multiplier: {integrated_signal.recommended_position_multiplier:.2f}x")
       logger.info(f"⚠️ Risk Level: {integrated_signal.risk_level}")
 
