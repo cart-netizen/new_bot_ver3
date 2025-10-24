@@ -1693,9 +1693,26 @@ class BotController:
     - Feature flags позволяют гибко управлять компонентами
     - Все критические операции имеют try-catch обработку
     """
-    from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
-    from datetime import datetime
-    import traceback
+    # ДЕБАГ: Логирование в самом начале метода
+    try:
+      logger.info("=" * 80)
+      logger.info("🚀 ANALYSIS LOOP МЕТОД ВЫЗВАН - НАЧАЛО ВЫПОЛНЕНИЯ")
+      logger.info(f"   self.status = {self.status}")
+      logger.info(f"   self.symbols = {len(self.symbols) if hasattr(self, 'symbols') else 'НЕТ'}")
+      logger.info("=" * 80)
+    except Exception as init_error:
+      logger.error(f"ОШИБКА ПРИ НАЧАЛЬНОМ ЛОГИРОВАНИИ: {init_error}", exc_info=True)
+      return
+
+    try:
+      from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
+      from datetime import datetime
+      import traceback
+
+      logger.info("✅ Импорты выполнены успешно")
+    except Exception as import_error:
+      logger.error(f"ОШИБКА ПРИ ИМПОРТЕ: {import_error}", exc_info=True)
+      return
 
     # ========================================================================
     # БЛОК 1: ИНИЦИАЛИЗАЦИЯ И ПОДГОТОВКА
@@ -1782,13 +1799,26 @@ class BotController:
     # БЛОК 2: ГЛАВНЫЙ ЦИКЛ АНАЛИЗА
     # ========================================================================
 
+    logger.info(f"🔄 Проверка статуса перед циклом: self.status = {self.status}, BotStatus.RUNNING = {BotStatus.RUNNING}")
+    logger.info(f"🔄 Статус совпадает: {self.status == BotStatus.RUNNING}")
+
     while self.status == BotStatus.RUNNING:
       cycle_start = time.time()
       cycle_number += 1
 
+      # ДЕБАГ: Логирование каждого цикла (первые 5 циклов)
+      if cycle_number <= 5:
+        logger.info(f"🔄 Цикл #{cycle_number} начался")
+
       if not self.websocket_manager.is_all_connected():
+        if cycle_number <= 5:
+          logger.info(f"⏳ Цикл #{cycle_number}: WebSocket не подключен, ждём...")
         await asyncio.sleep(1)
         continue
+
+      # ДЕБАГ: Логирование при первом успешном прохождении проверки WebSocket
+      if cycle_number == 1 or (cycle_number <= 5):
+        logger.info(f"✅ Цикл #{cycle_number}: WebSocket подключен, начинаем анализ {len(self.symbols)} символов")
 
       try:
         # async with self.analysis_lock:
