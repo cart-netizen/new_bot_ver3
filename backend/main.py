@@ -1189,6 +1189,11 @@ class BotController:
       else:
         logger.info("✅ Списки символов совпадают!")
 
+      self.watchdog_task = asyncio.create_task(
+        self._analysis_loop_watchdog()
+      )
+      logger.info("✓ Analysis Loop Watchdog запущен")
+
       self.status = BotStatus.RUNNING
       logger.info("=" * 80)
       logger.info("БОТ УСПЕШНО ЗАПУЩЕН (ML-READY)")
@@ -1281,69 +1286,151 @@ class BotController:
         logger.error(f"Traceback:\n{traceback.format_exc()}")
         await asyncio.sleep(interval)
 
-
   async def _load_historical_candles(self):
-    """Загрузка исторических свечей для всех символов."""
-    logger.info("Загрузка исторических свечей...")
+    """
+    Загрузка исторических свечей для всех символов.
 
-    for symbol in self.symbols:
-      try:
-        # ИСПРАВЛЕНО: get_kline (единственное число!)
-        candles_data = await rest_client.get_kline(
-          symbol=symbol,
-          interval="1",  # 1 минута
-          limit=200
+    Улучшения:
+    - Параллельная загрузка с ограничением concurrency
+    - Timeout для каждого запроса
+    - Детальное логирование прогресса
+    - Retry logic при ошибках
+    - Graceful degradation (продолжаем даже если какие-то символы не загрузились)
+    """
+    logger.info("=" * 80)
+    logger.info("ЗАГРУЗКА ИСТОРИЧЕСКИХ СВЕЧЕЙ")
+    logger.info(f"Всего символов: {len(self.symbols)}")
+    logger.info("=" * 80)
+
+    # Семафор для ограничения параллельных запросов
+    # Bybit API имеет rate limit ~50 requests/second
+    semaphore = asyncio.Semaphore(5)  # Максимум 5 параллельных запросов
+
+    # Счетчики
+    loaded_count = 0
+    failed_symbols = []
+
+    async def load_symbol_candles(symbol: str, index: int) -> bool:
+      """
+      Загрузка свечей для одного символа.
+
+      Returns:
+          True если загрузка успешна, False если ошибка
+      """
+      nonlocal loaded_count
+
+      async with semaphore:
+        retry_count = 0
+        max_retries = 3
+
+        while retry_count < max_retries:
+          try:
+            # Timeout для запроса - 10 секунд
+            candles_data = await asyncio.wait_for(
+              rest_client.get_kline(
+                symbol=symbol,
+                interval="1",
+                limit=200
+              ),
+              timeout=10.0
+            )
+
+            # Проверяем, что получили данные
+            if not candles_data or len(candles_data) == 0:
+              logger.warning(
+                f"[{index + 1}/{len(self.symbols)}] {symbol} | "
+                f"⚠️  Получен пустой ответ от API"
+              )
+              return False
+
+            # Добавляем в CandleManager
+            candle_manager = self.candle_managers[symbol]
+            await candle_manager.load_historical_data(candles_data)
+
+            # Логируем успех
+            loaded_count += 1
+            logger.info(
+              f"[{index + 1}/{len(self.symbols)}] {symbol} | "
+              f"✓ Загружено {len(candles_data)} свечей "
+              f"(прогресс: {loaded_count}/{len(self.symbols)})"
+            )
+
+            return True
+
+          except asyncio.TimeoutError:
+            retry_count += 1
+            logger.warning(
+              f"[{index + 1}/{len(self.symbols)}] {symbol} | "
+              f"⏱️  Timeout (попытка {retry_count}/{max_retries})"
+            )
+
+            if retry_count < max_retries:
+              # Экспоненциальная задержка: 1s, 2s, 4s
+              await asyncio.sleep(2 ** (retry_count - 1))
+
+          except Exception as e:
+            retry_count += 1
+            logger.warning(
+              f"[{index + 1}/{len(self.symbols)}] {symbol} | "
+              f"❌ Ошибка: {e} (попытка {retry_count}/{max_retries})"
+            )
+
+            if retry_count < max_retries:
+              await asyncio.sleep(2)
+
+        # Если все попытки исчерпаны
+        logger.error(
+          f"[{index + 1}/{len(self.symbols)}] {symbol} | "
+          f"❌ Не удалось загрузить после {max_retries} попыток"
+        )
+        failed_symbols.append(symbol)
+        return False
+
+    # Создаем задачи для параллельной загрузки
+    tasks = [
+      load_symbol_candles(symbol, i)
+      for i, symbol in enumerate(self.symbols)
+    ]
+
+    # Запускаем все задачи параллельно
+    try:
+      # Общий timeout для всей загрузки - 2 минуты
+      results = await asyncio.wait_for(
+        asyncio.gather(*tasks, return_exceptions=True),
+        timeout=120.0
+      )
+
+      # Подсчитываем результаты
+      success_count = sum(1 for r in results if r is True)
+
+      logger.info("=" * 80)
+      logger.info(f"✓ ЗАГРУЗКА ЗАВЕРШЕНА: {success_count}/{len(self.symbols)} успешно")
+
+      if failed_symbols:
+        logger.warning(
+          f"⚠️  Не удалось загрузить {len(failed_symbols)} символов: "
+          f"{', '.join(failed_symbols[:5])}"
+          f"{'...' if len(failed_symbols) > 5 else ''}"
         )
 
-        # Добавляем в CandleManager
-        candle_manager = self.candle_managers[symbol]
-        await candle_manager.load_historical_data(candles_data)
+      logger.info("=" * 80)
 
-        logger.debug(
-          f"{symbol} | Загружено {len(candles_data)} исторических свечей"
-        )
+    except asyncio.TimeoutError:
+      logger.error(
+        f"❌ КРИТИЧЕСКАЯ ОШИБКА: Общий timeout загрузки (120s) истек! "
+        f"Загружено: {loaded_count}/{len(self.symbols)}"
+      )
 
-      except Exception as e:
-        logger.warning(f"{symbol} | Ошибка загрузки свечей: {e}")
+      # Не останавливаем бота - продолжаем с тем, что загрузилось
+      logger.warning("⚠️  Продолжаем работу с загруженными данными...")
 
-  # async def _candle_update_loop(self):
-  #   """Цикл обновления свечей (каждую минуту)."""
-  #   logger.info("Запущен цикл обновления свечей")
-  #
-  #   while self.status == BotStatus.RUNNING:
-  #     try:
-  #       for symbol in self.symbols:
-  #         try:
-  #           # Получаем последнюю свечу
-  #           candles_data = await rest_client.get_kline(
-  #             symbol=symbol,
-  #             interval="1",
-  #             limit=2  # Последние 2 свечи (закрытая + текущая)
-  #           )
-  #
-  #           if candles_data and len(candles_data) >= 2:
-  #             candle_manager = self.candle_managers[symbol]
-  #
-  #             # Обновляем закрытую свечу
-  #             closed_candle = candles_data[-2]
-  #             await candle_manager.update_candle(closed_candle, is_closed=True)
-  #
-  #             # Обновляем текущую свечу
-  #             current_candle = candles_data[-1]
-  #             await candle_manager.update_candle(current_candle, is_closed=False)
-  #
-  #         except Exception as e:
-  #           logger.error(f"{symbol} | Ошибка обновления свечи: {e}")
-  #
-  #       # Обновляем каждые 5 секунд
-  #       await asyncio.sleep(5)
-  #
-  #     except asyncio.CancelledError:
-  #       logger.info("Цикл обновления свечей отменен")
-  #       break
-  #     except Exception as e:
-  #       logger.error(f"Ошибка в цикле обновления свечей: {e}")
-  #       await asyncio.sleep(10)
+    except Exception as e:
+      logger.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА загрузки свечей: {e}")
+      import traceback
+      logger.error(f"Traceback:\n{traceback.format_exc()}")
+
+      # Не останавливаем бота - продолжаем с тем, что загрузилось
+      logger.warning("⚠️  Продолжаем работу с загруженными данными...")
 
   async def _candle_update_loop(self):
     """
@@ -1695,7 +1782,7 @@ class BotController:
     # БЛОК 2: ГЛАВНЫЙ ЦИКЛ АНАЛИЗА
     # ========================================================================
 
-    while self.running:
+    while self.status == BotStatus.RUNNING:
       cycle_start = time.time()
       cycle_number += 1
 
@@ -2730,6 +2817,33 @@ class BotController:
     # logger.info(f"   ├─ Предупреждений: {self.stats.get('warnings', 0)}")
     # logger.info(f"   └─ Ошибок: {self.stats.get('errors', 0)}")
     # logger.info("=" * 80)
+
+  async def _analysis_loop_watchdog(self):
+    """
+    Watchdog для мониторинга работы analysis loop.
+    Если loop зависает - логирует предупреждение.
+    """
+    logger.info("🐕 Запущен Analysis Loop Watchdog")
+
+    last_iteration_time = asyncio.get_event_loop().time()
+    watchdog_interval = 30  # Проверяем каждые 30 секунд
+    max_stall_time = 60  # Максимум 60 секунд без итераций
+
+    while self.status == BotStatus.RUNNING:
+      await asyncio.sleep(watchdog_interval)
+
+      current_time = asyncio.get_event_loop().time()
+      elapsed = current_time - last_iteration_time
+
+      if elapsed > max_stall_time:
+        logger.error(
+          f"🚨 ANALYSIS LOOP STALLED! "
+          f"Прошло {elapsed:.1f}s без итераций"
+        )
+        logger.error("Проверьте:")
+        logger.error("  1. WebSocket соединения")
+        logger.error("  2. Наличие данных orderbook/candles")
+        logger.error("  3. Зависшие операции в loop")
 
 
   async def stop(self):

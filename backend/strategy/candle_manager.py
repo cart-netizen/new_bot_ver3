@@ -116,87 +116,71 @@ class CandleManager:
       logger.error(f"{self.symbol} | Ошибка загрузки исторических свечей: {e}")
       raise
 
-  async def update_candle(self, candle_data, is_closed: bool = False):
+  async def update_candle(
+        self,
+        candle_data: List,
+        is_closed: bool = False
+    ) -> None:
       """
-      Обновление свечи.
+      Обновление свечи (закрытой или текущей).
 
       Args:
-          candle_data: Данные свечи (список OHLCV или словарь)
-          is_closed: Флаг закрытой свечи
+          candle_data: Данные свечи [timestamp, open, high, low, close, volume]
+          is_closed: True если свеча закрыта
       """
       try:
-        # ============================================================
-        # ОПРЕДЕЛЕНИЕ ФОРМАТА ДАННЫХ
-        # ============================================================
-        if isinstance(candle_data, list):
-          # Формат: [timestamp, open, high, low, close, volume, turnover]
-          if len(candle_data) < 6:
-            logger.error(f"Некорректный формат списка: {candle_data}")
-            return
+        candle = Candle(
+          timestamp=int(candle_data[0]),
+          open=float(candle_data[1]),
+          high=float(candle_data[2]),
+          low=float(candle_data[3]),
+          close=float(candle_data[4]),
+          volume=float(candle_data[5])
+        )
 
-          candle = Candle(
-            timestamp=int(candle_data[0]),
-            open=float(candle_data[1]),
-            high=float(candle_data[2]),
-            low=float(candle_data[3]),
-            close=float(candle_data[4]),
-            volume=float(candle_data[5]),
-
-          )
-
-        elif isinstance(candle_data, dict):
-          # Формат: {'timestamp': ..., 'open': ..., ...}
-          candle = Candle(
-            timestamp=int(candle_data.get('timestamp', 0)),
-            open=float(candle_data.get('open', 0)),
-            high=float(candle_data.get('high', 0)),
-            low=float(candle_data.get('low', 0)),
-            close=float(candle_data.get('close', 0)),
-            volume=float(candle_data.get('volume', 0)),
-
-          )
-
-        else:
-          logger.error(
-            f"Неизвестный формат данных свечи: {type(candle_data)}"
-          )
-          return
-
-        # ============================================================
-        # ОБНОВЛЕНИЕ СВЕЧИ В МЕНЕДЖЕРЕ
-        # ============================================================
         if is_closed:
           # Закрытая свеча - добавляем в историю
           self._add_candle(candle)
+
+          # Если это была текущая свеча - сбрасываем
+          if (self.current_candle and
+              self.current_candle.timestamp == candle.timestamp):
+            self.current_candle = None
+
           logger.debug(
-            f"[{self.symbol}] Закрытая свеча добавлена: "
-            f"timestamp={candle.timestamp}, close={candle.close:.2f}"
+            f"{self.symbol} | Закрытая свеча добавлена: "
+            f"timestamp={candle.timestamp}, close={candle.close}"
           )
         else:
-          # Текущая свеча - обновляем последнюю
-          if self.candles:
-            self.candles[-1] = candle
-          else:
-            self._add_candle(candle)
+          # Текущая незакрытая свеча
+          self.current_candle = candle
 
           logger.debug(
-            f"[{self.symbol}] Текущая свеча обновлена: "
-            f"close={candle.close:.2f}"
+            f"{self.symbol} | Текущая свеча обновлена: "
+            f"timestamp={candle.timestamp}, close={candle.close}"
           )
 
-      except Exception as e:
+      except (IndexError, ValueError, TypeError) as e:
         logger.error(
-          f"[{self.symbol}] Ошибка обновления свечи: {e}",
-          exc_info=True
+          f"{self.symbol} | Ошибка обновления свечи: {e}, "
+          f"data={candle_data}"
         )
 
-  def _add_candle(self, candle: Candle):
-    """Добавление свечи в историю с ограничением размера."""
+  def _add_candle(self, candle: Candle) -> None:
+    """
+    Добавление свечи в историю.
+
+    ИСПРАВЛЕНИЕ: deque с maxlen автоматически удаляет старые элементы,
+    поэтому не нужно вручную вызывать pop()
+    """
     self.candles.append(candle)
 
-    # Ограничиваем размер истории
-    if len(self.candles) > self.max_candles:
-      self.candles.pop(0)
+    # Логирование только если достигли лимита
+    if len(self.candles) == self.max_candles:
+      logger.debug(
+        f"{self.symbol} | История достигла max_candles={self.max_candles}, "
+        f"старые свечи автоматически удаляются"
+      )
 
   def get_candles(self, count: Optional[int] = None) -> List[Candle]:
     """

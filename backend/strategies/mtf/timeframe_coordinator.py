@@ -485,7 +485,9 @@ class TimeframeCoordinator:
         """
         Загрузить исторические свечи через REST API.
 
-        ✅ ИСПРАВЛЕНО: Правильная конвертация таймфрейма в формат Bybit
+        ✅ ИСПРАВЛЕНО:
+        - Правильная конвертация таймфрейма в формат Bybit
+        - Конвертация данных в формат list для CandleManager
 
         Args:
             candle_manager: Менеджер свечей для обновления
@@ -496,11 +498,11 @@ class TimeframeCoordinator:
         Returns:
             True если загрузка успешна, False иначе
         """
+        global logger
         try:
-            # ✅ ИСПРАВЛЕНИЕ: Конвертируем timeframe в формат Bybit API
+            # Конвертируем timeframe в формат Bybit API
             bybit_interval = self._timeframe_to_bybit_interval(timeframe)
 
-            # Импорт внутри метода, чтобы избежать циклических зависимостей
             from exchange.rest_client import rest_client
             from core.logger import get_logger
 
@@ -509,7 +511,7 @@ class TimeframeCoordinator:
             # Загружаем через REST API с правильным интервалом
             candles_data = await rest_client.get_kline(
                 symbol=symbol,
-                interval=bybit_interval,  # ✅ "1", "5", "15", "60" вместо "1m", "5m", etc.
+                interval=bybit_interval,  # "1", "5", "15", "60" etc.
                 limit=count,
             )
 
@@ -522,23 +524,14 @@ class TimeframeCoordinator:
                 f"(API interval: {bybit_interval})"
             )
 
-            # ✅ ФОРМАТ ДАННЫХ: Bybit возвращает список списков
-            # Формат каждой свечи: [timestamp, open, high, low, close, volume, turnover]
+            # ✅ ИСПРАВЛЕНИЕ: Bybit возвращает список списков - используем напрямую!
+            # Формат: [timestamp, open, high, low, close, volume, turnover]
             for kline in candles_data:
                 try:
-                    # Парсим данные из списка
-                    candle_data = {
-                        'timestamp': int(kline[0]),
-                        'open': float(kline[1]),
-                        'high': float(kline[2]),
-                        'low': float(kline[3]),
-                        'close': float(kline[4]),
-                        'volume': float(kline[5])
-                    }
-
-                    # Обновляем CandleManager
+                    # ✅ ПРАВИЛЬНО: Передаем список напрямую в CandleManager
+                    # CandleManager.update_candle ожидает List[timestamp, o, h, l, c, v]
                     await candle_manager.update_candle(
-                        candle_data=candle_data,
+                        candle_data=kline,  # ← Передаем список как есть!
                         is_closed=True  # Исторические свечи всегда закрыты
                     )
 
@@ -572,8 +565,11 @@ class TimeframeCoordinator:
         """
         Обновить свечи напрямую из API.
 
-        ✅ ИСПРАВЛЕНО: Правильная конвертация таймфрейма
+        ✅ ИСПРАВЛЕНО:
+        - Правильная конвертация таймфрейма
+        - Конвертация dict → list для CandleManager
         """
+        global logger
         try:
             from exchange.rest_client import rest_client
             from core.logger import get_logger
@@ -582,8 +578,11 @@ class TimeframeCoordinator:
 
             # Получаем CandleManager
             if symbol not in self.candle_managers:
+                logger.warning(f"{symbol} не найден в candle_managers")
                 return False
+
             if timeframe not in self.candle_managers[symbol]:
+                logger.warning(f"{symbol} {timeframe.value} не найден")
                 return False
 
             manager = self.candle_managers[symbol][timeframe]
@@ -594,9 +593,7 @@ class TimeframeCoordinator:
                 logger.warning(f"Нет существующих свечей для {symbol} {timeframe.value}")
                 return False
 
-            last_candle = existing_candles[-1]
-
-            # ✅ ИСПРАВЛЕНИЕ: Конвертируем timeframe
+            # Конвертируем timeframe в формат Bybit
             bybit_interval = self._timeframe_to_bybit_interval(timeframe)
 
             # Загружаем новые свечи
@@ -604,58 +601,71 @@ class TimeframeCoordinator:
                 symbol=symbol,
                 interval=bybit_interval,  # ✅ Правильный формат
                 limit=10,
-                # start_time=last_candle.timestamp  # Опционально
             )
 
             if not candles_data:
+                logger.warning(f"API вернул пустой результат для {symbol} {timeframe.value}")
                 return False
 
-            # Обновляем свечи
+            # ✅ ИСПРАВЛЕНИЕ: Обновляем свечи правильным форматом
+            updated_count = 0
+
             for kline in candles_data:
                 try:
-                    candle_data = {
-                        'timestamp': int(kline[0]),
-                        'open': float(kline[1]),
-                        'high': float(kline[2]),
-                        'low': float(kline[3]),
-                        'close': float(kline[4]),
-                        'volume': float(kline[5])
-                    }
-
+                    # ✅ ПРАВИЛЬНО: Передаем список напрямую
+                    # Формат от Bybit: [timestamp, open, high, low, close, volume, ...]
                     await manager.update_candle(
-                        candle_data=candle_data,
+                        candle_data=kline,  # ← Список, не словарь!
                         is_closed=True
                     )
+                    updated_count += 1
 
                 except (IndexError, ValueError, TypeError) as e:
-                    logger.warning(f"Ошибка парсинга обновления: {e}")
+                    logger.warning(
+                        f"⚠️ Ошибка парсинга обновления {symbol} {timeframe.value}: {e}"
+                    )
                     continue
 
             logger.debug(
-                f"🔄 Обновлено {len(candles_data)} свечей для {symbol} {timeframe.value}"
+                f"🔄 Обновлено {updated_count}/{len(candles_data)} свечей "
+                f"для {symbol} {timeframe.value}"
             )
 
-            return True
+            return updated_count > 0
 
         except Exception as e:
-            logger.error(f"Ошибка обновления {symbol} {timeframe.value}: {e}")
+            logger.error(
+                f"❌ Ошибка обновления {symbol} {timeframe.value}: {e}",
+                exc_info=True
+            )
             return False
 
-    async def _aggregate_from_lower_timeframe(  # ✅ ДОБАВИТЬ async
+    async def _aggregate_from_lower_timeframe(
         self,
         symbol: str,
         target_timeframe: Timeframe
     ) -> bool:
-        """Построить свечи высшего таймфрейма из низшего."""
+        """
+        Построить свечи высшего таймфрейма из низшего.
+
+        ✅ ИСПРАВЛЕНО: Конвертация Candle объектов в list для update_candle
+        """
         try:
             source_timeframe = self.config.aggregation_mapping.get(target_timeframe)
 
             if not source_timeframe:
+                logger.warning(
+                    f"Нет маппинга агрегации для {target_timeframe.value}"
+                )
                 return False
 
             source_candles = self.get_candles(symbol, source_timeframe)
 
             if not source_candles:
+                logger.warning(
+                    f"Нет исходных свечей {symbol} {source_timeframe.value} "
+                    f"для агрегации в {target_timeframe.value}"
+                )
                 return False
 
             aggregation_factor = self._get_aggregation_factor(
@@ -663,6 +673,9 @@ class TimeframeCoordinator:
             )
 
             if aggregation_factor <= 1:
+                logger.warning(
+                    f"Некорректный коэффициент агрегации: {aggregation_factor}"
+                )
                 return False
 
             aggregated_candles = self._aggregate_candles(
@@ -670,40 +683,66 @@ class TimeframeCoordinator:
                 aggregation_factor
             )
 
+            if not aggregated_candles:
+                logger.warning(
+                    f"Агрегация не дала результатов для {symbol} "
+                    f"{source_timeframe.value} → {target_timeframe.value}"
+                )
+                return False
+
+            # Создаем manager если не существует
             if target_timeframe not in self.candle_managers[symbol]:
                 self.candle_managers[symbol][target_timeframe] = CandleManager(
                     symbol=symbol,
                     timeframe=target_timeframe.value,
-                    max_candles=self.config.candles_per_timeframe.get(target_timeframe, 200)
+                    max_candles=self.config.candles_per_timeframe.get(
+                        target_timeframe, 200
+                    )
                 )
 
             target_manager = self.candle_managers[symbol][target_timeframe]
 
-            # Теперь await работает
+            # ✅ ИСПРАВЛЕНИЕ: Конвертируем Candle объект в список
+            updated_count = 0
+
             for candle in aggregated_candles:
-                await target_manager.update_candle(
-                    candle_data={
-                        'timestamp': candle.timestamp,
-                        'open': candle.open,
-                        'high': candle.high,
-                        'low': candle.low,
-                        'close': candle.close,
-                        'volume': candle.volume
-                    },
-                    is_closed=True
-                )
+                try:
+                    # ✅ ПРАВИЛЬНО: Конвертируем в формат [timestamp, o, h, l, c, v]
+                    candle_data_list = [
+                        candle.timestamp,
+                        candle.open,
+                        candle.high,
+                        candle.low,
+                        candle.close,
+                        candle.volume
+                    ]
+
+                    await target_manager.update_candle(
+                        candle_data=candle_data_list,  # ← Список, не словарь!
+                        is_closed=True
+                    )
+                    updated_count += 1
+
+                except Exception as e:
+                    logger.warning(
+                        f"⚠️ Ошибка добавления агрегированной свечи: {e}"
+                    )
+                    continue
 
             self.aggregations_performed += 1
 
             logger.debug(
-                f"Агрегация {symbol}: {source_timeframe.value} → {target_timeframe.value}, "
-                f"свечей: {len(aggregated_candles)}"
+                f"✅ Агрегация {symbol}: {source_timeframe.value} → {target_timeframe.value}, "
+                f"свечей: {updated_count}/{len(aggregated_candles)}"
             )
 
-            return True
+            return updated_count > 0
 
         except Exception as e:
-            logger.error(f"Ошибка агрегации {symbol} {target_timeframe.value}: {e}")
+            logger.error(
+                f"❌ Ошибка агрегации {symbol} {target_timeframe.value}: {e}",
+                exc_info=True
+            )
             return False
 
     def _aggregate_candles(
