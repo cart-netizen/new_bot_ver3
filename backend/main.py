@@ -2745,30 +2745,25 @@ class BotController:
             #       f"Символ пропущен после {max_consecutive_errors} ошибок подряд"
             #     )
 
-        # await asyncio.sleep(1)
-
             continue  # Следующий символ
 
-        # self.stats['analysis_cycles'] += 1
-
-        # Периодическое логирование статистики (каждые 100 циклов)
-        # if cycle_number % 100 == 0:
-        #   self._log_analysis_statistics()
-
-          # Расчет времени выполнения цикла
-        # cycle_elapsed = time.time() - cycle_start
+        # Расчет времени выполнения цикла
+        cycle_elapsed = time.time() - cycle_start
 
         # Warning если цикл занял слишком много времени
-        # if cycle_elapsed > settings.ANALYSIS_INTERVAL:
-        #   logger.warning(
-        #     f"⏱️ Цикл анализа #{cycle_number} занял {cycle_elapsed:.2f}с "
-        #     f"(> интервал {settings.ANALYSIS_INTERVAL}с)"
-        #   )
+        if cycle_elapsed > settings.ANALYSIS_INTERVAL:
+          logger.warning(
+            f"⏱️ Цикл анализа #{cycle_number} занял {cycle_elapsed:.2f}с "
+            f"(> интервал {settings.ANALYSIS_INTERVAL}с)"
+          )
 
-        # # Ожидание до следующего цикла
-        # sleep_time = max(0, settings.ANALYSIS_INTERVAL - cycle_elapsed)
-        # if sleep_time > 0:
-        # await asyncio.sleep(1)
+        # Ожидание до следующего цикла
+        sleep_time = max(0, settings.ANALYSIS_INTERVAL - cycle_elapsed)
+        if sleep_time > 0:
+          await asyncio.sleep(sleep_time)
+        else:
+          # Минимальная задержка для уступки управления event loop
+          await asyncio.sleep(0.01)
 
       except asyncio.CancelledError:
         # Graceful shutdown
@@ -2780,43 +2775,41 @@ class BotController:
         logger.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
         logger.error(f"❌ Тип ошибки: {type(e).__name__}")
         logger.error(f"❌ Стек вызовов:\n{traceback.format_exc()}")
-        logger.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА в главном analysis loop: {e}")
-        logger.error(traceback.format_exc())
 
-    #     self.stats['errors'] += 1
-    #
-    #     # Отправка критического алерта
-    #     if settings.ENABLE_CRITICAL_ALERTS:
-    #       await self._send_critical_alert(
-    #         "Критическая ошибка в главном цикле",
-    #         f"Error: {str(e)}"
-    #       )
-    #
-    #     # Небольшая задержка перед следующей попыткой
-    #     await asyncio.sleep(5)
-    #
-    # # ========================================================================
-    # # ЗАВЕРШЕНИЕ LOOP
-    # # ========================================================================
-    #
-    # logger.warning("⚠️ Analysis Loop остановлен")
-    # logger.info("=" * 80)
-    # logger.info("📊 ФИНАЛЬНАЯ СТАТИСТИКА РАБОТЫ")
-    # logger.info("=" * 80)
-    # logger.info(f"   ├─ Циклов анализа: {self.stats.get('analysis_cycles', 0)}")
-    # logger.info(f"   ├─ Сигналов сгенерировано: {self.stats.get('signals_generated', 0)}")
-    # logger.info(f"   ├─ Сигналов выполнено: {self.stats.get('signals_executed', 0)}")
-    # logger.info(f"   ├─ Ордеров размещено: {self.stats.get('orders_placed', 0)}")
-    # logger.info(f"   ├─ Позиций открыто: {self.stats.get('positions_opened', 0)}")
-    # logger.info(f"   ├─ Позиций закрыто: {self.stats.get('positions_closed', 0)}")
-    # logger.info(f"   ├─ Общий PnL: {self.stats.get('total_pnl', 0.0):.2f} USDT")
-    # logger.info(f"   ├─ MTF сигналов: {self.stats.get('mtf_signals', 0)}")
-    # logger.info(f"   ├─ ML валидаций: {self.stats.get('ml_validations', 0)}")
-    # logger.info(f"   ├─ Манипуляций обнаружено: {self.stats.get('manipulations_detected', 0)}")
-    # logger.info(f"   ├─ Drift детекций: {self.stats.get('drift_detections', 0)}")
-    # logger.info(f"   ├─ Предупреждений: {self.stats.get('warnings', 0)}")
-    # logger.info(f"   └─ Ошибок: {self.stats.get('errors', 0)}")
-    # logger.info("=" * 80)
+        self.stats['errors'] += 1
+
+        # Отправка критического алерта
+        if settings.ENABLE_CRITICAL_ALERTS:
+          await self._send_critical_alert(
+            "Критическая ошибка в главном цикле",
+            f"Error: {str(e)}"
+          )
+
+        # Небольшая задержка перед следующей попыткой
+        await asyncio.sleep(5)
+
+    # ========================================================================
+    # ЗАВЕРШЕНИЕ LOOP
+    # ========================================================================
+
+    logger.warning("⚠️ Analysis Loop остановлен")
+    logger.info("=" * 80)
+    logger.info("📊 ФИНАЛЬНАЯ СТАТИСТИКА РАБОТЫ")
+    logger.info("=" * 80)
+    logger.info(f"   ├─ Циклов анализа: {self.stats.get('analysis_cycles', 0)}")
+    logger.info(f"   ├─ Сигналов сгенерировано: {self.stats.get('signals_generated', 0)}")
+    logger.info(f"   ├─ Сигналов выполнено: {self.stats.get('signals_executed', 0)}")
+    logger.info(f"   ├─ Ордеров размещено: {self.stats.get('orders_placed', 0)}")
+    logger.info(f"   ├─ Позиций открыто: {self.stats.get('positions_opened', 0)}")
+    logger.info(f"   ├─ Позиций закрыто: {self.stats.get('positions_closed', 0)}")
+    logger.info(f"   ├─ Общий PnL: {self.stats.get('total_pnl', 0.0):.2f} USDT")
+    logger.info(f"   ├─ MTF сигналов: {self.stats.get('mtf_signals', 0)}")
+    logger.info(f"   ├─ ML валидаций: {self.stats.get('ml_validations', 0)}")
+    logger.info(f"   ├─ Манипуляций обнаружено: {self.stats.get('manipulations_detected', 0)}")
+    logger.info(f"   ├─ Drift детекций: {self.stats.get('drift_detections', 0)}")
+    logger.info(f"   ├─ Предупреждений: {self.stats.get('warnings', 0)}")
+    logger.info(f"   └─ Ошибок: {self.stats.get('errors', 0)}")
+    logger.info("=" * 80)
 
   async def _analysis_loop_watchdog(self):
     """
