@@ -10,6 +10,7 @@ from functools import wraps
 from datetime import datetime
 
 from core.logger import get_logger
+from models.signal import SignalType, SignalStrength
 
 logger = get_logger(__name__)
 
@@ -168,6 +169,18 @@ def retry_async(
           return await func(*args, **kwargs)
         except exceptions as e:
           last_exception = e
+
+          # Проверяем на ошибки, которые не требуют повторных попыток
+          error_msg = str(e)
+
+          # Код 110043 "leverage not modified" - leverage уже установлен, это ОК
+          if "110043" in error_msg or "leverage not modified" in error_msg:
+            logger.debug(
+              f"{func.__name__}: Leverage уже установлен (код 110043), "
+              "повторные попытки не требуются"
+            )
+            raise last_exception  # Пробрасываем сразу, без retry
+
           if attempt < max_attempts:
             logger.warning(
               f"Попытка {attempt}/{max_attempts} не удалась для {func.__name__}: {e}. "
@@ -214,6 +227,16 @@ def retry_sync(
           return func(*args, **kwargs)
         except exceptions as e:
           last_exception = e
+          # Проверяем на ошибки, которые не требуют повторных попыток
+          error_msg = str(e)
+
+          # Код 110043 "leverage not modified" - leverage уже установлен, это ОК
+          if "110043" in error_msg or "leverage not modified" in error_msg:
+            logger.debug(
+              f"{func.__name__}: Leverage уже установлен (код 110043), "
+              "повторные попытки не требуются"
+            )
+            raise last_exception  # Пробрасываем сразу, без retry
           if attempt < max_attempts:
             logger.warning(
               f"Попытка {attempt}/{max_attempts} не удалась для {func.__name__}: {e}. "
