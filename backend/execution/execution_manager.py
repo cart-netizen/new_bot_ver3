@@ -395,8 +395,22 @@ class ExecutionManager:
             Optional[dict]: Результат с position_id и exchange_order_id или None
         """
         with trace_operation("open_position", symbol=symbol, side=side):
+            # ==========================================
+            # ШАГ 0: ВАЛИДАЦИЯ РАЗМЕРА ОРДЕРА
+            # ==========================================
+            notional_value = quantity * entry_price
+            min_order_value = settings.MIN_ORDER_SIZE_USDT
+
+            if notional_value < min_order_value:
+                logger.error(
+                    f"❌ {symbol} | Размер ордера {notional_value:.2f} USDT < "
+                    f"минимума {min_order_value} USDT. Ордер отклонен."
+                )
+                return None
+
             logger.info(
-                f"→ Открытие позиции: {symbol} {side} {quantity} @ {entry_price}"
+                f"→ Открытие позиции: {symbol} {side} {quantity} @ {entry_price} "
+                f"(notional: {notional_value:.2f} USDT)"
             )
 
             position_id = None
@@ -417,14 +431,66 @@ class ExecutionManager:
 
                 logger.debug(f"Client Order ID: {client_order_id}")
 
+                # ==========================================
+                # ШАГ 1.5: УСТАНОВКА LEVERAGE
+                # ==========================================
+                # Получаем leverage из risk_manager
+                leverage = self.risk_manager.limits.default_leverage
+                leverage_str = str(leverage)
+
+                try:
+                    # Пытаемся установить leverage для символа
+                    await rest_client.set_leverage(
+                        symbol=symbol,
+                        buy_leverage=leverage_str,
+                        sell_leverage=leverage_str
+                    )
+                    logger.info(f"✓ Leverage установлен для {symbol}: {leverage}x")
+                except Exception as leverage_error:
+                    # Если не удалось установить - пытаемся с меньшим leverage
+                    error_msg = str(leverage_error)
+
+                    # Проверяем если это ошибка превышения максимального leverage
+                    if "maxLeverage" in error_msg or "110013" in error_msg:
+                        # Извлекаем максимальное плечо из ошибки
+                        # Формат: "cannot set leverage [2500] gt maxLeverage [2000]"
+                        import re
+                        max_lev_match = re.search(r'maxLeverage \[(\d+)\]', error_msg)
+                        if max_lev_match:
+                            max_leverage_api = int(max_lev_match.group(1))
+                            # API формат: 2000 = 20.00x, конвертируем
+                            max_leverage = max_leverage_api // 100
+
+                            logger.warning(
+                                f"⚠️ Leverage {leverage}x превышает максимум {max_leverage}x для {symbol}. "
+                                f"Использую максимально допустимое плечо {max_leverage}x"
+                            )
+
+                            # Устанавливаем максимально допустимое плечо
+                            try:
+                                await rest_client.set_leverage(
+                                    symbol=symbol,
+                                    buy_leverage=str(max_leverage),
+                                    sell_leverage=str(max_leverage)
+                                )
+                                logger.info(f"✓ Leverage установлен для {symbol}: {max_leverage}x (максимум)")
+                                leverage = max_leverage  # Обновляем для использования далее
+                            except Exception as e2:
+                                logger.error(f"❌ Не удалось установить leverage {max_leverage}x: {e2}")
+                                # Продолжаем с дефолтным leverage биржи
+                        else:
+                            logger.warning(f"⚠️ Не удалось извлечь max leverage из ошибки: {error_msg}")
+                    else:
+                        logger.warning(f"⚠️ Не удалось установить leverage для {symbol}: {leverage_error}")
+
                 # Размещаем ордер на бирже
                 logger.info(
                     f"📊 Параметры TP/SL для {symbol}:\n"
                     f"  Entry Price:  {entry_price}\n"
                     f"  Stop Loss:    {stop_loss}\n"
-                    f"  Take Profit:  {take_profit}"
+                    f"  Take Profit:  {take_profit}\n"
+                    f"  Leverage:     {leverage}x"
                 )
-
 
                 try:
                     order_response = await rest_client.place_order(
