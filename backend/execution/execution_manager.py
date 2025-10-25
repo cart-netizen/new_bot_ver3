@@ -450,8 +450,14 @@ class ExecutionManager:
                     # Если не удалось установить - пытаемся с меньшим leverage
                     error_msg = str(leverage_error)
 
+                    # Код 110043 - "leverage not modified" означает что leverage уже установлен
+                    # Это НОРМАЛЬНАЯ ситуация, не требующая действий
+                    if "110043" in error_msg or "leverage not modified" in error_msg:
+                        logger.debug(f"✓ Leverage для {symbol} уже установлен на {leverage}x")
+                        # Продолжаем работу - это не ошибка
+
                     # Проверяем если это ошибка превышения максимального leverage
-                    if "maxLeverage" in error_msg or "110013" in error_msg:
+                    elif "maxLeverage" in error_msg or "110013" in error_msg:
                         # Извлекаем максимальное плечо из ошибки
                         # Формат: "cannot set leverage [2500] gt maxLeverage [2000]"
                         import re
@@ -480,6 +486,8 @@ class ExecutionManager:
                                 # Продолжаем с дефолтным leverage биржи
                         else:
                             logger.warning(f"⚠️ Не удалось извлечь max leverage из ошибки: {error_msg}")
+
+                    # Другие ошибки leverage - логируем и продолжаем
                     else:
                         logger.warning(f"⚠️ Не удалось установить leverage для {symbol}: {leverage_error}")
 
