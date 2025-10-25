@@ -902,6 +902,7 @@ class BotController:
       # Инициализация Integrated Engine для всех отобранных пар
       initialized_count = 0
       failed_count = 0
+      failed_symbols = []  # ✅ ДОБАВЛЕНО: Список неудачных пар
 
       for symbol in self.symbols:
         try:
@@ -915,10 +916,12 @@ class BotController:
             logger.info(f"✅ {symbol}: Успешно инициализирован")
           else:
             failed_count += 1
+            failed_symbols.append(symbol)  # ✅ ДОБАВЛЕНО
             logger.warning(f"⚠️ {symbol}: Инициализация не удалась")
 
         except Exception as e:
           failed_count += 1
+          failed_symbols.append(symbol)  # ✅ ДОБАВЛЕНО
           logger.error(f"❌ {symbol}: Ошибка инициализации - {e}")
 
       logger.info("=" * 80)
@@ -927,6 +930,16 @@ class BotController:
         f"✅ {initialized_count} успешно, "
         f"❌ {failed_count} ошибок"
       )
+      # ✅ ДОБАВЛЕНО: Детальный список неудачных пар
+      if failed_symbols:
+        logger.error(f"❌ НЕ ИНИЦИАЛИЗИРОВАНЫ ({len(failed_symbols)} пар):")
+        for failed_symbol in failed_symbols:
+          logger.error(f"   • {failed_symbol}")
+        logger.warning(
+          f"💡 Проверьте логи выше для деталей. "
+          f"Возможные причины: пара не существует на Bybit, неправильное название, "
+          f"нет исторических данных для всех таймфреймов."
+        )
       logger.info("=" * 80)
 
       # Продолжаем только если есть хотя бы одна инициализированная пара

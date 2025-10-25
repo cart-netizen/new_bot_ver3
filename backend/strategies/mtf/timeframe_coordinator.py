@@ -283,30 +283,47 @@ class TimeframeCoordinator:
                     # ❌ Отмечаем как не инициализированный
                     self.initialized[symbol][tf] = False
 
-            # Строгая проверка
-            if initialized_count < total_timeframes:
-                logger.warning(
-                    f"⚠️ [{symbol}]: Частичная инициализация "
-                    f"({initialized_count}/{total_timeframes}). "
-                    f"Удаляем частичные данные."
+            # ✅ УЛУЧШЕННАЯ ПРОВЕРКА: Более гибкая политика инициализации
+            # Требуем хотя бы 1 таймфрейм для успешной инициализации
+            min_required_timeframes = 1
+
+            if initialized_count == 0:
+                logger.error(
+                    f"❌ [{symbol}]: Не удалось инициализировать НИ ОДИН таймфрейм! "
+                    f"Символ недоступен на бирже или имеет неправильное название."
                 )
 
-                # Очистка частично инициализированных данных
+                # Очистка данных
                 if symbol in self.candle_managers:
                     del self.candle_managers[symbol]
-
                 if symbol in self.last_update:
                     del self.last_update[symbol]
-
                 if symbol in self.initialized:
                     del self.initialized[symbol]
 
                 return False
 
-            logger.info(
-                f"✅ [{symbol}]: Все {total_timeframes} TF инициализированы"
-            )
-            return True
+            elif initialized_count < total_timeframes:
+                # Частичная инициализация - разрешаем, но предупреждаем
+                failed_timeframes = [
+                    tf.value for tf in timeframes
+                    if not self.initialized[symbol].get(tf, False)
+                ]
+
+                logger.warning(
+                    f"⚠️ [{symbol}]: Частичная инициализация "
+                    f"({initialized_count}/{total_timeframes}). "
+                    f"НЕ инициализированы: {', '.join(failed_timeframes)}"
+                )
+                logger.info(
+                    f"✓ [{symbol}]: Работа продолжится с {initialized_count} доступными таймфреймами"
+                )
+                return True
+            else:
+                logger.info(
+                    f"✅ [{symbol}]: Все {total_timeframes} TF инициализированы"
+                )
+                return True
 
         except Exception as e:
             logger.error(f"❌ [{symbol}]: Критическая ошибка - {e}")
