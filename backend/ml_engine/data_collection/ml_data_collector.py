@@ -96,8 +96,15 @@ class MLDataCollector:
     """
     Проверка нужно ли собирать данные в этой итерации.
 
+    ⚠️ ВАЖНО: Эта проверка должна делаться ОДИН РАЗ за итерацию цикла анализа,
+    а не для каждой пары отдельно! Иначе из 42 пар данные сохранятся только
+    для каждой 10-й (на позициях 10, 20, 30, 40).
+
+    Рекомендуется вызывать этот метод ПЕРЕД циклом по парам в главном цикле анализа,
+    и передавать результат как флаг для всех пар.
+
     Returns:
-        bool: True если нужно собрать
+        bool: True если нужно собрать данные в этой итерации
     """
     self.iteration_counter += 1
     return self.iteration_counter % self.collection_interval == 0
@@ -108,10 +115,15 @@ class MLDataCollector:
       feature_vector: FeatureVector,
       orderbook_snapshot: OrderBookSnapshot,
       market_metrics: OrderBookMetrics,
-      executed_signal: Optional[Dict[str, Any]] = None
+      executed_signal: Optional[Dict[str, Any]] = None,
+      # ✅ ОБОГАЩЕНИЕ: Дополнительные метаданные для ML обучения
+      manipulation_detected: bool = False,
+      manipulation_types: List[str] = None,
+      market_regime: Optional[str] = None,
+      feature_quality: float = 1.0
   ):
     """
-    Сбор одного семпла данных.
+    Сбор одного семпла данных с обогащением rule-based метаданными.
 
     Args:
         symbol: Торговая пара
@@ -119,6 +131,10 @@ class MLDataCollector:
         orderbook_snapshot: Снимок стакана
         market_metrics: Рыночные метрики
         executed_signal: Исполненный сигнал (если есть)
+        manipulation_detected: Флаг обнаружения манипуляций
+        manipulation_types: Типы обнаруженных манипуляций (spoofing, layering и т.д.)
+        market_regime: Режим рынка (trending, ranging, volatile и т.д.)
+        feature_quality: Качество признаков (0.0-1.0)
     """
     try:
       # Инициализируем буферы для символа
@@ -151,7 +167,12 @@ class MLDataCollector:
         "signal_type": executed_signal.get("type") if executed_signal else None,
         "signal_confidence": executed_signal.get("confidence") if executed_signal else None,
         "signal_strength": executed_signal.get("strength") if executed_signal else None,
-        "feature_count": feature_vector.feature_count
+        "feature_count": feature_vector.feature_count,
+        # ✅ ОБОГАЩЕНИЕ: Rule-based метаданные для ML обучения
+        "manipulation_detected": manipulation_detected,
+        "manipulation_types": manipulation_types if manipulation_types else [],
+        "market_regime": market_regime,
+        "feature_quality": feature_quality
       }
 
       # Добавляем в буферы

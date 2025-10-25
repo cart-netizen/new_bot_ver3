@@ -1851,6 +1851,14 @@ class BotController:
         #   await asyncio.sleep(1)
         #   continue
 
+        # ✅ ИСПРАВЛЕНИЕ: Проверяем нужно ли собирать ML данные В ЭТОМ ЦИКЛЕ
+        # Вызываем ОДИН РАЗ перед циклом по парам, иначе из 42 пар данные
+        # сохранятся только для каждой 10-й (позиции 10, 20, 30, 40)
+        should_collect_ml_data_this_cycle = (
+          has_ml_data_collector and
+          self.ml_data_collector.should_collect()
+        )
+
         # Анализируем каждую пару
         for symbol in self.symbols:
           symbol_start = time.time()
@@ -2726,67 +2734,30 @@ class BotController:
             # ШАГ 12: ML DATA COLLECTION (для обучения)
             # ============================================================
 
-            if has_ml_data_collector and feature_vector:
+            if should_collect_ml_data_this_cycle and feature_vector:
               try:
-                # Проверяем нужно ли собирать данные
-                if self.ml_data_collector.should_collect():
-                  # Подготовка sample
-                  sample_data = {
-                    'symbol': symbol,
-                    'timestamp': int(time.time() * 1000),
-                    'features': feature_vector,
-                    'price': current_price,
-                    'orderbook_snapshot': {
-                      'best_bid': orderbook_snapshot.best_bid,
-                      'best_ask': orderbook_snapshot.best_ask,
-                      'mid_price': orderbook_snapshot.mid_price,
-                      'spread': orderbook_snapshot.spread,
-                      'imbalance': orderbook_metrics.imbalance
-                    },
-                    'market_metrics': {
-                      'volatility': market_volatility if market_metrics else None,
-                      'volume': (candles[-1].volume if candles and len(candles) > 0 else None) ,
-                      'momentum': (
-                          ((candles[-1].close - candles[-2].close) / candles[-2].close) * 100
-                          if candles and len(candles) > 1 and candles[-2].close > 0
-                          else None
-                      )
-                    }
-                  }
+                # ✅ ИСПРАВЛЕНО: Используем флаг, установленный ДО цикла по парам
+                # Обогащаем данные для ML обучения
+                # Сохранение sample для ML обучения с обогащенными данными
+                await self.ml_data_collector.collect_sample(
+                  symbol=symbol,
+                  feature_vector=feature_vector,
+                  orderbook_snapshot=orderbook_snapshot,
+                  market_metrics=market_metrics,
+                  executed_signal=None,
+                  # ✅ ОБОГАЩЕНИЕ: Добавляем rule-based метаданные
+                  manipulation_detected=manipulation_detected,
+                  manipulation_types=manipulation_types if manipulation_detected else [],
+                  market_regime=(
+                    integrated_signal.market_regime
+                    if integrated_signal and hasattr(integrated_signal, 'market_regime')
+                    else None
+                  ),
+                  feature_quality=feature_vector.metadata.get('quality', 1.0) if hasattr(feature_vector, 'metadata') else 1.0
+                )
 
-
-
-                  # Если был сгенерирован сигнал - добавляем его
-                  if integrated_signal:
-                    sample_data['signal'] = {
-                      'type': integrated_signal.final_signal.signal_type.value,
-                      'confidence': integrated_signal.combined_confidence,
-                      'quality': integrated_signal.combined_quality_score,
-                      'entry_price': integrated_signal.final_signal.price,
-                      'stop_loss': (
-                            integrated_signal.recommended_stop_loss
-                            if hasattr(integrated_signal, 'recommended_stop_loss')
-                            else integrated_signal.final_signal.metadata.get('stop_loss', None)
-                        ),
-                      'take_profit': (
-                            integrated_signal.recommended_take_profit
-                            if hasattr(integrated_signal, 'recommended_take_profit')
-                            else integrated_signal.final_signal.metadata.get('take_profit', None)
-                        ),
-                      'source_mode': integrated_signal.source_analysis_mode.value
-                    }
-
-                  # Сохранение sample
-                  await self.ml_data_collector.collect_sample(
-                    symbol=symbol,
-                    feature_vector=feature_vector,
-                    orderbook_snapshot=orderbook_snapshot,
-                    market_metrics=market_metrics,
-                    executed_signal=None
-                  )
-
-                  self.stats['ml_data_collected'] += 1
-                  logger.debug(f"[{symbol}] ML Data sample собран")
+                self.stats['ml_data_collected'] += 1
+                logger.debug(f"[{symbol}] ML Data sample собран")
 
               except Exception as e:
                 logger.error(f"[{symbol}] Ошибка ML Data Collection: {e}")
