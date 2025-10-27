@@ -108,13 +108,7 @@ class MLDataCollector:
       feature_vector: FeatureVector,
       orderbook_snapshot: OrderBookSnapshot,
       market_metrics: OrderBookMetrics,
-      executed_signal: Optional[Dict[str, Any]] = None,
-      # ✅ ОБОГАЩЕНИЕ: Дополнительные метаданные для ML обучения
-      manipulation_detected: bool = False,
-      manipulation_types: List[str] = None,
-      market_regime: Optional[str] = None,
-      feature_quality: float = 1.0
-
+      executed_signal: Optional[Dict[str, Any]] = None
   ):
     """
     Сбор одного семпла данных.
@@ -157,13 +151,7 @@ class MLDataCollector:
         "signal_type": executed_signal.get("type") if executed_signal else None,
         "signal_confidence": executed_signal.get("confidence") if executed_signal else None,
         "signal_strength": executed_signal.get("strength") if executed_signal else None,
-        "feature_count": feature_vector.feature_count,
-        # ✅ ОБОГАЩЕНИЕ: Rule-based метаданные для ML обучения
-        "manipulation_detected": manipulation_detected,
-        "manipulation_types": manipulation_types if manipulation_types else [],
-        "market_regime": market_regime,
-        "feature_quality": feature_quality
-
+        "feature_count": feature_vector.feature_count
       }
 
       # Добавляем в буферы

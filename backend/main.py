@@ -2117,7 +2117,6 @@ class BotController:
                   if self.ml_validator and not manipulation_detected:
                     try:
                       ml_prediction = await self.ml_validator.validate(
-                        signal=signal,
                         feature_vector=feature_vector
                       )
 
@@ -2410,6 +2409,7 @@ class BotController:
 
                       # ML Validator проверяет финальный сигнал
                       validation_result = await self.ml_validator.validate(
+
                         signal=final_signal,
                         feature_vector=feature_vector
                       )
@@ -2670,11 +2670,11 @@ class BotController:
             # ============================================================
             # ШАГ 12: ML DATA COLLECTION (для обучения)
             # ============================================================
-            if should_collect_ml_data_this_cycle and feature_vector:
+
             # if has_ml_data_collector and feature_vector:
               try:
                 # Проверяем нужно ли собирать данные
-                # if self.ml_data_collector.should_collect():
+                if self.ml_data_collector.should_collect():
                   # Подготовка sample
                   sample_data = {
                     'symbol': symbol,
@@ -2696,8 +2696,7 @@ class BotController:
                           if candles and len(candles) > 1 and candles[-2].close > 0
                           else None
                       )
-                    },
-
+                    }
                   }
 
 # +++++включить для основной работы++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -2728,18 +2727,8 @@ class BotController:
                     feature_vector=feature_vector,
                     orderbook_snapshot=orderbook_snapshot,
                     market_metrics=market_metrics,
-                    executed_signal=None,
-                    manipulation_detected=manipulation_detected,
-                    manipulation_types=manipulation_types if manipulation_detected else [],
-                    market_regime=(
-                      integrated_signal.market_regime
-                      if integrated_signal and hasattr(integrated_signal, 'market_regime')
-                      else None
-                    ),
-                    feature_quality=feature_vector.metadata.get('quality', 1.0) if hasattr(feature_vector,
-                                                                                           'metadata') else 1.0
+                    executed_signal=None
                   )
-
 
                   self.stats['ml_data_collected'] += 1
                   logger.debug(f"[{symbol}] ML Data sample собран")
@@ -3836,26 +3825,26 @@ class BotController:
           symbol: Торговая пара
           integrated_signal: IntegratedSignal объект
       """
-      trading_signal = integrated_signal.final_signal
+      signal = integrated_signal.final_signal
 
       logger.info("=" * 80)
       logger.info(f"🎯 INTEGRATED SIGNAL: {symbol}")
       logger.info("=" * 80)
 
       # ===== ОСНОВНАЯ ИНФОРМАЦИЯ =====
-      logger.info(f"📊 Тип сигнала: {trading_signal.signal_type.value}")
+      logger.info(f"📊 Тип сигнала: {signal.signal_type.value}")
       logger.info(f"💯 Combined Confidence: {integrated_signal.combined_confidence:.3f}")
       logger.info(f"⭐ Combined Quality: {integrated_signal.combined_quality_score:.3f}")
-      logger.info(f"📈 Entry Price: ${trading_signal.price:.2f}")
+      logger.info(f"📈 Entry Price: ${signal.price:.2f}")
       if integrated_signal.recommended_stop_loss is not None:
-        stop_loss_pct = ((integrated_signal.recommended_stop_loss - trading_signal.price) / trading_signal.price) * 100
+        stop_loss_pct = ((integrated_signal.recommended_stop_loss - signal.price) / signal.price) * 100
         logger.info(f"🛡️ Stop Loss: ${integrated_signal.recommended_stop_loss:.2f} ({stop_loss_pct:+.2f}%)")
       else:
         logger.info(f"🛡️ Stop Loss: Not set")
 
         # Take Profit (с безопасной обработкой)
       if integrated_signal.recommended_take_profit is not None:
-        take_profit_pct = ((integrated_signal.recommended_take_profit - trading_signal.price) / trading_signal.price) * 100
+        take_profit_pct = ((integrated_signal.recommended_take_profit - signal.price) / signal.price) * 100
         logger.info(f"🎯 Take Profit: ${integrated_signal.recommended_take_profit:.2f} ({take_profit_pct:+.2f}%)")
       else:
         logger.info(f"🎯 Take Profit: Not set")
