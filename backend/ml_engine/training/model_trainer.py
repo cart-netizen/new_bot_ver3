@@ -29,6 +29,7 @@ from sklearn.metrics import (
 
 from core.logger import get_logger
 from ml_engine.models.hybrid_cnn_lstm import HybridCNNLSTM, ModelConfig
+from ml_engine.training.class_balancing import ClassBalancingConfig, ClassBalancingStrategy
 
 logger = get_logger(__name__)
 
@@ -66,6 +67,39 @@ class TrainerConfig:
   # Logging
   log_interval: int = 10  # Log every N batches
 
+  def __init__(
+      self,
+      epochs: int = 100,
+      learning_rate: float = 0.001,
+      weight_decay: float = 1e-5,
+      grad_clip_value: float = 1.0,
+      early_stopping_patience: int = 10,
+      checkpoint_dir: str = "checkpoints/models",
+      device: str = "cuda" if torch.cuda.is_available() else "cpu",
+
+      # ===== НОВОЕ: CLASS BALANCING =====
+      class_balancing: Optional[ClassBalancingConfig] = None,
+      auto_compute_weights: bool = True
+  ):
+    """
+    Инициализация конфигурации.
+
+    Args:
+        class_balancing: Конфигурация балансировки классов
+        auto_compute_weights: Автоматически вычислять веса из данных
+    """
+    self.epochs = epochs
+    self.learning_rate = learning_rate
+    self.weight_decay = weight_decay
+    self.grad_clip_value = grad_clip_value
+    self.early_stopping_patience = early_stopping_patience
+    self.checkpoint_dir = checkpoint_dir
+    self.device = device
+
+    # Class Balancing
+    self.class_balancing = class_balancing or ClassBalancingConfig()
+    self.auto_compute_weights = auto_compute_weights
+
 
 @dataclass
 class TrainingMetrics:
@@ -97,8 +131,14 @@ class MultiTaskLoss(nn.Module):
       self,
       direction_weight: float = 1.0,
       confidence_weight: float = 0.5,
-      return_weight: float = 0.3
+      return_weight: float = 0.3,
+      direction_criterion: Optional[nn.Module] = None
   ):
+    """
+            Args:
+                direction_criterion: Custom loss для direction (например, FocalLoss)
+                                    Если None, используется CrossEntropyLoss
+            """
     super().__init__()
 
     self.direction_weight = direction_weight
@@ -106,7 +146,7 @@ class MultiTaskLoss(nn.Module):
     self.return_weight = return_weight
 
     # Loss functions
-    self.direction_criterion = nn.CrossEntropyLoss()
+    self.direction_criterion = direction_criterion or nn.CrossEntropyLoss()
     self.confidence_criterion = nn.MSELoss()
     self.return_criterion = nn.MSELoss()
 
@@ -251,13 +291,19 @@ class ModelTrainer:
     # Перемещаем модель на device
     self.model.to(self.device)
 
-    # Loss function
-    self.criterion = MultiTaskLoss(
-      direction_weight=config.direction_loss_weight,
-      confidence_weight=config.confidence_loss_weight,
-      return_weight=config.return_loss_weight
+    # ===== НОВОЕ: Class Balancing Strategy =====
+    self.balancing_strategy = ClassBalancingStrategy(
+      config.class_balancing
     )
 
+    # # Loss function
+    # self.criterion = MultiTaskLoss(
+    #   direction_weight=config.direction_loss_weight,
+    #   confidence_weight=config.confidence_loss_weight,
+    #   return_weight=config.return_loss_weight
+    # )
+    # Loss function (будет создан в train() после анализа данных)
+    self.criterion = None
     # Optimizer
     self.optimizer = optim.AdamW(
       self.model.parameters(),
@@ -298,6 +344,33 @@ class ModelTrainer:
     logger.info(
       f"Инициализирован ModelTrainer: device={self.device}, "
       f"lr={config.learning_rate}, epochs={config.epochs}"
+    )
+
+  def _setup_loss_function(self, train_labels: np.ndarray):
+    """
+    Настройка loss function на основе данных.
+
+    Args:
+        train_labels: Обучающие метки для расчета весов
+    """
+    device_str = str(self.device)
+    # Получаем direction loss criterion с балансировкой
+    direction_criterion = self.balancing_strategy.get_loss_function(
+      train_labels,
+      device=device_str
+    )
+
+    # Создаем MultiTaskLoss с custom criterion
+    self.criterion = MultiTaskLoss(
+      direction_weight=1.0,
+      confidence_weight=0.5,
+      return_weight=0.3,
+      direction_criterion=direction_criterion
+    )
+
+    logger.info(
+      f"✓ Loss function настроен: "
+      f"{type(direction_criterion).__name__}"
     )
 
   def train_epoch(
@@ -488,95 +561,217 @@ class ModelTrainer:
     return checkpoint
 
   def train(
-      self,
-      train_loader: DataLoader,
-      val_loader: DataLoader
-  ) -> List[TrainingMetrics]:
-    """
-    Полный цикл обучения.
+        self,
+        train_loader: DataLoader,
+        val_loader: DataLoader
+    ) -> list:
+      """
+      Обучение модели.
 
-    Args:
-        train_loader: DataLoader для обучения
-        val_loader: DataLoader для валидации
+      Args:
+          train_loader: DataLoader для обучающих данных
+          val_loader: DataLoader для валидационных данных
 
-    Returns:
-        История обучения
-    """
-    logger.info(
-      f"Начало обучения: epochs={self.config.epochs}, "
-      f"train_batches={len(train_loader)}, "
-      f"val_batches={len(val_loader)}"
+      Returns:
+          history: List метрик по эпохам
+      """
+      # ===== НОВОЕ: Настройка loss function на основе данных =====
+      if self.criterion is None:
+        logger.info("Анализ обучающих данных для настройки loss function...")
+
+        # Собираем все метки из train_loader
+        all_labels = []
+        for batch in train_loader:
+          labels = batch['label'].numpy()
+          all_labels.extend(labels)
+
+        train_labels = np.array(all_labels)
+
+        # Логируем распределение классов
+        from collections import Counter
+        class_dist = Counter(train_labels)
+        logger.info(f"Распределение классов в train: {dict(class_dist)}")
+
+        # Настраиваем loss
+        self._setup_loss_function(train_labels)
+
+      # ===== Основной цикл обучения =====
+      history = []
+
+      logger.info(f"\n{'=' * 80}")
+      logger.info(f"НАЧАЛО ОБУЧЕНИЯ")
+      logger.info(f"{'=' * 80}")
+      logger.info(f"Эпох: {self.config.epochs}")
+      logger.info(f"Device: {self.device}")
+      logger.info(f"Train batches: {len(train_loader)}")
+      logger.info(f"Val batches: {len(val_loader)}")
+      logger.info(f"{'=' * 80}\n")
+
+      for epoch in range(self.config.epochs):
+        logger.info(f"Эпоха {epoch + 1}/{self.config.epochs}")
+
+        # Training
+        train_loss, train_acc = self._train_epoch(train_loader)
+
+        # Validation
+        val_loss, val_metrics = self._validate_epoch(val_loader)
+
+        # Learning rate scheduling
+        self.scheduler.step(val_loss)
+        current_lr = self.optimizer.param_groups[0]['lr']
+
+        # Метрики
+        metrics = {
+          'epoch': epoch + 1,
+          'train_loss': train_loss,
+          'val_loss': val_loss,
+          'train_accuracy': train_acc,
+          'val_accuracy': val_metrics['accuracy'],
+          'val_precision': val_metrics['precision'],
+          'val_recall': val_metrics['recall'],
+          'val_f1': val_metrics['f1'],
+          'learning_rate': current_lr
+        }
+        history.append(metrics)
+
+        # Логирование
+        logger.info(
+          f"  train_loss: {train_loss:.4f}, "
+          f"train_acc: {train_acc:.4f}"
+        )
+        logger.info(
+          f"  val_loss: {val_loss:.4f}, "
+          f"val_acc: {val_metrics['accuracy']:.4f}, "
+          f"val_f1: {val_metrics['f1']:.4f}"
+        )
+        logger.info(f"  lr: {current_lr:.6f}\n")
+
+        # Checkpoint (сохраняем лучшую модель)
+        if val_loss < self.best_val_loss:
+          self.best_val_loss = val_loss
+          self.early_stopping_counter = 0
+          self._save_checkpoint(epoch, val_loss, metrics)
+          logger.info("  ✓ Сохранен новый лучший checkpoint\n")
+        else:
+          self.early_stopping_counter += 1
+
+        # Early stopping
+        if self.early_stopping_counter >= TrainerConfig.early_stopping_patience:
+          logger.info(
+            f"Early stopping на эпохе {epoch + 1}. "
+            f"Лучший val_loss: {self.best_val_loss:.4f}"
+          )
+          break
+
+      logger.info(f"\n{'=' * 80}")
+      logger.info(f"ОБУЧЕНИЕ ЗАВЕРШЕНО")
+      logger.info(f"{'=' * 80}")
+      logger.info(f"Лучший val_loss: {self.best_val_loss:.4f}")
+      logger.info(f"{'=' * 80}\n")
+
+      return history
+
+  def _train_epoch(self, train_loader: DataLoader) -> Tuple[float, float]:
+    """Обучение одной эпохи."""
+    self.model.train()
+
+    total_loss = 0.0
+    all_predictions = []
+    all_labels = []
+
+    for batch in train_loader:
+      sequences = batch['sequence'].to(self.device)
+      labels = batch['label'].to(self.device)
+
+      # Forward
+      outputs = self.model(sequences)
+
+      # Loss
+      targets = {'label': labels}
+      loss, _ = self.criterion(outputs, targets)
+
+      # Backward
+      self.optimizer.zero_grad()
+      loss.backward()
+
+      # Gradient clipping
+      if self.config.grad_clip_value > 0:
+        torch.nn.utils.clip_grad_norm_(
+          self.model.parameters(),
+          self.config.grad_clip_value
+        )
+
+      self.optimizer.step()
+
+      # Metrics
+      total_loss += loss.item()
+      predictions = torch.argmax(
+        outputs['direction_logits'], dim=-1
+      ).cpu().numpy()
+      all_predictions.extend(predictions)
+      all_labels.extend(labels.cpu().numpy())
+
+    avg_loss = total_loss / len(train_loader)
+    accuracy = accuracy_score(all_labels, all_predictions)
+
+    return avg_loss, accuracy
+
+  def _validate_epoch(self, val_loader: DataLoader) -> Tuple[float, Dict]:
+    """Валидация одной эпохи."""
+    self.model.eval()
+
+    total_loss = 0.0
+    all_predictions = []
+    all_labels = []
+
+    with torch.no_grad():
+      for batch in val_loader:
+        sequences = batch['sequence'].to(self.device)
+        labels = batch['label'].to(self.device)
+
+        # Forward
+        outputs = self.model(sequences)
+
+        # Loss
+        targets = {'label': labels}
+        loss, _ = self.criterion(outputs, targets)
+
+        # Metrics
+        total_loss += loss.item()
+        predictions = torch.argmax(
+          outputs['direction_logits'], dim=-1
+        ).cpu().numpy()
+        all_predictions.extend(predictions)
+        all_labels.extend(labels.cpu().numpy())
+
+    avg_loss = total_loss / len(val_loader)
+
+    # Вычисляем метрики
+    accuracy = accuracy_score(all_labels, all_predictions)
+    precision, recall, f1, _ = precision_recall_fscore_support(
+      all_labels, all_predictions, average='weighted', zero_division=0
     )
 
-    for epoch in range(self.config.epochs):
-      epoch_start = time.time()
+    metrics = {
+      'accuracy': accuracy,
+      'precision': precision,
+      'recall': recall,
+      'f1': f1
+    }
 
-      # Training
-      train_loss, train_accuracy = self.train_epoch(train_loader)
+    return avg_loss, metrics
 
-      # Validation
-      val_loss, val_metrics = self.validate_epoch(val_loader)
+  def _save_checkpoint(self, epoch: int, val_loss: float, metrics: Dict):
+    """Сохранение checkpoint."""
+    checkpoint_path = self.checkpoint_dir / "best_model.pt"
 
-      # Learning rate scheduling
-      if self.scheduler is not None:
-        if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
-          self.scheduler.step(val_loss)
-        else:
-          self.scheduler.step()
-
-      current_lr = self.optimizer.param_groups[0]['lr']
-      epoch_time = time.time() - epoch_start
-
-      # Создаем метрики эпохи
-      metrics = TrainingMetrics(
-        epoch=epoch + 1,
-        train_loss=train_loss,
-        val_loss=val_loss,
-        train_accuracy=train_accuracy,
-        val_accuracy=val_metrics['accuracy'],
-        val_precision=val_metrics['precision'],
-        val_recall=val_metrics['recall'],
-        val_f1=val_metrics['f1'],
-        val_auc=val_metrics['auc'],
-        learning_rate=current_lr,
-        epoch_time=epoch_time
-      )
-
-      self.history.append(metrics)
-
-      # Логирование
-      logger.info(
-        f"Epoch {epoch + 1}/{self.config.epochs} | "
-        f"Train Loss: {train_loss:.4f} | "
-        f"Val Loss: {val_loss:.4f} | "
-        f"Val Acc: {val_metrics['accuracy']:.4f} | "
-        f"Val F1: {val_metrics['f1']:.4f} | "
-        f"LR: {current_lr:.6f} | "
-        f"Time: {epoch_time:.1f}s"
-      )
-
-      # Сохранение checkpoint
-      is_best = val_loss < self.best_val_loss
-      if is_best:
-        self.best_val_loss = val_loss
-
-      if self.config.save_best_only:
-        if is_best:
-          self.save_checkpoint(epoch + 1, metrics, is_best=True)
-      else:
-        self.save_checkpoint(epoch + 1, metrics, is_best=is_best)
-
-      # Early stopping
-      if self.early_stopping(val_loss):
-        logger.info(
-          f"Early stopping на эпохе {epoch + 1}. "
-          f"Лучший val_loss: {self.best_val_loss:.4f}"
-        )
-        break
-
-    logger.info("Обучение завершено")
-    return self.history
-
+    torch.save({
+      'epoch': epoch,
+      'model_state_dict': self.model.state_dict(),
+      'optimizer_state_dict': self.optimizer.state_dict(),
+      'val_loss': val_loss,
+      'metrics': metrics
+    }, checkpoint_path)
 
 # Пример использования
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ Data Loader для загрузки и подготовки обучающих �
 
 Путь: backend/ml_engine/training/data_loader.py
 """
+from collections import Counter
 
 import numpy as np
 import json
@@ -21,6 +22,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 
 from core.logger import get_logger
+from ml_engine.training.class_balancing import ClassBalancingStrategy, ClassBalancingConfig
 
 logger = get_logger(__name__)
 
@@ -101,15 +103,28 @@ class HistoricalDataLoader:
   - Data augmentation
   """
 
-  def __init__(self, config: DataConfig):
-    """Инициализация загрузчика."""
+  def __init__(
+      self,
+      config: DataConfig,
+      balancing_config: Optional[ClassBalancingConfig] = None  # ← НОВОЕ
+  ):
+    """
+    Инициализация.
+
+    Args:
+        config: Конфигурация загрузки данных
+        balancing_config: Конфигурация балансировки классов
+    """
     self.config = config
     self.storage_path = Path(config.storage_path)
 
-    if not self.storage_path.exists():
-      raise FileNotFoundError(
-        f"Директория данных не найдена: {self.storage_path}"
-      )
+    # ===== НОВОЕ: Class Balancing =====
+    self.balancing_config = balancing_config
+    if balancing_config:
+      self.balancing_strategy = ClassBalancingStrategy(balancing_config)
+      logger.info("✓ Class Balancing включен в DataLoader")
+    else:
+      self.balancing_strategy = None
 
     logger.info(f"Инициализирован DataLoader: storage={self.storage_path}")
 
@@ -376,84 +391,192 @@ class HistoricalDataLoader:
 
     return dataloaders
 
-  def load_and_prepare(
-      self,
-      symbols: List[str],
-      use_walk_forward: bool = False,
-      n_splits: int = 5
-  ) -> Dict:
-    """
-    Полный pipeline загрузки и подготовки данных.
+  def train_val_test_split(
+        self,
+        sequences: np.ndarray,
+        labels: np.ndarray,
+        timestamps: np.ndarray
+    ) -> Tuple[
+      Tuple[np.ndarray, np.ndarray],
+      Tuple[np.ndarray, np.ndarray],
+      Optional[Tuple[np.ndarray, np.ndarray]]
+    ]:
+      """
+      Разбить данные на train/val/test с сохранением временного порядка.
 
-    Args:
-        symbols: Список символов для загрузки
-        use_walk_forward: Использовать walk-forward split
-        n_splits: Количество фолдов для walk-forward
+      ВАЖНО: Для временных рядов НЕ используем shuffle!
+      Данные разбиваются последовательно:
+      - Train: первые 70%
+      - Val: следующие 15%
+      - Test: последние 15%
 
-    Returns:
-        Dict с подготовленными данными
-    """
-    all_sequences = []
-    all_labels = []
+      Args:
+          sequences: (N, seq_len, features)
+          labels: (N,)
+          timestamps: (N,)
 
-    for symbol in symbols:
-      try:
-        # Загружаем данные
-        features, labels, timestamps = self.load_symbol_data(symbol)
+      Returns:
+          train_data: (X_train, y_train)
+          val_data: (X_val, y_val)
+          test_data: (X_test, y_test) или None если test_ratio=0
+      """
+      n_samples = len(sequences)
 
-        # Создаем последовательности
-        sequences, seq_labels, seq_timestamps = self.create_sequences(
-          features, labels, timestamps
-        )
-
-        all_sequences.append(sequences)
-        all_labels.append(seq_labels)
-
-      except Exception as e:
-        logger.error(f"Ошибка загрузки {symbol}: {e}")
-        continue
-
-    if not all_sequences:
-      raise ValueError("Не удалось загрузить данные ни для одного символа")
-
-    # Объединяем все символы
-    X = np.concatenate(all_sequences, axis=0)
-    y = np.concatenate(all_labels, axis=0)
-
-    logger.info(
-      f"Объединены данные: total_samples={len(X)}, "
-      f"symbols={len(symbols)}"
-    )
-
-    # Создаем timestamps для всего датасета (dummy)
-    timestamps = np.arange(len(X))
-
-    if use_walk_forward:
-      # Walk-forward split
-      splits = self.walk_forward_split(X, y, timestamps, n_splits)
-      return {'walk_forward_splits': splits}
-    else:
-      # Простой train/val/test split
-      n_samples = len(X)
+      # Вычисляем индексы split
       train_end = int(n_samples * self.config.train_ratio)
-      val_end = int(n_samples * (self.config.train_ratio + self.config.val_ratio))
+      val_end = train_end + int(n_samples * self.config.val_ratio)
 
-      train_data = (X[:train_end], y[:train_end])
-      val_data = (X[train_end:val_end], y[train_end:val_end])
-      test_data = (X[val_end:], y[val_end:])
+      # Split
+      X_train = sequences[:train_end]
+      y_train = labels[:train_end]
 
+      X_val = sequences[train_end:val_end]
+      y_val = labels[train_end:val_end]
+
+      # Test (если указано)
+      if self.config.test_ratio > 0:
+        X_test = sequences[val_end:]
+        y_test = labels[val_end:]
+        test_data = (X_test, y_test)
+        test_size = len(X_test)
+      else:
+        test_data = None
+        test_size = 0
+
+      logger.info(
+        f"Train/Val/Test split: "
+        f"train={len(X_train)}, "
+        f"val={len(X_val)}, "
+        f"test={test_size}"
+      )
+
+      # Логируем распределение классов
+      logger.info(f"Train class distribution: {Counter(y_train)}")
+      logger.info(f"Val class distribution: {Counter(y_val)}")
+      if test_data:
+        logger.info(f"Test class distribution: {Counter(y_test)}")
+
+      return (X_train, y_train), (X_val, y_val), test_data
+
+  def load_and_prepare(
+        self,
+        symbols: List[str],
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        apply_resampling: bool = True  # ← НОВОЕ
+    ) -> Dict:
+      """
+      Загрузка и подготовка данных с опциональной балансировкой.
+
+      Args:
+          symbols: Список символов
+          start_date: Начальная дата
+          end_date: Конечная дата
+          apply_resampling: Применять ли resampling (oversampling/undersampling)
+
+      Returns:
+          Dict с DataLoaders и статистикой
+      """
+      logger.info(f"\n{'=' * 80}")
+      logger.info(f"ЗАГРУЗКА И ПОДГОТОВКА ДАННЫХ")
+      logger.info(f"{'=' * 80}")
+
+      # Загружаем данные
+      all_features = []
+      all_labels = []
+      all_timestamps = []
+
+      for symbol in symbols:
+        logger.info(f"Загрузка {symbol}...")
+        X, y, timestamps = self.load_symbol_data(
+          symbol, start_date, end_date
+        )
+        all_features.append(X)
+        all_labels.append(y)
+        all_timestamps.append(timestamps)
+
+      # Объединяем
+      X = np.concatenate(all_features, axis=0)
+      y = np.concatenate(all_labels, axis=0)
+      timestamps = np.concatenate(all_timestamps, axis=0)
+
+      logger.info(f"\nВсего данных: {len(X):,} семплов")
+
+      # ===== НОВОЕ: RESAMPLING ДО SPLIT =====
+      if apply_resampling and self.balancing_strategy:
+        logger.info("\n" + "=" * 80)
+        logger.info("ПРИМЕНЕНИЕ RESAMPLING")
+        logger.info("=" * 80)
+
+        # Логируем распределение ДО
+        from collections import Counter
+        before_dist = Counter(y)
+        logger.info(f"ДО resampling: {dict(before_dist)}")
+
+        # Применяем балансировку
+        X, y = self.balancing_strategy.balance_dataset(X, y)
+
+        # Логируем распределение ПОСЛЕ
+        after_dist = Counter(y)
+        logger.info(f"ПОСЛЕ resampling: {dict(after_dist)}")
+        logger.info(f"Новый размер: {len(X):,} семплов")
+
+        # Обновляем timestamps (дублируем для oversampled семплов)
+        # Это упрощение - в реальности нужна более сложная логика
+        if len(timestamps) < len(X):
+          # Oversample: дублируем timestamps
+          indices = np.random.choice(len(timestamps), len(X), replace=True)
+          timestamps = timestamps[indices]
+        elif len(timestamps) > len(X):
+          # Undersample: обрезаем timestamps
+          timestamps = timestamps[:len(X)]
+
+      # ===== СОЗДАНИЕ SEQUENCES =====
+      logger.info("\n" + "=" * 80)
+      logger.info("СОЗДАНИЕ ВРЕМЕННЫХ ПОСЛЕДОВАТЕЛЬНОСТЕЙ")
+      logger.info("=" * 80)
+
+      sequences, seq_labels, seq_timestamps = self.create_sequences(
+        X, y, timestamps
+      )
+
+      logger.info(f"Создано последовательностей: {len(sequences):,}")
+      logger.info(f"Shape: {sequences.shape}")
+
+      # ===== TRAIN/VAL/TEST SPLIT =====
+      logger.info("\n" + "=" * 80)
+      logger.info("SPLIT НА TRAIN/VAL/TEST")
+      logger.info("=" * 80)
+
+      train_data, val_data, test_data = self.train_val_test_split(
+        sequences, seq_labels, seq_timestamps
+      )
+
+      # Создаем DataLoaders
       dataloaders = self.create_dataloaders(
         train_data, val_data, test_data
       )
 
-      return {
+      # Статистика
+      result = {
         'dataloaders': dataloaders,
-        'data': {
-          'train': train_data,
-          'val': val_data,
-          'test': test_data
+        'statistics': {
+          'total_sequences': len(sequences),
+          'train_samples': len(train_data[0]),
+          'val_samples': len(val_data[0]),
+          'test_samples': len(test_data[0]) if test_data else 0,
+          'sequence_length': self.config.sequence_length,
+          'feature_dim': sequences.shape[2]
         }
       }
+
+      logger.info(f"\n✓ Данные подготовлены")
+      logger.info(f"  • Train: {result['statistics']['train_samples']:,}")
+      logger.info(f"  • Val: {result['statistics']['val_samples']:,}")
+      logger.info(f"  • Test: {result['statistics']['test_samples']:,}")
+      logger.info(f"{'=' * 80}\n")
+
+      return result
 
 
 # Пример использования
@@ -471,7 +594,7 @@ if __name__ == "__main__":
 
   result = loader.load_and_prepare(
     symbols=symbols,
-    use_walk_forward=False
+    apply_resampling=False
   )
 
   # Получаем dataloaders
