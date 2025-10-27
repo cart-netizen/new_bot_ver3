@@ -112,6 +112,11 @@ class Settings(BaseSettings):
       le=1.0,
       description="Вес стратегии в гибридном решении")
 
+  ONLY_TRAINING: bool = Field(
+      default=False,
+      description="Режим только сбора данных для ML (без поиска сигналов). True - только сбор данных, False - полная работа бота"
+  )
+
   # ===== STRATEGY MANAGER CONFIGURATION =====
   CONSENSUS_MODE: Literal["weighted", "majority", "unanimous"] = Field(
       default="weighted",

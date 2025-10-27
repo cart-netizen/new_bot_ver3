@@ -369,7 +369,8 @@ class BotController:
       # ===== ML DATA COLLECTOR =====
       self.ml_data_collector = MLDataCollector(
         storage_path="../data/ml_training",
-        max_samples_per_file=10000
+        max_samples_per_file=50000,  # Увеличено для накопления большего количества данных перед сохранением
+        collection_interval=10  # Собирать каждые 10 итераций (все символы за раз)
       )
       await self.ml_data_collector.initialize()
       logger.info("✓ ML Data Collector инициализирован")
@@ -1685,6 +1686,7 @@ class BotController:
     logger.info("🚀 ANALYSIS LOOP ЗАПУЩЕН (ФИНАЛЬНАЯ РЕАЛИЗАЦИЯ)")
     logger.info("=" * 80)
     logger.info(f"📊 Режим анализа: {settings.INTEGRATED_ANALYSIS_MODE}")
+    logger.info(f"🎓 Режим обучения (ONLY_TRAINING): {'✅ ВКЛЮЧЕН - только сбор данных' if settings.ONLY_TRAINING else '❌ ВЫКЛЮЧЕН - полная работа'}")
     logger.info(f"⏱️ Интервал анализа: {settings.ANALYSIS_INTERVAL}с")
     logger.info(
       f"📈 Торговые пары: {len(self.symbols)} ({', '.join(self.symbols[:5])}{'...' if len(self.symbols) > 5 else ''})")
@@ -1716,11 +1718,11 @@ class BotController:
     logger.info(f"   └─ Drift Detector: {'✅' if has_drift_detector else '❌'}")
     logger.info("=" * 80)
 
-    # КРИТИЧЕСКАЯ ПРОВЕРКА: IntegratedEngine обязателен
-    if not has_integrated_engine:
+    # КРИТИЧЕСКАЯ ПРОВЕРКА: IntegratedEngine обязателен (кроме режима ONLY_TRAINING)
+    if not has_integrated_engine and not settings.ONLY_TRAINING:
       logger.critical(
         "🚨 КРИТИЧЕСКАЯ ОШИБКА: IntegratedEngine не инициализирован! "
-        "Analysis loop не может работать без него."
+        "Analysis loop не может работать без него (если не режим ONLY_TRAINING)."
       )
       if settings.ENABLE_CRITICAL_ALERTS:
         await self._send_critical_alert(
@@ -1728,6 +1730,10 @@ class BotController:
           "Analysis loop остановлен из-за отсутствия критического компонента"
         )
       return
+
+    # В режиме ONLY_TRAINING IntegratedEngine не обязателен
+    if settings.ONLY_TRAINING and not has_integrated_engine:
+      logger.info("ℹ️ Режим ONLY_TRAINING: IntegratedEngine не требуется, работаем только со сбором данных")
 
     # Инициализация счетчиков и статистики
     error_count = {}  # Счетчик ошибок по символам
@@ -2147,10 +2153,10 @@ class BotController:
             # ============================================================
             # ШАГ 5: 🎯 INTEGRATED ANALYSIS (ЯДРО СИСТЕМЫ)
             # ============================================================
-# +++++включить для основной работы++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+            # Режим ONLY_TRAINING: пропускаем поиск сигналов, только сбор данных
             integrated_signal = None
 
-            if not manipulation_detected:  # Анализируем только если нет манипуляций
+            if not settings.ONLY_TRAINING and not manipulation_detected:  # Анализируем только если не режим обучения и нет манипуляций
               try:
                 # ДЕБАГ: Логирование перед вызовом IntegratedEngine
                 if cycle_number <= 5:
@@ -2671,67 +2677,63 @@ class BotController:
             # ШАГ 12: ML DATA COLLECTION (для обучения)
             # ============================================================
 
-            # if has_ml_data_collector and feature_vector:
+            if has_ml_data_collector and feature_vector and should_collect_ml_data_this_cycle:
               try:
-                # Проверяем нужно ли собирать данные
-                if self.ml_data_collector.should_collect():
-                  # Подготовка sample
-                  sample_data = {
-                    'symbol': symbol,
-                    'timestamp': int(time.time() * 1000),
-                    'features': feature_vector,
-                    'price': current_price,
-                    'orderbook_snapshot': {
-                      'best_bid': orderbook_snapshot.best_bid,
-                      'best_ask': orderbook_snapshot.best_ask,
-                      'mid_price': orderbook_snapshot.mid_price,
-                      'spread': orderbook_snapshot.spread,
-                      'imbalance': orderbook_metrics.imbalance
-                    },
-                    'market_metrics': {
-                      'volatility': market_volatility if market_metrics else None,
-                      'volume': (candles[-1].volume if candles and len(candles) > 0 else None) ,
-                      'momentum': (
-                          ((candles[-1].close - candles[-2].close) / candles[-2].close) * 100
-                          if candles and len(candles) > 1 and candles[-2].close > 0
-                          else None
-                      )
-                    }
+                # Подготовка sample
+                sample_data = {
+                  'symbol': symbol,
+                  'timestamp': int(time.time() * 1000),
+                  'features': feature_vector,
+                  'price': current_price,
+                  'orderbook_snapshot': {
+                    'best_bid': orderbook_snapshot.best_bid,
+                    'best_ask': orderbook_snapshot.best_ask,
+                    'mid_price': orderbook_snapshot.mid_price,
+                    'spread': orderbook_snapshot.spread,
+                    'imbalance': orderbook_metrics.imbalance
+                  },
+                  'market_metrics': {
+                    'volatility': market_volatility if market_metrics else None,
+                    'volume': (candles[-1].volume if candles and len(candles) > 0 else None) ,
+                    'momentum': (
+                        ((candles[-1].close - candles[-2].close) / candles[-2].close) * 100
+                        if candles and len(candles) > 1 and candles[-2].close > 0
+                        else None
+                    )
+                  }
+                }
+
+                # Если был сгенерирован сигнал - добавляем его
+                if integrated_signal:
+                  sample_data['signal'] = {
+                    'type': integrated_signal.final_signal.signal_type.value,
+                    'confidence': integrated_signal.combined_confidence,
+                    'quality': integrated_signal.combined_quality_score,
+                    'entry_price': integrated_signal.final_signal.price,
+                    'stop_loss': (
+                          integrated_signal.recommended_stop_loss
+                          if hasattr(integrated_signal, 'recommended_stop_loss')
+                          else integrated_signal.final_signal.metadata.get('stop_loss', None)
+                      ),
+                    'take_profit': (
+                          integrated_signal.recommended_take_profit
+                          if hasattr(integrated_signal, 'recommended_take_profit')
+                          else integrated_signal.final_signal.metadata.get('take_profit', None)
+                      ),
+                    'source_mode': integrated_signal.source_analysis_mode.value
                   }
 
-# +++++включить для основной работы++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+                # Сохранение sample
+                await self.ml_data_collector.collect_sample(
+                  symbol=symbol,
+                  feature_vector=feature_vector,
+                  orderbook_snapshot=orderbook_snapshot,
+                  market_metrics=market_metrics,
+                  executed_signal=None
+                )
 
-                  # Если был сгенерирован сигнал - добавляем его
-                  if integrated_signal:
-                    sample_data['signal'] = {
-                      'type': integrated_signal.final_signal.signal_type.value,
-                      'confidence': integrated_signal.combined_confidence,
-                      'quality': integrated_signal.combined_quality_score,
-                      'entry_price': integrated_signal.final_signal.price,
-                      'stop_loss': (
-                            integrated_signal.recommended_stop_loss
-                            if hasattr(integrated_signal, 'recommended_stop_loss')
-                            else integrated_signal.final_signal.metadata.get('stop_loss', None)
-                        ),
-                      'take_profit': (
-                            integrated_signal.recommended_take_profit
-                            if hasattr(integrated_signal, 'recommended_take_profit')
-                            else integrated_signal.final_signal.metadata.get('take_profit', None)
-                        ),
-                      'source_mode': integrated_signal.source_analysis_mode.value
-                    }
-# +++++включить для основной работы++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-                  # Сохранение sample
-                  await self.ml_data_collector.collect_sample(
-                    symbol=symbol,
-                    feature_vector=feature_vector,
-                    orderbook_snapshot=orderbook_snapshot,
-                    market_metrics=market_metrics,
-                    executed_signal=None
-                  )
-
-                  self.stats['ml_data_collected'] += 1
-                  logger.debug(f"[{symbol}] ML Data sample собран")
+                self.stats['ml_data_collected'] += 1
+                logger.debug(f"[{symbol}] ML Data sample собран")
 
               except Exception as e:
                 logger.error(f"[{symbol}] Ошибка ML Data Collection: {e}")
