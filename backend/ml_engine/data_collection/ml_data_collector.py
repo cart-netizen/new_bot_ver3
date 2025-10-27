@@ -209,6 +209,7 @@ class MLDataCollector:
         "future_movement_60s": None,
 
         # Current state
+        "timestamp": orderbook_snapshot.timestamp,  # ИСПРАВЛЕНО: добавлен timestamp для preprocessing
         "current_mid_price": orderbook_snapshot.mid_price,
         "current_imbalance": market_metrics.imbalance,
 

@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import WebSocket, WebSocketDisconnect
 
-from analysis_loop_ml_data_collection import ml_data_collection_loop
+# from analysis_loop_ml_data_collection import ml_data_collection_loop
 from config import settings
 from core.dynamic_symbols import DynamicSymbolsManager
 from core.logger import get_logger, setup_logging
@@ -2116,24 +2116,7 @@ class BotController:
                       f"{sr_meta['num_resistances']} resistances"
                     )
 
-                  # Опционально: получаем ML prediction (если нужно для обогащения)
-                  # НЕ используем для блокировки торговли, только для метаданных
-                  # ПРИМЕЧАНИЕ: MLSignalValidator не имеет метода predict, только validate
-                  # который требует signal. Это можно реализовать позже при необходимости.
-                  if self.ml_validator and not manipulation_detected:
-                    try:
-                      ml_prediction = await self.ml_validator.validate(
-                        feature_vector=feature_vector
-                      )
 
-                      if ml_prediction:
-                        logger.debug(
-                          f"[{symbol}] ML Prediction: "
-                          f"direction={ml_prediction.get('prediction')}, "
-                          f"confidence={ml_prediction.get('confidence', 0):.3f}"
-                        )
-                    except Exception as e:
-                      logger.error(f"[{symbol}] Ошибка ML Prediction: {e}")
                 else:
                   logger.warning(f"[{symbol}] Feature extraction вернул None")
 

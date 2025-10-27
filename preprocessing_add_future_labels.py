@@ -55,28 +55,51 @@ class FutureLabelProcessor:
 
     print(f"  Загружено {len(labels)} семплов")
 
+    # Пытаемся загрузить metadata (для старых данных, где timestamp в metadata)
+    metadata_file = label_file.parent.parent / "metadata" / label_file.name
+    metadata_samples = []
+
+
+    if metadata_file.exists():
+      try:
+        with open(metadata_file, 'r') as f:
+          metadata = json.load(f)
+          metadata_samples = metadata.get("samples", [])
+          print(f"  ✓ Загружен metadata файл ({len(metadata_samples)} записей)")
+      except Exception as e:
+        print(f"  ⚠️  Ошибка загрузки metadata: {e}")
+
     # Для каждого семпла рассчитываем future targets
     updated_labels = []
+    timestamp_from_metadata_count = 0
 
     for i, label in enumerate(labels):
       # Текущая цена и timestamp
       current_price = label["current_mid_price"]
-      current_timestamp = label.get("current_timestamp")
+      current_timestamp = label.get("timestamp")  # Новые данные
+
+      # Если timestamp нет в label, пытаемся взять из metadata (старые данные)
+      if current_timestamp is None and i < len(metadata_samples):
+        current_timestamp = metadata_samples[i].get("timestamp")
+        if current_timestamp is not None:
+          # Сохраняем timestamp в label для будущего использования
+          label["timestamp"] = current_timestamp
+          timestamp_from_metadata_count += 1
 
       if current_timestamp is None:
-        # Если timestamp не сохранен, пропускаем
+        # Если timestamp не найден нигде, пропускаем
         updated_labels.append(label)
         continue
 
       # Ищем цены через 10s, 30s, 60s
       future_10s = self._find_future_price(
-        labels, i, current_timestamp, delta_seconds=10
+        labels, metadata_samples, i, current_timestamp, delta_seconds=10
       )
       future_30s = self._find_future_price(
-        labels, i, current_timestamp, delta_seconds=30
+        labels, metadata_samples, i, current_timestamp, delta_seconds=30
       )
       future_60s = self._find_future_price(
-        labels, i, current_timestamp, delta_seconds=60
+        labels, metadata_samples, i, current_timestamp, delta_seconds=60
       )
 
       # Обновляем label с future targets
@@ -114,9 +137,13 @@ class FutureLabelProcessor:
     filled = sum(1 for l in updated_labels if l["future_direction_10s"] is not None)
     print(f"  ✓ Обновлено {filled}/{len(labels)} семплов с future labels")
 
+    if timestamp_from_metadata_count > 0:
+      print(f"  ℹ️  Timestamp взят из metadata для {timestamp_from_metadata_count} семплов (старые данные)")
+
   def _find_future_price(
       self,
       labels: List[Dict],
+      metadata_samples: List[Dict],
       current_idx: int,
       current_timestamp: int,
       delta_seconds: int
@@ -126,6 +153,7 @@ class FutureLabelProcessor:
 
     Args:
         labels: Список всех labels
+        metadata_samples: Список metadata (для старых данных)
         current_idx: Индекс текущего семпла
         current_timestamp: Текущий timestamp (ms)
         delta_seconds: Через сколько секунд искать цену
@@ -139,7 +167,11 @@ class FutureLabelProcessor:
     # Ищем ближайший семпл к target_timestamp
     for i in range(current_idx + 1, len(labels)):
       future_label = labels[i]
-      future_timestamp = future_label.get("current_timestamp")
+      future_timestamp = future_label.get("timestamp")  # Новые данные
+
+      # Если timestamp нет в label, берем из metadata (старые данные)
+      if future_timestamp is None and i < len(metadata_samples):
+        future_timestamp = metadata_samples[i].get("timestamp")
 
       if future_timestamp is None:
         continue
