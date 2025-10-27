@@ -4,7 +4,6 @@
 """
 
 import asyncio
-import os
 import signal
 import time
 import traceback
@@ -15,6 +14,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import WebSocket, WebSocketDisconnect
 
+from analysis_loop_ml_data_collection import ml_data_collection_loop
 from config import settings
 from core.dynamic_symbols import DynamicSymbolsManager
 from core.logger import get_logger, setup_logging
@@ -34,8 +34,8 @@ from ml_engine.monitoring.drift_detector import DriftDetector
 from models.orderbook import OrderBookSnapshot
 # from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
 from screener.screener_manager import ScreenerManager
-from strategies.adaptive import AdaptiveConsensusManager, WeightOptimizerConfig, OptimizationMethod, \
-  RegimeDetectorConfig, PerformanceTrackerConfig, AdaptiveConsensusConfig
+from strategies.adaptive import OptimizationMethod, \
+  RegimeDetectorConfig, PerformanceTrackerConfig
 from strategies.strategy_manager import ExtendedStrategyManagerConfig, ExtendedStrategyManager
 from strategy.candle_manager import CandleManager
 from strategy.correlation_manager import correlation_manager
@@ -512,64 +512,7 @@ class BotController:
           logger.info(f"📊 MTF Таймфреймы: {[tf.value for tf in active_timeframes]}")
           logger.info(f"🎯 Primary TF: {primary_tf.value}, Execution TF: {execution_tf.value}")
 
-          # Конфигурация MTF Manager
-          # mtf_config = MTFManagerConfig(
-          #   enabled=True,
-          #
-          #   # Coordinator Config
-          #   coordinator_config=MultiTimeframeConfig(
-          #     active_timeframes=active_timeframes,
-          #     primary_timeframe=primary_tf,
-          #     execution_timeframe=execution_tf,
-          #
-          #   ),
-          #
-          #   # Aligner Config
-          #   aligner_config=AlignmentConfig(
-          #     timeframe_weights={  # ✅ Вместо htf_weight, mtf_weight, ltf_weight
-          #       Timeframe.H1: 0.50,
-          #       Timeframe.M15: 0.30,
-          #       Timeframe.M5: 0.15,
-          #       Timeframe.M1: 0.05
-          #     },  # Lower Timeframe weight
-          #     min_alignment_score=0.65,
-          #     confluence_price_tolerance_percent=0.5,
-          #     min_timeframes_for_confluence=1,  # ✅ Вместо min_confluence_zones
-          #     allow_trend_counter_signals=False
-          #   ),
-          #
-          #   # Synthesizer Config
-          #   synthesizer_config=SynthesizerConfig(
-          #     mode=SynthesisMode(mtf_synthesis_mode),  # ✅ mode, НЕ synthesis_mode
-          #     min_signal_quality=mtf_min_quality,  # ✅ Вместо min_quality_threshold
-          #     min_timeframes_required=2,  # ✅ Вместо min_timeframes_for_signal
-          #     enable_dynamic_position_sizing=True,
-          #     max_position_multiplier=1.5,  # ✅ Вместо position_size_multiplier_range
-          #     min_position_multiplier=0.3,  # ✅
-          #     use_higher_tf_for_stops=True,  # ✅ Вместо enable_smart_sl
-          #     atr_multiplier_for_stops=2.0  # ✅ Вместо default_risk_reward_ratio
-          #
-          #   ),
-          #
-          #   # Quality Control
-          #
-          #
-          #   # Fallback
-          #   fallback_to_single_tf=True,
-          #
-          # )
 
-          # self.mtf_manager = MultiTimeframeManager(
-          #   strategy_manager=self.strategy_manager,
-          #   config=mtf_config
-          # )
-
-
-
-          # Инициализация символов в MTF Manager
-          # for symbol in self.symbols:
-          #   await self.mtf_manager.initialize_symbol(symbol)
-          #   logger.info(f"✅ {symbol}: MTF Manager инициализирован")
 
           logger.info("✅ Multi-Timeframe Manager инициализирован")
 
@@ -1056,6 +999,16 @@ class BotController:
         self._analysis_loop_ml_enhanced()
       )
       logger.info("✓ Цикл анализа (ML-Enhanced) запущен")
+      # try:
+      #   await ml_data_collection_loop(
+      #     bot_controller=self,
+      #     symbols=self.symbols,
+      #     analysis_interval=settings.ANALYSIS_INTERVAL
+      #   )
+      # except Exception as e:
+      #   logger.error(f"Критическая ошибка: {e}", exc_info=True)
+      # finally:
+      #   await self.stop()
 
       # ========== 19. POSITION MONITOR - ЗАПУСК ==========
 
@@ -1838,6 +1791,11 @@ class BotController:
         #   await asyncio.sleep(1)
         #   continue
 
+        should_collect_ml_data_this_cycle = (
+            has_ml_data_collector and
+            self.ml_data_collector.should_collect()
+        )
+
         # Анализируем каждую пару
         for symbol in self.symbols:
           symbol_start = time.time()
@@ -2156,20 +2114,21 @@ class BotController:
                   # НЕ используем для блокировки торговли, только для метаданных
                   # ПРИМЕЧАНИЕ: MLSignalValidator не имеет метода predict, только validate
                   # который требует signal. Это можно реализовать позже при необходимости.
-                  # if self.ml_validator and not manipulation_detected:
-                  #   try:
-                  #     ml_prediction = await self.ml_validator.predict(
-                  #       feature_vector=feature_vector
-                  #     )
-                  #
-                  #     if ml_prediction:
-                  #       logger.debug(
-                  #         f"[{symbol}] ML Prediction: "
-                  #         f"direction={ml_prediction.get('prediction')}, "
-                  #         f"confidence={ml_prediction.get('confidence', 0):.3f}"
-                  #       )
-                  #   except Exception as e:
-                  #     logger.error(f"[{symbol}] Ошибка ML Prediction: {e}")
+                  if self.ml_validator and not manipulation_detected:
+                    try:
+                      ml_prediction = await self.ml_validator.validate(
+                        signal=signal,
+                        feature_vector=feature_vector
+                      )
+
+                      if ml_prediction:
+                        logger.debug(
+                          f"[{symbol}] ML Prediction: "
+                          f"direction={ml_prediction.get('prediction')}, "
+                          f"confidence={ml_prediction.get('confidence', 0):.3f}"
+                        )
+                    except Exception as e:
+                      logger.error(f"[{symbol}] Ошибка ML Prediction: {e}")
                 else:
                   logger.warning(f"[{symbol}] Feature extraction вернул None")
 
@@ -2189,7 +2148,7 @@ class BotController:
             # ============================================================
             # ШАГ 5: 🎯 INTEGRATED ANALYSIS (ЯДРО СИСТЕМЫ)
             # ============================================================
-
+# +++++включить для основной работы++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
             integrated_signal = None
 
             if not manipulation_detected:  # Анализируем только если нет манипуляций
@@ -2451,7 +2410,6 @@ class BotController:
 
                       # ML Validator проверяет финальный сигнал
                       validation_result = await self.ml_validator.validate(
-
                         signal=final_signal,
                         feature_vector=feature_vector
                       )
@@ -2708,15 +2666,15 @@ class BotController:
                 )
               except Exception as e:
                 logger.error(f"{symbol} | Ошибка drift monitoring: {e}", exc_info=True)
-
+# +++++включить для основной работы++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
             # ============================================================
             # ШАГ 12: ML DATA COLLECTION (для обучения)
             # ============================================================
-
-            if has_ml_data_collector and feature_vector:
+            if should_collect_ml_data_this_cycle and feature_vector:
+            # if has_ml_data_collector and feature_vector:
               try:
                 # Проверяем нужно ли собирать данные
-                if self.ml_data_collector.should_collect():
+                # if self.ml_data_collector.should_collect():
                   # Подготовка sample
                   sample_data = {
                     'symbol': symbol,
@@ -2738,10 +2696,11 @@ class BotController:
                           if candles and len(candles) > 1 and candles[-2].close > 0
                           else None
                       )
-                    }
+                    },
+
                   }
 
-
+# +++++включить для основной работы++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
                   # Если был сгенерирован сигнал - добавляем его
                   if integrated_signal:
@@ -2762,15 +2721,25 @@ class BotController:
                         ),
                       'source_mode': integrated_signal.source_analysis_mode.value
                     }
-
+# +++++включить для основной работы++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
                   # Сохранение sample
                   await self.ml_data_collector.collect_sample(
                     symbol=symbol,
                     feature_vector=feature_vector,
                     orderbook_snapshot=orderbook_snapshot,
                     market_metrics=market_metrics,
-                    executed_signal=None
+                    executed_signal=None,
+                    manipulation_detected=manipulation_detected,
+                    manipulation_types=manipulation_types if manipulation_detected else [],
+                    market_regime=(
+                      integrated_signal.market_regime
+                      if integrated_signal and hasattr(integrated_signal, 'market_regime')
+                      else None
+                    ),
+                    feature_quality=feature_vector.metadata.get('quality', 1.0) if hasattr(feature_vector,
+                                                                                           'metadata') else 1.0
                   )
+
 
                   self.stats['ml_data_collected'] += 1
                   logger.debug(f"[{symbol}] ML Data sample собран")
@@ -2796,7 +2765,7 @@ class BotController:
                 symbol=symbol,
                 metrics=market_metrics.to_dict()
               )
-
+# +++++включить для основной работы++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
               # Broadcast Signal (если был)
               if integrated_signal:
                 from api.websocket import broadcast_signal
@@ -2813,7 +2782,7 @@ class BotController:
 
                 except Exception as e:
                   logger.debug(f"[{symbol}] Ошибка broadcasting сигнала: {e}")
-
+# +++++включить для основной работы++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
             except Exception as e:
               # Broadcasting errors не критичны
               logger.debug(f"[{symbol}] Ошибка broadcasting: {e}")
@@ -3248,54 +3217,7 @@ class BotController:
           exc_info=True
         )
 
-  # async def _handle_orderbook_message(self, data: Dict[str, Any]):
-  #   """
-  #   Обработка сообщения о стакане от WebSocket.
-  #
-  #   Args:
-  #       data: Данные от WebSocket
-  #   """
-  #   try:
-  #     topic = data.get("topic", "")
-  #     message_type = data.get("type", "")
-  #     message_data = data.get("data", {})
-  #
-  #     # Извлекаем символ из топика
-  #     if "orderbook" in topic:
-  #       parts = topic.split(".")
-  #       if len(parts) >= 3:
-  #         symbol = parts[2]
-  #
-  #         if symbol not in self.orderbook_managers:
-  #           logger.warning(f"Получены данные для неизвестного символа: {symbol}")
-  #           return
-  #
-  #         manager = self.orderbook_managers[symbol]
-  #
-  #         if message_type == "snapshot":
-  #           logger.info(f"{symbol} | Получен snapshot стакана")
-  #           manager.apply_snapshot(message_data)
-  #           logger.info(
-  #             f"{symbol} | Snapshot применен: "
-  #             f"{len(manager.bids)} bids, {len(manager.asks)} asks"
-  #           )
-  #
-  #         elif message_type == "delta":
-  #           if not manager.snapshot_received:
-  #             logger.debug(
-  #               f"{symbol} | Delta получена до snapshot, пропускаем"
-  #             )
-  #             return
-  #
-  #           manager.apply_delta(message_data)
-  #           logger.debug(f"{symbol} | Delta применена")
-  #         else:
-  #           logger.warning(f"{symbol} | Неизвестный тип сообщения: {message_type}")
-  #
-  #   except Exception as e:
-  #     logger.error(f"Ошибка обработки сообщения стакана: {e}")
-  #     if not isinstance(e, (OrderBookSyncError, OrderBookError)):
-  #       log_exception(logger, e, "Обработка сообщения стакана")
+  
 
   async def _handle_orderbook_message(self, message: Dict[str, Any]):
     """
@@ -3914,26 +3836,26 @@ class BotController:
           symbol: Торговая пара
           integrated_signal: IntegratedSignal объект
       """
-      signal = integrated_signal.final_signal
+      trading_signal = integrated_signal.final_signal
 
       logger.info("=" * 80)
       logger.info(f"🎯 INTEGRATED SIGNAL: {symbol}")
       logger.info("=" * 80)
 
       # ===== ОСНОВНАЯ ИНФОРМАЦИЯ =====
-      logger.info(f"📊 Тип сигнала: {signal.signal_type.value}")
+      logger.info(f"📊 Тип сигнала: {trading_signal.signal_type.value}")
       logger.info(f"💯 Combined Confidence: {integrated_signal.combined_confidence:.3f}")
       logger.info(f"⭐ Combined Quality: {integrated_signal.combined_quality_score:.3f}")
-      logger.info(f"📈 Entry Price: ${signal.price:.2f}")
+      logger.info(f"📈 Entry Price: ${trading_signal.price:.2f}")
       if integrated_signal.recommended_stop_loss is not None:
-        stop_loss_pct = ((integrated_signal.recommended_stop_loss - signal.price) / signal.price) * 100
+        stop_loss_pct = ((integrated_signal.recommended_stop_loss - trading_signal.price) / trading_signal.price) * 100
         logger.info(f"🛡️ Stop Loss: ${integrated_signal.recommended_stop_loss:.2f} ({stop_loss_pct:+.2f}%)")
       else:
         logger.info(f"🛡️ Stop Loss: Not set")
 
         # Take Profit (с безопасной обработкой)
       if integrated_signal.recommended_take_profit is not None:
-        take_profit_pct = ((integrated_signal.recommended_take_profit - signal.price) / signal.price) * 100
+        take_profit_pct = ((integrated_signal.recommended_take_profit - trading_signal.price) / trading_signal.price) * 100
         logger.info(f"🎯 Take Profit: ${integrated_signal.recommended_take_profit:.2f} ({take_profit_pct:+.2f}%)")
       else:
         logger.info(f"🎯 Take Profit: Not set")
