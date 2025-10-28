@@ -12,104 +12,175 @@ from datetime import datetime
 # Добавляем путь к backend
 backend_path = Path(__file__).parent / "backend"
 sys.path.insert(0, str(backend_path))
+import time
+import logging
 import argparse
 import numpy as np
 import json
 from pathlib import Path
 from collections import Counter
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Tuple, Dict
+import multiprocessing as mp
 
+# Настройка логирования
+logging.basicConfig(
+  level=logging.INFO,
+  format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 def check_environment():
   """Проверка окружения."""
   print("\n" + "=" * 60)
   print("ПРОВЕРКА ОКРУЖЕНИЯ")
   print("=" * 60)
-
+  start_time = time.time()
+  logger.info("=" * 80)
+  logger.info("НАЧАЛО ПРОВЕРКИ ОКРУЖЕНИЯ")
+  logger.info("=" * 80)
   try:
+    logger.info("Проверка PyTorch...")
     import torch
     print(f"✓ PyTorch: {torch.__version__}")
+    logger.info(f"✓ PyTorch {torch.__version__} установлен")
     print(f"  CUDA available: {torch.cuda.is_available()}")
     if torch.cuda.is_available():
       print(f"  CUDA version: {torch.version.cuda}")
       print(f"  GPU: {torch.cuda.get_device_name(0)}")
-  except ImportError:
+      logger.info(f"  CUDA version: {torch.version.cuda}")
+      logger.info(f"  GPU: {torch.cuda.get_device_name(0)}")
+      logger.info(f"  GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+  except ImportError as e:
     print("❌ PyTorch не установлен!")
+    logger.error(f"❌ PyTorch не установлен: {e}")
     return False
 
   try:
+    logger.info("Проверка Scikit-learn...")
     import sklearn
     print(f"✓ Scikit-learn: {sklearn.__version__}")
-  except ImportError:
+    logger.info(f"✓ Scikit-learn {sklearn.__version__} установлен")
+  except ImportError as e:
     print("❌ Scikit-learn не установлен!")
+    logger.error(f"❌ Scikit-learn не установлен: {e}")
     return False
 
   try:
+    logger.info("Проверка imbalanced-learn...")
     from imblearn import over_sampling
     print(f"✓ imbalanced-learn установлен")
+    logger.info("✓ imbalanced-learn установлен")
   except ImportError:
     print("⚠️  imbalanced-learn не установлен (опционально)")
+    logger.warning("⚠️  imbalanced-learn не установлен (опционально)")
+
+    # Проверка доступных CPU ядер
+    cpu_count = mp.cpu_count()
+    print(f"✓ CPU cores: {cpu_count}")
+    logger.info(f"✓ Доступно CPU ядер: {cpu_count}")
+
+    elapsed = time.time() - start_time
+    logger.info(f"✓ Проверка окружения завершена за {elapsed:.2f}s")
 
   print()
   return True
 
+def _count_samples_in_file(file_path: Path) -> int:
+  """Подсчет количества семплов в файле (вспомогательная функция для параллелизации)."""
+  try:
+    data = np.load(file_path, mmap_mode='r')  # Memory-mapped для быстрой загрузки
+    return data.shape[0]
+  except Exception as e:
+    logger.warning(f"Ошибка при чтении {file_path.name}: {e}")
+    return 0
 
 def check_data(symbol: str, data_path: str = "data/ml_training"):
   """Проверка данных."""
+  start_time = time.time()
+  logger.info("=" * 80)
+  logger.info(f"НАЧАЛО ПРОВЕРКИ ДАННЫХ: {symbol}")
+  logger.info("=" * 80)
   print("=" * 60)
   print(f"ПРОВЕРКА ДАННЫХ: {symbol}")
   print("=" * 60)
 
+  logger.info(f"Путь к данным: {data_path}")
+
   symbol_path = Path(data_path) / symbol
 
   if not symbol_path.exists():
+    logger.error(f"❌ Директория не найдена: {symbol_path}")
     print(f"❌ Директория не найдена: {symbol_path}")
     return False
 
+  logger.info(f"✓ Директория найдена: {symbol_path}")
   features_dir = symbol_path / "features"
   labels_dir = symbol_path / "labels"
 
   if not features_dir.exists():
     print(f"❌ Директория features не найдена!")
+    logger.error(f"❌ Директория features не найдена: {features_dir}")
     return False
 
   if not labels_dir.exists():
     print(f"❌ Директория labels не найдена!")
+    logger.error(f"❌ Директория labels не найдена: {labels_dir}")
     return False
-
+  logger.info("✓ Директории features и labels найдены")
   # Подсчет файлов
+  logger.info("Подсчет файлов...")
+  files_start = time.time()
+
   feature_files = list(features_dir.glob("*.npy"))
   label_files = list(labels_dir.glob("*.json"))
+
+  files_time = time.time() - files_start
+  logger.info(f"✓ Файлы подсчитаны за {files_time:.2f}s")
 
   print(f"\nФайлы:")
   print(f"  Feature files: {len(feature_files)}")
   print(f"  Label files: {len(label_files)}")
 
+  logger.info(f"Feature files: {len(feature_files)}")
+  logger.info(f"Label files: {len(label_files)}")
+
   if len(feature_files) == 0:
     print("❌ Нет файлов features!")
+    logger.error("❌ Нет файлов features!")
     return False
 
   if len(label_files) == 0:
     print("❌ Нет файлов labels!")
+    logger.error("❌ Нет файлов labels!")
     return False
 
   # Загрузка примеров
+  logger.info("Загрузка и анализ примеров данных...")
   print(f"\nЗагрузка примеров...")
-
+  load_start = time.time()
   try:
     # Features
+    logger.info(f"Загрузка примера features из {feature_files[0].name}...")
     sample_features = np.load(feature_files[0])
     print(f"  ✓ Features shape: {sample_features.shape}")
     print(f"    Expected: (N, 110)")
 
     if sample_features.shape[1] != 110:
+      logger.warning(f"⚠️  Неожиданное количество признаков: {sample_features.shape[1]} вместо 110")
       print(f"    ⚠️  Неожиданное количество признаков!")
 
     # Labels
+    logger.info(f"Загрузка примера labels из {label_files[0].name}...")
     with open(label_files[0]) as f:
       sample_labels = json.load(f)
 
     print(f"  ✓ Labels loaded: {len(sample_labels)} samples")
+    logger.info(f"✓ Labels загружены: {len(sample_labels)} семплов")
+
+    load_time = time.time() - load_start
+    logger.info(f"✓ Примеры загружены за {load_time:.2f}s")
 
     # Проверка структуры labels
     if sample_labels:
@@ -147,14 +218,32 @@ def check_data(symbol: str, data_path: str = "data/ml_training"):
     return False
 
   # Подсчет общего количества семплов
+  logger.info("Подсчет общего количества семплов...")
   print(f"\nПодсчет семплов...")
+  count_start = time.time()
+
+  # Параллельный подсчет семплов для ускорения
+  logger.info(f"Параллельная обработка {len(feature_files)} файлов...")
   total_samples = 0
 
-  for feature_file in feature_files:
-    data = np.load(feature_file)
-    total_samples += data.shape[0]
+  # Используем ThreadPoolExecutor для I/O операций
+  max_workers = min(mp.cpu_count(), len(feature_files))
+  logger.info(f"Использование {max_workers} воркеров для подсчета")
+
+  with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    # Запускаем параллельный подсчет
+    futures = {executor.submit(_count_samples_in_file, f): f for f in feature_files}
+
+    # Собираем результаты
+    for future in as_completed(futures):
+      count = future.result()
+      total_samples += count
+
+  count_time = time.time() - count_start
+  logger.info(f"✓ Подсчет завершен за {count_time:.2f}s")
 
   print(f"  Всего семплов: {total_samples:,}")
+  logger.info(f"Всего семплов: {total_samples:,}")
 
   # Рекомендации по объему
   if total_samples < 10_000:
@@ -173,16 +262,28 @@ def check_data(symbol: str, data_path: str = "data/ml_training"):
     print(f"  ✓ Отлично! Достаточно данных для full optimization")
 
   # Анализ распределения классов
+  logger.info("Анализ распределения классов...")
   print(f"\nАнализ распределения классов...")
+  analysis_start = time.time()
+
+
+  # Оптимизация: используем векторизацию для более быстрого анализа
+  logger.info(f"Загрузка labels из первых {min(10, len(label_files))} файлов для анализа...")
 
   all_directions = []
-  for label_file in label_files[:3]:  # Первые 3 файла для примера
+  # Загружаем больше файлов для более точного анализа, но не все
+  sample_size = min(10, len(label_files))
+  for i, label_file in enumerate(label_files[:sample_size]):
+    logger.debug(f"Обработка файла {i + 1}/{sample_size}: {label_file.name}")  # Первые 3 файла для примера
     with open(label_file) as f:
       labels = json.load(f)
       for label in labels:
         direction = label.get("future_direction_60s")
         if direction is not None:
           all_directions.append(direction)
+
+  analysis_time = time.time() - analysis_start
+  logger.info(f"✓ Анализ выполнен за {analysis_time:.2f}s")
 
   if all_directions:
     class_dist = Counter(all_directions)
@@ -209,21 +310,32 @@ def check_data(symbol: str, data_path: str = "data/ml_training"):
       print(f"    ⚠️  Средний дисбаланс - используйте Focal Loss")
     else:
       print(f"    ❌ Сильный дисбаланс - используйте Focal Loss + SMOTE")
+      logger.info(f"Класс распределение: {dict(class_dist)}")
+      logger.info(f"Imbalance ratio: {ratio:.2f}")
 
+    total_time = time.time() - start_time
+    logger.info(f"✓ Проверка данных завершена за {total_time:.1f}s")
+    logger.info("=" * 80)
   print()
   return True
 
 
 def test_dataloader(symbol: str):
   """Тест загрузки данных."""
+  start_time = time.time()
+  logger.info("=" * 80)
+  logger.info("НАЧАЛО ТЕСТА DATALOADER")
+  logger.info("=" * 80)
   print("=" * 60)
   print("ТЕСТ DATALOADER")
   print("=" * 60)
 
   try:
+    logger.info("Импорт модулей...")
     from ml_engine.training.data_loader import HistoricalDataLoader, DataConfig
 
     print("Создание DataLoader...")
+    logger.info("Создание конфигурации DataLoader...")
     config = DataConfig(
       storage_path="data/ml_training",
       sequence_length=60,
