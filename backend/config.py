@@ -648,6 +648,111 @@ class Settings(BaseSettings):
     description="Период расчета корреляции (дни)"
   )
 
+  # ===== ADVANCED CORRELATION SETTINGS =====
+  # Методы расчета корреляции
+  CORRELATION_USE_ADVANCED: bool = Field(
+    default=os.getenv("CORRELATION_USE_ADVANCED", "true").lower() == "true",
+    description="Использовать продвинутый анализ корреляций"
+  )
+  CORRELATION_USE_SPEARMAN: bool = Field(
+    default=os.getenv("CORRELATION_USE_SPEARMAN", "true").lower() == "true",
+    description="Использовать Spearman rank correlation"
+  )
+  CORRELATION_USE_DTW: bool = Field(
+    default=os.getenv("CORRELATION_USE_DTW", "false").lower() == "true",
+    description="Использовать Dynamic Time Warping (требует больше ресурсов)"
+  )
+
+  # Rolling windows
+  CORRELATION_SHORT_WINDOW: int = Field(
+    default=int(os.getenv("CORRELATION_SHORT_WINDOW", "7")),
+    ge=2,
+    le=30,
+    description="Короткое окно для rolling correlation (дни)"
+  )
+  CORRELATION_MEDIUM_WINDOW: int = Field(
+    default=int(os.getenv("CORRELATION_MEDIUM_WINDOW", "14")),
+    ge=2,
+    le=60,
+    description="Среднее окно для rolling correlation (дни)"
+  )
+  CORRELATION_LONG_WINDOW: int = Field(
+    default=int(os.getenv("CORRELATION_LONG_WINDOW", "30")),
+    ge=2,
+    le=90,
+    description="Длинное окно для rolling correlation (дни)"
+  )
+
+  # Веса окон
+  CORRELATION_SHORT_WEIGHT: float = Field(
+    default=float(os.getenv("CORRELATION_SHORT_WEIGHT", "0.5")),
+    ge=0.0,
+    le=1.0,
+    description="Вес короткого окна"
+  )
+  CORRELATION_MEDIUM_WEIGHT: float = Field(
+    default=float(os.getenv("CORRELATION_MEDIUM_WEIGHT", "0.3")),
+    ge=0.0,
+    le=1.0,
+    description="Вес среднего окна"
+  )
+  CORRELATION_LONG_WEIGHT: float = Field(
+    default=float(os.getenv("CORRELATION_LONG_WEIGHT", "0.2")),
+    ge=0.0,
+    le=1.0,
+    description="Вес длинного окна"
+  )
+
+  # Методы группировки
+  CORRELATION_GROUPING_METHOD: str = Field(
+    default=os.getenv("CORRELATION_GROUPING_METHOD", "ensemble"),
+    description="Метод группировки: greedy, louvain, hierarchical, ensemble"
+  )
+
+  # DTW параметры
+  CORRELATION_DTW_MAX_LAG_HOURS: int = Field(
+    default=int(os.getenv("CORRELATION_DTW_MAX_LAG_HOURS", "24")),
+    description="Максимальный лаг для DTW (часы)"
+  )
+  CORRELATION_DTW_WINDOW_HOURS: int = Field(
+    default=int(os.getenv("CORRELATION_DTW_WINDOW_HOURS", "168")),
+    description="Размер окна для DTW (часы, 168 = 7 дней)"
+  )
+
+  # Режимы корреляций
+  CORRELATION_REGIME_DETECTION: bool = Field(
+    default=os.getenv("CORRELATION_REGIME_DETECTION", "true").lower() == "true",
+    description="Детектировать режим корреляций и адаптировать параметры"
+  )
+  CORRELATION_REGIME_LOW_THRESHOLD: float = Field(
+    default=float(os.getenv("CORRELATION_REGIME_LOW_THRESHOLD", "0.4")),
+    description="Порог для низких корреляций"
+  )
+  CORRELATION_REGIME_MODERATE_THRESHOLD: float = Field(
+    default=float(os.getenv("CORRELATION_REGIME_MODERATE_THRESHOLD", "0.6")),
+    description="Порог для умеренных корреляций"
+  )
+  CORRELATION_REGIME_HIGH_THRESHOLD: float = Field(
+    default=float(os.getenv("CORRELATION_REGIME_HIGH_THRESHOLD", "0.75")),
+    description="Порог для высоких корреляций"
+  )
+  CORRELATION_REGIME_CRISIS_THRESHOLD: float = Field(
+    default=float(os.getenv("CORRELATION_REGIME_CRISIS_THRESHOLD", "0.85")),
+    description="Порог для кризисных корреляций"
+  )
+
+  # Volatility clustering
+  CORRELATION_VOLATILITY_CLUSTERING: bool = Field(
+    default=os.getenv("CORRELATION_VOLATILITY_CLUSTERING", "true").lower() == "true",
+    description="Группировать активы по волатильности"
+  )
+  CORRELATION_VOLATILITY_CLUSTERS: int = Field(
+    default=int(os.getenv("CORRELATION_VOLATILITY_CLUSTERS", "3")),
+    ge=2,
+    le=10,
+    description="Количество кластеров волатильности"
+  )
+
   # Daily Loss Killer
   DAILY_LOSS_KILLER_ENABLED: bool = Field(
     default=os.getenv("DAILY_LOSS_KILLER_ENABLED", "true").lower() == "true",
