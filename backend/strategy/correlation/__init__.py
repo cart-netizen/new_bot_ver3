@@ -5,6 +5,10 @@
 - Модели данных
 - Продвинутый калькулятор
 - Методы группировки
+- DTW калькулятор
+- Conditional correlation анализатор
+- Market cap weighting менеджер
+- Детектор режимов корреляций
 """
 from .models import (
     CorrelationMethod,
@@ -24,7 +28,26 @@ from .advanced_calculator import AdvancedCorrelationCalculator
 from .grouping_methods import (
     GraphBasedGroupManager,
     HierarchicalGroupManager,
-    EnsembleGroupManager
+    EnsembleGroupManager,
+    ClusterQualityMetrics
+)
+
+from .dtw_calculator import DTWCalculator
+
+from .conditional_correlation import (
+    MarketRegimeClassifier,
+    ConditionalCorrelationAnalyzer
+)
+
+from .market_cap_weighting import (
+    MarketCapInfo,
+    MarketCapWeightingManager,
+    market_cap_manager
+)
+
+from .regime_detector import (
+    CorrelationRegimeDetector,
+    VolatilityClusterManager
 )
 
 __all__ = [
@@ -45,4 +68,17 @@ __all__ = [
     "GraphBasedGroupManager",
     "HierarchicalGroupManager",
     "EnsembleGroupManager",
+    "ClusterQualityMetrics",
+    # DTW
+    "DTWCalculator",
+    # Conditional Correlation
+    "MarketRegimeClassifier",
+    "ConditionalCorrelationAnalyzer",
+    # Market Cap Weighting
+    "MarketCapInfo",
+    "MarketCapWeightingManager",
+    "market_cap_manager",
+    # Regime Detection
+    "CorrelationRegimeDetector",
+    "VolatilityClusterManager",
 ]

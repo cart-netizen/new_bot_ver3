@@ -17,6 +17,7 @@ from .models import (
     ConditionalCorrelationMetrics,
     CorrelationMethod
 )
+from .dtw_calculator import DTWCalculator
 
 logger = get_logger(__name__)
 
@@ -162,10 +163,10 @@ class AdvancedCorrelationCalculator:
         prices_b: np.ndarray
     ) -> float:
         """
-        Расчет Dynamic Time Warping distance (упрощенная версия).
+        Расчет Dynamic Time Warping distance (полная версия).
 
-        Примечание: Полная имплементация DTW требует библиотеки dtaidistance.
-        Эта версия использует упрощенный алгоритм.
+        Использует полную реализацию DTW с динамическим программированием
+        и Sakoe-Chiba band constraint для ускорения.
 
         Args:
             prices_a: Цены актива A
@@ -178,26 +179,17 @@ class AdvancedCorrelationCalculator:
             return 1.0  # Максимальная дистанция = нет корреляции
 
         try:
-            # Упрощенная версия: используем обычное евклидово расстояние
-            # после нормализации временных рядов
-            if self.dtw_params.normalize:
-                prices_a = (prices_a - np.mean(prices_a)) / (np.std(prices_a) + 1e-8)
-                prices_b = (prices_b - np.mean(prices_b)) / (np.std(prices_b) + 1e-8)
+            # Используем полную реализацию DTW
+            result = DTWCalculator.calculate_dtw(
+                series_a=prices_a,
+                series_b=prices_b,
+                window_size=self.dtw_params.window_size,
+                normalize=self.dtw_params.normalize,
+                step_pattern=self.dtw_params.step_pattern
+            )
 
-            # Выравниваем длину
-            min_len = min(len(prices_a), len(prices_b))
-            prices_a = prices_a[-min_len:]
-            prices_b = prices_b[-min_len:]
-
-            # Расчет евклидова расстояния
-            distance = euclidean(prices_a, prices_b)
-
-            # Нормализуем к [0, 1]
-            # Максимальная дистанция для нормализованных рядов ≈ sqrt(2*N)
-            max_distance = np.sqrt(2 * len(prices_a))
-            normalized_distance = min(distance / max_distance, 1.0)
-
-            return float(normalized_distance)
+            # Результат уже нормализован к [0, 1]
+            return result.normalized_distance
 
         except Exception as e:
             logger.warning(f"Ошибка расчета DTW: {e}")

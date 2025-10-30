@@ -16,7 +16,7 @@ except ImportError:
 
 try:
     from sklearn.cluster import AgglomerativeClustering, KMeans
-    from sklearn.metrics import silhouette_score
+    from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
@@ -25,6 +25,147 @@ from core.logger import get_logger
 from .models import AdvancedCorrelationGroup, GroupingMethod
 
 logger = get_logger(__name__)
+
+
+class ClusterQualityMetrics:
+    """
+    Метрики качества кластеризации.
+    """
+
+    @staticmethod
+    def calculate_silhouette_score(
+        distance_matrix: np.ndarray,
+        labels: np.ndarray
+    ) -> float:
+        """
+        Расчет silhouette score.
+
+        Args:
+            distance_matrix: Матрица расстояний
+            labels: Метки кластеров
+
+        Returns:
+            float: Silhouette score [-1, 1], выше = лучше
+        """
+        if not SKLEARN_AVAILABLE:
+            return 0.0
+
+        try:
+            # Проверяем, что есть хотя бы 2 кластера
+            unique_labels = np.unique(labels)
+            if len(unique_labels) < 2:
+                return 0.0
+
+            score = silhouette_score(
+                distance_matrix,
+                labels,
+                metric='precomputed'
+            )
+            return float(score)
+
+        except Exception as e:
+            logger.warning(f"Ошибка расчета silhouette score: {e}")
+            return 0.0
+
+    @staticmethod
+    def calculate_modularity(
+        graph: 'nx.Graph',
+        communities: List[Set[str]]
+    ) -> float:
+        """
+        Расчет modularity для граф-based кластеризации.
+
+        Args:
+            graph: NetworkX граф
+            communities: Список сообществ (sets of nodes)
+
+        Returns:
+            float: Modularity [0, 1], выше = лучше
+        """
+        if not NETWORKX_AVAILABLE:
+            return 0.0
+
+        try:
+            modularity = community.modularity(
+                graph,
+                communities,
+                weight='weight'
+            )
+            return float(modularity)
+
+        except Exception as e:
+            logger.warning(f"Ошибка расчета modularity: {e}")
+            return 0.0
+
+    @staticmethod
+    def calculate_intra_cluster_correlation(
+        symbols_in_group: List[str],
+        correlation_matrix: Dict[Tuple[str, str], float]
+    ) -> Dict[str, float]:
+        """
+        Рассчитывает метрики корреляции внутри кластера.
+
+        Args:
+            symbols_in_group: Символы в группе
+            correlation_matrix: Матрица корреляций
+
+        Returns:
+            Dict[str, float]: Метрики (avg, min, max, std)
+        """
+        correlations = []
+
+        for i, sym1 in enumerate(symbols_in_group):
+            for sym2 in symbols_in_group[i + 1:]:
+                key = (sym1, sym2) if sym1 < sym2 else (sym2, sym1)
+
+                if key in correlation_matrix:
+                    correlations.append(abs(correlation_matrix[key]))
+
+        if not correlations:
+            return {
+                "avg": 0.0,
+                "min": 0.0,
+                "max": 0.0,
+                "std": 0.0
+            }
+
+        return {
+            "avg": float(np.mean(correlations)),
+            "min": float(np.min(correlations)),
+            "max": float(np.max(correlations)),
+            "std": float(np.std(correlations))
+        }
+
+    @staticmethod
+    def calculate_inter_cluster_correlation(
+        group1_symbols: List[str],
+        group2_symbols: List[str],
+        correlation_matrix: Dict[Tuple[str, str], float]
+    ) -> float:
+        """
+        Средняя корреляция между двумя кластерами.
+
+        Args:
+            group1_symbols: Символы первой группы
+            group2_symbols: Символы второй группы
+            correlation_matrix: Матрица корреляций
+
+        Returns:
+            float: Средняя межкластерная корреляция
+        """
+        correlations = []
+
+        for sym1 in group1_symbols:
+            for sym2 in group2_symbols:
+                key = (sym1, sym2) if sym1 < sym2 else (sym2, sym1)
+
+                if key in correlation_matrix:
+                    correlations.append(abs(correlation_matrix[key]))
+
+        if not correlations:
+            return 0.0
+
+        return float(np.mean(correlations))
 
 
 class GraphBasedGroupManager:
@@ -51,7 +192,8 @@ class GraphBasedGroupManager:
         self,
         symbols: List[str],
         correlation_matrix: Dict[Tuple[str, str], float],
-        dtw_matrix: Optional[Dict[Tuple[str, str], float]] = None
+        dtw_matrix: Optional[Dict[Tuple[str, str], float]] = None,
+        returns_cache: Optional[Dict[str, np.ndarray]] = None
     ) -> List[AdvancedCorrelationGroup]:
         """
         Создание групп методом Louvain community detection.
@@ -60,6 +202,7 @@ class GraphBasedGroupManager:
             symbols: Список символов
             correlation_matrix: Матрица корреляций
             dtw_matrix: Матрица DTW (опционально)
+            returns_cache: Кеш returns для расчета волатильности (опционально)
 
         Returns:
             List[AdvancedCorrelationGroup]: Список групп
@@ -94,6 +237,12 @@ class GraphBasedGroupManager:
                 G, weight='weight'
             )
 
+            # Рассчитываем modularity для всех сообществ
+            communities_list = [set(comm) for comm in communities]
+            overall_modularity = ClusterQualityMetrics.calculate_modularity(
+                G, communities_list
+            )
+
             groups = []
             for idx, comm in enumerate(communities):
                 symbols_in_group = sorted(list(comm))
@@ -109,6 +258,11 @@ class GraphBasedGroupManager:
                     dtw_matrix
                 )
 
+                # Рассчитываем среднюю волатильность группы
+                avg_volatility = self._calculate_avg_volatility(
+                    symbols_in_group, returns_cache
+                )
+
                 group = AdvancedCorrelationGroup(
                     group_id=f"louvain_{idx}",
                     symbols=symbols_in_group,
@@ -117,13 +271,16 @@ class GraphBasedGroupManager:
                     min_correlation=metrics['min_correlation'],
                     max_correlation=metrics['max_correlation'],
                     avg_dtw_distance=metrics.get('avg_dtw', 0.0),
-                    avg_volatility=0.0,  # TODO: добавить расчет
-                    cluster_quality_score=0.0  # TODO: добавить расчет
+                    avg_volatility=avg_volatility,
+                    cluster_quality_score=overall_modularity
                 )
 
                 groups.append(group)
 
-            logger.info(f"Создано {len(groups)} групп методом Louvain")
+            logger.info(
+                f"Создано {len(groups)} групп методом Louvain | "
+                f"modularity={overall_modularity:.3f}"
+            )
             return groups
 
         except Exception as e:
@@ -221,6 +378,34 @@ class GraphBasedGroupManager:
             'avg_dtw': np.mean(dtw_distances) if dtw_distances else 0.0
         }
 
+    def _calculate_avg_volatility(
+        self,
+        symbols: List[str],
+        returns_cache: Optional[Dict[str, np.ndarray]]
+    ) -> float:
+        """
+        Рассчитывает среднюю волатильность группы символов.
+
+        Args:
+            symbols: Список символов в группе
+            returns_cache: Кеш returns
+
+        Returns:
+            float: Средняя волатильность группы
+        """
+        if not returns_cache:
+            return 0.0
+
+        volatilities = []
+        for symbol in symbols:
+            if symbol in returns_cache:
+                returns = returns_cache[symbol]
+                if len(returns) > 1:
+                    vol = np.std(returns)
+                    volatilities.append(vol)
+
+        return np.mean(volatilities) if volatilities else 0.0
+
 
 class HierarchicalGroupManager:
     """
@@ -248,7 +433,8 @@ class HierarchicalGroupManager:
     def create_groups_hierarchical(
         self,
         symbols: List[str],
-        correlation_matrix: Dict[Tuple[str, str], float]
+        correlation_matrix: Dict[Tuple[str, str], float],
+        returns_cache: Optional[Dict[str, np.ndarray]] = None
     ) -> List[AdvancedCorrelationGroup]:
         """
         Создание групп методом hierarchical clustering.
@@ -256,6 +442,7 @@ class HierarchicalGroupManager:
         Args:
             symbols: Список символов
             correlation_matrix: Матрица корреляций
+            returns_cache: Кеш returns для расчета волатильности (опционально)
 
         Returns:
             List[AdvancedCorrelationGroup]: Список групп
@@ -284,6 +471,11 @@ class HierarchicalGroupManager:
 
             labels = clustering.fit_predict(distance_matrix)
 
+            # Рассчитываем silhouette score для всего кластеризации
+            silhouette = ClusterQualityMetrics.calculate_silhouette_score(
+                distance_matrix, labels
+            )
+
             # Группируем символы по кластерам
             clusters = defaultdict(list)
             for symbol, label in zip(symbols, labels):
@@ -300,6 +492,11 @@ class HierarchicalGroupManager:
                     correlation_matrix
                 )
 
+                # Рассчитываем среднюю волатильность группы
+                avg_volatility = self._calculate_avg_volatility(
+                    symbols_in_cluster, returns_cache
+                )
+
                 group = AdvancedCorrelationGroup(
                     group_id=f"hierarchical_{idx}",
                     symbols=sorted(symbols_in_cluster),
@@ -308,13 +505,16 @@ class HierarchicalGroupManager:
                     min_correlation=metrics['min_correlation'],
                     max_correlation=metrics['max_correlation'],
                     avg_dtw_distance=0.0,
-                    avg_volatility=0.0,
-                    cluster_quality_score=0.0
+                    avg_volatility=avg_volatility,
+                    cluster_quality_score=silhouette
                 )
 
                 groups.append(group)
 
-            logger.info(f"Создано {len(groups)} групп методом Hierarchical")
+            logger.info(
+                f"Создано {len(groups)} групп методом Hierarchical | "
+                f"silhouette={silhouette:.3f}"
+            )
             return groups
 
         except Exception as e:
@@ -375,6 +575,34 @@ class HierarchicalGroupManager:
             'max_correlation': np.max(correlations) if correlations else 0.0
         }
 
+    def _calculate_avg_volatility(
+        self,
+        symbols: List[str],
+        returns_cache: Optional[Dict[str, np.ndarray]]
+    ) -> float:
+        """
+        Рассчитывает среднюю волатильность группы символов.
+
+        Args:
+            symbols: Список символов в группе
+            returns_cache: Кеш returns
+
+        Returns:
+            float: Средняя волатильность группы
+        """
+        if not returns_cache:
+            return 0.0
+
+        volatilities = []
+        for symbol in symbols:
+            if symbol in returns_cache:
+                returns = returns_cache[symbol]
+                if len(returns) > 1:
+                    vol = np.std(returns)
+                    volatilities.append(vol)
+
+        return np.mean(volatilities) if volatilities else 0.0
+
 
 class EnsembleGroupManager:
     """
@@ -390,7 +618,8 @@ class EnsembleGroupManager:
     def create_groups_ensemble(
         self,
         symbols: List[str],
-        correlation_matrix: Dict[Tuple[str, str], float]
+        correlation_matrix: Dict[Tuple[str, str], float],
+        returns_cache: Optional[Dict[str, np.ndarray]] = None
     ) -> List[AdvancedCorrelationGroup]:
         """
         Создание групп методом ensemble (консенсус).
@@ -398,6 +627,7 @@ class EnsembleGroupManager:
         Args:
             symbols: Список символов
             correlation_matrix: Матрица корреляций
+            returns_cache: Кеш returns для расчета волатильности (опционально)
 
         Returns:
             List[AdvancedCorrelationGroup]: Консенсусные группы
@@ -406,10 +636,10 @@ class EnsembleGroupManager:
 
         # Получаем группы от разных методов
         louvain_groups = self.louvain_manager.create_groups_louvain(
-            symbols, correlation_matrix
+            symbols, correlation_matrix, returns_cache=returns_cache
         )
         hierarchical_groups = self.hierarchical_manager.create_groups_hierarchical(
-            symbols, correlation_matrix
+            symbols, correlation_matrix, returns_cache=returns_cache
         )
 
         # Преобразуем в словари symbol -> group_id
@@ -511,6 +741,28 @@ class EnsembleGroupManager:
 
             metrics = self._calculate_group_metrics(symbols, correlation_matrix)
 
+            # Рассчитываем среднюю волатильность группы
+            avg_volatility = self._calculate_avg_volatility(
+                symbols, returns_cache
+            )
+
+            # Для ensemble используем комбинированный quality score
+            # (среднее между louvain и hierarchical качеством)
+            louvain_quality = 0.0
+            hierarchical_quality = 0.0
+
+            for group in louvain_groups:
+                if set(symbols).issubset(set(group.symbols)):
+                    louvain_quality = group.cluster_quality_score
+                    break
+
+            for group in hierarchical_groups:
+                if set(symbols).issubset(set(group.symbols)):
+                    hierarchical_quality = group.cluster_quality_score
+                    break
+
+            combined_quality = (louvain_quality + hierarchical_quality) / 2.0
+
             group = AdvancedCorrelationGroup(
                 group_id=f"ensemble_{idx}",
                 symbols=sorted(symbols),
@@ -519,8 +771,8 @@ class EnsembleGroupManager:
                 min_correlation=metrics['min_correlation'],
                 max_correlation=metrics['max_correlation'],
                 avg_dtw_distance=0.0,
-                avg_volatility=0.0,
-                cluster_quality_score=0.0
+                avg_volatility=avg_volatility,
+                cluster_quality_score=combined_quality
             )
 
             final_groups.append(group)
@@ -547,3 +799,31 @@ class EnsembleGroupManager:
             'min_correlation': np.min(correlations) if correlations else 0.0,
             'max_correlation': np.max(correlations) if correlations else 0.0
         }
+
+    def _calculate_avg_volatility(
+        self,
+        symbols: List[str],
+        returns_cache: Optional[Dict[str, np.ndarray]]
+    ) -> float:
+        """
+        Рассчитывает среднюю волатильность группы символов.
+
+        Args:
+            symbols: Список символов в группе
+            returns_cache: Кеш returns
+
+        Returns:
+            float: Средняя волатильность группы
+        """
+        if not returns_cache:
+            return 0.0
+
+        volatilities = []
+        for symbol in symbols:
+            if symbol in returns_cache:
+                returns = returns_cache[symbol]
+                if len(returns) > 1:
+                    vol = np.std(returns)
+                    volatilities.append(vol)
+
+        return np.mean(volatilities) if volatilities else 0.0
