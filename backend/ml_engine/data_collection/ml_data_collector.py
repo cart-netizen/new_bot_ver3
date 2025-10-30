@@ -48,7 +48,8 @@ class MLDataCollector:
       self,
       storage_path: str = "data/ml_training",
       max_samples_per_file: int = 10000,
-      collection_interval: int = 10  # Каждые N итераций
+      collection_interval: int = 10,
+      auto_save_interval_seconds: int = 300# Каждые N итераций
   ):
     """
     Инициализация сборщика данных.
@@ -57,10 +58,12 @@ class MLDataCollector:
         storage_path: Путь для хранения данных
         max_samples_per_file: Максимум семплов в одном файле
         collection_interval: Интервал сбора (каждые N итераций)
+        auto_save_interval_seconds: Интервал автосохранения (секунды)
     """
     self.storage_path = Path(storage_path)
     self.max_samples_per_file = max_samples_per_file
     self.collection_interval = collection_interval
+    self.auto_save_interval = auto_save_interval_seconds
 
     # Буферы для каждого символа
     self.feature_buffers: Dict[str, List[np.ndarray]] = {}
@@ -70,6 +73,7 @@ class MLDataCollector:
     # Счетчики
     self.sample_counts: Dict[str, int] = {}
     self.batch_numbers: Dict[str, int] = {}
+    self.last_save_time: Dict[str, float] = {}  # Время последнего сохранения
     self.iteration_counter = 0
 
     # Статистика
@@ -78,6 +82,8 @@ class MLDataCollector:
 
     logger.info(
       f"MLDataCollector инициализирован, storage_path={storage_path}, "
+      f"max_samples={max_samples_per_file}, interval={collection_interval}, "
+      f"auto_save={auto_save_interval_seconds}s"
       f"interval={collection_interval}"
     )
 
@@ -128,6 +134,7 @@ class MLDataCollector:
         self.metadata_buffers[symbol] = []
         self.sample_counts[symbol] = 0
         self.batch_numbers[symbol] = 1
+        self.last_save_time[symbol] = datetime.now().timestamp()
 
       # Извлекаем массив признаков
       features_array = feature_vector.to_array()
@@ -168,8 +175,19 @@ class MLDataCollector:
       )
 
       # Проверяем нужно ли сохранить batch
-      if len(self.feature_buffers[symbol]) >= self.max_samples_per_file:
+      # 1. По количеству семплов
+      should_save_by_count = len(self.feature_buffers[symbol]) >= self.max_samples_per_file
+
+      # 2. По времени (автосохранение каждые N секунд)
+      current_time = datetime.now().timestamp()
+      time_since_last_save = current_time - self.last_save_time.get(symbol, current_time)
+      should_save_by_time = time_since_last_save >= self.auto_save_interval
+
+      if should_save_by_count or (should_save_by_time and len(self.feature_buffers[symbol]) > 0):
+        if should_save_by_time:
+          logger.info(f"{symbol} | Автосохранение по таймеру ({time_since_last_save:.0f}s)")
         await self._save_batch(symbol)
+        self.last_save_time[symbol] = current_time
 
     except Exception as e:
       logger.error(f"{symbol} | Ошибка сбора семпла: {e}")

@@ -3,11 +3,18 @@
 
 Путь: backend/tests/test_advanced_correlation.py
 """
+import sys
+from pathlib import Path
+from datetime import datetime
+
+# Добавляем путь к backend
+backend_path = Path(__file__).parent / "backend"
+sys.path.insert(0, str(backend_path))
 import pytest
 import numpy as np
 from datetime import datetime
 
-from strategy.correlation.advanced_calculator import AdvancedCorrelationCalculator
+from backend.strategy.correlation.advanced_calculator import AdvancedCorrelationCalculator
 from strategy.correlation.grouping_methods import (
     GraphBasedGroupManager,
     HierarchicalGroupManager,
