@@ -33,6 +33,10 @@ from ml_engine.features.indicator_feature_extractor import (
   IndicatorFeatureExtractor,
   IndicatorFeatures
 )
+from ml_engine.features.feature_scaler_manager import (
+  FeatureScalerManager,
+  ScalerConfig
+)
 # Для type hints без circular imports
 if TYPE_CHECKING:
     from models.orderbook import OrderBookMetrics
@@ -142,11 +146,27 @@ class FeaturePipeline:
     self.candle_extractor = CandleFeatureExtractor(symbol)
     self.indicator_extractor = IndicatorFeatureExtractor(symbol)
 
-    # Scaler для нормализации
-    self.scaler: Optional[StandardScaler] = None
+    # ============================================================================
+    # PROFESSIONAL FEATURE SCALER MANAGER
+    # Replaces simplified StandardScaler (old lines 145-149)
+    # ============================================================================
+    self.scaler_manager: Optional[FeatureScalerManager] = None
     if normalize:
-      self.scaler = StandardScaler()
-      self._scaler_fitted = False
+      # Create professional multi-channel scaler
+      scaler_config = ScalerConfig(
+        orderbook_scaler_type="standard",  # StandardScaler for orderbook
+        candle_scaler_type="robust",       # RobustScaler for candles (outlier-resistant)
+        indicator_scaler_type="minmax",    # MinMaxScaler for bounded indicators
+        min_samples_for_fitting=100,
+        refit_interval_samples=1000,
+        auto_save=True,
+        save_interval_samples=500
+      )
+      self.scaler_manager = FeatureScalerManager(symbol=symbol, config=scaler_config)
+      logger.info(
+        f"{symbol} | Professional FeatureScalerManager initialized: "
+        f"multi-channel, persistent state, auto-save"
+      )
 
     # Кэш последних признаков
     self._last_feature_vector: Optional[FeatureVector] = None
@@ -272,50 +292,56 @@ class FeaturePipeline:
       feature_vector: FeatureVector
   ) -> FeatureVector:
     """
-    Нормализует признаки используя StandardScaler.
+    Нормализует признаки используя профессиональный FeatureScalerManager.
 
-    Note: Для production нужно обучить scaler на исторических данных.
-    Здесь используется online normalization.
+    ============================================================================
+    PROFESSIONAL FEATURE NORMALIZATION
+    Replaces broken normalization (old lines 270-319)
+    ============================================================================
+
+    Previous Issue:
+    - Normalized data was calculated but NEVER USED
+    - Original (raw) feature_vector was returned
+    - ML models received unnormalized data
+
+    New Implementation:
+    - Uses multi-channel scalers (OrderBook, Candle, Indicator)
+    - Creates NEW FeatureVector with normalized values
+    - Preserves original values in metadata
+    - Proper batch fitting on historical data
+
+    Returns:
+        FeatureVector with NORMALIZED features (not original!)
     """
-    try:
-      # Получаем массив признаков
-      features_array = feature_vector.to_array()
-
-      # Проверяем NaN/Inf
-      if np.any(np.isnan(features_array)) or np.any(np.isinf(features_array)):
-        logger.warning(
-          f"{self.symbol} | Обнаружены NaN/Inf перед нормализацией, "
-          "заменяем на 0"
-        )
-        features_array = np.nan_to_num(features_array, nan=0.0, posinf=0.0, neginf=0.0)
-
-      # Для первого вызова - "обучаем" scaler
-      if not self._scaler_fitted:
-        # Reshape для sklearn
-        features_2d = features_array.reshape(1, -1)
-        self.scaler.partial_fit(features_2d)
-        self._scaler_fitted = True
-        logger.debug(f"{self.symbol} | Scaler инициализирован")
-
-      # Нормализуем
-      features_2d = features_array.reshape(1, -1)
-      normalized = self.scaler.transform(features_2d).flatten()
-
-      # Обновляем признаки (создаем новые объекты с normalized values)
-      # Это упрощенная версия - в production лучше использовать отдельные scalers
-      # для каждого канала
-
-      logger.debug(
-        f"{self.symbol} | Признаки нормализованы, "
-        f"mean={normalized.mean():.3f}, std={normalized.std():.3f}"
-      )
-
-      # Возвращаем оригинальный вектор (в production здесь нужно обновить значения)
+    if not self.scaler_manager:
+      logger.debug(f"{self.symbol} | Scaler manager not initialized, skipping normalization")
       return feature_vector
 
+    try:
+      # ========================================================================
+      # Use professional FeatureScalerManager
+      # ========================================================================
+      scaled_vector = await self.scaler_manager.scale_features(
+        feature_vector=feature_vector,
+        update_history=True
+      )
+
+      if scaled_vector is None:
+        logger.warning(f"{self.symbol} | Scaling failed, returning original vector")
+        return feature_vector
+
+      # ========================================================================
+      # CRITICAL: Return SCALED vector, not original!
+      # ========================================================================
+      logger.debug(
+        f"{self.symbol} | Features professionally normalized using multi-channel scalers"
+      )
+
+      return scaled_vector  # ← Returns normalized data!
+
     except Exception as e:
-      logger.error(f"{self.symbol} | Ошибка нормализации: {e}")
-      # Возвращаем ненормализованный вектор
+      logger.error(f"{self.symbol} | Error in professional normalization: {e}", exc_info=True)
+      # Fallback: return original (unnormalized)
       return feature_vector
 
   def _create_default_candle_features(
@@ -365,30 +391,91 @@ class FeaturePipeline:
     """
     Вычисляет важность признаков на основе вариации.
 
-    Returns:
-        Dict[feature_name, importance_score]
-    """
-    # Для production здесь должен быть анализ на основе модели
-    # Пока возвращаем заглушку
-    return {}
+    ============================================================================
+    PROFESSIONAL FEATURE IMPORTANCE
+    Replaces empty stub (old lines 364-373)
+    ============================================================================
 
-  async def warmup(self, num_samples: int = 10):
+    Uses variance-based importance from FeatureScalerManager.
+
+    Returns:
+        Dict[feature_name, importance_score] sorted by importance
+
+    Example:
+    --------
+    >>> importance = pipeline.get_feature_importance()
+    >>> for feature, score in list(importance.items())[:10]:
+    ...     print(f"{feature}: {score:.4f}")
     """
-    Прогрев pipeline и scaler на начальных данных.
+    if not self.scaler_manager:
+      logger.warning(f"{self.symbol} | Scaler manager not available for feature importance")
+      return {}
+
+    return self.scaler_manager.get_feature_importance()
+
+  async def warmup(
+      self,
+      historical_feature_vectors: List[FeatureVector],
+      force_refit: bool = False
+  ) -> bool:
+    """
+    Прогрев pipeline и scaler на исторических данных.
+
+    ============================================================================
+    PROFESSIONAL WARMUP
+    Replaces empty stub (old lines 375-392)
+    ============================================================================
+
+    Previous Issue:
+    - Method did nothing
+    - No actual warm-up on historical data
+    - Scalers not fitted before use
+
+    New Implementation:
+    - Fits scalers on historical feature vectors (batch fitting)
+    - Requires actual historical data, not just a number
+    - Saves scaler state for persistence
 
     Args:
-        num_samples: Количество образцов для прогрева
+        historical_feature_vectors: List of FeatureVector objects from history
+        force_refit: Force refitting even if already fitted
+
+    Returns:
+        True if successful, False otherwise
+
+    Example:
+    --------
+    >>> # Load last 1000 feature vectors from database/cache
+    >>> historical_vectors = load_historical_features(symbol, count=1000)
+    >>> success = await pipeline.warmup(historical_vectors)
+    >>> if success:
+    ...     print("Pipeline ready for live trading")
     """
-    logger.info(f"{self.symbol} | Прогрев pipeline на {num_samples} образцах")
+    logger.info(
+      f"{self.symbol} | Warming up pipeline on "
+      f"{len(historical_feature_vectors)} historical samples"
+    )
 
-    # В production здесь нужно загрузить исторические данные
-    # и "обучить" scaler
+    if not self.scaler_manager:
+      logger.warning(f"{self.symbol} | No scaler manager, skipping warmup")
+      return False
 
-    if self.scaler and not self._scaler_fitted:
-      logger.warning(
-        f"{self.symbol} | Для корректной нормализации нужны "
-        "исторические данные"
-      )
+    if not historical_feature_vectors:
+      logger.warning(f"{self.symbol} | No historical data provided for warmup")
+      return False
+
+    # Use professional FeatureScalerManager warmup
+    success = await self.scaler_manager.warmup(
+      feature_vectors=historical_feature_vectors,
+      force_refit=force_refit
+    )
+
+    if success:
+      logger.info(f"{self.symbol} | ✅ Pipeline warmed up successfully")
+    else:
+      logger.warning(f"{self.symbol} | ❌ Pipeline warmup failed")
+
+    return success
 
 
 class MultiSymbolFeaturePipeline:
