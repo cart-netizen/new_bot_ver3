@@ -171,6 +171,15 @@ class OrderBookFeatureExtractor:
     self.snapshot_history: List[OrderBookSnapshot] = []
     self.max_history_size = 100  # Последние 100 снимков
 
+    # Level TTL tracking для spoofing detection
+    # Отслеживаем время жизни каждого ценового уровня
+    self.level_tracker: Dict[str, Dict[float, Dict]] = {
+      "bid": {},  # price -> {first_seen, last_seen, max_volume}
+      "ask": {}
+    }
+    self.level_ttl_history: List[float] = []  # История TTL (секунды)
+    self.max_ttl_history = 200  # Последние 200 TTL значений
+
     logger.info(f"OrderBookFeatureExtractor инициализирован для {symbol}")
 
   def extract(
@@ -195,6 +204,9 @@ class OrderBookFeatureExtractor:
       self.snapshot_history.append(snapshot)
       if len(self.snapshot_history) > self.max_history_size:
         self.snapshot_history.pop(0)
+
+      # Обновляем отслеживание уровней для TTL
+      self._update_level_tracking(snapshot)
 
       # 1. Базовые микроструктурные признаки
       basic_features = self._extract_basic_features(snapshot)
@@ -339,11 +351,12 @@ class OrderBookFeatureExtractor:
     else:
       price_pressure = 0.0
 
-    # Volume delta (требует истории, пока 0)
-    volume_delta_5 = 0.0  # TODO: вычислять из истории
+    # Volume delta - изменение объема на топ-5 уровнях
+    volume_delta_5 = self._calculate_volume_delta(snapshot, depth=5)
 
-    # Order flow imbalance (требует trades, пока приблизительно)
-    order_flow_imbalance = imbalance_5  # Упрощение
+    # Order flow imbalance - взвешенное изменение объемов
+    # Учитывает близость к mid price (ближе = более агрессивно)
+    order_flow_imbalance = self._calculate_order_flow_imbalance(snapshot, depth=10)
 
     # Intensities (количество ордеров / средний размер)
     bid_intensity = self._calculate_intensity(snapshot.bids[:10])
@@ -440,16 +453,17 @@ class OrderBookFeatureExtractor:
     mid_price = snapshot.mid_price or 1.0
     effective_spread = spread / mid_price if mid_price > 0 else 0.0
 
-    # Kyle's lambda (упрощенная версия)
-    # lambda = spread / volume
-    total_volume = liquidity_bid_5 + liquidity_ask_5
-    kyle_lambda = spread / total_volume if total_volume > 0 else 0.0
+    # Kyle's Lambda - полная формула (price impact coefficient)
+    # λ = ΔPrice / ΔVolume
+    kyle_lambda = self._calculate_kyle_lambda(snapshot)
 
-    # Amihud illiquidity (упрощенная версия)
-    amihud_illiquidity = spread / max(total_volume, int(1.0))
+    # Amihud Illiquidity - полная формула
+    # ILLIQ = mean(|Return| / Volume)
+    amihud_illiquidity = self._calculate_amihud_illiquidity(snapshot)
 
-    # Roll spread (упрощенная версия)
-    roll_spread = effective_spread * 2
+    # Roll's Spread Estimator - полная формула
+    # Spread = 2 * sqrt(-Cov(ΔP_t, ΔP_{t-1}))
+    roll_spread = self._calculate_roll_spread(snapshot)
 
     # Depth imbalance ratio
     depth_imbalance_ratio = (
@@ -476,11 +490,9 @@ class OrderBookFeatureExtractor:
     """Извлечение временных признаков (7)"""
 
     # Для временных признаков нужна история
-    # Пока возвращаем значения по умолчанию
 
-    # Level TTL (среднее и std) - требует трекинга уровней
-    level_ttl_avg = 0.0  # TODO: implement level tracking
-    level_ttl_std = 0.0
+    # Level TTL (среднее и std) из истории отслеживания уровней
+    level_ttl_avg, level_ttl_std = self._calculate_level_ttl_stats()
 
     # Orderbook volatility
     orderbook_volatility = self._calculate_orderbook_volatility()
@@ -491,8 +503,9 @@ class OrderBookFeatureExtractor:
     # Quote intensity (updates per second)
     quote_intensity = update_frequency
 
-    # Trade arrival rate (требует trades data)
-    trade_arrival_rate = 0.0  # TODO: implement with trades
+    # Trade arrival rate - оценка на основе активности стакана
+    # TODO: Заменить на реальные market trades когда будет WebSocket stream
+    trade_arrival_rate = self._estimate_trade_arrival_rate(snapshot)
 
     # Spread volatility
     spread_volatility = self._calculate_spread_volatility()
@@ -678,3 +691,490 @@ class OrderBookFeatureExtractor:
       return 0.0
 
     return float(np.std(spreads))
+
+  def _calculate_volume_delta(
+      self,
+      snapshot: OrderBookSnapshot,
+      depth: int = 5
+  ) -> float:
+    """
+    Вычисляет изменение объема на топ-N уровнях.
+
+    Volume Delta показывает агрессивность покупателей/продавцов:
+    - Положительное значение = агрессивная покупка (bid объем растет)
+    - Отрицательное значение = агрессивная продажа (ask объем растет)
+
+    Args:
+        snapshot: Текущий снимок стакана
+        depth: Глубина анализа (топ-N уровней)
+
+    Returns:
+        float: Изменение net volume (bid - ask) между снимками
+    """
+    # Нужен предыдущий снимок для сравнения
+    if len(self.snapshot_history) < 2:
+      return 0.0
+
+    prev_snapshot = self.snapshot_history[-2]
+
+    # Текущие объемы на топ-N уровнях
+    current_bid_vol = sum(vol for _, vol in snapshot.bids[:depth])
+    current_ask_vol = sum(vol for _, vol in snapshot.asks[:depth])
+    current_net_volume = current_bid_vol - current_ask_vol
+
+    # Предыдущие объемы на топ-N уровнях
+    prev_bid_vol = sum(vol for _, vol in prev_snapshot.bids[:depth])
+    prev_ask_vol = sum(vol for _, vol in prev_snapshot.asks[:depth])
+    prev_net_volume = prev_bid_vol - prev_ask_vol
+
+    # Дельта (изменение net volume)
+    volume_delta = current_net_volume - prev_net_volume
+
+    return volume_delta
+
+  def _update_level_tracking(self, snapshot: OrderBookSnapshot):
+    """
+    Обновляет отслеживание времени жизни уровней в стакане.
+
+    Для каждого уровня:
+    - Если новый -> записать first_seen
+    - Если существует -> обновить last_seen
+    - Если исчез -> вычислить TTL и сохранить в историю
+
+    Это критично для spoofing detection!
+
+    Args:
+        snapshot: Текущий снимок стакана
+    """
+    timestamp = snapshot.timestamp
+    current_bids = {price: vol for price, vol in snapshot.bids}
+    current_asks = {price: vol for price, vol in snapshot.asks}
+
+    # Обновляем bid уровни
+    self._update_side_levels("bid", current_bids, timestamp)
+
+    # Обновляем ask уровни
+    self._update_side_levels("ask", current_asks, timestamp)
+
+  def _update_side_levels(
+      self,
+      side: str,
+      current_levels: Dict[float, float],
+      timestamp: int
+  ):
+    """
+    Обновляет отслеживание уровней для одной стороны стакана.
+
+    Args:
+        side: "bid" или "ask"
+        current_levels: Dict[price, volume]
+        timestamp: Временная метка (ms)
+    """
+    tracker_side = self.level_tracker[side]
+
+    # Обновляем существующие и добавляем новые уровни
+    for price, volume in current_levels.items():
+      if price not in tracker_side:
+        # Новый уровень появился
+        tracker_side[price] = {
+          "first_seen": timestamp,
+          "last_seen": timestamp,
+          "max_volume": volume
+        }
+      else:
+        # Уровень все еще существует - обновляем
+        tracker_side[price]["last_seen"] = timestamp
+        tracker_side[price]["max_volume"] = max(
+          tracker_side[price]["max_volume"],
+          volume
+        )
+
+    # Проверяем исчезнувшие уровни
+    disappeared_prices = set(tracker_side.keys()) - set(current_levels.keys())
+
+    for price in disappeared_prices:
+      level_info = tracker_side[price]
+
+      # Вычисляем TTL (секунды)
+      ttl_ms = level_info["last_seen"] - level_info["first_seen"]
+      ttl_sec = ttl_ms / 1000.0
+
+      # Сохраняем в историю (только если TTL > 0)
+      if ttl_sec > 0:
+        self.level_ttl_history.append(ttl_sec)
+
+        # Ограничиваем размер истории
+        if len(self.level_ttl_history) > self.max_ttl_history:
+          self.level_ttl_history.pop(0)
+
+      # Удаляем исчезнувший уровень
+      del tracker_side[price]
+
+  def _calculate_level_ttl_stats(self) -> Tuple[float, float]:
+    """
+    Вычисляет статистику TTL уровней.
+
+    Returns:
+        Tuple[avg_ttl, std_ttl] в секундах
+    """
+    if not self.level_ttl_history:
+      return 0.0, 0.0
+
+    # Берем последние 100 значений для статистики
+    recent_ttls = self.level_ttl_history[-100:]
+
+    avg_ttl = float(np.mean(recent_ttls))
+    std_ttl = float(np.std(recent_ttls))
+
+    return avg_ttl, std_ttl
+
+  def _estimate_trade_arrival_rate(self, snapshot: OrderBookSnapshot) -> float:
+    """
+    Оценивает частоту сделок на основе активности стакана.
+
+    ВРЕМЕННАЯ РЕАЛИЗАЦИЯ до получения доступа к market trades stream.
+
+    Логика:
+    - Частые обновления стакана + большие изменения объема = высокая торговая активность
+    - Используем update_frequency и volume_delta как proxy
+
+    Формула:
+    trade_arrival_rate ≈ update_freq * (1 + |volume_delta| / total_volume)
+
+    TODO: Заменить на реальный подсчет из market trades WebSocket stream
+
+    Args:
+        snapshot: Текущий снимок стакана
+
+    Returns:
+        float: Оценка trades per second
+    """
+    # Базовая частота обновлений стакана
+    update_freq = self._calculate_update_frequency()
+
+    if update_freq == 0:
+      return 0.0
+
+    # Изменение объема (используем уже вычисленный volume_delta)
+    volume_delta = abs(self._calculate_volume_delta(snapshot, depth=5))
+
+    # Общий объем в стакане
+    total_bid_vol = sum(vol for _, vol in snapshot.bids[:10])
+    total_ask_vol = sum(vol for _, vol in snapshot.asks[:10])
+    total_volume = total_bid_vol + total_ask_vol
+
+    if total_volume == 0:
+      return update_freq
+
+    # Нормализованная активность (0-1)
+    volume_activity = min(volume_delta / total_volume, 1.0)
+
+    # Оценка trade arrival rate
+    # Логика: больше изменений в объеме = больше сделок
+    estimated_trade_rate = update_freq * (1.0 + volume_activity)
+
+    return estimated_trade_rate
+
+  def _calculate_kyle_lambda(self, snapshot: OrderBookSnapshot) -> float:
+    """
+    Вычисляет Kyle's Lambda - коэффициент влияния объема на цену.
+
+    Полная формула:
+    λ = ΔMid_Price / ΔVolume
+
+    Где:
+    - ΔMid_Price = изменение средней цены между snapshot'ами
+    - ΔVolume = изменение объема на топ-5 уровнях
+
+    Показывает: насколько изменится цена при торговле единицей объема.
+    Высокий λ = низкая ликвидность (цена сильно реагирует на объем)
+    Низкий λ = высокая ликвидность (цена стабильна при больших объемах)
+
+    Args:
+        snapshot: Текущий снимок стакана
+
+    Returns:
+        float: Kyle's Lambda (price impact per unit volume)
+    """
+    # Нужна история для расчета изменений
+    if len(self.snapshot_history) < 10:
+      # Fallback к упрощенной формуле
+      spread = snapshot.spread or 0.0
+      total_vol = sum(vol for _, vol in snapshot.bids[:5]) + sum(vol for _, vol in snapshot.asks[:5])
+      return spread / total_vol if total_vol > 0 else 0.0
+
+    # Берем последние 10 snapshots для расчета
+    recent_snapshots = self.snapshot_history[-10:]
+
+    price_changes = []
+    volume_changes = []
+
+    for i in range(1, len(recent_snapshots)):
+      prev_snap = recent_snapshots[i - 1]
+      curr_snap = recent_snapshots[i]
+
+      # Изменение mid price
+      prev_mid = prev_snap.mid_price or 0.0
+      curr_mid = curr_snap.mid_price or 0.0
+
+      if prev_mid == 0:
+        continue
+
+      delta_price = abs(curr_mid - prev_mid)
+
+      # Изменение объема на топ-5 уровнях
+      prev_vol = sum(vol for _, vol in prev_snap.bids[:5]) + sum(vol for _, vol in prev_snap.asks[:5])
+      curr_vol = sum(vol for _, vol in curr_snap.bids[:5]) + sum(vol for _, vol in curr_snap.asks[:5])
+
+      delta_volume = abs(curr_vol - prev_vol)
+
+      # Сохраняем только значимые изменения
+      if delta_volume > 0:
+        price_changes.append(delta_price)
+        volume_changes.append(delta_volume)
+
+    if not price_changes or not volume_changes:
+      # Нет данных - используем fallback
+      spread = snapshot.spread or 0.0
+      total_vol = sum(vol for _, vol in snapshot.bids[:5]) + sum(vol for _, vol in snapshot.asks[:5])
+      return spread / total_vol if total_vol > 0 else 0.0
+
+    # Вычисляем Kyle's Lambda как среднее отношение ΔPrice/ΔVolume
+    lambdas = [dp / dv for dp, dv in zip(price_changes, volume_changes) if dv > 0]
+
+    if not lambdas:
+      return 0.0
+
+    # Используем median для устойчивости к outliers
+    kyle_lambda = float(np.median(lambdas))
+
+    return kyle_lambda
+
+  def _calculate_amihud_illiquidity(self, snapshot: OrderBookSnapshot) -> float:
+    """
+    Вычисляет Amihud Illiquidity Measure - меру неликвидности.
+
+    Полная формула:
+    ILLIQ = mean(|Return_t| / Volume_t)
+
+    Где:
+    - Return_t = (Price_t - Price_{t-1}) / Price_{t-1}
+    - Volume_t = торговый объем в период t
+
+    Показывает: насколько сильно цена реагирует на объем торговли.
+    Высокий ILLIQ = низкая ликвидность (большие движения цены на малых объемах)
+    Низкий ILLIQ = высокая ликвидность (малые движения даже на больших объемах)
+
+    Используется для:
+    - Оценки транзакционных издержек
+    - Определения риска ликвидности
+    - Сравнения ликвидности разных активов
+
+    Args:
+        snapshot: Текущий снимок стакана
+
+    Returns:
+        float: Amihud Illiquidity Measure
+    """
+    # Нужна история для расчета returns
+    if len(self.snapshot_history) < 10:
+      # Fallback к упрощенной формуле
+      spread = snapshot.spread or 0.0
+      total_vol = sum(vol for _, vol in snapshot.bids[:5]) + sum(vol for _, vol in snapshot.asks[:5])
+      return spread / max(total_vol, 1.0)
+
+    # Берем последние 20 snapshots для расчета
+    recent_snapshots = self.snapshot_history[-20:]
+
+    illiquidity_values = []
+
+    for i in range(1, len(recent_snapshots)):
+      prev_snap = recent_snapshots[i - 1]
+      curr_snap = recent_snapshots[i]
+
+      # Вычисляем return
+      prev_mid = prev_snap.mid_price or 0.0
+      curr_mid = curr_snap.mid_price or 0.0
+
+      if prev_mid == 0:
+        continue
+
+      # Return = (P_t - P_{t-1}) / P_{t-1}
+      return_pct = abs((curr_mid - prev_mid) / prev_mid)
+
+      # Объем торговли (используем изменение объема в стакане как proxy)
+      prev_vol = sum(vol for _, vol in prev_snap.bids[:5]) + sum(vol for _, vol in prev_snap.asks[:5])
+      curr_vol = sum(vol for _, vol in curr_snap.bids[:5]) + sum(vol for _, vol in curr_snap.asks[:5])
+
+      # Используем среднее значение как proxy для traded volume
+      avg_volume = (prev_vol + curr_vol) / 2.0
+
+      if avg_volume > 0:
+        # Amihud measure для этого периода
+        illiq_t = return_pct / avg_volume
+        illiquidity_values.append(illiq_t)
+
+    if not illiquidity_values:
+      # Fallback
+      spread = snapshot.spread or 0.0
+      total_vol = sum(vol for _, vol in snapshot.bids[:5]) + sum(vol for _, vol in snapshot.asks[:5])
+      return spread / max(total_vol, 1.0)
+
+    # Среднее значение Amihud illiquidity
+    amihud = float(np.mean(illiquidity_values))
+
+    return amihud
+
+  def _calculate_roll_spread(self, snapshot: OrderBookSnapshot) -> float:
+    """
+    Вычисляет Roll's Spread Estimator - оценку эффективного спреда.
+
+    Полная формула Roll (1984):
+    Spread = 2 * sqrt(-Cov(ΔP_t, ΔP_{t-1}))
+
+    Где:
+    - ΔP_t = P_t - P_{t-1} (изменение цены)
+    - Cov() = ковариация последовательных изменений цен
+
+    Логика:
+    Bid-ask bounce создает отрицательную автокорреляцию в ценах.
+    Когда сделка происходит по ask, следующая может быть по bid (и наоборот).
+    Это создает паттерн: +spread, -spread, +spread...
+    Roll использовал эту отрицательную ковариацию для оценки спреда.
+
+    Показывает:
+    - Неявные транзакционные издержки
+    - Эффективный спред (не quoted spread)
+    - Качество price discovery
+
+    Args:
+        snapshot: Текущий снимок стакана
+
+    Returns:
+        float: Roll's Spread Estimate
+    """
+    # Нужна история для расчета ковариации
+    if len(self.snapshot_history) < 20:
+      # Fallback к effective spread
+      spread = snapshot.spread or 0.0
+      mid_price = snapshot.mid_price or 1.0
+      return 2.0 * (spread / mid_price) if mid_price > 0 else 0.0
+
+    # Берем последние 50 snapshots для расчета
+    recent_snapshots = self.snapshot_history[-50:]
+
+    # Извлекаем mid prices
+    mid_prices = []
+    for snap in recent_snapshots:
+      mid = snap.mid_price
+      if mid and mid > 0:
+        mid_prices.append(mid)
+
+    if len(mid_prices) < 20:
+      # Недостаточно данных - fallback
+      spread = snapshot.spread or 0.0
+      mid_price = snapshot.mid_price or 1.0
+      return 2.0 * (spread / mid_price) if mid_price > 0 else 0.0
+
+    # Вычисляем price changes (ΔP_t)
+    price_changes = np.diff(mid_prices)
+
+    if len(price_changes) < 2:
+      # Fallback
+      spread = snapshot.spread or 0.0
+      mid_price = snapshot.mid_price or 1.0
+      return 2.0 * (spread / mid_price) if mid_price > 0 else 0.0
+
+    # Вычисляем ковариацию между ΔP_t и ΔP_{t-1}
+    # Для этого сдвигаем массив на 1
+    delta_t = price_changes[1:]  # ΔP_t
+    delta_t_minus_1 = price_changes[:-1]  # ΔP_{t-1}
+
+    # Ковариация
+    covariance = float(np.cov(delta_t, delta_t_minus_1)[0, 1])
+
+    # Roll spread = 2 * sqrt(-cov)
+    # Ковариация должна быть отрицательной из-за bid-ask bounce
+    if covariance < 0:
+      roll_spread = 2.0 * np.sqrt(-covariance)
+    else:
+      # Если ковариация положительная (нет bid-ask bounce),
+      # используем fallback к quoted spread
+      spread = snapshot.spread or 0.0
+      mid_price = snapshot.mid_price or 1.0
+      roll_spread = 2.0 * (spread / mid_price) if mid_price > 0 else 0.0
+
+    return float(roll_spread)
+
+  def _calculate_order_flow_imbalance(
+      self,
+      snapshot: OrderBookSnapshot,
+      depth: int = 10
+  ) -> float:
+    """
+    Вычисляет Order Flow Imbalance - взвешенное изменение объемов.
+
+    OFI учитывает:
+    - Изменение объемов на каждом уровне
+    - Взвешивание по близости к mid price (ближе = важнее)
+    - Направление потока капитала
+
+    Формула:
+    OFI = Σ(ΔBid_i * weight_i) - Σ(ΔAsk_i * weight_i)
+    где weight_i = 1 / (1 + distance_from_mid_i)
+
+    Положительный OFI = агрессивное покупательное давление
+    Отрицательный OFI = агрессивное продавательное давление
+
+    Args:
+        snapshot: Текущий снимок стакана
+        depth: Глубина анализа
+
+    Returns:
+        float: Order Flow Imbalance
+    """
+    # Нужен предыдущий снимок
+    if len(self.snapshot_history) < 2:
+      return 0.0
+
+    prev_snapshot = self.snapshot_history[-2]
+    mid_price = snapshot.mid_price or 0.0
+
+    if mid_price == 0:
+      return 0.0
+
+    # Создаем словари для быстрого доступа
+    prev_bids = {price: vol for price, vol in prev_snapshot.bids[:depth]}
+    prev_asks = {price: vol for price, vol in prev_snapshot.asks[:depth]}
+
+    weighted_bid_flow = 0.0
+    weighted_ask_flow = 0.0
+
+    # Анализируем изменения на bid стороне
+    for price, volume in snapshot.bids[:depth]:
+      # Вычисляем изменение объема
+      prev_volume = prev_bids.get(price, 0.0)
+      delta_volume = volume - prev_volume
+
+      # Взвешиваем по близости к mid price
+      distance_pct = abs(price - mid_price) / mid_price
+      weight = 1.0 / (1.0 + distance_pct)
+
+      weighted_bid_flow += delta_volume * weight
+
+    # Анализируем изменения на ask стороне
+    for price, volume in snapshot.asks[:depth]:
+      # Вычисляем изменение объема
+      prev_volume = prev_asks.get(price, 0.0)
+      delta_volume = volume - prev_volume
+
+      # Взвешиваем по близости к mid price
+      distance_pct = abs(price - mid_price) / mid_price
+      weight = 1.0 / (1.0 + distance_pct)
+
+      weighted_ask_flow += delta_volume * weight
+
+    # Order Flow Imbalance = bid flow - ask flow
+    ofi = weighted_bid_flow - weighted_ask_flow
+
+    return ofi
