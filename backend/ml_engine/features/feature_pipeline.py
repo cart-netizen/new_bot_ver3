@@ -6,6 +6,9 @@ Feature Pipeline - оркестратор всех feature extractors.
 """
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+
+from strategy.trade_manager import TradeManager
+
 if TYPE_CHECKING:
     from ml_engine.detection.sr_level_detector import SRLevel
 else:
@@ -403,9 +406,9 @@ class FeaturePipeline:
 
     Example:
     --------
-    >>> importance = pipeline.get_feature_importance()
-    >>> for feature, score in list(importance.items())[:10]:
-    ...     print(f"{feature}: {score:.4f}")
+    importance = pipeline.get_feature_importance()
+    for feature, score in list(importance.items())[:10]:
+    print(f"{feature}: {score:.4f}")
     """
     if not self.scaler_manager:
       logger.warning(f"{self.symbol} | Scaler manager not available for feature importance")
@@ -445,11 +448,11 @@ class FeaturePipeline:
 
     Example:
     --------
-    >>> # Load last 1000 feature vectors from database/cache
-    >>> historical_vectors = load_historical_features(symbol, count=1000)
-    >>> success = await pipeline.warmup(historical_vectors)
-    >>> if success:
-    ...     print("Pipeline ready for live trading")
+    # Load last 1000 feature vectors from database/cache
+    historical_vectors = load_historical_features(symbol, count=1000)
+    success = await pipeline.warmup(historical_vectors)
+    if success:
+    print("Pipeline ready for live trading")
     """
     logger.info(
       f"{self.symbol} | Warming up pipeline on "
