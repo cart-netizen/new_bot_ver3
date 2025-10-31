@@ -182,6 +182,60 @@ class Trade:
 
 
 @dataclass
+class MarketTrade:
+  """
+  Модель публичной market trade из WebSocket stream.
+
+  Это НЕ собственная сделка бота, а реальная сделка на бирже,
+  совершенная любым участником рынка.
+
+  Используется для:
+  - Расчета реального trade arrival rate
+  - Определения buy/sell pressure (агрессивности)
+  - Order flow toxicity analysis
+  - Block trades detection (институционалы)
+  - Реального VWAP расчета
+  """
+
+  trade_id: str  # Уникальный ID сделки с биржи
+  symbol: str  # Торговая пара (BTCUSDT)
+  side: str  # "Buy" или "Sell" - сторона TAKER'а (агрессора)
+  price: float  # Цена исполнения
+  quantity: float  # Объем сделки
+  timestamp: int  # Время сделки (ms)
+  is_block_trade: bool = False  # Институциональная сделка (крупная)
+
+  @property
+  def value(self) -> float:
+    """Стоимость сделки в USDT."""
+    return self.price * self.quantity
+
+  @property
+  def is_buy(self) -> bool:
+    """Была ли это агрессивная покупка (taker buy)."""
+    return self.side == "Buy"
+
+  @property
+  def is_sell(self) -> bool:
+    """Была ли это агрессивная продажа (taker sell)."""
+    return self.side == "Sell"
+
+  def to_dict(self) -> dict:
+    """Преобразование в словарь для API."""
+    return {
+      "trade_id": self.trade_id,
+      "symbol": self.symbol,
+      "side": self.side,
+      "price": self.price,
+      "quantity": self.quantity,
+      "value": self.value,
+      "is_block_trade": self.is_block_trade,
+      "timestamp": self.timestamp,
+      "datetime": datetime.fromtimestamp(self.timestamp / 1000).isoformat(),
+    }
+
+
+@dataclass
 class TradingPairInfo:
   """Информация о торговой паре."""
 
