@@ -50,7 +50,7 @@ class MLDataCollector:
       max_samples_per_file: int = 10000,
       collection_interval: int = 10,
       # auto_save_interval_seconds: int = 40000,# Каждые N итераций
-    max_buffer_memory_mb: int = 100  # НОВОЕ: Максимум МБ на символ
+      max_buffer_memory_mb: int = 200  # НОВОЕ: Максимум МБ на символ
   ):
     """
     Инициализация сборщика данных.

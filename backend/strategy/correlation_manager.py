@@ -199,6 +199,16 @@ class CorrelationGroupManager:
       f"Группировка завершена: создано {len(self.groups)} групп, "
       f"покрыто {len(self.symbol_to_group)}/{len(symbols)} символов"
     )
+    # Находим символы, которые не вошли ни в одну группу
+    uncovered_symbols = [s for s in symbols if s not in self.symbol_to_group]
+    if uncovered_symbols:
+      logger.info(
+        f"⚠ {len(uncovered_symbols)} символов не вошло в группы. "
+        f"Символы: {', '.join(sorted(uncovered_symbols))}"
+      )
+    else:
+      logger.info("✓ Все символы покрыты корреляционными группами")
+
 
   def get_group_for_symbol(self, symbol: str) -> Optional[CorrelationGroup]:
     """
