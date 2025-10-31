@@ -34,6 +34,7 @@ from ml_engine.detection.sr_level_detector import SRLevelConfig, SRLevelDetector
 from ml_engine.integration.ml_signal_validator import ValidationConfig, MLSignalValidator
 from ml_engine.monitoring.drift_detector import DriftDetector
 from models.orderbook import OrderBookSnapshot
+from models.market_data import MarketTrade
 # from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
 from screener.screener_manager import ScreenerManager
 from strategies.adaptive import OptimizationMethod, \
@@ -43,6 +44,7 @@ from strategy.candle_manager import CandleManager
 from strategy.correlation_manager import correlation_manager
 from strategy.daily_loss_killer import daily_loss_killer
 from strategy.orderbook_manager import OrderBookManager
+from strategy.trade_manager import TradeManager
 from strategy.analyzer import MarketAnalyzer, OrderBookAnalyzer
 from strategy.position_monitor import PositionMonitor
 from strategy.reversal_detector import reversal_detector
@@ -194,6 +196,7 @@ class BotController:
     # ==================== БАЗОВЫЕ КОМПОНЕНТЫ ====================
     self.websocket_manager: Optional[BybitWebSocketManager] = None
     self.orderbook_managers: Dict[str, OrderBookManager] = {}
+    self.trade_managers: Dict[str, TradeManager] = {}  # Market trades tracking
     self.orderbook_analyzer: Optional[OrderBookAnalyzer] = None
     self.candle_managers: Dict[str, CandleManager] = {}
 
@@ -914,20 +917,32 @@ class BotController:
       )
 
 
-      # ========== 9. ML FEATURE PIPELINE - СОЗДАНИЕ ДЛЯ ФИНАЛЬНЫХ СИМВОЛОВ ==========
-      logger.info("Создание ML Feature Pipeline...")
-      self.ml_feature_pipeline = MultiSymbolFeaturePipeline(
-        symbols=self.symbols,  # ← Правильные динамические символы!
-        normalize=True,
-        cache_enabled=True
-      )
-      logger.info(f"✓ ML Feature Pipeline создан для {len(self.symbols)} символов")
-
-      # ========== 10. ORDERBOOK/CANDLE MANAGERS - СОЗДАНИЕ ДЛЯ ФИНАЛЬНЫХ ПАР ==========
+      # ========== 9. ORDERBOOK/CANDLE MANAGERS - СОЗДАНИЕ ДЛЯ ФИНАЛЬНЫХ ПАР ==========
       logger.info(f"Создание менеджеров стакана для {len(self.symbols)} пар...")
       for symbol in self.symbols:
         self.orderbook_managers[symbol] = OrderBookManager(symbol)
       logger.info(f"✓ Создано {len(self.orderbook_managers)} менеджеров стакана")
+
+      # ===== Создаем менеджеры market trades для ФИНАЛЬНЫХ пар =====
+      logger.info(f"Создание менеджеров market trades для {len(self.symbols)} пар...")
+      for symbol in self.symbols:
+        self.trade_managers[symbol] = TradeManager(
+          symbol=symbol,
+          max_history=5000,  # Последние 5000 сделок (~5-10 минут)
+          enable_statistics=True
+        )
+      logger.info(f"✓ Создано {len(self.trade_managers)} менеджеров market trades")
+
+      # ========== 10. ML FEATURE PIPELINE - СОЗДАНИЕ ДЛЯ ФИНАЛЬНЫХ СИМВОЛОВ ==========
+      # ВАЖНО: Создается ПОСЛЕ trade_managers для интеграции реальных market trades
+      logger.info("Создание ML Feature Pipeline с интеграцией market trades...")
+      self.ml_feature_pipeline = MultiSymbolFeaturePipeline(
+        symbols=self.symbols,  # ← Правильные динамические символы!
+        normalize=True,
+        cache_enabled=True,
+        trade_managers=self.trade_managers  # ← Передаем TradeManagers для реальных trades
+      )
+      logger.info(f"✓ ML Feature Pipeline создан для {len(self.symbols)} символов с real trades support")
 
       # ===== Создаем менеджеры свечей для ФИНАЛЬНЫХ пар =====
       logger.info(f"Создание менеджеров свечей для {len(self.symbols)} пар...")
@@ -984,7 +999,7 @@ class BotController:
 
       self.websocket_manager = BybitWebSocketManager(
         symbols=self.symbols,  # ← Правильные динамические символы!
-        on_message=self._handle_orderbook_message
+        on_message=self._handle_websocket_message  # Unified handler for orderbook & trades
       )
       logger.info("✓ WebSocket менеджер создан с правильными символами")
 
@@ -1226,6 +1241,7 @@ class BotController:
           for symbol in added:
             logger.info(f"  + Добавление пары: {symbol}")
             self.orderbook_managers[symbol] = OrderBookManager(symbol)
+            self.trade_managers[symbol] = TradeManager(symbol, max_history=5000, enable_statistics=True)
             self.candle_managers[symbol] = CandleManager(symbol, "1m", 200)
             self.market_analyzer.add_symbol(symbol)
 
@@ -1234,6 +1250,8 @@ class BotController:
             logger.info(f"  - Удаление пары: {symbol}")
             if symbol in self.orderbook_managers:
               del self.orderbook_managers[symbol]
+            if symbol in self.trade_managers:
+              del self.trade_managers[symbol]
             if symbol in self.candle_managers:
               del self.candle_managers[symbol]
 
@@ -1252,7 +1270,7 @@ class BotController:
           # Пересоздаем WebSocket менеджер
           self.websocket_manager = BybitWebSocketManager(
             symbols=self.symbols,
-            on_message=self._handle_orderbook_message
+            on_message=self._handle_websocket_message  # Unified handler
           )
           self.websocket_task = asyncio.create_task(
             self.websocket_manager.start()
@@ -3223,7 +3241,102 @@ class BotController:
           exc_info=True
         )
 
-  
+  async def _handle_websocket_message(self, message: Dict[str, Any]):
+    """
+    Unified обработчик WebSocket сообщений.
+    Маршрутизирует сообщения в соответствующий обработчик на основе типа.
+
+    Args:
+        message: Сообщение от WebSocket
+    """
+    try:
+      # Проверяем метаданные типа сообщения (добавленные в WebSocketManager)
+      message_type = message.get('_message_type')
+
+      if message_type == 'trade':
+        # Это market trade сообщение
+        await self._handle_trade_message(message)
+      else:
+        # Это orderbook сообщение (по умолчанию)
+        await self._handle_orderbook_message(message)
+
+    except Exception as e:
+      logger.error(f"Ошибка в unified websocket handler: {e}", exc_info=True)
+
+  async def _handle_trade_message(self, message: Dict[str, Any]):
+    """
+    Обработчик сообщений WebSocket для market trades.
+    Парсит публичные сделки и передает их в TradeManager.
+
+    Args:
+        message: Сообщение от WebSocket
+
+    Формат Bybit publicTrade message:
+    {
+      "topic": "publicTrade.BTCUSDT",
+      "type": "snapshot",
+      "ts": 1672304486868,
+      "data": [
+        {
+          "T": 1672304486868,  # timestamp
+          "s": "BTCUSDT",      # symbol
+          "S": "Buy",          # side
+          "v": "0.001",        # volume (quantity)
+          "p": "16578.50",     # price
+          "L": "PlusTick",     # tick direction
+          "i": "trade_id",     # trade ID
+          "BT": false          # block trade indicator
+        }
+      ]
+    }
+    """
+    try:
+      topic = message.get("topic", "")
+      data_list = message.get("data", [])
+
+      if not data_list:
+        return
+
+      # Извлекаем symbol из topic: "publicTrade.BTCUSDT" -> "BTCUSDT"
+      symbol = None
+      if topic.startswith("publicTrade."):
+        symbol = topic.split(".", 1)[1]
+
+      if not symbol or symbol not in self.trade_managers:
+        logger.warning(
+          f"⚠️ Trade manager не найден для символа {symbol}, topic={topic}"
+        )
+        return
+
+      trade_manager = self.trade_managers[symbol]
+
+      # Парсим каждую сделку из data массива
+      for trade_data in data_list:
+        try:
+          # Создаем MarketTrade объект
+          market_trade = MarketTrade(
+            trade_id=trade_data.get("i", ""),
+            symbol=trade_data.get("s", symbol),
+            side=trade_data.get("S", "Buy"),  # "Buy" или "Sell"
+            price=float(trade_data.get("p", 0)),
+            quantity=float(trade_data.get("v", 0)),
+            timestamp=int(trade_data.get("T", 0)),  # milliseconds
+            is_block_trade=trade_data.get("BT", False)
+          )
+
+          # Добавляем в TradeManager
+          trade_manager.add_trade(market_trade)
+
+        except (ValueError, KeyError) as e:
+          logger.warning(
+            f"{symbol} | Ошибка парсинга trade: {e}, data={trade_data}"
+          )
+
+    except Exception as e:
+      logger.error(
+        f"Ошибка обработки trade message: {e}",
+        exc_info=True
+      )
 
   async def _handle_orderbook_message(self, message: Dict[str, Any]):
     """

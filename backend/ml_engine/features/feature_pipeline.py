@@ -123,20 +123,22 @@ class FeaturePipeline:
       self,
       symbol: str,
       normalize: bool = True,
-      cache_enabled: bool = False
+      cache_enabled: bool = False,
+      trade_manager=None
   ):
     """
     Args:
         symbol: Торговая пара
         normalize: Применять ли нормализацию к признакам
         cache_enabled: Использовать ли кэширование (Redis)
+        trade_manager: Optional TradeManager для реальных market trades
     """
     self.symbol = symbol
     self.normalize = normalize
     self.cache_enabled = cache_enabled
 
     # Инициализация extractors
-    self.orderbook_extractor = OrderBookFeatureExtractor(symbol)
+    self.orderbook_extractor = OrderBookFeatureExtractor(symbol, trade_manager=trade_manager)
     self.candle_extractor = CandleFeatureExtractor(symbol)
     self.indicator_extractor = IndicatorFeatureExtractor(symbol)
 
@@ -398,13 +400,15 @@ class MultiSymbolFeaturePipeline:
       self,
       symbols: List[str],
       normalize: bool = True,
-      cache_enabled: bool = True
+      cache_enabled: bool = True,
+      trade_managers: Optional[Dict[str, 'TradeManager']] = None
   ):
     """
     Args:
         symbols: Список торговых пар
         normalize: Применять ли нормализацию
         cache_enabled: Использовать ли кэширование
+        trade_managers: Optional Dict[symbol, TradeManager] для реальных market trades
     """
     self.symbols = symbols
     self.normalize = normalize
@@ -413,10 +417,14 @@ class MultiSymbolFeaturePipeline:
     # Создаем pipeline для каждого символа
     self.pipelines: Dict[str, FeaturePipeline] = {}
     for symbol in symbols:
+      # Получаем TradeManager для этого символа, если доступен
+      trade_manager = trade_managers.get(symbol) if trade_managers else None
+
       self.pipelines[symbol] = FeaturePipeline(
         symbol=symbol,
         normalize=normalize,
-        cache_enabled=cache_enabled
+        cache_enabled=cache_enabled,
+        trade_manager=trade_manager
       )
 
     logger.info(

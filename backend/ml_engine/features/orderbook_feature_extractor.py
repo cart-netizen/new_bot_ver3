@@ -159,13 +159,15 @@ class OrderBookFeatureExtractor:
   и добавляет продвинутые признаки.
   """
 
-  def __init__(self, symbol: str):
+  def __init__(self, symbol: str, trade_manager=None):
     """
     Args:
         symbol: Торговая пара
+        trade_manager: Optional TradeManager для получения реальных market trades
     """
     self.symbol = symbol
     self.analyzer = OrderBookAnalyzer(symbol)
+    self.trade_manager = trade_manager  # Для реальных trade arrival rates
 
     # История для временных признаков
     self.snapshot_history: List[OrderBookSnapshot] = []
@@ -830,25 +832,31 @@ class OrderBookFeatureExtractor:
 
   def _estimate_trade_arrival_rate(self, snapshot: OrderBookSnapshot) -> float:
     """
-    Оценивает частоту сделок на основе активности стакана.
+    Получает реальную частоту сделок из TradeManager или оценивает по стакану.
 
-    ВРЕМЕННАЯ РЕАЛИЗАЦИЯ до получения доступа к market trades stream.
-
-    Логика:
-    - Частые обновления стакана + большие изменения объема = высокая торговая активность
-    - Используем update_frequency и volume_delta как proxy
-
-    Формула:
-    trade_arrival_rate ≈ update_freq * (1 + |volume_delta| / total_volume)
-
-    TODO: Заменить на реальный подсчет из market trades WebSocket stream
+    ОБНОВЛЕНО: Теперь использует реальные market trades из WebSocket stream
+    когда TradeManager доступен.
 
     Args:
         snapshot: Текущий снимок стакана
 
     Returns:
-        float: Оценка trades per second
+        float: Реальные или оцененные trades per second
     """
+    # НОВОЕ: Используем реальные данные из TradeManager, если доступен
+    if self.trade_manager:
+      try:
+        # Получаем реальный arrival rate за последние 60 секунд
+        real_arrival_rate = self.trade_manager.calculate_arrival_rate(window_seconds=60)
+        if real_arrival_rate > 0:
+          return real_arrival_rate
+      except Exception as e:
+        # Логируем ошибку, но продолжаем с оценкой
+        pass
+
+    # FALLBACK: Оценка на основе активности стакана
+    # (используется если TradeManager не доступен или нет данных)
+
     # Базовая частота обновлений стакана
     update_freq = self._calculate_update_frequency()
 

@@ -339,11 +339,16 @@ class BybitWebSocketManager:
 
     # Формируем список топиков для подписки
     for symbol in symbols:
-      topic = BybitWSTopics.get_orderbook_topic(
+      # Orderbook топик
+      orderbook_topic = BybitWSTopics.get_orderbook_topic(
         symbol,
         settings.ORDERBOOK_DEPTH
       )
-      topics.append(topic)
+      topics.append(orderbook_topic)
+
+      # Market trades топик (публичные сделки)
+      trades_topic = BybitWSTopics.get_trades_topic(symbol)
+      topics.append(trades_topic)
 
     # Отправляем запрос подписки
     subscribe_message = {
@@ -466,24 +471,42 @@ class BybitWebSocketManager:
             logger.debug(f"[{connection_id}] Pong получен")
             continue
 
-          # Обрабатываем данные стакана
+          # Обрабатываем данные стакана и trades
           if "topic" in data and "data" in data:
             data_count += 1
 
-            if data_count <= 5:
-              # Логируем первые 5 сообщений подробно
-              logger.info(
-                f"[{connection_id}] 📊 Данные стакана #{data_count}: "
-                f"topic={data.get('topic')}, type={data.get('type')}, "
-                f"ts={data.get('ts')}"
-              )
-            elif data_count % 10000 == 0:
-              # Каждое 100-е сообщение
-              logger.info(
-                f"[{connection_id}] 📊 Обработано {data_count} сообщений стакана"
-              )
+            topic = data.get('topic', '')
 
-            await self._process_message(connection_id, data)
+            # Различаем orderbook и trades по topic
+            if topic.startswith('publicTrade.'):
+              # Это market trade сообщение
+              if data_count <= 5:
+                logger.info(
+                  f"[{connection_id}] 💱 Market trade #{data_count}: "
+                  f"topic={topic}, type={data.get('type')}, "
+                  f"ts={data.get('ts')}"
+                )
+              await self._process_trade_message(connection_id, data)
+
+            elif topic.startswith('orderbook.'):
+              # Это orderbook сообщение
+              if data_count <= 5:
+                logger.info(
+                  f"[{connection_id}] 📊 Данные стакана #{data_count}: "
+                  f"topic={topic}, type={data.get('type')}, "
+                  f"ts={data.get('ts')}"
+                )
+              elif data_count % 10000 == 0:
+                logger.info(
+                  f"[{connection_id}] 📊 Обработано {data_count} сообщений"
+                )
+              await self._process_message(connection_id, data)
+
+            else:
+              # Неизвестный топик
+              logger.warning(
+                f"[{connection_id}] Неизвестный топик: {topic}"
+              )
 
           else:
             # Логируем неизвестные сообщения для отладки
@@ -535,7 +558,7 @@ class BybitWebSocketManager:
 
   async def _process_message(self, connection_id: int, data: Dict[str, Any]):
     """
-    Обработка отдельного сообщения.
+    Обработка отдельного orderbook сообщения.
 
     Args:
         connection_id: ID соединения
@@ -549,6 +572,47 @@ class BybitWebSocketManager:
     except Exception as e:
       logger.error(
         f"[{connection_id}] Ошибка в callback обработки сообщения: "
+        f"{type(e).__name__}: {e}"
+      )
+      logger.error(traceback.format_exc())
+
+  async def _process_trade_message(self, connection_id: int, data: Dict[str, Any]):
+    """
+    Обработка отдельного market trade сообщения.
+
+    Args:
+        connection_id: ID соединения
+        data: Данные сообщения с публичными сделками
+
+    Формат Bybit publicTrade:
+    {
+      "topic": "publicTrade.BTCUSDT",
+      "type": "snapshot",  # или "delta"
+      "ts": 1672304486868,
+      "data": [
+        {
+          "T": 1672304486868,  # timestamp
+          "s": "BTCUSDT",      # symbol
+          "S": "Buy",          # side (Buy/Sell)
+          "v": "0.001",        # volume (quantity)
+          "p": "16578.50",     # price
+          "L": "PlusTick",     # tick direction
+          "i": "20f43950-d8dd-5b31-9112-a178eb6023af",  # trade ID
+          "BT": false          # block trade indicator
+        }
+      ]
+    }
+    """
+    try:
+      # Передаем сообщение в callback (в main.py) с пометкой типа
+      if self.on_message:
+        # Добавляем метаданные для различения типа сообщения
+        data['_message_type'] = 'trade'
+        await self.on_message(data)
+
+    except Exception as e:
+      logger.error(
+        f"[{connection_id}] Ошибка в callback обработки trade сообщения: "
         f"{type(e).__name__}: {e}"
       )
       logger.error(traceback.format_exc())
