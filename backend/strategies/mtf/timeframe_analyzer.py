@@ -1198,23 +1198,51 @@ class TimeframeAnalyzer:
     # Создаем агрегированный сигнал
     from models.signal import SignalSource, SignalStrength
 
+    # Определяем силу сигнала адаптивно на основе confidence и волатильности
+    # При высокой волатильности требуем большую confidence для STRONG/MEDIUM
+    if regime.volatility_regime == VolatilityRegime.HIGH:
+      # Высокая волатильность - более строгие пороги (снижает риск ложных сигналов)
+      strong_threshold = 0.88
+      medium_threshold = 0.78
+    else:
+      # Нормальная/низкая волатильность - стандартные пороги
+      strong_threshold = 0.85
+      medium_threshold = 0.75
+
+    if final_confidence >= strong_threshold:
+      strength = SignalStrength.STRONG
+    elif final_confidence >= medium_threshold:
+      strength = SignalStrength.MEDIUM
+    else:
+      strength = SignalStrength.WEAK
+
+    logger.debug(
+      f"[{timeframe.value}] {symbol} - Signal strength determined: {strength.value} "
+      f"(confidence={final_confidence:.2f}, volatility={regime.volatility_regime.value}, "
+      f"thresholds: STRONG≥{strong_threshold}, MEDIUM≥{medium_threshold})"
+    )
+
     signal = TradingSignal(
       symbol=symbol,
       signal_type=signal_type,
       source=SignalSource.STRATEGY,
-      strength=SignalStrength.MEDIUM,  # TODO: определять по confidence
+      strength=strength,
       price=current_price,
       confidence=final_confidence,
       timestamp=int(datetime.now().timestamp() * 1000),
       reason=(
-        f"[{timeframe.value}] Consensus: {len(contributing)}/{len(results_with_signals)} "
-        f"strategies agree, regime={regime.market_regime.value}"
+        f"[{timeframe.value}] {strength.value} signal: {len(contributing)}/{len(results_with_signals)} "
+        f"strategies agree, regime={regime.market_regime.value}, "
+        f"volatility={regime.volatility_regime.value}"
       ),
       metadata={
         'timeframe': timeframe.value,
         'regime': regime.market_regime.value,
         'regime_confidence': regime.regime_confidence,
         'trend_strength': regime.trend_strength,
+        'volatility_regime': regime.volatility_regime.value,
+        'signal_strength': strength.value,
+        'strength_threshold_used': strong_threshold if strength == SignalStrength.STRONG else medium_threshold,
         'contributing_strategies': [r.strategy_name for r in contributing]
       }
     )
