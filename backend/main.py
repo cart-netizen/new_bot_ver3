@@ -10,7 +10,9 @@ import traceback
 from datetime import datetime
 from typing import Dict, Optional, Any, List
 from contextlib import asynccontextmanager
-
+import gc  # НОВОЕ: Для принудительной сборки мусора
+import os
+import psutil
 import uvicorn
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -149,6 +151,24 @@ TradingSignal.__post_init__ = patched_post_init
 setup_logging()
 logger = get_logger(__name__)
 
+# ============================================================
+# УТИЛИТЫ ДЛЯ МОНИТОРИНГА ПАМЯТИ
+# ============================================================
+
+def get_memory_usage() -> float:
+  """
+  Получить использование памяти текущим процессом в МБ.
+
+  Returns:
+      float: Использование памяти в МБ
+  """
+  try:
+    process = psutil.Process(os.getpid())
+    memory_mb = process.memory_info().rss / (1024 * 1024)
+    return memory_mb
+  except Exception as e:
+    logger.error(f"Ошибка получения памяти: {e}")
+    return 0.0
 
 
 class BotController:
@@ -371,7 +391,8 @@ class BotController:
         storage_path="../data/ml_training",
         max_samples_per_file=5000,  # Увеличено для накопления большего количества данных перед сохранением
         collection_interval=10,  # Собирать каждые 10 итераций (все символы за раз)
-        auto_save_interval_seconds = 300  # Автосохранение каждые 5 минут для защиты от переполнения памяти
+        # auto_save_interval_seconds = 300  # Автосохранение каждые 5 минут для защиты от переполнения памяти
+        max_buffer_memory_mb=100  # НОВОЕ: Максимум 100 МБ буфера на символ перед принудительным сохранением
       )
       await self.ml_data_collector.initialize()
       logger.info("✓ ML Data Collector инициализирован")
@@ -1412,6 +1433,7 @@ class BotController:
     max_errors = 5  # Максимум последовательных ошибок
     cycle_number = 0
 
+
     while self.running:
       cycle_number += 1
 
@@ -1740,6 +1762,7 @@ class BotController:
     error_count = {}  # Счетчик ошибок по символам
     max_consecutive_errors = 5  # Максимум последовательных ошибок перед skip
     cycle_number = 0
+    cleanup_counter = 0  # НОВОЕ: Счетчик для периодической очистки памяти
 
     # Инициализация статистики (если еще не инициализирована)
     if not hasattr(self, 'stats') or not self.stats:
@@ -1775,6 +1798,14 @@ class BotController:
     while self.status == BotStatus.RUNNING:
       cycle_start = time.time()
       cycle_number += 1
+
+      cleanup_counter += 1
+
+      # НОВОЕ: Периодическая очистка памяти (каждые 1000 циклов)
+      if cleanup_counter >= 1000:
+        logger.info("🧹 Запуск периодической очистки памяти (каждые 1000 циклов)")
+        await self._cleanup_memory()
+        cleanup_counter = 0
 
       # ДЕБАГ: Логирование каждого цикла (первые 5 циклов)
       if cycle_number <= 5:
@@ -3463,6 +3494,17 @@ class BotController:
       try:
         await asyncio.sleep(300)  # Каждые 5 минут
 
+        # НОВОЕ: Мониторинг памяти
+        memory_mb = get_memory_usage()
+
+        if memory_mb > 8000:  # Если больше 8 ГБ
+          logger.warning(f"⚠️ HIGH MEMORY USAGE: {memory_mb:.1f} MB - запуск очистки памяти")
+          await self._cleanup_memory()
+          # Проверяем снова после очистки
+          memory_after = get_memory_usage()
+          logger.info(
+            f"📊 Memory: {memory_mb:.1f} MB → {memory_after:.1f} MB (освобождено {memory_mb - memory_after:.1f} MB)")
+
         if self.ml_data_collector:
           stats = self.ml_data_collector.get_statistics()
 
@@ -3473,6 +3515,8 @@ class BotController:
             f"файлов={stats['files_written']}, "
             f"итераций={stats['iteration_counter']}, "
             f"интервал={stats['collection_interval']}"
+            f"интервал={stats['collection_interval']}, "
+            f"память={memory_mb:.1f}MB"  # НОВОЕ: Вывод памяти
           )
 
           # ===== ИСПРАВЛЕНИЕ: Итерируемся по stats["symbols"], а не stats =====
@@ -3498,6 +3542,42 @@ class BotController:
         # Логируем полный traceback для диагностики
         import traceback
         logger.error(f"Traceback:\n{traceback.format_exc()}")
+
+  async def _cleanup_memory(self):
+    """
+    Принудительная очистка памяти для предотвращения утечек.
+
+    Очищает:
+    - ML буферы (через MLDataCollector._cleanup_old_buffers())
+    - OrderBook кэши (через OrderBookManager.clear_old_data())
+    - Python garbage collector
+    """
+    try:
+      logger.info("🧹 Начало очистки памяти...")
+
+      # 1. Очистка ML буферов
+      if self.ml_data_collector:
+        self.ml_data_collector._cleanup_old_buffers()
+        logger.info("  ✓ ML буферы очищены")
+
+      # 2. Очистка OrderBook кэшей
+      cleaned_count = 0
+      for manager in self.orderbook_managers.values():
+        if hasattr(manager, 'clear_old_data'):
+          manager.clear_old_data()
+          cleaned_count += 1
+
+      if cleaned_count > 0:
+        logger.info(f"  ✓ OrderBook кэши очищены ({cleaned_count} символов)")
+
+      # 3. Принудительная сборка мусора
+      collected = gc.collect()
+      logger.info(f"  ✓ Garbage collector: собрано {collected} объектов")
+
+      logger.info("🧹 Очистка памяти завершена")
+
+    except Exception as e:
+      logger.error(f"Ошибка очистки памяти: {e}")
 
   async def _screener_broadcast_loop(self):
     """

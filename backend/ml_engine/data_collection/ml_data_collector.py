@@ -49,7 +49,8 @@ class MLDataCollector:
       storage_path: str = "data/ml_training",
       max_samples_per_file: int = 10000,
       collection_interval: int = 10,
-      auto_save_interval_seconds: int = 300# Каждые N итераций
+      # auto_save_interval_seconds: int = 40000,# Каждые N итераций
+    max_buffer_memory_mb: int = 100  # НОВОЕ: Максимум МБ на символ
   ):
     """
     Инициализация сборщика данных.
@@ -58,12 +59,15 @@ class MLDataCollector:
         storage_path: Путь для хранения данных
         max_samples_per_file: Максимум семплов в одном файле
         collection_interval: Интервал сбора (каждые N итераций)
-        auto_save_interval_seconds: Интервал автосохранения (секунды)
+        # auto_save_interval_seconds: Интервал автосохранения (секунды)
+        max_buffer_memory_mb: Максимум памяти на буфер символа (МБ)
     """
     self.storage_path = Path(storage_path)
     self.max_samples_per_file = max_samples_per_file
     self.collection_interval = collection_interval
-    self.auto_save_interval = auto_save_interval_seconds
+    # self.auto_save_interval = auto_save_interval_seconds
+    self.max_buffer_memory_mb = max_buffer_memory_mb
+
 
     # Буферы для каждого символа
     self.feature_buffers: Dict[str, List[np.ndarray]] = {}
@@ -75,6 +79,7 @@ class MLDataCollector:
     self.batch_numbers: Dict[str, int] = {}
     self.last_save_time: Dict[str, float] = {}  # Время последнего сохранения
     self.iteration_counter = 0
+    self.last_cleanup_iteration = 0  # НОВОЕ: Счетчик для периодической очистки
 
     # Статистика
     self.total_samples_collected = 0
@@ -83,7 +88,8 @@ class MLDataCollector:
     logger.info(
       f"MLDataCollector инициализирован, storage_path={storage_path}, "
       f"max_samples={max_samples_per_file}, interval={collection_interval}, "
-      f"auto_save={auto_save_interval_seconds}s"
+      # f"auto_save={auto_save_interval_seconds}s, max_buffer_mem={max_buffer_memory_mb}MB"
+      # f"auto_save={auto_save_interval_seconds}s"
       f"interval={collection_interval}"
     )
 
@@ -175,19 +181,8 @@ class MLDataCollector:
       )
 
       # Проверяем нужно ли сохранить batch
-      # 1. По количеству семплов
-      should_save_by_count = len(self.feature_buffers[symbol]) >= self.max_samples_per_file
-
-      # 2. По времени (автосохранение каждые N секунд)
-      current_time = datetime.now().timestamp()
-      time_since_last_save = current_time - self.last_save_time.get(symbol, current_time)
-      should_save_by_time = time_since_last_save >= self.auto_save_interval
-
-      if should_save_by_count or (should_save_by_time and len(self.feature_buffers[symbol]) > 0):
-        if should_save_by_time:
-          logger.info(f"{symbol} | Автосохранение по таймеру ({time_since_last_save:.0f}s)")
+      if len(self.feature_buffers[symbol]) >= self.max_samples_per_file:
         await self._save_batch(symbol)
-        self.last_save_time[symbol] = current_time
 
     except Exception as e:
       logger.error(f"{symbol} | Ошибка сбора семпла: {e}")
@@ -322,6 +317,68 @@ class MLDataCollector:
       f"всего семплов={self.total_samples_collected}, "
       f"файлов={self.files_written}"
     )
+
+  def _calculate_buffer_memory(self, symbol: str) -> float:
+    """
+    Расчет размера буфера в памяти (МБ).
+
+    Args:
+        symbol: Торговая пара
+
+    Returns:
+        float: Размер буфера в МБ
+    """
+    if symbol not in self.feature_buffers:
+      return 0.0
+
+    try:
+      # Размер feature буфера
+      features_size = 0
+      for arr in self.feature_buffers[symbol]:
+        features_size += arr.nbytes
+
+      # Размер label буфера (приблизительно)
+      labels_size = len(self.label_buffers[symbol]) * 200  # ~200 bytes per label
+
+      # Размер metadata буфера (приблизительно)
+      metadata_size = len(self.metadata_buffers[symbol]) * 300  # ~300 bytes per metadata
+
+      total_bytes = features_size + labels_size + metadata_size
+      total_mb = total_bytes / (1024 * 1024)
+
+      return total_mb
+
+    except Exception as e:
+      logger.error(f"{symbol} | Ошибка расчета размера буфера: {e}")
+      return 0.0
+
+  def _cleanup_old_buffers(self):
+    """
+    Принудительная очистка буферов с сохранением только последних N элементов.
+    Вызывается периодически для предотвращения утечек памяти.
+    """
+    import gc
+
+    cleaned_symbols = []
+
+    for symbol in list(self.feature_buffers.keys()):
+      buffer_size = len(self.feature_buffers[symbol])
+
+      # Если буфер содержит более 100 элементов - оставляем только последние 100
+      if buffer_size > 100:
+        self.feature_buffers[symbol] = self.feature_buffers[symbol][-100:]
+        self.label_buffers[symbol] = self.label_buffers[symbol][-100:]
+        self.metadata_buffers[symbol] = self.metadata_buffers[symbol][-100:]
+        cleaned_symbols.append(f"{symbol}({buffer_size}→100)")
+
+    if cleaned_symbols:
+      logger.warning(
+        f"🧹 Принудительная очистка буферов: {', '.join(cleaned_symbols)}"
+      )
+
+    # Принудительная сборка мусора
+    gc.collect()
+    logger.info("🧹 Сборка мусора выполнена")
 
   def get_statistics(self) -> Dict[str, Any]:
     """

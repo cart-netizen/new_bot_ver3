@@ -17,14 +17,16 @@ logger = get_logger(__name__)
 class OrderBookManager:
   """Менеджер для управления состоянием стакана ордеров."""
 
-  def __init__(self, symbol: str):
+  def __init__(self, symbol: str, max_depth: int = 50):
     """
     Инициализация менеджера стакана.
 
     Args:
         symbol: Торговая пара
+        max_depth: Максимальная глубина стакана (уровней) для экономии памяти
     """
     self.symbol = symbol
+    self.max_depth = max_depth  # НОВОЕ: Ограничение глубины для экономии памяти
 
     # Хранилище уровней стакана
     self.bids: OrderedDict[float, float] = OrderedDict()  # {price: quantity}
@@ -40,7 +42,7 @@ class OrderBookManager:
     self.snapshot_count: int = 0
     self.delta_count: int = 0
 
-    logger.info(f"Инициализирован OrderBook менеджер для {symbol}")
+    logger.info(f"Инициализирован OrderBook менеджер для {symbol}, max_depth={max_depth}")
 
   def apply_snapshot(self, data: Dict) -> OrderBookSnapshot:
     """
@@ -61,13 +63,17 @@ class OrderBookManager:
       bids_list = []
       asks_list = []
 
-      for bid_data in data.get("b", []):
+      # ИСПРАВЛЕНО: Берем только top N уровней из snapshot
+      bids_data = data.get("b", [])[:self.max_depth]
+      asks_data = data.get("a", [])[:self.max_depth]
+
+      for bid_data in bids_data:
         price = float(bid_data[0])
         quantity = float(bid_data[1])
         self.bids[price] = quantity
         bids_list.append((price, quantity))
 
-      for ask_data in data.get("a", []):
+      for ask_data in asks_data:
         price = float(ask_data[0])
         quantity = float(ask_data[1])
         self.asks[price] = quantity
@@ -105,6 +111,24 @@ class OrderBookManager:
     except Exception as e:
       logger.error(f"{self.symbol} | Ошибка применения snapshot: {e}")
       raise OrderBookError(f"Failed to apply snapshot: {str(e)}")
+
+  def clear_old_data(self):
+    """
+    Очистка старых данных для освобождения памяти.
+    Вызывается периодически для предотвращения утечек памяти.
+    """
+    # Ограничиваем количество уровней до max_depth
+    if len(self.bids) > self.max_depth:
+      # Оставляем только top N лучших bid (самые высокие цены)
+      sorted_bids = sorted(self.bids.items(), reverse=True)[:self.max_depth]
+      self.bids = OrderedDict(sorted_bids)
+      logger.debug(f"{self.symbol} | Ограничена глубина bids до {self.max_depth}")
+
+    if len(self.asks) > self.max_depth:
+      # Оставляем только top N лучших ask (самые низкие цены)
+      sorted_asks = sorted(self.asks.items())[:self.max_depth]
+      self.asks = OrderedDict(sorted_asks)
+      logger.debug(f"{self.symbol} | Ограничена глубина asks до {self.max_depth}")
 
   def apply_delta(self, data: Dict) -> Optional[OrderBookDelta]:
     """
