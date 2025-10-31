@@ -149,13 +149,27 @@ class VolumeFlowStrategy(BaseOrderBookStrategy):
         whale_orders = self._detect_whale_orders(
             symbol, orderbook, metrics, current_price
         )
-        
+
         if whale_orders:
             logger.debug(
                 f"[{self.strategy_name}] {symbol} | "
                 f"Обнаружено {len(whale_orders)} whale orders"
             )
-        
+
+        # НОВОЕ: Подтверждение через реальные block trades из TradeManager
+        real_block_trades_count = 0
+        if self.trade_manager:
+            try:
+                stats = self.trade_manager.get_statistics(window_seconds=60)
+                real_block_trades_count = stats.block_trade_count
+                if real_block_trades_count > 0:
+                    logger.debug(
+                        f"[{self.strategy_name}] {symbol} | "
+                        f"РЕАЛЬНЫЕ block trades: {real_block_trades_count} за 60 сек"
+                    )
+            except Exception as e:
+                logger.debug(f"TradeManager stats error: {e}")
+
         # Шаг 3: Обновление и анализ volume clusters
         self._update_volume_clusters(symbol, orderbook, metrics, current_price)
         
@@ -187,13 +201,15 @@ class VolumeFlowStrategy(BaseOrderBookStrategy):
         signal_type = signal_analysis['signal_type']
         flow_strength = signal_analysis['strength']
         
-        # Шаг 6: Вычисление confidence
+        # Шаг 6: Вычисление confidence (с новыми фичами из TradeManager)
         confidence = self._calculate_confidence(
             flow_strength=flow_strength,
             whale_count=len(whale_orders),
             absorption_count=len(absorbed_clusters),
             ofi=ofi,
-            liquidity_quality=analysis.liquidity_quality
+            liquidity_quality=analysis.liquidity_quality,
+            signal_type=signal_type,  # НОВОЕ: для проверки buy/sell pressure
+            block_trades_count=real_block_trades_count  # НОВОЕ: реальные block trades
         )
         
         if confidence < 0.6:
@@ -211,23 +227,60 @@ class VolumeFlowStrategy(BaseOrderBookStrategy):
         else:
             signal_strength = SignalStrength.WEAK
         
-        # Шаг 8: Формирование reason
+        # Шаг 8: Формирование reason (с новыми фичами)
         reason_parts = [
             f"Volume flow {signal_type.value}: strength={flow_strength:.2f}",
             f"Whale orders: {len(whale_orders)}"
         ]
-        
+
         if absorbed_clusters:
             reason_parts.append(f"Absorbed clusters: {len(absorbed_clusters)}")
-        
+
         reason_parts.append(f"OFI: {ofi:.2f}")
+
+        # НОВОЕ: Добавляем информацию из TradeManager
+        if real_block_trades_count > 0:
+            reason_parts.append(f"Real block trades: {real_block_trades_count}")
+
+        if self.trade_manager:
+            try:
+                _, _, pressure_ratio = self.trade_manager.calculate_buy_sell_pressure(60)
+                reason_parts.append(f"Buy pressure: {pressure_ratio:.1%}")
+            except Exception:
+                pass
         
         # Шаг 9: Определение stop-loss на основе кластеров
         stop_loss_info = self._calculate_cluster_based_stop(
             symbol, signal_type, current_price
         )
         
-        # Шаг 10: Создание сигнала
+        # Шаг 10: Создание сигнала (с новыми фичами из TradeManager)
+        metadata = {
+            'strategy': self.strategy_name,
+            'flow_strength': flow_strength,
+            'whale_orders': len(whale_orders),
+            'absorbed_clusters': len(absorbed_clusters),
+            'ofi': ofi,
+            'clusters_nearby': stop_loss_info['clusters_nearby'],
+            'stop_loss_distance': stop_loss_info['distance'],
+            'liquidity_quality': analysis.liquidity_quality,
+            # НОВОЕ: Real market trades статистики
+            'real_block_trades': real_block_trades_count
+        }
+
+        # Добавляем дополнительные метрики из TradeManager
+        if self.trade_manager:
+            try:
+                stats = self.trade_manager.get_statistics(window_seconds=60)
+                metadata.update({
+                    'buy_pressure_ratio': stats.buy_sell_ratio / (1 + stats.buy_sell_ratio),  # Normalize to 0-1
+                    'order_flow_toxicity': stats.order_flow_toxicity,
+                    'trade_arrival_rate': stats.arrival_rate,
+                    'real_vwap': stats.vwap
+                })
+            except Exception:
+                pass
+
         signal = TradingSignal(
             symbol=symbol,
             signal_type=signal_type,
@@ -237,16 +290,7 @@ class VolumeFlowStrategy(BaseOrderBookStrategy):
             confidence=confidence,
             timestamp=int(datetime.now().timestamp() * 1000),
             reason=" | ".join(reason_parts),
-            metadata={
-                'strategy': self.strategy_name,
-                'flow_strength': flow_strength,
-                'whale_orders': len(whale_orders),
-                'absorbed_clusters': len(absorbed_clusters),
-                'ofi': ofi,
-                'clusters_nearby': stop_loss_info['clusters_nearby'],
-                'stop_loss_distance': stop_loss_info['distance'],
-                'liquidity_quality': analysis.liquidity_quality
-            }
+            metadata=metadata
         )
         
         self.active_signals[symbol] = signal
@@ -562,31 +606,79 @@ class VolumeFlowStrategy(BaseOrderBookStrategy):
         whale_count: int,
         absorption_count: int,
         ofi: float,
-        liquidity_quality: float
+        liquidity_quality: float,
+        signal_type: Optional[SignalType] = None,
+        block_trades_count: int = 0
     ) -> float:
         """
-        Вычислить итоговую confidence.
+        Вычислить итоговую confidence с учетом реальных market trades.
         """
         # Базовая confidence от силы потока
         base_confidence = flow_strength * 0.5
-        
+
         # Бонус за количество whale orders (до +0.2)
         whale_bonus = min(whale_count / 5.0, 1.0) * 0.2
-        
+
         # Бонус за поглощения (до +0.15)
         absorption_bonus = min(absorption_count / 3.0, 1.0) * 0.15
-        
+
         # Качество ликвидности (0.15)
         liquidity_component = liquidity_quality * 0.15
-        
+
         confidence = (
             base_confidence +
             whale_bonus +
             absorption_bonus +
             liquidity_component
         )
-        
-        return min(confidence, 1.0)
+
+        # ==================== НОВЫЕ ФИЧИ ИЗ TRADEMANAGER ====================
+
+        # 1. Bonus за реальные block trades (до +0.15)
+        if block_trades_count > 0:
+            block_trades_bonus = min(block_trades_count / 5.0, 1.0) * 0.15
+            confidence += block_trades_bonus
+
+        # 2. Buy/Sell Pressure Confirmation (до +0.15 или -0.2 при конфликте)
+        if self.trade_manager and signal_type:
+            try:
+                buy_vol, sell_vol, pressure_ratio = self.trade_manager.calculate_buy_sell_pressure(window_seconds=60)
+
+                if signal_type == SignalType.BUY:
+                    # Long сигнал: ожидаем давление покупателей > 60%
+                    if pressure_ratio > 0.7:
+                        confidence += 0.15  # Сильное подтверждение
+                    elif pressure_ratio > 0.6:
+                        confidence += 0.08  # Умеренное подтверждение
+                    elif pressure_ratio < 0.4:
+                        confidence -= 0.2  # Конфликт с реальными трейдами!
+
+                elif signal_type == SignalType.SELL:
+                    # Short сигнал: ожидаем давление продавцов > 60%
+                    if pressure_ratio < 0.3:
+                        confidence += 0.15  # Сильное подтверждение
+                    elif pressure_ratio < 0.4:
+                        confidence += 0.08  # Умеренное подтверждение
+                    elif pressure_ratio > 0.6:
+                        confidence -= 0.2  # Конфликт с реальными трейдами!
+
+            except Exception:
+                pass  # Нет данных - ок
+
+        # 3. Order Flow Toxicity Bonus (до +0.1)
+        if self.trade_manager:
+            try:
+                toxicity = self.trade_manager.calculate_order_flow_toxicity(window_seconds=60)
+                # Высокая токсичность = информированные трейдеры активны
+                if abs(toxicity) > 0.5:
+                    toxicity_bonus = min(abs(toxicity), 1.0) * 0.1
+                    confidence += toxicity_bonus
+            except Exception:
+                pass  # Нет данных - ок
+
+        # ======================================================================
+
+        return max(min(confidence, 1.0), 0.0)  # Clamp [0, 1]
 
     def _calculate_cluster_based_stop(
         self,

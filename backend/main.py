@@ -659,6 +659,13 @@ class BotController:
         self.adaptive_consensus = self.integrated_engine.adaptive_consensus
         self.mtf_manager = self.integrated_engine.mtf_manager
 
+        # НОВОЕ: Передаем trade_managers в Strategy Manager для реальных market trades фичей
+        if self.strategy_manager and self.trade_managers:
+          self.strategy_manager.trade_managers = self.trade_managers
+          logger.info(
+            f"✅ TradeManagers переданы в Strategy Manager для {len(self.trade_managers)} символов"
+          )
+
         if hasattr(self, 'ml_validator') and self.ml_validator is not None:
           logger.info("🔗 Привязка ML Validator к TimeframeAnalyzer...")
 

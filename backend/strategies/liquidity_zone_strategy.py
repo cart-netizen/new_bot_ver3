@@ -581,9 +581,23 @@ class LiquidityZoneStrategy(BaseOrderBookStrategy):
         
         # Бонус если это POC
         poc_bonus = 0.15 if nearest_hvn.is_poc else 0.0
-        
+
         confidence = self.config.reversion_confidence_base + distance_score + strength_score + poc_bonus
-        
+
+        # ========== НОВОЕ: Real VWAP Confirmation (до +0.15) ==========
+        if self.trade_manager:
+            try:
+                real_vwap = self.trade_manager.calculate_vwap(window_seconds=300)  # 5 минут
+                if real_vwap > 0:
+                    # Проверяем, близка ли цена к real VWAP
+                    vwap_distance_pct = abs(current_price - real_vwap) / real_vwap * 100
+
+                    # Если цена близко к VWAP - хорошая зона для mean reversion
+                    if vwap_distance_pct < 0.2:
+                        confidence += 0.15
+            except Exception:
+                pass  # Нет данных - ок
+
         return {
             'has_signal': True,
             'signal_type': signal_type,
@@ -648,9 +662,30 @@ class LiquidityZoneStrategy(BaseOrderBookStrategy):
                     
                     # LVN strength (обратная - слабый LVN = легче пробить)
                     lvn_score = (1.0 - lvn.strength) * 0.3
-                    
+
                     confidence = self.config.breakout_confidence_base + volume_score + lvn_score
-                    
+
+                    # ========== НОВОЕ: Trade Intensity Confirmation for Breakout (до +0.2) ==========
+                    if self.trade_manager:
+                        try:
+                            arrival_rate = self.trade_manager.calculate_arrival_rate(window_seconds=10)  # Последние 10 сек
+
+                            # Примерный средний arrival rate (зависит от пары)
+                            avg_arrival_rate = 5.0  # trades/sec
+
+                            intensity_ratio = arrival_rate / avg_arrival_rate if avg_arrival_rate > 0 else 1.0
+
+                            # Настоящий breakout должен сопровождаться всплеском активности
+                            if intensity_ratio > 3.0:
+                                confidence += 0.2  # Сильное подтверждение
+                            elif intensity_ratio > 2.0:
+                                confidence += 0.1  # Умеренное подтверждение
+                            elif intensity_ratio < 1.0:
+                                confidence *= 0.8  # Слабая активность - снижаем
+
+                        except Exception:
+                            pass  # Нет данных - ок
+
                     return {
                         'has_signal': True,
                         'signal_type': signal_type,
