@@ -47,32 +47,35 @@ class BaseOrderBookStrategy(ABC):
     - Статистики стратегии
     """
 
-    def __init__(self, strategy_name: str):
+    def __init__(self, strategy_name: str, trade_manager=None):
         """
         Инициализация базовой стратегии.
 
         Args:
             strategy_name: Имя стратегии
+            trade_manager: Optional TradeManager для реальных market trades анализа
         """
         self.strategy_name = strategy_name
-        
+        self.trade_manager = trade_manager  # Для реальных market trades фичей
+
         # История snapshot'ов для временного анализа
         self.snapshot_history: Dict[str, deque] = {}
         self.max_snapshot_history = 100
-        
+
         # История метрик
         self.metrics_history: Dict[str, deque] = {}
-        
+
         # Активные сигналы
         self.active_signals: Dict[str, TradingSignal] = {}
-        
+
         # Статистика
         self.signals_generated = 0
         self.manipulation_blocks = 0
         self.liquidity_blocks = 0
-        
+
         logger.info(
             f"Инициализирована {strategy_name} (OrderBook-aware стратегия)"
+            f"{' с TradeManager интеграцией' if trade_manager else ''}"
         )
 
     @abstractmethod

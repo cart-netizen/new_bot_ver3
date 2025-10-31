@@ -193,14 +193,16 @@ class ExtendedStrategyManager:
   - Гибридными стратегиями (комбинация обоих)
   """
 
-  def __init__(self, config: ExtendedStrategyManagerConfig):
+  def __init__(self, config: ExtendedStrategyManagerConfig, trade_managers: Optional[Dict[str, 'TradeManager']] = None):
     """
     Инициализация менеджера.
 
     Args:
         config: Конфигурация менеджера
+        trade_managers: Optional Dict[symbol, TradeManager] для интеграции реальных market trades
     """
     self.config = config
+    self.trade_managers = trade_managers or {}
 
     # Инициализация свечных стратегий
     self.candle_strategies: Dict[str, any] = {}
@@ -209,14 +211,17 @@ class ExtendedStrategyManager:
     self.candle_strategies['supertrend'] = SuperTrendStrategy(SuperTrendConfig())
     self.candle_strategies['volume_profile'] = VolumeProfileStrategy(VolumeProfileConfig())
 
-    # Инициализация OrderBook стратегий
+    # Инициализация OrderBook стратегий (с TradeManager)
+    # ПРИМЕЧАНИЕ: trade_manager передается для конкретного символа в analyze_all_strategies
     self.orderbook_strategies: Dict[str, any] = {}
     if config.enable_orderbook_strategies:
+      # Передаем None в __init__, т.к. trade_manager специфичен для символа
+      # и будет установлен динамически для каждого вызова analyze
       self.orderbook_strategies['imbalance'] = ImbalanceStrategy(ImbalanceConfig())
       self.orderbook_strategies['volume_flow'] = VolumeFlowStrategy(VolumeFlowConfig())
       self.orderbook_strategies['liquidity_zone'] = LiquidityZoneStrategy(LiquidityZoneConfig())
 
-    # Инициализация гибридных стратегий
+    # Инициализация гибридных стратегий (с TradeManager)
     self.hybrid_strategies: Dict[str, any] = {}
     if config.enable_hybrid_strategies:
       self.hybrid_strategies['smart_money'] = SmartMoneyStrategy(SmartMoneyConfig())
@@ -285,11 +290,18 @@ class ExtendedStrategyManager:
 
     results = []
 
+    # Получаем TradeManager для символа (будет использоваться всеми типами стратегий)
+    trade_manager = self.trade_managers.get(symbol)
+
     # ========== Candle Strategies ==========
     for strategy_name, strategy in self.candle_strategies.items():
       start_time = time.time()
 
       try:
+        # Устанавливаем trade_manager для стратегий, которые его поддерживают (например, MomentumStrategy)
+        if hasattr(strategy, 'trade_manager'):
+          strategy.trade_manager = trade_manager
+
         signal = strategy.analyze(symbol, candles, current_price)
         execution_time = (time.time() - start_time) * 1000
 
@@ -325,6 +337,10 @@ class ExtendedStrategyManager:
         start_time = time.time()
 
         try:
+          # Устанавливаем trade_manager для этого символа (уже установлен выше)
+          if hasattr(strategy, 'trade_manager'):
+            strategy.trade_manager = trade_manager
+
           # Передаем дополнительные параметры для LiquidityZone
           if strategy_name == 'liquidity_zone':
             signal = strategy.analyze(
@@ -374,6 +390,10 @@ class ExtendedStrategyManager:
         start_time = time.time()
 
         try:
+          # Устанавливаем trade_manager для этого символа (уже установлен выше)
+          if hasattr(strategy, 'trade_manager'):
+            strategy.trade_manager = trade_manager
+
           signal = strategy.analyze(
             symbol=symbol,
             candles=candles,

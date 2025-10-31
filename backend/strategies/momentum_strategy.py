@@ -164,15 +164,17 @@ class MomentumStrategy:
   5. Управляем позицией через trailing stop
   """
 
-  def __init__(self, config: MomentumConfig):
+  def __init__(self, config: MomentumConfig, trade_manager=None):
     """
     Инициализация стратегии.
 
     Args:
         config: Конфигурация стратегии
+        trade_manager: Optional TradeManager для trade intensity confirmation
     """
     self.config = config
     self.indicators = MomentumIndicators()
+    self.trade_manager = trade_manager  # НОВОЕ: для trade intensity
 
     # Состояние стратегии
     self.active_signals: Dict[str, TradingSignal] = {}
@@ -261,6 +263,31 @@ class MomentumStrategy:
 
     if signal_type is None:
       return None
+
+    # ========== НОВОЕ: Trade Intensity Confirmation ==========
+    # Сильный momentum должен подтверждаться высокой интенсивностью торгов
+    if self.trade_manager:
+      try:
+        arrival_rate = self.trade_manager.calculate_arrival_rate(window_seconds=60)
+
+        # Примерный средний arrival rate (зависит от пары, можно настроить)
+        avg_arrival_rate = 5.0  # trades/sec
+
+        intensity_ratio = arrival_rate / avg_arrival_rate if avg_arrival_rate > 0 else 1.0
+
+        # Фильтр: Низкая интенсивность = слабый momentum
+        if intensity_ratio < 0.5:
+          logger.debug(
+            f"[momentum] {symbol} | Низкая trade intensity: {intensity_ratio:.2f}x - ПРОПУСКАЕМ"
+          )
+          return None  # Блокируем сигнал
+
+        # Добавляем в reason если высокая интенсивность
+        if intensity_ratio > 2.0:
+          reason_parts.append(f"High trade intensity: {intensity_ratio:.1f}x")
+
+      except Exception:
+        pass  # Нет данных - продолжаем без фильтра
 
     # Вычисляем силу momentum
     momentum_strength = self.indicators.calculate_momentum_strength(

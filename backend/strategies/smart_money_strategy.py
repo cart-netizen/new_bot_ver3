@@ -486,10 +486,46 @@ class SmartMoneyStrategy(BaseOrderBookStrategy):
             supporting_factors['market_pressure'] = orderbook_analysis.pressure_strength
         
         entry_confidence += pressure_score
-        
+
+        # ========== НОВОЕ: Фактор 4: Institutional Activity Detection (до +0.3) ==========
+        institutional_score = 0.0
+
+        if self.trade_manager:
+            try:
+                stats = self.trade_manager.get_statistics(window_seconds=300)  # 5 минут
+
+                # Признаки "умных денег" (institutional players):
+
+                # 1. Block Trades (крупные институциональные сделки)
+                if stats.block_trade_count > 3:
+                    institutional_score += 0.15
+                    reasons.append(f"Institutional block trades: {stats.block_trade_count}")
+                    supporting_factors['block_trades'] = stats.block_trade_count
+
+                # 2. High Order Flow Toxicity (информированные трейдеры)
+                if abs(stats.order_flow_toxicity) > 0.6:
+                    institutional_score += 0.10
+                    reasons.append(f"High order flow toxicity: {stats.order_flow_toxicity:.2f}")
+                    supporting_factors['toxicity'] = stats.order_flow_toxicity
+
+                # 3. Sustained Directional Pressure (устойчивое давление в одну сторону)
+                if desired_direction == SignalType.BUY and stats.buy_sell_ratio > 2.0:
+                    institutional_score += 0.05
+                    reasons.append(f"Strong buy pressure: {stats.buy_sell_ratio:.1f}")
+                    supporting_factors['buy_sell_ratio'] = stats.buy_sell_ratio
+                elif desired_direction == SignalType.SELL and stats.buy_sell_ratio < 0.5:
+                    institutional_score += 0.05
+                    reasons.append(f"Strong sell pressure: {stats.buy_sell_ratio:.1f}")
+                    supporting_factors['buy_sell_ratio'] = stats.buy_sell_ratio
+
+            except Exception:
+                pass  # Нет данных - продолжаем без institutional score
+
+        entry_confidence += institutional_score
+
         # Проверка минимальной entry confidence
         has_entry = entry_confidence >= 0.5 and len(reasons) >= 2
-        
+
         return EntryPoint(
             has_entry=has_entry,
             signal_type=desired_direction if has_entry else None,

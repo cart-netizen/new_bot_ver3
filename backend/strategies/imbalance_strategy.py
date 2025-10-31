@@ -465,7 +465,7 @@ class ImbalanceStrategy(BaseOrderBookStrategy):
         
         # Компонент 4: Согласованность с давлением (10%)
         pressure_component = 0.0
-        
+
         if market_pressure == "bullish" and signal_type == SignalType.BUY:
             pressure_component = pressure_strength * 0.1
         elif market_pressure == "bearish" and signal_type == SignalType.SELL:
@@ -474,7 +474,7 @@ class ImbalanceStrategy(BaseOrderBookStrategy):
             # Нейтральное давление - небольшой бонус за стабильность
             pressure_component = 0.05
         # Если противоположное давление - не добавляем ничего
-        
+
         # Итоговая confidence
         confidence = (
             imbalance_component +
@@ -482,11 +482,37 @@ class ImbalanceStrategy(BaseOrderBookStrategy):
             liquidity_component +
             pressure_component
         )
-        
+
+        # ========== НОВОЕ: Компонент 5: Real Buy/Sell Pressure Confirmation (до +0.2 или -0.2) ==========
+        if self.trade_manager:
+            try:
+                buy_vol, sell_vol, pressure_ratio = self.trade_manager.calculate_buy_sell_pressure(window_seconds=60)
+
+                if signal_type == SignalType.BUY:
+                    # Long сигнал: подтверждаем реальным давлением покупателей
+                    if pressure_ratio > 0.7:
+                        confidence += 0.2  # Сильное подтверждение
+                    elif pressure_ratio > 0.6:
+                        confidence += 0.1  # Умеренное подтверждение
+                    elif pressure_ratio < 0.4:
+                        confidence -= 0.2  # Конфликт с реальными трейдами!
+
+                elif signal_type == SignalType.SELL:
+                    # Short сигнал: подтверждаем реальным давлением продавцов
+                    if pressure_ratio < 0.3:
+                        confidence += 0.2  # Сильное подтверждение
+                    elif pressure_ratio < 0.4:
+                        confidence += 0.1  # Умеренное подтверждение
+                    elif pressure_ratio > 0.6:
+                        confidence -= 0.2  # Конфликт с реальными трейдами!
+
+            except Exception:
+                pass  # Нет данных - ок
+
         # Применяем базовую confidence как множитель
         confidence = confidence * (self.config.base_confidence / 0.7)
-        
-        return min(confidence, 1.0)
+
+        return max(min(confidence, 1.0), 0.0)  # Clamp [0, 1]
 
     def get_statistics(self) -> Dict:
         """Получить расширенную статистику."""
