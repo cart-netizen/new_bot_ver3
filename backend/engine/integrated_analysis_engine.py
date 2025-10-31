@@ -351,7 +351,7 @@ class IntegratedAnalysisEngine:
     Определить эффективный режим анализа.
 
     В ADAPTIVE режиме выбирает между single-TF и MTF
-    на основе текущих рыночных условий.
+    на основе текущих рыночных условий используя профессиональный MarketRegimeDetector.
 
     Args:
         symbol: Торговая пара
@@ -365,44 +365,92 @@ class IntegratedAnalysisEngine:
     if self.config.analysis_mode != AnalysisMode.ADAPTIVE:
       return self.config.analysis_mode
 
-    # Adaptive logic
-    # Проверяем условия для использования MTF
-    use_mtf = False
-    use_single_tf = False
+    # ============================================================================
+    # PROFESSIONAL MARKET REGIME DETECTION
+    # Replaces simplified SMA-based logic (old lines 373-383)
+    # ============================================================================
 
-    # Простой market regime detection
-    if len(candles) >= 50:
-      # Trending market check (упрощенно)
-      closes = [c.close for c in candles[-50:]]
-      sma_fast = sum(closes[-20:]) / 20
-      sma_slow = sum(closes[-50:]) / 50
+    # Use professional MarketRegimeDetector if available via AdaptiveConsensusManager
+    if self.adaptive_consensus and self.adaptive_consensus.regime_detector:
+      regime = self.adaptive_consensus.regime_detector.detect_regime(
+        symbol=symbol,
+        candles=candles,
+        orderbook_metrics=metrics
+      )
 
-      if abs(sma_fast - sma_slow) / sma_slow > 0.02:
-        # Trending market
-        use_mtf = True
-        logger.debug(f"{symbol}: Trending market detected → MTF")
+      # Decision logic based on professional regime analysis
+      # MTF is optimal for:
+      # - Strong trends (STRONG_UPTREND, STRONG_DOWNTREND)
+      # - Normal/Low volatility (stable market)
+      # - High liquidity (quality data across timeframes)
 
-    # High volatility check
-    if metrics and hasattr(metrics, 'spread_pct'):
-      volatility = metrics.spread_pct / metrics.mid_price if metrics.mid_price > 0 else 0
-      if volatility > 0.015:
+      # Single-TF is optimal for:
+      # - Ranging markets (RANGING)
+      # - High volatility (CHOPPY_VOLATILE)
+      # - Low liquidity (less reliable multi-timeframe data)
+
+      from strategies.adaptive.market_regime_detector import (
+        TrendRegime, VolatilityRegime, LiquidityRegime
+      )
+
+      # Strong trend + stable volatility → MTF
+      if regime.trend in [TrendRegime.STRONG_UPTREND, TrendRegime.STRONG_DOWNTREND]:
+        if regime.volatility != VolatilityRegime.HIGH:
+          logger.debug(
+            f"{symbol}: Strong {regime.trend.value} + {regime.volatility.value} volatility "
+            f"(ADX={regime.adx_value:.1f}) → MTF"
+          )
+          return AnalysisMode.MTF_ONLY if self.mtf_manager else AnalysisMode.SINGLE_TF_ONLY
+
+      # High volatility → Single-TF (more responsive)
+      if regime.volatility == VolatilityRegime.HIGH:
+        logger.debug(
+          f"{symbol}: High volatility (ATR={regime.atr_value:.2f}) → Single-TF"
+        )
         return AnalysisMode.SINGLE_TF_ONLY
 
-    # Fallback
-    if not use_mtf and not use_single_tf:
-      # Default к MTF если доступен
-      if self.mtf_manager:
-        use_mtf = True
-      else:
-        use_single_tf = True
+      # Ranging market → Single-TF (mean reversion strategies work better)
+      if regime.trend == TrendRegime.RANGING:
+        logger.debug(
+          f"{symbol}: Ranging market (ADX={regime.adx_value:.1f}) → Single-TF"
+        )
+        return AnalysisMode.SINGLE_TF_ONLY
 
-    # Выбираем режим
-    if use_mtf and self.mtf_manager:
+      # Low liquidity + High volatility → Single-TF only
+      if regime.liquidity == LiquidityRegime.LOW and regime.volatility == VolatilityRegime.HIGH:
+        logger.debug(
+          f"{symbol}: Low liquidity + High volatility → Single-TF (dangerous regime)"
+        )
+        return AnalysisMode.SINGLE_TF_ONLY
+
+      # Weak trend → HYBRID (use both for confirmation)
+      if regime.trend in [TrendRegime.WEAK_UPTREND, TrendRegime.WEAK_DOWNTREND]:
+        logger.debug(
+          f"{symbol}: Weak {regime.trend.value} → HYBRID (require confirmation)"
+        )
+        return AnalysisMode.HYBRID if self.mtf_manager else AnalysisMode.SINGLE_TF_ONLY
+
+      # Default: MTF if available
+      logger.debug(
+        f"{symbol}: Standard regime ({regime.trend.value}/{regime.volatility.value}) → "
+        f"{'MTF' if self.mtf_manager else 'Single-TF'}"
+      )
+      return AnalysisMode.MTF_ONLY if self.mtf_manager else AnalysisMode.SINGLE_TF_ONLY
+
+    # ============================================================================
+    # END PROFESSIONAL MARKET REGIME DETECTION
+    # ============================================================================
+
+    # Fallback if MarketRegimeDetector not available
+    logger.warning(
+      f"{symbol}: MarketRegimeDetector not available, using fallback mode selection"
+    )
+
+    # Simple fallback: MTF if available, otherwise Single-TF
+    if self.mtf_manager:
       return AnalysisMode.MTF_ONLY
-    elif use_single_tf or not self.mtf_manager:
-      return AnalysisMode.SINGLE_TF_ONLY
     else:
-      return AnalysisMode.HYBRID
+      return AnalysisMode.SINGLE_TF_ONLY
 
   async def _analyze_single_tf_mode(
       self,
