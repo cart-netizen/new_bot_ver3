@@ -982,9 +982,13 @@ async def get_detection_status(symbol: str):
       "active": layering_active,
       "patterns": [
         {
-          "side": p.side,
+          "spoofing_side": p.spoofing_side,
+          "execution_side": p.execution_side,
           "confidence": p.confidence,
           "layers": len(p.layers),
+          "total_orders": p.total_orders,
+          "cancellation_rate": p.cancellation_rate,
+          "spoofing_execution_ratio": p.spoofing_execution_ratio,
           "reason": p.reason
         }
         for p in layering_patterns

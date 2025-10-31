@@ -288,13 +288,13 @@ class BotController:
     )
     self.spoofing_detector = SpoofingDetector(spoofing_config)
 
-    # Layering Detector
-    layering_config = LayeringConfig(
+    # Layering Detector (будет создан после TradeManagers для интеграции)
+    self.layering_config = LayeringConfig(
       min_orders_in_layer=3,
       max_price_spread_pct=0.005,
-      min_layer_volume_usdt=30000.0
+      min_layer_volume_btc=0.5  # FIXED: Changed from min_layer_volume_usdt to min_layer_volume_btc
     )
-    self.layering_detector = LayeringDetector(layering_config)
+    self.layering_detector = None  # Будет инициализирован позже с trade_managers
 
     # S/R Level Detector
     sr_config = SRLevelConfig(
@@ -940,6 +940,14 @@ class BotController:
         )
       logger.info(f"✓ Создано {len(self.trade_managers)} менеджеров market trades")
 
+      # ===== Создаем LayeringDetector с интеграцией TradeManagers =====
+      logger.info("Инициализация Professional LayeringDetector с trade integration...")
+      self.layering_detector = LayeringDetector(
+        config=self.layering_config,
+        trade_managers=self.trade_managers  # ← Передаем TradeManagers для execution analysis
+      )
+      logger.info("✅ LayeringDetector инициализирован с интеграцией market trades")
+
       # ========== 10. ML FEATURE PIPELINE - СОЗДАНИЕ ДЛЯ ФИНАЛЬНЫХ СИМВОЛОВ ==========
       # ВАЖНО: Создается ПОСЛЕ trade_managers для интеграции реальных market trades
       logger.info("Создание ML Feature Pipeline с интеграцией market trades...")
@@ -1261,6 +1269,11 @@ class BotController:
               del self.trade_managers[symbol]
             if symbol in self.candle_managers:
               del self.candle_managers[symbol]
+
+          # Обновляем LayeringDetector trade_managers после изменений
+          if self.layering_detector and (added or removed):
+            self.layering_detector.trade_managers = self.trade_managers
+            logger.info(f"✅ LayeringDetector обновлен: {len(self.trade_managers)} TradeManagers")
 
           # Обновляем список
           self.symbols = new_symbols
