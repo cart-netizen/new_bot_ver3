@@ -20,6 +20,7 @@ from collections import defaultdict
 from core.logger import get_logger
 from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
 from strategy.candle_manager import Candle
+from strategies.volume_distributor import VolumeDistributor, VolumeDistributionConfig
 
 logger = get_logger(__name__)
 
@@ -78,6 +79,25 @@ class VolumeProfile:
 class VolumeProfileAnalyzer:
   """Анализатор Volume Profile."""
 
+  # Class-level volume distributor (initialized once)
+  _distributor: Optional[VolumeDistributor] = None
+
+  @classmethod
+  def _get_distributor(cls) -> VolumeDistributor:
+    """Get or create volume distributor instance."""
+    if cls._distributor is None:
+      # Initialize professional volume distributor
+      config = VolumeDistributionConfig(
+        price_points=30,  # 30 points across candle range for granular distribution
+        body_weight_ratio=0.70,  # 70% of volume in candle body
+        upper_wick_ratio=0.15,  # 15% in upper wick
+        lower_wick_ratio=0.15,  # 15% in lower wick
+        gaussian_sigma_factor=1.5  # Moderate concentration near close
+      )
+      cls._distributor = VolumeDistributor(config)
+      logger.info("Initialized professional VolumeDistributor for Volume Profile building")
+    return cls._distributor
+
   @staticmethod
   def build_profile(
       candles: List[Candle],
@@ -85,7 +105,15 @@ class VolumeProfileAnalyzer:
       value_area_percent: float
   ) -> VolumeProfile:
     """
-    Построить Volume Profile из свечей.
+    Построить Volume Profile из свечей с использованием профессионального распределения объема.
+
+    Вместо упрощенного деления объема на 4 точки (OHLC), используется
+    профессиональный алгоритм weighted distribution:
+    - 70% объема распределяется в теле свечи
+    - 15% в верхней тени
+    - 15% в нижней тени
+    - Гауссово взвешивание с центром на close price
+    - 30 точек на каждую свечу для высокой точности
 
     Args:
         candles: История свечей
@@ -108,22 +136,38 @@ class VolumeProfileAnalyzer:
 
     # Создаем ценовые бины
     price_levels = np.linspace(min_price, max_price, price_bins)
-    price_step = (max_price - min_price) / price_bins
 
-    # Распределяем объем по бинам
-    volume_distribution = np.zeros(price_bins)
+    # ============================================================================
+    # PROFESSIONAL VOLUME DISTRIBUTION
+    # Заменяет упрощенную логику (старые строки 116-126)
+    # ============================================================================
 
-    for candle in candles:
-      # Для каждой свечи распределяем объем между ценами
-      # Упрощенно: равномерно между OHLC
-      prices = [candle.open, candle.high, candle.low, candle.close]
-      volume_per_price = candle.volume / 4
+    # Get professional distributor instance
+    distributor = VolumeProfileAnalyzer._get_distributor()
 
-      for price in prices:
-        # Находим соответствующий бин
-        bin_idx = int((price - min_price) / price_step)
-        bin_idx = min(bin_idx, price_bins - 1)
-        volume_distribution[bin_idx] += volume_per_price
+    # Use professional weighted distribution algorithm
+    volume_distribution = distributor.distribute_candles_to_bins(
+      candles=candles,
+      price_bins=price_bins,
+      min_price=min_price,
+      max_price=max_price
+    )
+
+    # Log distribution quality metrics
+    total_volume_input = sum(c.volume for c in candles)
+    total_volume_distributed = np.sum(volume_distribution)
+    distribution_accuracy = (total_volume_distributed / total_volume_input) * 100 if total_volume_input > 0 else 0
+
+    logger.debug(
+      f"Volume distribution completed: "
+      f"input_volume={total_volume_input:.2f}, "
+      f"distributed={total_volume_distributed:.2f}, "
+      f"accuracy={distribution_accuracy:.2f}%"
+    )
+
+    # ============================================================================
+    # END PROFESSIONAL VOLUME DISTRIBUTION
+    # ============================================================================
 
     # Point of Control (максимальный объем)
     poc_idx = np.argmax(volume_distribution)
