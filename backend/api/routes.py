@@ -1019,6 +1019,449 @@ async def get_sr_levels(symbol: str):
   }
 
 
+# ==================== QUOTE STUFFING DETECTION ====================
+
+@detection_router.get("/quote-stuffing/status/{symbol}")
+async def get_quote_stuffing_status(symbol: str, current_user: dict = Depends(require_auth)):
+  """
+  Статус Quote Stuffing для символа.
+
+  Args:
+      symbol: Торговая пара
+
+  Returns:
+      dict: Статус и метрики quote stuffing
+  """
+  from main import bot_controller
+
+  if not hasattr(bot_controller, 'quote_stuffing_detector') or not bot_controller.quote_stuffing_detector:
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Quote Stuffing Detector недоступен"
+    )
+
+  detector = bot_controller.quote_stuffing_detector
+
+  # Проверяем активность
+  is_active = detector.is_stuffing_active(symbol, time_window_seconds=30)
+
+  # Получаем последние события
+  recent_events = detector.get_recent_events(symbol, limit=10)
+
+  return {
+    "symbol": symbol,
+    "is_active": is_active,
+    "recent_events": [
+      {
+        "timestamp": event.timestamp,
+        "pattern_type": event.pattern_type,
+        "confidence": event.confidence,
+        "updates_per_second": event.metrics.get("updates_per_second", 0),
+        "cancellation_rate": event.metrics.get("cancellation_rate", 0),
+        "avg_order_size_btc": event.metrics.get("avg_order_size_btc", 0),
+        "price_range_bps": event.metrics.get("price_range_bps", 0)
+      }
+      for event in recent_events
+    ]
+  }
+
+
+@detection_router.get("/quote-stuffing/statistics")
+async def get_quote_stuffing_statistics(current_user: dict = Depends(require_auth)):
+  """
+  Общая статистика Quote Stuffing Detector.
+
+  Returns:
+      dict: Статистика по всем символам
+  """
+  from main import bot_controller
+
+  if not hasattr(bot_controller, 'quote_stuffing_detector') or not bot_controller.quote_stuffing_detector:
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Quote Stuffing Detector недоступен"
+    )
+
+  detector = bot_controller.quote_stuffing_detector
+  stats = detector.get_statistics()
+
+  return {
+    "total_events_detected": stats.get("total_events_detected", 0),
+    "symbols_tracked": stats.get("symbols_tracked", 0),
+    "active_now": stats.get("active_now", []),
+    "detection_rate_24h": stats.get("detection_rate_24h", 0)
+  }
+
+
+# ==================== PATTERN DATABASE ====================
+
+@detection_router.get("/patterns/list")
+async def get_pattern_list(
+    limit: int = 50,
+    sort_by: str = "occurrence_count",
+    blacklist_only: bool = False,
+    current_user: dict = Depends(require_auth)
+):
+  """
+  Список исторических паттернов.
+
+  Args:
+      limit: Максимальное количество
+      sort_by: Поле сортировки (occurrence_count, last_seen, success_rate)
+      blacklist_only: Показать только blacklist
+
+  Returns:
+      dict: Список паттернов
+  """
+  from main import bot_controller
+
+  if not hasattr(bot_controller, 'pattern_database') or not bot_controller.pattern_database:
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Pattern Database недоступна"
+    )
+
+  db = bot_controller.pattern_database
+  patterns = db.get_all_patterns(limit=limit, sort_by=sort_by, blacklist_only=blacklist_only)
+
+  return {
+    "patterns": [
+      {
+        "pattern_id": p["pattern_id"],
+        "first_seen": p["first_seen"],
+        "last_seen": p["last_seen"],
+        "occurrence_count": p["occurrence_count"],
+        "avg_layer_count": p["avg_layer_count"],
+        "avg_cancellation_rate": p["avg_cancellation_rate"],
+        "avg_volume_btc": p["avg_volume_btc"],
+        "symbols": p["symbols"],
+        "success_rate": p["success_rate"],
+        "risk_level": p["risk_level"],
+        "blacklist": bool(p["blacklist"])
+      }
+      for p in patterns
+    ],
+    "total": len(patterns)
+  }
+
+
+@detection_router.get("/patterns/statistics")
+async def get_pattern_database_statistics(current_user: dict = Depends(require_auth)):
+  """
+  Статистика Pattern Database.
+
+  Returns:
+      dict: Общая статистика базы паттернов
+  """
+  from main import bot_controller
+
+  if not hasattr(bot_controller, 'pattern_database') or not bot_controller.pattern_database:
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Pattern Database недоступна"
+    )
+
+  db = bot_controller.pattern_database
+  stats = db.get_statistics()
+
+  return {
+    "total_patterns": stats.get("total_patterns", 0),
+    "blacklisted_patterns": stats.get("blacklisted_patterns", 0),
+    "unique_symbols": stats.get("unique_symbols", 0),
+    "avg_success_rate": stats.get("avg_success_rate", 0),
+    "oldest_pattern_age_hours": stats.get("oldest_pattern_age_hours", 0)
+  }
+
+
+@detection_router.post("/patterns/{pattern_id}/blacklist")
+async def toggle_pattern_blacklist(
+    pattern_id: str,
+    current_user: dict = Depends(require_auth)
+):
+  """
+  Переключить blacklist статус паттерна.
+
+  Args:
+      pattern_id: ID паттерна
+
+  Returns:
+      dict: Новый статус
+  """
+  from main import bot_controller
+
+  if not hasattr(bot_controller, 'pattern_database') or not bot_controller.pattern_database:
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Pattern Database недоступна"
+    )
+
+  db = bot_controller.pattern_database
+
+  # Получаем текущий паттерн
+  pattern = db.get_pattern_by_id(pattern_id)
+
+  if not pattern:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail=f"Pattern {pattern_id} не найден"
+    )
+
+  # Переключаем blacklist
+  new_blacklist_status = not bool(pattern["blacklist"])
+  db.update_blacklist(pattern_id, new_blacklist_status)
+
+  return {
+    "pattern_id": pattern_id,
+    "blacklist": new_blacklist_status,
+    "message": f"Pattern {'добавлен в' if new_blacklist_status else 'удален из'} blacklist"
+  }
+
+
+# ==================== ML DATA COLLECTOR ====================
+
+@ml_router.get("/data-collector/statistics")
+async def get_data_collector_statistics(current_user: dict = Depends(require_auth)):
+  """
+  Статистика сбора ML данных.
+
+  Returns:
+      dict: Статистика data collector
+  """
+  from main import bot_controller
+
+  if not hasattr(bot_controller, 'layering_data_collector') or not bot_controller.layering_data_collector:
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Layering Data Collector недоступен"
+    )
+
+  collector = bot_controller.layering_data_collector
+  stats = collector.get_statistics()
+
+  return {
+    "enabled": collector.enabled,
+    "buffer_size": stats.get("buffer_size", 0),
+    "auto_save_interval": stats.get("auto_save_interval", 0),
+    "total_collected": stats.get("total_collected", 0),
+    "labeled_samples": stats.get("labeled_samples", 0),
+    "unlabeled_samples": stats.get("unlabeled_samples", 0),
+    "data_directory": stats.get("data_directory", ""),
+    "files_count": stats.get("files_count", 0)
+  }
+
+
+@ml_router.post("/data-collector/save")
+async def save_collected_data(current_user: dict = Depends(require_auth)):
+  """
+  Принудительное сохранение собранных данных.
+
+  Returns:
+      dict: Результат сохранения
+  """
+  from main import bot_controller
+
+  if not hasattr(bot_controller, 'layering_data_collector') or not bot_controller.layering_data_collector:
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Layering Data Collector недоступен"
+    )
+
+  collector = bot_controller.layering_data_collector
+
+  try:
+    collector.save_to_disk()
+    stats = collector.get_statistics()
+
+    return {
+      "status": "success",
+      "message": f"Сохранено {stats['buffer_size']} samples",
+      "buffer_size": stats["buffer_size"]
+    }
+  except Exception as e:
+    logger.error(f"Ошибка сохранения ML данных: {e}")
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=f"Ошибка сохранения: {str(e)}"
+    )
+
+
+@ml_router.get("/data-collector/labeled-data")
+async def get_labeled_data_info(current_user: dict = Depends(require_auth)):
+  """
+  Информация о labeled данных для обучения.
+
+  Returns:
+      dict: Статистика labeled samples
+  """
+  from main import bot_controller
+
+  if not hasattr(bot_controller, 'layering_data_collector') or not bot_controller.layering_data_collector:
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Layering Data Collector недоступен"
+    )
+
+  collector = bot_controller.layering_data_collector
+
+  try:
+    labeled_df = collector.get_labeled_data()
+
+    if labeled_df.empty:
+      return {
+        "total_labeled": 0,
+        "positive_samples": 0,
+        "negative_samples": 0,
+        "ready_for_training": False
+      }
+
+    positive_count = len(labeled_df[labeled_df['is_true_layering'] == True])
+    negative_count = len(labeled_df[labeled_df['is_true_layering'] == False])
+
+    return {
+      "total_labeled": len(labeled_df),
+      "positive_samples": positive_count,
+      "negative_samples": negative_count,
+      "ready_for_training": len(labeled_df) >= 100,
+      "balance_ratio": positive_count / max(negative_count, 1)
+    }
+  except Exception as e:
+    logger.error(f"Ошибка получения labeled data: {e}")
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=f"Ошибка: {str(e)}"
+    )
+
+
+# ==================== ADAPTIVE ML MODEL ====================
+
+@ml_router.get("/adaptive-model/status")
+async def get_adaptive_model_status(current_user: dict = Depends(require_auth)):
+  """
+  Статус Adaptive ML Model.
+
+  Returns:
+      dict: Статус модели
+  """
+  from main import bot_controller
+
+  if not hasattr(bot_controller, 'adaptive_layering_model') or not bot_controller.adaptive_layering_model:
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Adaptive Layering Model недоступна"
+    )
+
+  model = bot_controller.adaptive_layering_model
+
+  return {
+    "enabled": model.enabled,
+    "is_trained": model.is_trained,
+    "model_version": model.model_version if hasattr(model, 'model_version') else None,
+    "feature_count": len(model.feature_names),
+    "scaler_fitted": model.scaler is not None
+  }
+
+
+@ml_router.get("/adaptive-model/metrics")
+async def get_adaptive_model_metrics(current_user: dict = Depends(require_auth)):
+  """
+  Метрики обученной модели.
+
+  Returns:
+      dict: Метрики модели (accuracy, precision, recall, F1, ROC AUC)
+  """
+  from main import bot_controller
+
+  if not hasattr(bot_controller, 'adaptive_layering_model') or not bot_controller.adaptive_layering_model:
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Adaptive Layering Model недоступна"
+    )
+
+  model = bot_controller.adaptive_layering_model
+
+  if not model.is_trained:
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail="Модель еще не обучена"
+    )
+
+  metrics = model.get_metrics()
+
+  if not metrics:
+    return {
+      "available": False,
+      "message": "Метрики недоступны - модель загружена из файла"
+    }
+
+  return {
+    "available": True,
+    "accuracy": metrics.accuracy,
+    "precision": metrics.precision,
+    "recall": metrics.recall,
+    "f1_score": metrics.f1_score,
+    "roc_auc": metrics.roc_auc,
+    "confusion_matrix": metrics.confusion_matrix.tolist() if hasattr(metrics, 'confusion_matrix') else None
+  }
+
+
+@ml_router.get("/adaptive-model/feature-importance")
+async def get_feature_importance(
+    top_n: int = 10,
+    current_user: dict = Depends(require_auth)
+):
+  """
+  Feature importance для модели.
+
+  Args:
+      top_n: Количество top features
+
+  Returns:
+      dict: Список feature importance
+  """
+  from main import bot_controller
+
+  if not hasattr(bot_controller, 'adaptive_layering_model') or not bot_controller.adaptive_layering_model:
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Adaptive Layering Model недоступна"
+    )
+
+  model = bot_controller.adaptive_layering_model
+
+  if not model.is_trained:
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail="Модель еще не обучена"
+    )
+
+  try:
+    importance_dict = model.get_feature_importance()
+
+    # Сортируем по важности и берем top N
+    sorted_features = sorted(
+      importance_dict.items(),
+      key=lambda x: x[1],
+      reverse=True
+    )[:top_n]
+
+    return {
+      "top_features": [
+        {
+          "feature": name,
+          "importance": float(importance)
+        }
+        for name, importance in sorted_features
+      ],
+      "total_features": len(importance_dict)
+    }
+  except Exception as e:
+    logger.error(f"Ошибка получения feature importance: {e}")
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=f"Ошибка: {str(e)}"
+    )
+
+
 # ==================== STRATEGY MANAGER ====================
 
 @strategies_router.get("/status")

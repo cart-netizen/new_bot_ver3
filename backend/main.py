@@ -4551,8 +4551,11 @@ from api.app import app
 app.router.lifespan_context = lifespan
 
 # Регистрируем роутеры
-from api.routes import auth_router, bot_router, data_router, trading_router, monitoring_router, screener_router, \
-  adaptive_router
+from api.routes import (
+  auth_router, bot_router, data_router, trading_router,
+  monitoring_router, screener_router, adaptive_router,
+  ml_router, detection_router, strategies_router
+)
 
 app.include_router(auth_router)
 app.include_router(bot_router)
@@ -4561,6 +4564,9 @@ app.include_router(trading_router)
 app.include_router(monitoring_router)
 app.include_router(screener_router)
 app.include_router(adaptive_router)
+app.include_router(ml_router)
+app.include_router(detection_router)
+app.include_router(strategies_router)
 # WebSocket эндпоинт
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
