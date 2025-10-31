@@ -389,10 +389,10 @@ class BotController:
       # ===== ML DATA COLLECTOR =====
       self.ml_data_collector = MLDataCollector(
         storage_path="../data/ml_training",
-        max_samples_per_file=5000,  # Увеличено для накопления большего количества данных перед сохранением
+        max_samples_per_file=2000,  # Увеличено для накопления большего количества данных перед сохранением
         collection_interval=10,  # Собирать каждые 10 итераций (все символы за раз)
         # auto_save_interval_seconds = 300  # Автосохранение каждые 5 минут для защиты от переполнения памяти
-        max_buffer_memory_mb=100  # НОВОЕ: Максимум 100 МБ буфера на символ перед принудительным сохранением
+        max_buffer_memory_mb=200  # НОВОЕ: Максимум 100 МБ буфера на символ перед принудительным сохранением
       )
       await self.ml_data_collector.initialize()
       logger.info("✓ ML Data Collector инициализирован")
