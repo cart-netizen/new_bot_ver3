@@ -34,6 +34,18 @@ import time
 from core.logger import get_logger
 from models.orderbook import OrderBookSnapshot, OrderBookLevel
 
+# Import new components (optional)
+try:
+  from ml_engine.detection.pattern_database import HistoricalPatternDatabase
+  from ml_engine.detection.layering_data_collector import LayeringDataCollector
+  from ml_engine.detection.adaptive_layering_model import AdaptiveLayeringModel
+  ADVANCED_FEATURES_AVAILABLE = True
+except ImportError:
+  ADVANCED_FEATURES_AVAILABLE = False
+  HistoricalPatternDatabase = None
+  LayeringDataCollector = None
+  AdaptiveLayeringModel = None
+
 if TYPE_CHECKING:
   from strategy.trade_manager import TradeManager
 
@@ -340,7 +352,11 @@ class LayeringDetector:
   def __init__(
       self,
       config: LayeringConfig,
-      trade_managers: Optional[Dict[str, 'TradeManager']] = None
+      trade_managers: Optional[Dict[str, 'TradeManager']] = None,
+      pattern_database: Optional['HistoricalPatternDatabase'] = None,
+      data_collector: Optional['LayeringDataCollector'] = None,
+      adaptive_model: Optional['AdaptiveLayeringModel'] = None,
+      enable_ml_features: bool = True
   ):
     """
     Initialize professional layering detector.
@@ -348,9 +364,19 @@ class LayeringDetector:
     Args:
         config: Configuration parameters
         trade_managers: Dict of TradeManagers for each symbol (for execution analysis)
+        pattern_database: Historical pattern database for learning
+        data_collector: Data collector for ML training
+        adaptive_model: ML model for adaptive thresholds
+        enable_ml_features: Enable advanced ML features
     """
     self.config = config
     self.trade_managers = trade_managers or {}
+
+    # Advanced ML components (optional)
+    self.pattern_database = pattern_database
+    self.data_collector = data_collector
+    self.adaptive_model = adaptive_model
+    self.enable_ml_features = enable_ml_features and ADVANCED_FEATURES_AVAILABLE
 
     # Trackers for each symbol: symbol -> side -> OrderTracker
     self.trackers: Dict[str, Dict[str, OrderTracker]] = {}
@@ -374,8 +400,20 @@ class LayeringDetector:
       f"✅ Professional LayeringDetector initialized: "
       f"min_orders={config.min_orders_in_layer}, "
       f"price_spread={config.max_price_spread_pct:.2%}, "
-      f"trade_integration={'✅' if trade_managers else '❌'}"
+      f"trade_integration={'✅' if trade_managers else '❌'}, "
+      f"ml_features={'✅' if self.enable_ml_features else '❌'}"
     )
+
+    if self.enable_ml_features:
+      logger.info(
+        f"   ├─ Pattern Database: {'✅' if pattern_database else '❌'}"
+      )
+      logger.info(
+        f"   ├─ Data Collector: {'✅' if data_collector else '❌'}"
+      )
+      logger.info(
+        f"   └─ Adaptive Model: {'✅' if adaptive_model else '❌'}"
+      )
 
   def update(self, snapshot: OrderBookSnapshot):
     """
@@ -655,7 +693,7 @@ class LayeringDetector:
       mid_price
     )
 
-    return LayeringPattern(
+    pattern = LayeringPattern(
       symbol=symbol,
       timestamp=timestamp,
       spoofing_side=spoofing_side,
@@ -677,6 +715,17 @@ class LayeringDetector:
       price_impact_score=confidence_components['price_impact'],
       reason=reason
     )
+
+    # ===== STEP 7: ML Integration (if enabled) =====
+    if self.enable_ml_features:
+      pattern = self._integrate_ml_features(
+        pattern,
+        symbol,
+        mid_price,
+        confidence_components
+      )
+
+    return pattern
 
   def _group_into_layers(
       self,
@@ -1126,6 +1175,260 @@ class LayeringDetector:
 
     return ", ".join(reason_parts)
 
+  def _integrate_ml_features(
+      self,
+      pattern: LayeringPattern,
+      symbol: str,
+      mid_price: float,
+      confidence_components: Dict[str, float]
+  ) -> LayeringPattern:
+    """
+    Integrate ML features: Historical matching, data collection, adaptive model.
+
+    Args:
+        pattern: Detected layering pattern
+        symbol: Trading symbol
+        mid_price: Current mid price
+        confidence_components: Confidence score components
+
+    Returns:
+        Enhanced pattern with ML adjustments
+    """
+    # ===== 1. Historical Pattern Matching =====
+    if self.pattern_database:
+      pattern_features = self._extract_pattern_features(pattern, mid_price)
+
+      # Find similar patterns
+      match_result = self.pattern_database.find_similar_pattern(
+        pattern_features,
+        similarity_threshold=0.80
+      )
+
+      if match_result:
+        matched_id, similarity = match_result
+        historical = self.pattern_database.get_pattern(matched_id)
+
+        if historical:
+          # Boost confidence for known patterns
+          confidence_boost = 0.15 if historical.blacklist else 0.10
+          pattern.confidence = min(pattern.confidence + confidence_boost, 1.0)
+
+          # Update reason
+          pattern.reason += (
+            f" | KNOWN PATTERN (id={matched_id[:8]}, "
+            f"seen={historical.occurrence_count}x, "
+            f"risk={historical.risk_level})"
+          )
+
+          logger.info(
+            f"🔍 Historical match: {matched_id[:12]}, "
+            f"similarity={similarity:.2f}, "
+            f"occurrences={historical.occurrence_count}, "
+            f"blacklist={historical.blacklist}"
+          )
+
+      # Save pattern to database
+      try:
+        price_impact_bps = (
+          pattern.price_impact.price_change_bps
+          if pattern.price_impact else None
+        )
+
+        self.pattern_database.save_pattern(
+          pattern_features,
+          symbol,
+          pattern.confidence,
+          price_impact_bps
+        )
+      except Exception as e:
+        logger.error(f"Error saving pattern to database: {e}")
+
+    # ===== 2. ML Data Collection =====
+    if self.data_collector:
+      try:
+        # Prepare data for collection
+        pattern_data = {
+          'timestamp': pattern.timestamp,
+          'symbol': symbol,
+          'total_spoofing_volume': pattern.total_spoofing_volume,
+          'total_volume_usdt': pattern.total_spoofing_volume * mid_price,
+          'placement_duration': pattern.placement_duration,
+          'cancellation_rate': pattern.cancellation_rate,
+          'spoofing_execution_ratio': pattern.spoofing_execution_ratio,
+          'layer_count': len(pattern.layers),
+          'total_orders': pattern.total_orders,
+          'avg_order_size': (
+            pattern.total_spoofing_volume / pattern.total_orders
+            if pattern.total_orders > 0 else 0.0
+          ),
+          'price_spread_bps': (
+            np.mean([layer.price_spread for layer in pattern.layers]) * 10000
+            if pattern.layers else 0.0
+          ),
+          'confidence': pattern.confidence,
+          'price_change_bps': (
+            pattern.price_impact.price_change_bps
+            if pattern.price_impact else None
+          ),
+          'expected_impact_bps': (
+            pattern.price_impact.expected_impact_bps
+            if pattern.price_impact else None
+          ),
+          'impact_ratio': (
+            pattern.price_impact.impact_ratio
+            if pattern.price_impact else None
+          ),
+          'execution_volume': (
+            pattern.execution_metrics.total_volume
+            if pattern.execution_metrics else None
+          ),
+          'execution_trade_count': (
+            pattern.execution_metrics.trade_count
+            if pattern.execution_metrics else None
+          ),
+          'aggressive_ratio': (
+            pattern.execution_metrics.aggressive_ratio
+            if pattern.execution_metrics else None
+          )
+        }
+
+        # Get market context (simplified - can be enhanced)
+        market_context = {
+          'market_regime': 'unknown',  # Can integrate with MarketRegimeDetector
+          'volatility_24h': 0.0,       # Can get from market stats
+          'volume_24h': 0.0,
+          'liquidity_score': 0.0,
+          'spread_bps': 0.0
+        }
+
+        # Collect data (unlabeled - will be labeled later)
+        data_id = self.data_collector.collect(
+          pattern_data,
+          market_context,
+          confidence_components,
+          label=None,  # Unlabeled initially
+          label_source="automatic",
+          label_confidence=0.0
+        )
+
+        logger.debug(f"📊 Training data collected: {data_id}")
+
+      except Exception as e:
+        logger.error(f"Error collecting training data: {e}")
+
+    # ===== 3. Adaptive ML Model Prediction =====
+    if self.adaptive_model and self.adaptive_model.enabled:
+      try:
+        # Prepare features for ML prediction
+        features = self._extract_ml_features(pattern, mid_price)
+
+        # Get ML prediction
+        ml_is_true, ml_confidence = self.adaptive_model.predict(features)
+
+        # Adjust confidence based on ML prediction
+        if ml_is_true:
+          # ML confirms - boost confidence slightly
+          pattern.confidence = (pattern.confidence + ml_confidence) / 2
+        else:
+          # ML disagrees - reduce confidence
+          pattern.confidence = pattern.confidence * 0.7
+
+        pattern.confidence = min(max(pattern.confidence, 0.0), 1.0)
+
+        logger.debug(
+          f"🤖 ML prediction: is_true={ml_is_true}, "
+          f"ml_conf={ml_confidence:.2f}, "
+          f"adjusted_conf={pattern.confidence:.2f}"
+        )
+
+      except Exception as e:
+        logger.error(f"Error in ML prediction: {e}")
+
+    return pattern
+
+  def _extract_pattern_features(
+      self,
+      pattern: LayeringPattern,
+      mid_price: float
+  ) -> Dict:
+    """Extract features for historical pattern matching."""
+    avg_spread = (
+      np.mean([layer.price_spread for layer in pattern.layers])
+      if pattern.layers else 0.0
+    )
+
+    return {
+      'avg_layer_count': len(pattern.layers),
+      'cancellation_rate': pattern.cancellation_rate,
+      'total_volume': pattern.total_spoofing_volume,
+      'placement_duration': pattern.placement_duration,
+      'avg_spread_pct': avg_spread,
+      'total_orders': pattern.total_orders,
+      'spoofing_execution_ratio': pattern.spoofing_execution_ratio,
+      'avg_lifetime_seconds': 0.0  # Can be calculated from tracker
+    }
+
+  def _extract_ml_features(
+      self,
+      pattern: LayeringPattern,
+      mid_price: float
+  ) -> Dict:
+    """Extract features for ML model prediction."""
+    avg_order_size = (
+      pattern.total_spoofing_volume / pattern.total_orders
+      if pattern.total_orders > 0 else 0.0
+    )
+
+    avg_spread = (
+      np.mean([layer.price_spread for layer in pattern.layers])
+      if pattern.layers else 0.0
+    )
+
+    return {
+      # Pattern features
+      'total_volume_btc': pattern.total_spoofing_volume,
+      'total_volume_usdt': pattern.total_spoofing_volume * mid_price,
+      'placement_duration': pattern.placement_duration,
+      'cancellation_rate': pattern.cancellation_rate,
+      'spoofing_execution_ratio': pattern.spoofing_execution_ratio,
+      'layer_count': len(pattern.layers),
+      'total_orders': pattern.total_orders,
+      'avg_order_size': avg_order_size,
+      'price_spread_bps': avg_spread * 10000,
+
+      # Market context (simplified)
+      'volatility_24h': 0.0,
+      'volume_24h': 0.0,
+      'liquidity_score': 0.0,
+      'spread_bps': 0.0,
+      'hour_utc': datetime.utcfromtimestamp(pattern.timestamp / 1000).hour,
+      'day_of_week': datetime.utcfromtimestamp(pattern.timestamp / 1000).weekday(),
+
+      # Price impact
+      'price_change_bps': (
+        pattern.price_impact.price_change_bps
+        if pattern.price_impact else 0.0
+      ),
+      'expected_impact_bps': (
+        pattern.price_impact.expected_impact_bps
+        if pattern.price_impact else 0.0
+      ),
+      'impact_ratio': (
+        pattern.price_impact.impact_ratio
+        if pattern.price_impact else 0.0
+      ),
+
+      # Component scores
+      'volume_score': pattern.volume_score,
+      'timing_score': pattern.timing_score,
+      'cancellation_score': pattern.cancellation_score,
+      'execution_correlation_score': pattern.execution_correlation_score,
+      'price_impact_score': pattern.price_impact_score,
+
+      # Detector confidence (for reference)
+      'detector_confidence': pattern.confidence
+    }
+
   def _cleanup_old_data(self, symbol: str, timestamp: int):
     """Cleanup old tracking data."""
     cutoff_time = timestamp - (self.config.history_window_seconds * 1000)
@@ -1181,7 +1484,7 @@ class LayeringDetector:
       for patterns in self.detected_patterns.values()
     )
 
-    return {
+    stats = {
       'total_checks': self.total_checks,
       'event_driven_checks': self.event_driven_checks,
       'patterns_detected': self.patterns_detected,
@@ -1192,8 +1495,22 @@ class LayeringDetector:
         if self.total_checks > 0
         else 0.0
       ),
-      'trade_integration_enabled': len(self.trade_managers) > 0
+      'trade_integration_enabled': len(self.trade_managers) > 0,
+      'ml_features_enabled': self.enable_ml_features
     }
+
+    # Add ML component statistics
+    if self.enable_ml_features:
+      if self.pattern_database:
+        stats['pattern_database'] = self.pattern_database.get_statistics()
+
+      if self.data_collector:
+        stats['data_collector'] = self.data_collector.get_statistics()
+
+      if self.adaptive_model:
+        stats['adaptive_model'] = self.adaptive_model.get_info()
+
+    return stats
 
 
 # Example usage and testing
