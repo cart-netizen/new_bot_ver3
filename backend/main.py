@@ -3548,17 +3548,17 @@ class BotController:
     Принудительная очистка памяти для предотвращения утечек.
 
     Очищает:
-    - ML буферы (через MLDataCollector._cleanup_old_buffers())
+    - ML буферы (через MLDataCollector._emergency_save_all_buffers())
     - OrderBook кэши (через OrderBookManager.clear_old_data())
     - Python garbage collector
     """
     try:
       logger.info("🧹 Начало очистки памяти...")
 
-      # 1. Очистка ML буферов
+      # 1. 🚨 ЭКСТРЕННОЕ СОХРАНЕНИЕ ML буферов (вместо урезания!)
       if self.ml_data_collector:
-        self.ml_data_collector._cleanup_old_buffers()
-        logger.info("  ✓ ML буферы очищены")
+        await self.ml_data_collector._emergency_save_all_buffers()
+        logger.info("  ✓ ML буферы экстренно сохранены")
 
       # 2. Очистка OrderBook кэшей
       cleaned_count = 0

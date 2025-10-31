@@ -47,10 +47,10 @@ class MLDataCollector:
   def __init__(
       self,
       storage_path: str = "data/ml_training",
-      max_samples_per_file: int = 10000,
+      max_samples_per_file: int = 2000,  # ОПТИМИЗИРОВАНО: 10000 → 2000 (~2 MB/файл)
       collection_interval: int = 10,
       # auto_save_interval_seconds: int = 40000,# Каждые N итераций
-      max_buffer_memory_mb: int = 200  # НОВОЕ: Максимум МБ на символ
+      max_buffer_memory_mb: int = 80  # ОПТИМИЗИРОВАНО: 200 → 80 (запас для адаптивности)
   ):
     """
     Инициализация сборщика данных.
@@ -64,6 +64,7 @@ class MLDataCollector:
     """
     self.storage_path = Path(storage_path)
     self.max_samples_per_file = max_samples_per_file
+    self.initial_max_samples_per_file = max_samples_per_file  # НОВОЕ: Сохраняем начальное значение для адаптации
     self.collection_interval = collection_interval
     # self.auto_save_interval = auto_save_interval_seconds
     self.max_buffer_memory_mb = max_buffer_memory_mb
@@ -175,13 +176,35 @@ class MLDataCollector:
       self.sample_counts[symbol] += 1
       self.total_samples_collected += 1
 
+      # 🔧 АДАПТИВНАЯ ПОДСТРОЙКА (каждые 100 семплов)
+      if self.total_samples_collected % 100 == 0:
+        self._adapt_thresholds()
+
+      # 🔥 ПРОАКТИВНАЯ ПРОВЕРКА ПАМЯТИ (КРИТИЧНО!)
+      # Проверяем ПОСЛЕ добавления семпла, гарантируя сохранность данных
+      buffer_size = len(self.feature_buffers[symbol])
+      buffer_memory_mb = self._calculate_buffer_memory(symbol)
+      memory_threshold_mb = self.max_buffer_memory_mb * 0.9  # 90% порог
+
       logger.debug(
         f"{symbol} | Собран семпл #{self.sample_counts[symbol]}, "
-        f"буфер: {len(self.feature_buffers[symbol])}/{self.max_samples_per_file}"
+        f"буфер: {buffer_size}/{self.max_samples_per_file}, "
+        f"память: {buffer_memory_mb:.2f}MB/{self.max_buffer_memory_mb}MB"
       )
 
-      # Проверяем нужно ли сохранить batch
-      if len(self.feature_buffers[symbol]) >= self.max_samples_per_file:
+      # Проверяем нужно ли сохранить batch (по количеству ИЛИ по памяти)
+      should_save = False
+      save_reason = ""
+
+      if buffer_size >= self.max_samples_per_file:
+        should_save = True
+        save_reason = f"превышен лимит семплов ({buffer_size}/{self.max_samples_per_file})"
+      elif buffer_memory_mb >= memory_threshold_mb:
+        should_save = True
+        save_reason = f"превышен лимит памяти ({buffer_memory_mb:.2f}MB/{memory_threshold_mb:.2f}MB)"
+
+      if should_save:
+        logger.info(f"{symbol} | 💾 Автосохранение: {save_reason}")
         await self._save_batch(symbol)
 
     except Exception as e:
@@ -352,28 +375,93 @@ class MLDataCollector:
       logger.error(f"{symbol} | Ошибка расчета размера буфера: {e}")
       return 0.0
 
-  def _cleanup_old_buffers(self):
+  def _calculate_total_buffer_memory(self) -> float:
     """
-    Принудительная очистка буферов с сохранением только последних N элементов.
-    Вызывается периодически для предотвращения утечек памяти.
+    Расчет ОБЩЕГО размера ВСЕХ буферов в памяти (МБ).
+
+    Returns:
+        float: Общий размер всех буферов в МБ
+    """
+    total_mb = 0.0
+    for symbol in self.feature_buffers.keys():
+      total_mb += self._calculate_buffer_memory(symbol)
+    return total_mb
+
+  def _adapt_thresholds(self):
+    """
+    🔧 АДАПТИВНАЯ ПОДСТРОЙКА ПОРОГОВ.
+
+    Динамически изменяет max_samples_per_file в зависимости от текущего
+    использования памяти ВСЕМИ буферами.
+
+    Логика:
+    - Высокое давление памяти (>70% от лимита) → снижаем порог до 1000
+    - Среднее давление (>50%) → снижаем до 1500
+    - Нормальное использование → возвращаем к базовому (2000)
+
+    ЦЕЛЬ: Превентивное сохранение при высокой нагрузке.
+    """
+    total_memory_mb = self._calculate_total_buffer_memory()
+    symbol_count = len(self.feature_buffers)
+
+    if symbol_count == 0:
+      return
+
+    # Рассчитываем лимит для всех символов
+    total_memory_limit_mb = self.max_buffer_memory_mb * symbol_count
+    memory_usage_percent = (total_memory_mb / total_memory_limit_mb) * 100
+
+    old_threshold = self.max_samples_per_file
+
+    # Адаптивная подстройка
+    if memory_usage_percent > 70:
+      # Критическое использование → агрессивно снижаем порог
+      self.max_samples_per_file = int(self.initial_max_samples_per_file * 0.5)  # 1000
+    elif memory_usage_percent > 50:
+      # Высокое использование → умеренно снижаем
+      self.max_samples_per_file = int(self.initial_max_samples_per_file * 0.75)  # 1500
+    else:
+      # Нормальное использование → базовый порог
+      self.max_samples_per_file = self.initial_max_samples_per_file  # 2000
+
+    if old_threshold != self.max_samples_per_file:
+      logger.info(
+        f"🔧 Адаптивная подстройка: max_samples_per_file {old_threshold} → {self.max_samples_per_file} "
+        f"(память: {total_memory_mb:.1f}MB/{total_memory_limit_mb:.1f}MB, {memory_usage_percent:.1f}%)"
+      )
+
+  async def _emergency_save_all_buffers(self):
+    """
+    🚨 ЭКСТРЕННОЕ СОХРАНЕНИЕ ВСЕХ БУФЕРОВ.
+
+    Вызывается при критическом превышении памяти.
+    В отличие от старого _cleanup_old_buffers(), СОХРАНЯЕТ ВСЕ данные,
+    вместо их урезания.
+
+    КРИТИЧНО: Ноль потери данных!
     """
     import gc
 
-    cleaned_symbols = []
+    logger.warning("🚨 ЭКСТРЕННОЕ СОХРАНЕНИЕ ВСЕХ БУФЕРОВ")
 
+    saved_symbols = []
+    total_saved_samples = 0
+
+    # Сохраняем ВСЕ буферы для ВСЕХ символов
     for symbol in list(self.feature_buffers.keys()):
-      buffer_size = len(self.feature_buffers[symbol])
+      if self.feature_buffers[symbol]:
+        buffer_size = len(self.feature_buffers[symbol])
+        buffer_memory = self._calculate_buffer_memory(symbol)
 
-      # Если буфер содержит более 100 элементов - оставляем только последние 100
-      if buffer_size > 100:
-        self.feature_buffers[symbol] = self.feature_buffers[symbol][-100:]
-        self.label_buffers[symbol] = self.label_buffers[symbol][-100:]
-        self.metadata_buffers[symbol] = self.metadata_buffers[symbol][-100:]
-        cleaned_symbols.append(f"{symbol}({buffer_size}→100)")
+        # Сохраняем batch
+        await self._save_batch(symbol)
 
-    if cleaned_symbols:
+        saved_symbols.append(f"{symbol}({buffer_size} семплов, {buffer_memory:.2f}MB)")
+        total_saved_samples += buffer_size
+
+    if saved_symbols:
       logger.warning(
-        f"🧹 Принудительная очистка буферов: {', '.join(cleaned_symbols)}"
+        f"💾 Экстренно сохранено {total_saved_samples} семплов: {', '.join(saved_symbols)}"
       )
 
     # Принудительная сборка мусора
@@ -385,20 +473,33 @@ class MLDataCollector:
     Получение статистики сбора данных.
 
     Returns:
-        Dict: Статистика
+        Dict: Статистика с информацией о памяти и адаптивных порогах
     """
     symbol_stats = {}
     for symbol in self.sample_counts.keys():
+      buffer_memory = self._calculate_buffer_memory(symbol)
       symbol_stats[symbol] = {
         "total_samples": self.sample_counts[symbol],
         "current_batch": self.batch_numbers[symbol],
-        "buffer_size": len(self.feature_buffers.get(symbol, []))
+        "buffer_size": len(self.feature_buffers.get(symbol, [])),
+        "buffer_memory_mb": round(buffer_memory, 2),
+        "memory_utilization_percent": round(
+          (buffer_memory / self.max_buffer_memory_mb) * 100, 1
+        ) if self.max_buffer_memory_mb > 0 else 0
       }
+
+    total_memory = self._calculate_total_buffer_memory()
 
     return {
       "total_samples_collected": self.total_samples_collected,
       "files_written": self.files_written,
       "iteration_counter": self.iteration_counter,
       "collection_interval": self.collection_interval,
+      "memory": {
+        "total_buffer_memory_mb": round(total_memory, 2),
+        "max_buffer_memory_mb_per_symbol": self.max_buffer_memory_mb,
+        "current_max_samples_per_file": self.max_samples_per_file,
+        "initial_max_samples_per_file": self.initial_max_samples_per_file
+      },
       "symbols": symbol_stats
     }
