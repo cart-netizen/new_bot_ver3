@@ -505,8 +505,9 @@ class OrderBookFeatureExtractor:
     # Quote intensity (updates per second)
     quote_intensity = update_frequency
 
-    # Trade arrival rate - оценка на основе активности стакана
-    # TODO: Заменить на реальные market trades когда будет WebSocket stream
+    # Trade arrival rate - РЕАЛЬНЫЕ market trades из TradeManager (с fallback на оценку)
+    # Использует TradeManager.calculate_arrival_rate() если доступен,
+    # иначе оценивает по активности стакана
     trade_arrival_rate = self._estimate_trade_arrival_rate(snapshot)
 
     # Spread volatility
