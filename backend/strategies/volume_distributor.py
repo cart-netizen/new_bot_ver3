@@ -199,9 +199,9 @@ class VolumeDistributor:
         in_lower_wick = price_points < body_low
 
         # Count points in each region (prevent division by zero)
-        n_body = max(np.sum(in_body), 1)
-        n_upper = max(np.sum(in_upper_wick), 1)
-        n_lower = max(np.sum(in_lower_wick), 1)
+        n_body = max(int(np.sum(in_body)), 1)
+        n_upper = max(int(np.sum(in_upper_wick)), 1)
+        n_lower = max(int(np.sum(in_lower_wick)), 1)
 
         # Assign base weights
         base_weights = np.zeros(len(price_points))
