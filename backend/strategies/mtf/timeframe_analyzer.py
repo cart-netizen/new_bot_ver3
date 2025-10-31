@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 import numpy as np
+import time
 
 from core.logger import get_logger
 from ml_engine.detection.sr_level_detector import SRLevelDetector, SRLevelConfig, SRLevel
@@ -100,6 +101,64 @@ class TimeframeIndicators:
   ichimoku_base: Optional[float] = None  # Kijun-sen
   ichimoku_span_a: Optional[float] = None  # Senkou Span A
   ichimoku_span_b: Optional[float] = None  # Senkou Span B
+
+
+@dataclass
+class CachedIndicators:
+  """
+  Кэшированные индикаторы с timestamp валидацией.
+
+  Обеспечивает актуальность закэшированных данных через проверку timestamp
+  последней свечи и времени расчета.
+  """
+  indicators: TimeframeIndicators
+  candle_timestamp: int  # timestamp последней свечи, для которой рассчитаны индикаторы
+  calculated_at: int  # когда были рассчитаны (system timestamp в ms)
+
+  def is_valid(self, current_candle_timestamp: int, max_age_ms: Optional[int] = None) -> bool:
+    """
+    Проверить актуальность кэша.
+
+    Args:
+        current_candle_timestamp: timestamp последней доступной свечи
+        max_age_ms: максимальный возраст кэша в миллисекундах
+
+    Returns:
+        True если кэш актуален
+    """
+    # Проверка 1: timestamp свечи должен совпадать
+    if self.candle_timestamp != current_candle_timestamp:
+      return False
+
+    # Проверка 2: максимальный возраст (если указан)
+    if max_age_ms is not None:
+      current_time_ms = int(time.time() * 1000)
+      cache_age = current_time_ms - self.calculated_at
+      if cache_age > max_age_ms:
+        return False
+
+    return True
+
+
+@dataclass
+class CachedRegime:
+  """Кэшированная информация о режиме рынка с timestamp валидацией."""
+  regime: 'TimeframeRegimeInfo'
+  candle_timestamp: int
+  calculated_at: int
+
+  def is_valid(self, current_candle_timestamp: int, max_age_ms: Optional[int] = None) -> bool:
+    """Проверить актуальность кэша."""
+    if self.candle_timestamp != current_candle_timestamp:
+      return False
+
+    if max_age_ms is not None:
+      current_time_ms = int(time.time() * 1000)
+      cache_age = current_time_ms - self.calculated_at
+      if cache_age > max_age_ms:
+        return False
+
+    return True
 
 
 @dataclass
@@ -212,11 +271,26 @@ class TimeframeAnalyzer:
       }
     }
 
-    # Кэш расчетов (для оптимизации)
-    self._indicators_cache: Dict[Tuple[str, Timeframe], TimeframeIndicators] = {}
-    self._regime_cache: Dict[Tuple[str, Timeframe], TimeframeRegimeInfo] = {}
+    # Кэш расчетов (для оптимизации) - ОБНОВЛЕНО с timestamp validation
+    self._indicators_cache: Dict[Tuple[str, Timeframe], CachedIndicators] = {}
+    self._regime_cache: Dict[Tuple[str, Timeframe], CachedRegime] = {}
 
-    # Статистика
+    # TTL для кэша (максимальный возраст) - защита от устаревших данных
+    self.cache_ttl_ms: Dict[Timeframe, int] = {
+      Timeframe.M1: 60_000,       # 1 минута
+      Timeframe.M5: 300_000,      # 5 минут
+      Timeframe.M15: 900_000,     # 15 минут
+      Timeframe.H1: 3_600_000,    # 1 час
+      Timeframe.H4: 14_400_000,   # 4 часа
+      Timeframe.D1: 86_400_000,   # 24 часа
+    }
+
+    # Статистика кэша
+    self.cache_hits = 0
+    self.cache_misses = 0
+    self.cache_invalidations = 0
+
+    # Статистика анализа
     self.total_analyses = 0
     self.analyses_by_timeframe = {tf: 0 for tf in Timeframe}
 
@@ -693,6 +767,8 @@ class TimeframeAnalyzer:
     """
     Рассчитать индикаторы, специфичные для таймфрейма.
 
+    ОБНОВЛЕНО: Добавлена timestamp валидация кэша для гарантии актуальности.
+
     Разные таймфреймы используют разные периоды и индикаторы:
     - 1m: быстрые EMA, micro-структура
     - 5m: стандартные oscillators
@@ -707,14 +783,38 @@ class TimeframeAnalyzer:
     Returns:
         TimeframeIndicators с рассчитанными значениями
     """
-    # Проверяем кэш
+    # Проверяем кэш с timestamp валидацией
     cache_key = (symbol, timeframe)
 
-    # Используем timestamp последней свечи для валидации кэша
+    # Валидация кэша: проверяем timestamp последней свечи и TTL
     if candles:
       last_candle_ts = candles[-1].timestamp
       cached = self._indicators_cache.get(cache_key)
-      # TODO: добавить timestamp в кэш для валидации
+
+      if cached:
+        # Получаем TTL для этого таймфрейма
+        max_age_ms = self.cache_ttl_ms.get(timeframe)
+
+        # Проверяем актуальность кэша
+        if cached.is_valid(last_candle_ts, max_age_ms):
+          # Кэш актуален - возвращаем закэшированные индикаторы
+          self.cache_hits += 1
+          logger.debug(
+            f"[CACHE HIT] {symbol} {timeframe.value}: "
+            f"indicators from cache (hits={self.cache_hits}, misses={self.cache_misses})"
+          )
+          return cached.indicators
+        else:
+          # Кэш устарел
+          self.cache_invalidations += 1
+          logger.debug(
+            f"[CACHE INVALID] {symbol} {timeframe.value}: "
+            f"candle_ts={last_candle_ts}, cached_ts={cached.candle_timestamp}, "
+            f"age={(int(time.time() * 1000) - cached.calculated_at) / 1000:.1f}s"
+          )
+
+      # Кэш отсутствует или устарел
+      self.cache_misses += 1
 
     if not candles or len(candles) < 20:
       logger.warning(
@@ -835,8 +935,21 @@ class TimeframeAnalyzer:
             indicators.ichimoku_span_a = ichimoku['span_a']
             indicators.ichimoku_span_b = ichimoku['span_b']
 
-      # Кэшируем результат
-      self._indicators_cache[cache_key] = indicators
+      # Кэшируем результат с timestamp метаданными
+      if candles:
+        last_candle_ts = candles[-1].timestamp
+        current_time_ms = int(time.time() * 1000)
+
+        self._indicators_cache[cache_key] = CachedIndicators(
+          indicators=indicators,
+          candle_timestamp=last_candle_ts,
+          calculated_at=current_time_ms
+        )
+
+        logger.debug(
+          f"[CACHE STORE] {symbol} {timeframe.value}: "
+          f"indicators cached with ts={last_candle_ts}"
+        )
 
     except Exception as e:
       logger.error(f"Ошибка расчета индикаторов {timeframe.value}: {e}")

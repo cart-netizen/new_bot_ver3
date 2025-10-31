@@ -56,11 +56,30 @@ class DivergenceType(Enum):
 
 @dataclass
 class ConfluenceZone:
-  """Зона confluence - множественные TF подтверждают уровень."""
+  """
+  Зона confluence - множественные TF подтверждают уровень.
+
+  ОБНОВЛЕНО: Добавлена поддержка Fibonacci retracement уровней для
+  более точной идентификации психологически важных зон.
+  """
   price_level: float
   timeframes_confirming: List[Timeframe]
   confluence_type: str  # 'support', 'resistance', 'breakout'
   strength: float  # 0.0-1.0
+
+  # Fibonacci metadata (НОВОЕ)
+  fib_levels: List[float] = None  # Fibonacci ratios совпадающие с этой зоной [0.382, 0.618, ...]
+  has_fib_confluence: bool = False  # True если зона совпадает с Fibonacci уровнем
+  fib_timeframes: List[Timeframe] = None  # TF, для которых найдено Fib совпадение
+
+  def __post_init__(self):
+    """Инициализация после создания dataclass."""
+    if self.fib_levels is None:
+      self.fib_levels = []
+    if self.fib_timeframes is None:
+      self.fib_timeframes = []
+    # Автоматически определяем has_fib_confluence
+    self.has_fib_confluence = len(self.fib_levels) > 0
 
 
 @dataclass
@@ -458,6 +477,91 @@ class TimeframeAligner:
       else:
         return AlignmentType.WEAK_BEAR
 
+  def _calculate_fibonacci_levels(
+      self,
+      tf_results: Dict[Timeframe, TimeframeAnalysisResult],
+      current_price: float
+  ) -> Dict[Timeframe, List[Tuple[float, str, float]]]:
+    """
+    Рассчитать Fibonacci retracement уровни для каждого таймфрейма.
+
+    Fibonacci уровни - психологически важные зоны, используемые институционалами:
+    - 0.236 (23.6%) - слабый уровень
+    - 0.382 (38.2%) - сильный уровень коррекции
+    - 0.5 (50%) - психологический уровень
+    - 0.618 (61.8%) - золотое сечение, критический уровень
+    - 0.786 (78.6%) - глубокая коррекция
+
+    Args:
+        tf_results: Результаты анализа по таймфреймам
+        current_price: Текущая цена (для определения направления)
+
+    Returns:
+        Dict[Timeframe, List[Tuple[price, type, ratio]]]
+        где type = 'fib_support' или 'fib_resistance'
+    """
+    fib_levels_by_tf: Dict[Timeframe, List[Tuple[float, str, float]]] = {}
+
+    # Стандартные Fibonacci ratios
+    FIB_RATIOS = [0.236, 0.382, 0.5, 0.618, 0.786]
+
+    for tf, result in tf_results.items():
+      fib_levels = []
+
+      # Для расчета Fibonacci нужны swing high и swing low
+      swing_high = result.indicators.swing_high
+      swing_low = result.indicators.swing_low
+
+      if not swing_high or not swing_low:
+        continue
+
+      # Защита от некорректных данных
+      if swing_high <= swing_low:
+        logger.warning(
+          f"[FIB] {tf.value}: invalid swing levels "
+          f"(high={swing_high:.2f} <= low={swing_low:.2f}), skipping"
+        )
+        continue
+
+      # Рассчитываем диапазон движения
+      price_range = swing_high - swing_low
+
+      # Определяем тренд на основе текущей цены
+      # Если цена ближе к swing_high - коррекция вниз (retracement от uptrend)
+      # Если цена ближе к swing_low - коррекция вверх (retracement от downtrend)
+      distance_to_high = abs(current_price - swing_high)
+      distance_to_low = abs(current_price - swing_low)
+
+      is_uptrend_retracement = distance_to_high < distance_to_low
+
+      # Рассчитываем уровни для каждого Fibonacci ratio
+      for ratio in FIB_RATIOS:
+        if is_uptrend_retracement:
+          # Uptrend correction: уровни рассчитываются от high вниз
+          # Формула: high - (range * ratio)
+          fib_price = swing_high - (price_range * ratio)
+          level_type = 'fib_support'  # В uptrend Fibonacci = support
+        else:
+          # Downtrend correction: уровни рассчитываются от low вверх
+          # Формула: low + (range * ratio)
+          fib_price = swing_low + (price_range * ratio)
+          level_type = 'fib_resistance'  # В downtrend Fibonacci = resistance
+
+        # Сохраняем уровень с метаданными
+        fib_levels.append((fib_price, level_type, ratio))
+
+      if fib_levels:
+        fib_levels_by_tf[tf] = fib_levels
+
+        logger.debug(
+          f"[FIB] {tf.value}: calculated {len(fib_levels)} levels, "
+          f"range={price_range:.2f}, "
+          f"trend={'UP' if is_uptrend_retracement else 'DOWN'}, "
+          f"swing_high={swing_high:.2f}, swing_low={swing_low:.2f}"
+        )
+
+    return fib_levels_by_tf
+
   def _detect_confluence_zones(
       self,
       tf_results: Dict[Timeframe, TimeframeAnalysisResult],
@@ -469,7 +573,7 @@ class TimeframeAligner:
     Ищет:
     - Swing highs/lows совпадающие между TF
     - Bollinger bands на схожих уровнях
-    - Fibonacci retracements (TODO)
+    - Fibonacci retracement levels (РЕАЛИЗОВАНО)
 
     Returns:
         Список ConfluenceZone
@@ -503,6 +607,20 @@ class TimeframeAligner:
 
       if levels:
         levels_by_tf[tf] = levels
+
+    # НОВОЕ: Рассчитываем Fibonacci retracement уровни
+    fib_levels_by_tf = self._calculate_fibonacci_levels(tf_results, current_price)
+
+    # Добавляем Fibonacci уровни к общим уровням
+    for tf, fib_levels in fib_levels_by_tf.items():
+      if tf not in levels_by_tf:
+        levels_by_tf[tf] = []
+
+      # Добавляем каждый Fibonacci уровень
+      for fib_price, fib_type, fib_ratio in fib_levels:
+        # Конвертируем fib_type в обычный type (убираем префикс 'fib_')
+        simple_type = fib_type.replace('fib_', '')
+        levels_by_tf[tf].append((fib_price, simple_type))
 
     # Ищем пересечения уровней между TF
     tolerance = current_price * (self.config.confluence_price_tolerance_percent / 100)
@@ -541,11 +659,35 @@ class TimeframeAligner:
         # Сила confluence = количество подтверждающих TF
         strength = len(timeframes) / len(tf_results)
 
+        # НОВОЕ: Проверяем совпадение с Fibonacci уровнями
+        fib_ratios_matched = []
+        fib_tfs_matched = []
+
+        for tf, fib_levels in fib_levels_by_tf.items():
+          for fib_price, fib_type, fib_ratio in fib_levels:
+            # Проверяем совпадение цены с Fibonacci уровнем
+            if abs(price - fib_price) <= tolerance:
+              # Этот Fibonacci уровень совпадает с confluence zone
+              if fib_ratio not in fib_ratios_matched:
+                fib_ratios_matched.append(fib_ratio)
+              if tf not in fib_tfs_matched:
+                fib_tfs_matched.append(tf)
+
+        # Бонус к strength если есть Fibonacci confluence
+        if fib_ratios_matched:
+          # Golden ratio (0.618) дает больший бонус
+          golden_bonus = 0.15 if 0.618 in fib_ratios_matched else 0.0
+          fib_bonus = 0.1 * len(fib_ratios_matched) + golden_bonus
+          strength = min(1.0, strength + fib_bonus)
+
         zone = ConfluenceZone(
           price_level=price,
           timeframes_confirming=timeframes,
           confluence_type=confluence_type,
-          strength=strength
+          strength=strength,
+          fib_levels=fib_ratios_matched,
+          has_fib_confluence=len(fib_ratios_matched) > 0,
+          fib_timeframes=fib_tfs_matched
         )
 
         confluence_zones.append(zone)
@@ -554,11 +696,28 @@ class TimeframeAligner:
     confluence_zones.sort(key=lambda z: z.strength, reverse=True)
 
     if confluence_zones:
+      # Подсчет зон с Fibonacci confluence
+      fib_confluence_count = sum(1 for z in confluence_zones if z.has_fib_confluence)
+
       logger.debug(
-        f"Обнаружено {len(confluence_zones)} confluence zones, "
+        f"Обнаружено {len(confluence_zones)} confluence zones "
+        f"({fib_confluence_count} с Fibonacci), "
         f"сильнейшая: {confluence_zones[0].price_level:.2f} "
-        f"({len(confluence_zones[0].timeframes_confirming)} TF)"
+        f"({len(confluence_zones[0].timeframes_confirming)} TF, "
+        f"strength={confluence_zones[0].strength:.2f}"
+        f"{', Fib=' + str(confluence_zones[0].fib_levels) if confluence_zones[0].has_fib_confluence else ''})"
       )
+
+      # Дополнительное логирование для зон с Fibonacci confluence
+      for zone in confluence_zones:
+        if zone.has_fib_confluence:
+          logger.debug(
+            f"[FIB CONFLUENCE] price={zone.price_level:.2f}, "
+            f"type={zone.confluence_type}, "
+            f"strength={zone.strength:.2f}, "
+            f"fib_levels={zone.fib_levels}, "
+            f"fib_tfs={[tf.value for tf in zone.fib_timeframes]}"
+          )
 
     return confluence_zones
 
