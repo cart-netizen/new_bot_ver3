@@ -311,11 +311,11 @@ class TimeframeAnalyzer:
     # ============================================================
     # КЭШИ ДЛЯ VOLUME PROFILE
     # ============================================================
-    # symbol -> VolumeProfile
-    self.volume_profiles: Dict[str, VolumeProfile] = {}
+    # symbol -> timeframe -> VolumeProfile (двухуровневый словарь)
+    self.volume_profiles: Dict[str, Dict[Timeframe, VolumeProfile]] = {}
 
-    # symbol -> timestamp последнего обновления
-    self.last_vp_update: Dict[str, int] = {}
+    # symbol -> timeframe -> timestamp последнего обновления
+    self.last_vp_update: Dict[str, Dict[Timeframe, int]] = {}
 
     # Интервал обновления Volume Profile (30 минут в ms)
     self.vp_update_interval = 30 * 60 * 1000
