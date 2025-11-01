@@ -30,6 +30,10 @@ import time
 
 from backend.core.logger import get_logger
 from backend.ml_engine.detection.sr_level_detector import SRLevelDetector, SRLevelConfig, SRLevel
+from backend.ml_engine.features.indicator_feature_extractor import (
+  IndicatorFeatureExtractor,
+  IndicatorFeatures
+)
 from backend.strategies.volume_profile_strategy import VolumeProfile, VolumeProfileAnalyzer
 from backend.strategy.candle_manager import Candle
 from backend.models.orderbook import OrderBookSnapshot, OrderBookMetrics
@@ -323,13 +327,21 @@ class TimeframeAnalyzer:
     self.ml_validator = None  # Будет установлен из main.py
     self.feature_pipeline = None  # Будет установлен из main.py
 
+    # ============================================================
+    # ПРОФЕССИОНАЛЬНЫЕ ИНДИКАТОРЫ (INTEGRATION)
+    # ============================================================
+    # Кэш профессиональных калькуляторов индикаторов (по символам)
+    # Обеспечивает single source of truth - ML и стратегии используют
+    # одинаковые industry-standard расчеты
+    self._indicator_extractors: Dict[str, IndicatorFeatureExtractor] = {}
+
     # Статистика
     self.total_analyses = 0
     self.analyses_by_timeframe = {tf: 0 for tf in Timeframe}
 
     logger.info(
-      f"Инициализирован TimeframeAnalyzer с lookback periods для "
-      f"{len(self.lookback_periods)} таймфреймов"
+      f"✅ Инициализирован TimeframeAnalyzer с lookback periods для "
+      f"{len(self.lookback_periods)} таймфреймов + профессиональные индикаторы"
     )
 
   async def analyze_timeframe(
@@ -758,6 +770,126 @@ class TimeframeAnalyzer:
 
     logger.info(f"Кэш очищен" + (f" для {symbol}" if symbol else ""))
 
+  def _get_indicator_extractor(self, symbol: str) -> IndicatorFeatureExtractor:
+    """
+    Получить или создать IndicatorFeatureExtractor для символа.
+
+    Обеспечивает single source of truth для расчета индикаторов -
+    ML и стратегии используют одинаковые профессиональные расчеты.
+
+    Args:
+        symbol: Торговая пара
+
+    Returns:
+        IndicatorFeatureExtractor для этого символа
+    """
+    if symbol not in self._indicator_extractors:
+      self._indicator_extractors[symbol] = IndicatorFeatureExtractor(symbol)
+      logger.debug(f"Создан IndicatorFeatureExtractor для {symbol}")
+
+    return self._indicator_extractors[symbol]
+
+  def _map_indicator_features_to_timeframe(
+      self,
+      features: IndicatorFeatures,
+      candles: List[Candle],
+      timeframe: Timeframe
+  ) -> TimeframeIndicators:
+    """
+    Преобразовать IndicatorFeatures (37 индикаторов) в TimeframeIndicators (30 полей).
+
+    IndicatorFeatures содержит профессиональные расчеты с state management:
+    - MACD Signal = EMA(MACD, 9)
+    - RSI с Wilder's smoothing
+    - ADX с Wilder's smoothing
+    - Stochastic %D = SMA(%K, 3)
+    - Aroon Up/Down
+
+    Args:
+        features: IndicatorFeatures от IndicatorFeatureExtractor
+        candles: Свечи для расчета timeframe-specific индикаторов
+        timeframe: Текущий таймфрейм
+
+    Returns:
+        TimeframeIndicators с mapped значениями
+    """
+    indicators = TimeframeIndicators()
+
+    # === MAPPING: IndicatorFeatures → TimeframeIndicators ===
+
+    # Trend indicators (Moving Averages)
+    indicators.sma_fast = features.sma_20  # SMA 20 → fast
+    indicators.sma_slow = features.sma_50  # SMA 50 → slow
+    indicators.ema_fast = features.ema_12  # EMA 12 → fast
+    indicators.ema_slow = features.ema_26  # EMA 26 → slow
+
+    # Trend strength (ADX)
+    indicators.adx = features.adx  # ✅ Professional Wilder's smoothing
+    indicators.adx_di_plus = features.adx_plus_di
+    indicators.adx_di_minus = features.adx_minus_di
+
+    # Momentum indicators
+    indicators.rsi = features.rsi_14  # ✅ Professional Wilder's smoothing
+    indicators.stochastic_k = features.stochastic_k  # ✅ Professional
+    indicators.stochastic_d = features.stochastic_d  # ✅ Professional SMA(%K, 3)
+    indicators.macd = features.macd  # MACD line
+    indicators.macd_signal = features.macd_signal  # ✅ Professional EMA(9) of MACD
+    indicators.macd_histogram = features.macd_histogram
+
+    # Volatility indicators
+    indicators.atr = features.atr_14  # Average True Range
+    # ATR % рассчитываем от текущей цены
+    if features.atr_14 and candles:
+      current_price = candles[-1].close
+      if current_price > 0:
+        indicators.atr_percent = (features.atr_14 / current_price) * 100
+
+    indicators.bollinger_upper = features.bollinger_upper
+    indicators.bollinger_middle = features.bollinger_middle
+    indicators.bollinger_lower = features.bollinger_lower
+    # Bollinger width рассчитываем
+    if (features.bollinger_upper and features.bollinger_lower and
+        features.bollinger_middle and features.bollinger_middle > 0):
+      indicators.bollinger_width = (
+        (features.bollinger_upper - features.bollinger_lower) /
+        features.bollinger_middle * 100
+      )
+
+    # Volume indicators
+    indicators.volume_sma = features.volume_sma_20
+    # Volume ratio рассчитываем
+    if features.volume_sma_20 and features.volume_sma_20 > 0 and candles:
+      current_volume = candles[-1].volume
+      indicators.volume_ratio = current_volume / features.volume_sma_20
+
+    indicators.obv = features.obv
+    indicators.vwap = features.vwap
+
+    # === TIMEFRAME-SPECIFIC ИНДИКАТОРЫ (не из IndicatorFeatureExtractor) ===
+    # Эти индикаторы рассчитываем отдельно т.к. зависят от таймфрейма
+
+    # Price structure (Swing High/Low)
+    highs = np.array([c.high for c in candles])
+    lows = np.array([c.low for c in candles])
+
+    swing_lookback = 10
+    if len(candles) >= swing_lookback:
+      indicators.swing_high = self._find_swing_high(highs, swing_lookback)
+      indicators.swing_low = self._find_swing_low(lows, swing_lookback)
+
+    # Ichimoku (только для высших TF)
+    periods = self.lookback_periods.get(timeframe, {})
+    if periods.get('ichimoku') and timeframe in [Timeframe.H1, Timeframe.H4, Timeframe.D1]:
+      if len(candles) >= 52:
+        ichimoku = self._calculate_ichimoku(candles)
+        if ichimoku:
+          indicators.ichimoku_conversion = ichimoku['conversion']
+          indicators.ichimoku_base = ichimoku['base']
+          indicators.ichimoku_span_a = ichimoku['span_a']
+          indicators.ichimoku_span_b = ichimoku['span_b']
+
+    return indicators
+
   def _calculate_tf_specific_indicators(
       self,
       symbol: str,
@@ -767,7 +899,10 @@ class TimeframeAnalyzer:
     """
     Рассчитать индикаторы, специфичные для таймфрейма.
 
-    ОБНОВЛЕНО: Добавлена timestamp валидация кэша для гарантии актуальности.
+    ОБНОВЛЕНО (INTEGRATION):
+    - Использует IndicatorFeatureExtractor для профессиональных расчетов
+    - Гарантирует single source of truth (ML и стратегии используют одинаковые индикаторы)
+    - Industry-standard реализации: MACD Signal (EMA), RSI (Wilder's), ADX (Wilder's), Stochastic %D
 
     Разные таймфреймы используют разные периоды и индикаторы:
     - 1m: быстрые EMA, micro-структура
@@ -822,118 +957,26 @@ class TimeframeAnalyzer:
       )
       return TimeframeIndicators()
 
-    indicators = TimeframeIndicators()
-
-    # Извлекаем OHLCV
-    closes = np.array([c.close for c in candles])
-    highs = np.array([c.high for c in candles])
-    lows = np.array([c.low for c in candles])
-    volumes = np.array([c.volume for c in candles])
-
-    periods = self.lookback_periods.get(timeframe, {})
-
     try:
-      # === Trend Indicators ===
-      sma_fast_period = periods.get('sma_fast', 20)
-      sma_slow_period = periods.get('sma_slow', 50)
+      # ============================================================
+      # ПРОФЕССИОНАЛЬНЫЕ ИНДИКАТОРЫ (IndicatorFeatureExtractor)
+      # ============================================================
+      # Получаем профессиональный калькулятор индикаторов
+      indicator_extractor = self._get_indicator_extractor(symbol)
 
-      if len(closes) >= sma_fast_period:
-        indicators.sma_fast = float(np.mean(closes[-sma_fast_period:]))
+      # Извлекаем профессиональные индикаторы (industry-standard)
+      # - MACD Signal = EMA(MACD, 9) ✅
+      # - RSI с Wilder's smoothing ✅
+      # - ADX с Wilder's smoothing ✅
+      # - Stochastic %D = SMA(%K, 3) ✅
+      indicator_features = indicator_extractor.extract(candles)
 
-      if len(closes) >= sma_slow_period:
-        indicators.sma_slow = float(np.mean(closes[-sma_slow_period:]))
-
-      # EMA
-      ema_fast_period = periods.get('ema_fast', 12)
-      ema_slow_period = periods.get('ema_slow', 26)
-
-      if len(closes) >= ema_fast_period:
-        indicators.ema_fast = self._calculate_ema(closes, ema_fast_period)
-
-      if len(closes) >= ema_slow_period:
-        indicators.ema_slow = self._calculate_ema(closes, ema_slow_period)
-
-      # === Momentum Indicators ===
-      rsi_period = periods.get('rsi', 14)
-      if len(closes) >= rsi_period + 1:
-        indicators.rsi = self._calculate_rsi(closes, rsi_period)
-
-      # Stochastic
-      stoch_period = periods.get('stochastic', 14)
-      if len(highs) >= stoch_period:
-        indicators.stochastic_k = self._calculate_stochastic_k(
-          closes, highs, lows, stoch_period
-        )
-        # %D - 3-period SMA of %K
-        if indicators.stochastic_k is not None:
-          # Упрощенно - можно улучшить
-          indicators.stochastic_d = indicators.stochastic_k
-
-      # MACD
-      if indicators.ema_fast and indicators.ema_slow:
-        indicators.macd = indicators.ema_fast - indicators.ema_slow
-        # Signal line - EMA(9) of MACD
-        # Упрощенно - в production использовать полный расчет
-        indicators.macd_signal = indicators.macd * 0.9
-        indicators.macd_histogram = indicators.macd - indicators.macd_signal
-
-      # === Volatility Indicators ===
-      atr_period = periods.get('atr', 14)
-      if len(candles) >= atr_period + 1:
-        indicators.atr = self._calculate_atr(candles, atr_period)
-        if indicators.atr and closes[-1] > 0:
-          indicators.atr_percent = (indicators.atr / closes[-1]) * 100
-
-      # Bollinger Bands
-      bb_period = periods.get('bollinger', 20)
-      if len(closes) >= bb_period:
-        bb_middle = np.mean(closes[-bb_period:])
-        bb_std = np.std(closes[-bb_period:])
-
-        indicators.bollinger_middle = float(bb_middle)
-        indicators.bollinger_upper = float(bb_middle + 2 * bb_std)
-        indicators.bollinger_lower = float(bb_middle - 2 * bb_std)
-        indicators.bollinger_width = float(
-          (indicators.bollinger_upper - indicators.bollinger_lower) / bb_middle * 100
-        )
-
-      # === Volume Indicators ===
-      vol_sma_period = periods.get('volume_sma', 20)
-      if len(volumes) >= vol_sma_period:
-        indicators.volume_sma = float(np.mean(volumes[-vol_sma_period:]))
-        if indicators.volume_sma > 0:
-          indicators.volume_ratio = float(volumes[-1] / indicators.volume_sma)
-
-      # OBV (On-Balance Volume)
-      indicators.obv = self._calculate_obv(candles)
-
-      # VWAP (Volume Weighted Average Price)
-      indicators.vwap = self._calculate_vwap(candles)
-
-      # === ADX (для определения силы тренда) ===
-      adx_period = periods.get('adx', 14)
-      if len(candles) >= adx_period + 1:
-        adx_result = self._calculate_adx(candles, adx_period)
-        if adx_result:
-          indicators.adx = adx_result['adx']
-          indicators.adx_di_plus = adx_result['di_plus']
-          indicators.adx_di_minus = adx_result['di_minus']
-
-      # === Swing Highs/Lows ===
-      swing_lookback = 10
-      if len(candles) >= swing_lookback:
-        indicators.swing_high = self._find_swing_high(highs, swing_lookback)
-        indicators.swing_low = self._find_swing_low(lows, swing_lookback)
-
-      # === Ichimoku (только для высших TF) ===
-      if periods.get('ichimoku') and timeframe in [Timeframe.H1, Timeframe.H4, Timeframe.D1]:
-        if len(candles) >= 52:  # Минимум для Ichimoku
-          ichimoku = self._calculate_ichimoku(candles)
-          if ichimoku:
-            indicators.ichimoku_conversion = ichimoku['conversion']
-            indicators.ichimoku_base = ichimoku['base']
-            indicators.ichimoku_span_a = ichimoku['span_a']
-            indicators.ichimoku_span_b = ichimoku['span_b']
+      # Преобразуем IndicatorFeatures → TimeframeIndicators
+      indicators = self._map_indicator_features_to_timeframe(
+        features=indicator_features,
+        candles=candles,
+        timeframe=timeframe
+      )
 
       # Кэшируем результат с timestamp метаданными
       if candles:
@@ -948,11 +991,16 @@ class TimeframeAnalyzer:
 
         logger.debug(
           f"[CACHE STORE] {symbol} {timeframe.value}: "
-          f"indicators cached with ts={last_candle_ts}"
+          f"professional indicators cached with ts={last_candle_ts}"
         )
 
     except Exception as e:
-      logger.error(f"Ошибка расчета индикаторов {timeframe.value}: {e}")
+      logger.error(
+        f"Ошибка расчета профессиональных индикаторов {timeframe.value}: {e}",
+        exc_info=True
+      )
+      # Fallback на пустой результат
+      indicators = TimeframeIndicators()
 
     return indicators
 
@@ -1249,175 +1297,10 @@ class TimeframeAnalyzer:
 
     return signal
 
-  # ==================== Helper Methods ====================
-
-  def _calculate_ema(self, values: np.ndarray, period: int) -> float:
-    """Экспоненциальная скользящая средняя."""
-    if len(values) < period:
-      return float(np.mean(values))
-
-    multiplier = 2 / (period + 1)
-    ema = np.mean(values[:period])  # Начальная SMA
-
-    for price in values[period:]:
-      ema = (price * multiplier) + (ema * (1 - multiplier))
-
-    return float(ema)
-
-  def _calculate_rsi(self, closes: np.ndarray, period: int = 14) -> float:
-    """Relative Strength Index."""
-    if len(closes) < period + 1:
-      return 50.0
-
-    deltas = np.diff(closes)
-    gains = np.where(deltas > 0, deltas, 0)
-    losses = np.where(deltas < 0, -deltas, 0)
-
-    avg_gain = np.mean(gains[-period:])
-    avg_loss = np.mean(losses[-period:])
-
-    if avg_loss == 0:
-      return 100.0
-
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-
-    return float(rsi)
-
-  def _calculate_stochastic_k(
-      self,
-      closes: np.ndarray,
-      highs: np.ndarray,
-      lows: np.ndarray,
-      period: int = 14
-  ) -> float:
-    """Stochastic %K."""
-    if len(closes) < period:
-      return 50.0
-
-    lowest_low = np.min(lows[-period:])
-    highest_high = np.max(highs[-period:])
-    current_close = closes[-1]
-
-    if highest_high == lowest_low:
-      return 50.0
-
-    k = ((current_close - lowest_low) / (highest_high - lowest_low)) * 100
-
-    return float(k)
-
-  def _calculate_atr(self, candles: List[Candle], period: int = 14) -> Optional[float]:
-    """Average True Range."""
-    if len(candles) < period + 1:
-      return None
-
-    true_ranges = []
-
-    for i in range(1, len(candles)):
-      high = candles[i].high
-      low = candles[i].low
-      prev_close = candles[i - 1].close
-
-      tr = max(
-        high - low,
-        abs(high - prev_close),
-        abs(low - prev_close)
-      )
-
-      true_ranges.append(tr)
-
-    if len(true_ranges) < period:
-      return None
-
-    atr = np.mean(true_ranges[-period:])
-
-    return float(atr)
-
-  def _calculate_adx(
-      self,
-      candles: List[Candle],
-      period: int = 14
-  ) -> Optional[Dict]:
-    """Average Directional Index с +DI и -DI."""
-    if len(candles) < period + 1:
-      return None
-
-    # Расчет +DM и -DM
-    plus_dm_values = []
-    minus_dm_values = []
-
-    for i in range(1, len(candles)):
-      high_diff = candles[i].high - candles[i - 1].high
-      low_diff = candles[i - 1].low - candles[i].low
-
-      plus_dm = high_diff if high_diff > low_diff and high_diff > 0 else 0
-      minus_dm = low_diff if low_diff > high_diff and low_diff > 0 else 0
-
-      plus_dm_values.append(plus_dm)
-      minus_dm_values.append(minus_dm)
-
-    # Сглаживание через SMA (упрощенно)
-    smoothed_plus_dm = np.mean(plus_dm_values[-period:])
-    smoothed_minus_dm = np.mean(minus_dm_values[-period:])
-
-    # Расчет ATR
-    atr = self._calculate_atr(candles, period)
-    if not atr or atr == 0:
-      return None
-
-    # +DI и -DI
-    di_plus = (smoothed_plus_dm / atr) * 100
-    di_minus = (smoothed_minus_dm / atr) * 100
-
-    # DX
-    di_diff = abs(di_plus - di_minus)
-    di_sum = di_plus + di_minus
-
-    if di_sum == 0:
-      return None
-
-    dx = (di_diff / di_sum) * 100
-
-    # ADX - сглаживание DX (упрощенно используем текущий DX)
-    adx = dx
-
-    return {
-      'adx': float(adx),
-      'di_plus': float(di_plus),
-      'di_minus': float(di_minus)
-    }
-
-  def _calculate_obv(self, candles: List[Candle]) -> float:
-    """On-Balance Volume."""
-    if len(candles) < 2:
-      return 0.0
-
-    obv = 0.0
-
-    for i in range(1, len(candles)):
-      if candles[i].close > candles[i - 1].close:
-        obv += candles[i].volume
-      elif candles[i].close < candles[i - 1].close:
-        obv -= candles[i].volume
-
-    return float(obv)
-
-  def _calculate_vwap(self, candles: List[Candle]) -> float:
-    """Volume Weighted Average Price."""
-    if not candles:
-      return 0.0
-
-    total_volume = sum(c.volume for c in candles)
-
-    if total_volume == 0:
-      return candles[-1].close
-
-    vwap = sum(
-      ((c.high + c.low + c.close) / 3) * c.volume
-      for c in candles
-    ) / total_volume
-
-    return float(vwap)
+  # ==================== Helper Methods (Timeframe-Specific) ====================
+  # ПРИМЕЧАНИЕ: Основные индикаторы (MACD, RSI, ADX, Stochastic, OBV, VWAP, ATR, etc.)
+  # теперь рассчитываются через IndicatorFeatureExtractor для обеспечения single source of truth.
+  # Здесь остались только timeframe-specific методы.
 
   def _find_swing_high(self, highs: np.ndarray, lookback: int = 10) -> Optional[float]:
     """Найти последний swing high."""
