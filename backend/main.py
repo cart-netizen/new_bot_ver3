@@ -8,6 +8,7 @@ import signal
 import time
 import traceback
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Optional, Any, List
 from contextlib import asynccontextmanager
 import gc  # НОВОЕ: Для принудительной сборки мусора
