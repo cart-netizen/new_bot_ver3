@@ -536,9 +536,52 @@ class IntegratedAnalysisEngine:
     if not mtf_signal:
       return None
 
+    # ============================================================
+    # CRITICAL FIX: Передача MTF параметров через metadata
+    # ============================================================
+    # Проблема: ExecutionManager получает только final_signal (TradingSignal)
+    # и НЕ ВИДИТ recommended параметры из IntegratedSignal.
+    # Решение: Добавляем MTF параметры в signal.metadata для передачи в ExecutionManager.
+    #
+    # Это избегает дублирования расчета SL/TP:
+    # - MTFRiskManager рассчитывает SL/TP один раз (здесь)
+    # - ExecutionManager использует эти значения (не пересчитывает)
+    # ============================================================
+
+    final_signal = mtf_signal.signal
+
+    # Инициализируем metadata если его нет
+    if final_signal.metadata is None:
+      final_signal.metadata = {}
+
+    # Добавляем MTF risk parameters
+    final_signal.metadata['mtf_recommended_stop_loss'] = mtf_signal.recommended_stop_loss_price
+    final_signal.metadata['mtf_recommended_take_profit'] = mtf_signal.recommended_take_profit_price
+    final_signal.metadata['mtf_position_multiplier'] = mtf_signal.recommended_position_size_multiplier
+    final_signal.metadata['mtf_reliability_score'] = mtf_signal.reliability_score
+    final_signal.metadata['mtf_risk_level'] = mtf_signal.risk_level
+    final_signal.metadata['mtf_signal_quality'] = mtf_signal.signal_quality
+    final_signal.metadata['mtf_alignment_score'] = mtf_signal.alignment_score
+
+    # Флаг для ExecutionManager
+    final_signal.metadata['has_mtf_risk_params'] = True
+
+    # MTF synthesis metadata
+    final_signal.metadata['synthesis_mode'] = mtf_signal.synthesis_mode.value
+    final_signal.metadata['timeframes_analyzed'] = mtf_signal.timeframes_analyzed
+    final_signal.metadata['timeframes_agreeing'] = mtf_signal.timeframes_agreeing
+
+    logger.info(
+      f"{mtf_signal.signal.symbol} | ✅ MTF risk parameters добавлены в metadata: "
+      f"SL=${mtf_signal.recommended_stop_loss_price:.2f}, "
+      f"TP=${mtf_signal.recommended_take_profit_price:.2f}, "
+      f"reliability={mtf_signal.reliability_score:.3f}, "
+      f"risk_level={mtf_signal.risk_level}"
+    )
+
     # Создаем IntegratedSignal
     integrated_signal = IntegratedSignal(
-      final_signal=mtf_signal.signal,
+      final_signal=final_signal,
       source_analysis_mode=AnalysisMode.MTF_ONLY,
       used_single_tf=False,
       used_mtf=True,

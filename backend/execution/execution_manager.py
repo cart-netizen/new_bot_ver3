@@ -1362,15 +1362,70 @@ class ExecutionManager:
             logger.debug(f"{signal.symbol} | Side: {side}")
 
             # ==========================================
-            # ШАГ 4: ML-ENHANCED VALIDATION
-            # КРИТИЧНО: Рассчитывает SL/TP внутри!
+            # ШАГ 4: ПРОВЕРКА MTF PRE-CALCULATED ПАРАМЕТРОВ
             # ==========================================
+            # CRITICAL FIX: Избегаем дублирования расчета SL/TP
+            # Если сигнал от MTF - используем pre-calculated параметры
+            # Если сигнал от single-TF - используем ML-enhanced validation
+            # ==========================================
+
             ml_adjustments = None
             stop_loss = None
             take_profit = None
             entry_price = signal.price
+            mtf_params_used = False
 
-            if hasattr(self.risk_manager, 'validate_signal_ml_enhanced') and feature_vector:
+            # Проверяем наличие MTF pre-calculated параметров
+            if signal.metadata and signal.metadata.get('has_mtf_risk_params'):
+                # ========================================
+                # ИСПОЛЬЗУЕМ MTF PRE-CALCULATED SL/TP
+                # ========================================
+                stop_loss = signal.metadata.get('mtf_recommended_stop_loss')
+                take_profit = signal.metadata.get('mtf_recommended_take_profit')
+                mtf_reliability = signal.metadata.get('mtf_reliability_score', 0.0)
+                mtf_risk_level = signal.metadata.get('mtf_risk_level', 'UNKNOWN')
+                mtf_quality = signal.metadata.get('mtf_signal_quality', 0.0)
+
+                if stop_loss is not None and take_profit is not None:
+                    mtf_params_used = True
+
+                    logger.info(
+                        f"{signal.symbol} | ✅ Используем MTF pre-calculated SL/TP | "
+                        f"SL=${stop_loss:.2f}, "
+                        f"TP=${take_profit:.2f}, "
+                        f"R/R={(abs(take_profit - entry_price) / abs(entry_price - stop_loss)):.2f}, "
+                        f"reliability={mtf_reliability:.3f}, "
+                        f"risk_level={mtf_risk_level}, "
+                        f"quality={mtf_quality:.3f}"
+                    )
+
+                    # Создаем ml_adjustments для совместимости с последующим кодом
+                    # (хотя это не ML, но используем ту же структуру)
+                    from strategy.risk_models import MLRiskAdjustments, MarketRegime
+
+                    ml_adjustments = MLRiskAdjustments(
+                        position_size_multiplier=signal.metadata.get('mtf_position_multiplier', 1.0),
+                        stop_loss_price=stop_loss,
+                        take_profit_price=take_profit,
+                        ml_confidence=mtf_reliability,  # Используем reliability как confidence
+                        expected_return=(take_profit - entry_price) / entry_price,
+                        market_regime=MarketRegime.MILD_TREND,  # Default, можно улучшить
+                        manipulation_risk_score=0.0,
+                        feature_quality=mtf_quality,
+                        allow_entry=True,
+                        rejection_reason=None
+                    )
+                else:
+                    logger.warning(
+                        f"{signal.symbol} | MTF params flag present but SL/TP not found, "
+                        f"falling back to ML-enhanced validation"
+                    )
+
+            # ==========================================
+            # ШАГ 4.1: ML-ENHANCED VALIDATION (FALLBACK)
+            # Используется только если MTF параметры НЕ доступны
+            # ==========================================
+            if not mtf_params_used and hasattr(self.risk_manager, 'validate_signal_ml_enhanced') and feature_vector:
                 try:
                     logger.debug(f"{signal.symbol} | Используем ML-enhanced validation")
 
