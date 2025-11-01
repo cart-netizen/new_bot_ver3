@@ -16,7 +16,7 @@ import psycopg2
 from psycopg2 import sql
 
 # Импортируем модели ПЕРЕД использованием Base
-from database.models import (
+from backend.database.models import (
   Order,
   Position,
   Trade,
@@ -24,8 +24,8 @@ from database.models import (
   IdempotencyCache,
   MarketDataSnapshot
 )
-from database.connection import Base
-from core.logger import setup_logging, get_logger
+from backend.database.connection import Base
+from backend.core.logger import setup_logging, get_logger
 
 setup_logging()
 logger = get_logger(__name__)
@@ -34,7 +34,7 @@ logger = get_logger(__name__)
 def get_sync_database_url():
   """Получаем синхронный URL для подключения к БД."""
   # Преобразуем асинхронный URL в синхронный
-  from config import settings
+  from backend.config import settings
   url = settings.DATABASE_URL
   # Заменяем postgresql+asyncpg на postgresql+psycopg2
   return url.replace("postgresql+asyncpg", "postgresql+psycopg2")
@@ -42,7 +42,7 @@ def get_sync_database_url():
 
 def create_database_if_not_exists():
   """Создаем базу данных, если она не существует."""
-  from config import settings
+  from backend.config import settings
 
   # Парсим DATABASE_URL для получения параметров
   import re

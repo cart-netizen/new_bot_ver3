@@ -9,8 +9,8 @@ from enum import Enum
 from functools import wraps
 from datetime import datetime, timedelta
 
-from core.logger import get_logger
-from core.exceptions import CircuitBreakerError
+from backend.core.logger import get_logger
+from backend.core.exceptions import CircuitBreakerError
 
 logger = get_logger(__name__)
 

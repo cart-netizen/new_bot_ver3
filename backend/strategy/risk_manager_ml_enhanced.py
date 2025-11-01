@@ -25,18 +25,18 @@ FALLBACK СИСТЕМА:
 from typing import Optional, Tuple, Dict, Union
 from datetime import datetime
 
-from core.logger import get_logger
-from config import settings
-from models.signal import TradingSignal, SignalType
-from strategy.risk_manager import RiskManager
-from strategy.sltp_calculator import sltp_calculator
-from strategy.adaptive_risk_calculator import adaptive_risk_calculator
-from strategy.correlation_manager import correlation_manager
-from strategy.daily_loss_killer import daily_loss_killer
-from strategy.risk_models import MLRiskAdjustments, MarketRegime, SLTPCalculation
-from ml_engine.integration.ml_signal_validator import MLSignalValidator
-from ml_engine.features import FeatureVector
-from utils.helpers import safe_enum_value
+from backend.core.logger import get_logger
+from backend.config import settings
+from backend.models.signal import TradingSignal, SignalType
+from backend.strategy.risk_manager import RiskManager
+from backend.strategy.sltp_calculator import sltp_calculator
+from backend.strategy.adaptive_risk_calculator import adaptive_risk_calculator
+from backend.strategy.correlation_manager import correlation_manager
+from backend.strategy.daily_loss_killer import daily_loss_killer
+from backend.strategy.risk_models import MLRiskAdjustments, MarketRegime, SLTPCalculation
+from backend.ml_engine.integration.ml_signal_validator import MLSignalValidator
+from backend.ml_engine.features import FeatureVector
+from backend.utils.helpers import safe_enum_value
 
 logger = get_logger(__name__)
 
@@ -356,7 +356,7 @@ class RiskManagerMLEnhanced(RiskManager):
       )
     else:
       # Fallback: Adaptive Risk Calculator с минимумом 1.0x
-      from strategy.adaptive_risk_calculator import adaptive_risk_calculator
+      from backend.strategy.adaptive_risk_calculator import adaptive_risk_calculator
 
       adaptive_mult = adaptive_risk_calculator.calculate_risk_multiplier(
         signal.confidence

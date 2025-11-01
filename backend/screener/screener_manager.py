@@ -9,9 +9,9 @@ import aiohttp
 from typing import Dict, List, Optional
 from datetime import datetime
 
-from core.logger import get_logger
-from models.screener import ScreenerPairData
-from config import settings
+from backend.core.logger import get_logger
+from backend.models.screener import ScreenerPairData
+from backend.config import settings
 
 logger = get_logger(__name__)
 

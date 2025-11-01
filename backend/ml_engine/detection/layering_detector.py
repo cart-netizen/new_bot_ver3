@@ -31,14 +31,14 @@ from collections import defaultdict, deque
 import numpy as np
 import time
 
-from core.logger import get_logger
-from models.orderbook import OrderBookSnapshot, OrderBookLevel
+from backend.core.logger import get_logger
+from backend.models.orderbook import OrderBookSnapshot, OrderBookLevel
 
 # Import new components (optional)
 try:
-  from ml_engine.detection.pattern_database import HistoricalPatternDatabase
-  from ml_engine.detection.layering_data_collector import LayeringDataCollector
-  from ml_engine.detection.adaptive_layering_model import AdaptiveLayeringModel
+  from backend.ml_engine.detection.pattern_database import HistoricalPatternDatabase
+  from backend.ml_engine.detection.layering_data_collector import LayeringDataCollector
+  from backend.ml_engine.detection.adaptive_layering_model import AdaptiveLayeringModel
   ADVANCED_FEATURES_AVAILABLE = True
 except ImportError:
   ADVANCED_FEATURES_AVAILABLE = False
@@ -47,7 +47,7 @@ except ImportError:
   AdaptiveLayeringModel = None
 
 if TYPE_CHECKING:
-  from strategy.trade_manager import TradeManager
+  from backend.strategy.trade_manager import TradeManager
 
 logger = get_logger(__name__)
 
@@ -1515,7 +1515,7 @@ class LayeringDetector:
 
 # Example usage and testing
 if __name__ == "__main__":
-  from models.orderbook import OrderBookSnapshot, OrderBookLevel
+  from backend.models.orderbook import OrderBookSnapshot, OrderBookLevel
 
   config = LayeringConfig(
     min_orders_in_layer=3,

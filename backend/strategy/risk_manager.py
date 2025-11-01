@@ -12,13 +12,13 @@
 from typing import Dict, Optional
 from dataclasses import dataclass
 
-from core.logger import get_logger
-from core.exceptions import RiskManagementError
-from models.signal import TradingSignal, SignalType
-from config import settings
-from strategy.adaptive_risk_calculator import adaptive_risk_calculator
-from strategy.correlation_manager import correlation_manager
-from strategy.daily_loss_killer import daily_loss_killer
+from backend.core.logger import get_logger
+from backend.core.exceptions import RiskManagementError
+from backend.models.signal import TradingSignal, SignalType
+from backend.config import settings
+from backend.strategy.adaptive_risk_calculator import adaptive_risk_calculator
+from backend.strategy.correlation_manager import correlation_manager
+from backend.strategy.daily_loss_killer import daily_loss_killer
 
 logger = get_logger(__name__)
 

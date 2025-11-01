@@ -11,7 +11,7 @@ import traceback
 backend_path = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_path))
 
-from core.logger import setup_logging, get_logger
+from backend.core.logger import setup_logging, get_logger
 
 setup_logging()
 logger = get_logger(__name__)
@@ -45,7 +45,7 @@ def check_database_url():
   logger.info("Проверка DATABASE_URL...")
 
   try:
-    from config import settings
+    from backend.config import settings
     url = settings.DATABASE_URL
     logger.info(f"  URL: {url[:30]}...")
 
@@ -76,7 +76,7 @@ async def check_async_connection():
   logger.info("Проверка асинхронного подключения...")
 
   try:
-    from database.connection import db_manager
+    from backend.database.connection import db_manager
 
     await db_manager.initialize()
 
@@ -98,7 +98,7 @@ def check_sync_connection():
   logger.info("Проверка синхронного подключения...")
 
   try:
-    from config import settings
+    from backend.config import settings
     import psycopg2
     import re
 
@@ -146,7 +146,7 @@ def check_models():
   logger.info("Проверка моделей...")
 
   try:
-    from database.models import (
+    from backend.database.models import (
       Order,
       Position,
       Trade,
@@ -154,7 +154,7 @@ def check_models():
       IdempotencyCache,
       MarketDataSnapshot
     )
-    from database.connection import Base
+    from backend.database.connection import Base
 
     # Проверяем, что модели зарегистрированы
     tables = Base.metadata.tables

@@ -27,8 +27,8 @@ Path: backend/strategies/volume_distributor.py
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
 import numpy as np
-from strategy.candle_manager import Candle
-from core.logger import get_logger
+from backend.strategy.candle_manager import Candle
+from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
 

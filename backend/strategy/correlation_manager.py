@@ -14,10 +14,10 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import numpy as np
 
-from core.logger import get_logger
-from config import settings
-from strategy.risk_models import CorrelationGroup
-from exchange.rest_client import rest_client
+from backend.core.logger import get_logger
+from backend.config import settings
+from backend.strategy.risk_models import CorrelationGroup
+from backend.exchange.rest_client import rest_client
 
 logger = get_logger(__name__)
 

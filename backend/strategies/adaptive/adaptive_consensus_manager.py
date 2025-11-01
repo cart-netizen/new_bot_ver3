@@ -17,21 +17,21 @@ from dataclasses import dataclass
 from datetime import datetime
 import numpy as np
 
-from core.logger import get_logger
-from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
-from models.orderbook import OrderBookSnapshot, OrderBookMetrics
-from strategy.candle_manager import Candle
+from backend.core.logger import get_logger
+from backend.models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
+from backend.models.orderbook import OrderBookSnapshot, OrderBookMetrics
+from backend.strategy.candle_manager import Candle
 
-from strategies.adaptive.strategy_performance_tracker import (
+from backend.strategies.adaptive.strategy_performance_tracker import (
     StrategyPerformanceTracker,
     PerformanceTrackerConfig
 )
-from strategies.adaptive.market_regime_detector import (
+from backend.strategies.adaptive.market_regime_detector import (
     MarketRegimeDetector,
     RegimeDetectorConfig,
     MarketRegime
 )
-from strategies.adaptive.weight_optimizer import (
+from backend.strategies.adaptive.weight_optimizer import (
     WeightOptimizer,
     WeightOptimizerConfig,
     OptimizationMethod

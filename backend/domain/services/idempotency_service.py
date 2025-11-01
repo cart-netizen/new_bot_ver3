@@ -8,9 +8,9 @@ import hashlib
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 
-from core.logger import get_logger
-from database.connection import db_manager
-from database.models import IdempotencyCache
+from backend.core.logger import get_logger
+from backend.database.connection import db_manager
+from backend.database.models import IdempotencyCache
 from sqlalchemy import select, delete
 
 logger = get_logger(__name__)

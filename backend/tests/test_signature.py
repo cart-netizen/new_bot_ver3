@@ -18,8 +18,8 @@ import sys
 if sys.platform == 'win32':
   asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-from exchange.bybit_auth import authenticator
-from exchange.rest_client import rest_client
+from backend.exchange.bybit_auth import authenticator
+from backend.exchange.rest_client import rest_client
 
 
 async def test_signature():

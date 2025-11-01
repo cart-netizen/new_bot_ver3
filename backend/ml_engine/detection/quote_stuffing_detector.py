@@ -29,8 +29,8 @@ from collections import defaultdict, deque
 import numpy as np
 import time
 
-from core.logger import get_logger
-from models.orderbook import OrderBookSnapshot
+from backend.core.logger import get_logger
+from backend.models.orderbook import OrderBookSnapshot
 
 logger = get_logger(__name__)
 

@@ -14,9 +14,9 @@ import numpy as np
 from datetime import datetime
 import asyncio
 
-from models.orderbook import OrderBookSnapshot
-from ml_engine.features.candle_feature_extractor import Candle
-from ml_engine.features.feature_pipeline import (
+from backend.models.orderbook import OrderBookSnapshot
+from backend.ml_engine.features.candle_feature_extractor import Candle
+from backend.ml_engine.features.feature_pipeline import (
   FeaturePipeline,
   MultiSymbolFeaturePipeline,
   FeatureVector

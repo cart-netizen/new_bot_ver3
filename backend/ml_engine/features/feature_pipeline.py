@@ -7,10 +7,10 @@ Feature Pipeline - оркестратор всех feature extractors.
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
-from strategy.trade_manager import TradeManager
+from backend.strategy.trade_manager import TradeManager
 
 if TYPE_CHECKING:
-    from ml_engine.detection.sr_level_detector import SRLevel
+    from backend.ml_engine.detection.sr_level_detector import SRLevel
 else:
     SRLevel = None
 
@@ -19,31 +19,31 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 import asyncio
 
-from core.logger import get_logger
-from core.periodic_logger import periodic_logger
-from ml_engine.detection.sr_level_detector import SRLevel
-from models.orderbook import OrderBookSnapshot, OrderBookMetrics
-from ml_engine.features.orderbook_feature_extractor import (
+from backend.core.logger import get_logger
+from backend.core.periodic_logger import periodic_logger
+from backend.ml_engine.detection.sr_level_detector import SRLevel
+from backend.models.orderbook import OrderBookSnapshot, OrderBookMetrics
+from backend.ml_engine.features.orderbook_feature_extractor import (
   OrderBookFeatureExtractor,
   OrderBookFeatures
 )
-from ml_engine.features.candle_feature_extractor import (
+from backend.ml_engine.features.candle_feature_extractor import (
   CandleFeatureExtractor,
   CandleFeatures,
   Candle
 )
-from ml_engine.features.indicator_feature_extractor import (
+from backend.ml_engine.features.indicator_feature_extractor import (
   IndicatorFeatureExtractor,
   IndicatorFeatures
 )
-from ml_engine.features.feature_scaler_manager import (
+from backend.ml_engine.features.feature_scaler_manager import (
   FeatureScalerManager,
   ScalerConfig
 )
 # Для type hints без circular imports
 if TYPE_CHECKING:
-    from models.orderbook import OrderBookMetrics
-    from ml_engine.detection.sr_level_detector import SRLevel
+    from backend.models.orderbook import OrderBookMetrics
+    from backend.ml_engine.detection.sr_level_detector import SRLevel
 logger = get_logger(__name__)
 
 

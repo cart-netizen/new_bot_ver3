@@ -25,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 import json
 
-from core.logger import get_logger
+from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
 

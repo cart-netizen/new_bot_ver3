@@ -28,14 +28,14 @@ from enum import Enum
 import numpy as np
 import time
 
-from core.logger import get_logger
-from ml_engine.detection.sr_level_detector import SRLevelDetector, SRLevelConfig, SRLevel
-from strategies.volume_profile_strategy import VolumeProfile, VolumeProfileAnalyzer
-from strategy.candle_manager import Candle
-from models.orderbook import OrderBookSnapshot, OrderBookMetrics
-from models.signal import TradingSignal, SignalType
-from strategies.strategy_manager import ExtendedStrategyManager, StrategyResult
-from strategies.mtf.timeframe_coordinator import Timeframe
+from backend.core.logger import get_logger
+from backend.ml_engine.detection.sr_level_detector import SRLevelDetector, SRLevelConfig, SRLevel
+from backend.strategies.volume_profile_strategy import VolumeProfile, VolumeProfileAnalyzer
+from backend.strategy.candle_manager import Candle
+from backend.models.orderbook import OrderBookSnapshot, OrderBookMetrics
+from backend.models.signal import TradingSignal, SignalType
+from backend.strategies.strategy_manager import ExtendedStrategyManager, StrategyResult
+from backend.strategies.mtf.timeframe_coordinator import Timeframe
 
 logger = get_logger(__name__)
 
@@ -1196,7 +1196,7 @@ class TimeframeAnalyzer:
     final_confidence = min(avg_confidence * regime_modifier, 0.95)
 
     # Создаем агрегированный сигнал
-    from models.signal import SignalSource, SignalStrength
+    from backend.models.signal import SignalSource, SignalStrength
 
     # Определяем силу сигнала адаптивно на основе confidence и волатильности
     # При высокой волатильности требуем большую confidence для STRONG/MEDIUM

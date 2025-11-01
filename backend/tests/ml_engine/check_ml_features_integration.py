@@ -74,7 +74,7 @@ def check_imports():
   print("=" * 70)
 
   try:
-    from models.orderbook import OrderBookSnapshot, OrderBookMetrics
+    from backend.models.orderbook import OrderBookSnapshot, OrderBookMetrics
     print("✓ OrderBookSnapshot импортирован")
     print("✓ OrderBookMetrics импортирован")
   except ImportError as e:
@@ -82,14 +82,14 @@ def check_imports():
     return False
 
   try:
-    from strategy.analyzer import OrderBookAnalyzer
+    from backend.strategy.analyzer import OrderBookAnalyzer
     print("✓ OrderBookAnalyzer импортирован")
   except ImportError as e:
     print(f"✗ Ошибка импорта analyzer: {e}")
     return False
 
   try:
-    from ml_engine.features.orderbook_feature_extractor import (
+    from backend.ml_engine.features.orderbook_feature_extractor import (
       OrderBookFeatureExtractor,
       OrderBookFeatures
     )
@@ -124,8 +124,8 @@ def test_basic_extraction():
   print("=" * 70)
 
   try:
-    from models.orderbook import OrderBookSnapshot
-    from ml_engine.features.orderbook_feature_extractor import OrderBookFeatureExtractor
+    from backend.models.orderbook import OrderBookSnapshot
+    from backend.ml_engine.features.orderbook_feature_extractor import OrderBookFeatureExtractor
     import numpy as np
 
     # Создаем реалистичный снимок
@@ -209,10 +209,10 @@ def test_integration_with_analyzer():
   print("=" * 70)
 
   try:
-    from models.orderbook import OrderBookSnapshot
-    from strategy.analyzer import OrderBookAnalyzer
-    from strategy.orderbook_manager import OrderBookManager
-    from ml_engine.features.orderbook_feature_extractor import OrderBookFeatureExtractor
+    from backend.models.orderbook import OrderBookSnapshot
+    from backend.strategy.analyzer import OrderBookAnalyzer
+    from backend.strategy.orderbook_manager import OrderBookManager
+    from backend.ml_engine.features.orderbook_feature_extractor import OrderBookFeatureExtractor
     from collections import OrderedDict
 
     # Создаем снимок
@@ -297,8 +297,8 @@ def test_temporal_features():
   print("=" * 70)
 
   try:
-    from models.orderbook import OrderBookSnapshot
-    from ml_engine.features.orderbook_feature_extractor import OrderBookFeatureExtractor
+    from backend.models.orderbook import OrderBookSnapshot
+    from backend.ml_engine.features.orderbook_feature_extractor import OrderBookFeatureExtractor
 
     extractor = OrderBookFeatureExtractor("BTCUSDT")
 

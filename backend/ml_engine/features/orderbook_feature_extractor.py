@@ -11,10 +11,10 @@ from dataclasses import dataclass
 import numpy as np
 from numba import jit
 
-from core.logger import get_logger
-from core.periodic_logger import periodic_logger
-from models.orderbook import OrderBookSnapshot, OrderBookMetrics
-from strategy.analyzer import OrderBookAnalyzer
+from backend.core.logger import get_logger
+from backend.core.periodic_logger import periodic_logger
+from backend.models.orderbook import OrderBookSnapshot, OrderBookMetrics
+from backend.strategy.analyzer import OrderBookAnalyzer
 
 logger = get_logger(__name__)
 

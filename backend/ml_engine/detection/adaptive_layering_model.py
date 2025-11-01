@@ -43,7 +43,7 @@ except ImportError:
     from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
     from sklearn.preprocessing import StandardScaler
 
-from core.logger import get_logger
+from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
 

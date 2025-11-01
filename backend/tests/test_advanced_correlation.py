@@ -15,16 +15,16 @@ import numpy as np
 from datetime import datetime
 
 from backend.strategy.correlation.advanced_calculator import AdvancedCorrelationCalculator
-from strategy.correlation.grouping_methods import (
+from backend.strategy.correlation.grouping_methods import (
     GraphBasedGroupManager,
     HierarchicalGroupManager,
     EnsembleGroupManager
 )
-from strategy.correlation.regime_detector import (
+from backend.strategy.correlation.regime_detector import (
     CorrelationRegimeDetector,
     VolatilityClusterManager
 )
-from strategy.correlation.models import (
+from backend.strategy.correlation.models import (
     DTWParameters,
     MarketCorrelationRegime
 )

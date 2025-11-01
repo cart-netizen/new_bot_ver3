@@ -23,8 +23,8 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from collections import Counter
 
-from core.logger import get_logger
-from ml_engine.training.class_balancing import (
+from backend.core.logger import get_logger
+from backend.ml_engine.training.class_balancing import (
     ClassBalancingConfig,
     ClassBalancingStrategy
 )
@@ -605,7 +605,7 @@ if __name__ == "__main__":
     """
     Пример загрузки данных с class balancing.
     """
-    from ml_engine.training.class_balancing import ClassBalancingConfig
+    from backend.ml_engine.training.class_balancing import ClassBalancingConfig
 
     # ===== КОНФИГУРАЦИЯ =====
 

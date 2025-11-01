@@ -19,24 +19,24 @@ from dataclasses import dataclass, field
 from enum import Enum
 import numpy as np
 
-from core.logger import get_logger
-from models.orderbook import OrderBookSnapshot, OrderBookMetrics
-from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
-from strategy.candle_manager import Candle
+from backend.core.logger import get_logger
+from backend.models.orderbook import OrderBookSnapshot, OrderBookMetrics
+from backend.models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
+from backend.strategy.candle_manager import Candle
 
 # Импорт всех стратегий
-from strategies.momentum_strategy import MomentumStrategy, MomentumConfig
-from strategies.sar_wave_strategy import SARWaveStrategy, SARWaveConfig
-from strategies.supertrend_strategy import SuperTrendStrategy, SuperTrendConfig
-from strategies.volume_profile_strategy import VolumeProfileStrategy, VolumeProfileConfig
+from backend.strategies.momentum_strategy import MomentumStrategy, MomentumConfig
+from backend.strategies.sar_wave_strategy import SARWaveStrategy, SARWaveConfig
+from backend.strategies.supertrend_strategy import SuperTrendStrategy, SuperTrendConfig
+from backend.strategies.volume_profile_strategy import VolumeProfileStrategy, VolumeProfileConfig
 
 # Импорт новых OrderBook стратегий
-from strategies.imbalance_strategy import ImbalanceStrategy, ImbalanceConfig
-from strategies.volume_flow_strategy import VolumeFlowStrategy, VolumeFlowConfig
-from strategies.liquidity_zone_strategy import LiquidityZoneStrategy, LiquidityZoneConfig
-from strategies.smart_money_strategy import SmartMoneyStrategy, SmartMoneyConfig
+from backend.strategies.imbalance_strategy import ImbalanceStrategy, ImbalanceConfig
+from backend.strategies.volume_flow_strategy import VolumeFlowStrategy, VolumeFlowConfig
+from backend.strategies.liquidity_zone_strategy import LiquidityZoneStrategy, LiquidityZoneConfig
+from backend.strategies.smart_money_strategy import SmartMoneyStrategy, SmartMoneyConfig
 
-from utils.helpers import safe_enum_value
+from backend.utils.helpers import safe_enum_value
 
 logger = get_logger(__name__)
 

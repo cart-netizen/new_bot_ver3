@@ -8,10 +8,10 @@ from datetime import datetime
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
-from core.logger import get_logger
-from database.connection import db_manager
-from database.models import Order, OrderStatus, OrderSide, OrderType
-from core.exceptions import DatabaseError
+from backend.core.logger import get_logger
+from backend.database.connection import db_manager
+from backend.database.models import Order, OrderStatus, OrderSide, OrderType
+from backend.core.exceptions import DatabaseError
 
 logger = get_logger(__name__)
 

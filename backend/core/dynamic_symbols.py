@@ -5,7 +5,7 @@
 """
 
 from typing import List, Dict
-from core.logger import get_logger
+from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
 

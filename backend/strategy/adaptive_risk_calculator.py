@@ -17,10 +17,10 @@
 from typing import Optional
 import numpy as np
 
-from core.logger import get_logger
-from config import settings
-from models.signal import TradingSignal
-from strategy.risk_models import RiskPerTradeParams
+from backend.core.logger import get_logger
+from backend.config import settings
+from backend.models.signal import TradingSignal
+from backend.strategy.risk_models import RiskPerTradeParams
 
 logger = get_logger(__name__)
 

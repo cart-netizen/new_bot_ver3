@@ -26,9 +26,9 @@ import numpy as np
 from sqlalchemy import select, update, delete, func, and_
 from sqlalchemy.exc import IntegrityError
 
-from core.logger import get_logger
-from database.connection import db_manager
-from database.models import LayeringPattern
+from backend.core.logger import get_logger
+from backend.database.connection import db_manager
+from backend.database.models import LayeringPattern
 
 logger = get_logger(__name__)
 

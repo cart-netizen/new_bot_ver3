@@ -20,7 +20,7 @@ from collections import Counter
 from dataclasses import dataclass
 from sklearn.utils.class_weight import compute_class_weight
 
-from core.logger import get_logger
+from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
 

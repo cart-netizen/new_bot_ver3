@@ -12,8 +12,8 @@ import pytest
 import numpy as np
 from datetime import datetime
 
-from models.orderbook import OrderBookSnapshot
-from ml_engine.features.orderbook_feature_extractor import (
+from backend.models.orderbook import OrderBookSnapshot
+from backend.ml_engine.features.orderbook_feature_extractor import (
   OrderBookFeatureExtractor,
   OrderBookFeatures
 )

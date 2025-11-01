@@ -14,32 +14,32 @@ from decimal import Decimal
 from typing import Optional, Dict, List
 from collections import deque
 
-from config import settings
-from core.logger import get_logger
-from core.exceptions import ExecutionError, OrderExecutionError
-from core.trace_context import trace_operation
-from database.models import AuditAction, OrderStatus, PositionStatus
-from domain.services.fsm_registry import fsm_registry
-from domain.services.idempotency_service import idempotency_service
-from domain.state_machines.order_fsm import OrderStateMachine
-from domain.state_machines.position_fsm import PositionStateMachine
-from infrastructure.repositories.audit_repository import audit_repository
-from infrastructure.repositories.order_repository import order_repository
-from infrastructure.repositories.position_repository import position_repository
-from infrastructure.resilience.circuit_breaker import circuit_breaker_manager
-from infrastructure.resilience.rate_limiter import rate_limited
-from models.signal import TradingSignal, SignalType
-from models.market_data import OrderSide, OrderType, TimeInForce
-from exchange.rest_client import rest_client
-from strategies.adaptive import adaptive_consensus_manager, AdaptiveConsensusManager
+from backend.config import settings
+from backend.core.logger import get_logger
+from backend.core.exceptions import ExecutionError, OrderExecutionError
+from backend.core.trace_context import trace_operation
+from backend.database.models import AuditAction, OrderStatus, PositionStatus
+from backend.domain.services.fsm_registry import fsm_registry
+from backend.domain.services.idempotency_service import idempotency_service
+from backend.domain.state_machines.order_fsm import OrderStateMachine
+from backend.domain.state_machines.position_fsm import PositionStateMachine
+from backend.infrastructure.repositories.audit_repository import audit_repository
+from backend.infrastructure.repositories.order_repository import order_repository
+from backend.infrastructure.repositories.position_repository import position_repository
+from backend.infrastructure.resilience.circuit_breaker import circuit_breaker_manager
+from backend.infrastructure.resilience.rate_limiter import rate_limited
+from backend.models.signal import TradingSignal, SignalType
+from backend.models.market_data import OrderSide, OrderType, TimeInForce
+from backend.exchange.rest_client import rest_client
+from backend.strategies.adaptive import adaptive_consensus_manager, AdaptiveConsensusManager
 
-from strategy.risk_manager import RiskManager
-from strategy.risk_models import MarketRegime
-from strategy.signal_deduplicator import signal_deduplicator
-from strategy.sltp_calculator import sltp_calculator
-from strategy.trailing_stop_manager import trailing_stop_manager
-from utils.balance_tracker import balance_tracker
-from utils.helpers import get_timestamp_ms, round_price, round_quantity, safe_enum_value
+from backend.strategy.risk_manager import RiskManager
+from backend.strategy.risk_models import MarketRegime
+from backend.strategy.signal_deduplicator import signal_deduplicator
+from backend.strategy.sltp_calculator import sltp_calculator
+from backend.strategy.trailing_stop_manager import trailing_stop_manager
+from backend.utils.balance_tracker import balance_tracker
+from backend.utils.helpers import get_timestamp_ms, round_price, round_quantity, safe_enum_value
 
 logger = get_logger(__name__)
 

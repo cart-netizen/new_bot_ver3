@@ -5,7 +5,7 @@ ML Data Collection Module
 Файл: backend/ml_engine/data_collection/__init__.py
 """
 
-from ml_engine.data_collection.ml_data_collector import MLDataCollector
+from backend.ml_engine.data_collection.ml_data_collector import MLDataCollector
 
 __all__ = [
     "MLDataCollector"

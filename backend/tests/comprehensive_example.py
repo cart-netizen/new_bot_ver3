@@ -25,18 +25,18 @@ import asyncio
 from datetime import datetime
 from typing import Optional
 
-from core.logger import setup_logging, get_logger
-from core.trace_context import trace_operation, TraceContext
-from database.connection import db_manager
-from database.models import OrderSide, OrderType, OrderStatus, PositionStatus, AuditAction
-from domain.state_machines.order_fsm import OrderStateMachine
-from domain.state_machines.position_fsm import PositionStateMachine
-from domain.services.idempotency_service import idempotency_service
-from infrastructure.repositories.order_repository import order_repository
-from infrastructure.repositories.position_repository import position_repository
-from infrastructure.repositories.audit_repository import audit_repository
-from infrastructure.resilience.circuit_breaker import circuit_breaker_manager
-from infrastructure.resilience.rate_limiter import rate_limiter
+from backend.core.logger import setup_logging, get_logger
+from backend.core.trace_context import trace_operation, TraceContext
+from backend.database.connection import db_manager
+from backend.database.models import OrderSide, OrderType, OrderStatus, PositionStatus, AuditAction
+from backend.domain.state_machines.order_fsm import OrderStateMachine
+from backend.domain.state_machines.position_fsm import PositionStateMachine
+from backend.domain.services.idempotency_service import idempotency_service
+from backend.infrastructure.repositories.order_repository import order_repository
+from backend.infrastructure.repositories.position_repository import position_repository
+from backend.infrastructure.repositories.audit_repository import audit_repository
+from backend.infrastructure.resilience.circuit_breaker import circuit_breaker_manager
+from backend.infrastructure.resilience.rate_limiter import rate_limiter
 
 # Настройка логирования
 setup_logging()
