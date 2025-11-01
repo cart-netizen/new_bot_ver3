@@ -655,7 +655,10 @@ class EnsembleGroupManager:
         # Создаем финальные группы из консенсусных пар
         final_groups = self._build_groups_from_pairs(
             consensus_pairs,
-            correlation_matrix
+            correlation_matrix,
+            returns_cache=returns_cache,
+            louvain_groups=louvain_groups,
+            hierarchical_groups=hierarchical_groups
         )
 
         logger.info(f"Создано {len(final_groups)} консенсусных групп")
@@ -705,9 +708,24 @@ class EnsembleGroupManager:
     def _build_groups_from_pairs(
         self,
         pairs: Set[Tuple[str, str]],
-        correlation_matrix: Dict[Tuple[str, str], float]
+        correlation_matrix: Dict[Tuple[str, str], float],
+        returns_cache: Optional[Dict[str, np.ndarray]] = None,
+        louvain_groups: Optional[List[AdvancedCorrelationGroup]] = None,
+        hierarchical_groups: Optional[List[AdvancedCorrelationGroup]] = None
     ) -> List[AdvancedCorrelationGroup]:
-        """Строит группы из консенсусных пар."""
+        """
+        Строит группы из консенсусных пар.
+
+        Args:
+            pairs: Консенсусные пары символов
+            correlation_matrix: Матрица корреляций
+            returns_cache: Кеш returns для расчета волатильности
+            louvain_groups: Группы от Louvain метода для расчета quality score
+            hierarchical_groups: Группы от hierarchical метода для расчета quality score
+
+        Returns:
+            List[AdvancedCorrelationGroup]: Финальные консенсусные группы
+        """
         # Используем Union-Find для объединения пар в группы
         parent = {}
 
@@ -751,15 +769,17 @@ class EnsembleGroupManager:
             louvain_quality = 0.0
             hierarchical_quality = 0.0
 
-            for group in louvain_groups:
-                if set(symbols).issubset(set(group.symbols)):
-                    louvain_quality = group.cluster_quality_score
-                    break
+            if louvain_groups:
+                for group in louvain_groups:
+                    if set(symbols).issubset(set(group.symbols)):
+                        louvain_quality = group.cluster_quality_score
+                        break
 
-            for group in hierarchical_groups:
-                if set(symbols).issubset(set(group.symbols)):
-                    hierarchical_quality = group.cluster_quality_score
-                    break
+            if hierarchical_groups:
+                for group in hierarchical_groups:
+                    if set(symbols).issubset(set(group.symbols)):
+                        hierarchical_quality = group.cluster_quality_score
+                        break
 
             combined_quality = (louvain_quality + hierarchical_quality) / 2.0
 
