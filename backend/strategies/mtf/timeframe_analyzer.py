@@ -818,15 +818,17 @@ class TimeframeAnalyzer:
     # === MAPPING: IndicatorFeatures → TimeframeIndicators ===
 
     # Trend indicators (Moving Averages)
+    # IndicatorFeatures has: sma_10, sma_20, sma_50 and ema_10, ema_20, ema_50
     indicators.sma_fast = features.sma_20  # SMA 20 → fast
     indicators.sma_slow = features.sma_50  # SMA 50 → slow
-    indicators.ema_fast = features.ema_12  # EMA 12 → fast
-    indicators.ema_slow = features.ema_26  # EMA 26 → slow
+    indicators.ema_fast = features.ema_20  # EMA 20 → fast
+    indicators.ema_slow = features.ema_50  # EMA 50 → slow
 
     # Trend strength (ADX)
+    # IndicatorFeatures has: adx, plus_di, minus_di
     indicators.adx = features.adx  # ✅ Professional Wilder's smoothing
-    indicators.adx_di_plus = features.adx_plus_di
-    indicators.adx_di_minus = features.adx_minus_di
+    indicators.adx_di_plus = features.plus_di
+    indicators.adx_di_minus = features.minus_di
 
     # Momentum indicators
     indicators.rsi = features.rsi_14  # ✅ Professional Wilder's smoothing
@@ -847,23 +849,21 @@ class TimeframeAnalyzer:
     indicators.bollinger_upper = features.bollinger_upper
     indicators.bollinger_middle = features.bollinger_middle
     indicators.bollinger_lower = features.bollinger_lower
-    # Bollinger width рассчитываем
-    if (features.bollinger_upper and features.bollinger_lower and
-        features.bollinger_middle and features.bollinger_middle > 0):
-      indicators.bollinger_width = (
-        (features.bollinger_upper - features.bollinger_lower) /
-        features.bollinger_middle * 100
-      )
+    # Bollinger width уже в features.bollinger_width
+    indicators.bollinger_width = features.bollinger_width
 
     # Volume indicators
-    indicators.volume_sma = features.volume_sma_20
-    # Volume ratio рассчитываем
-    if features.volume_sma_20 and features.volume_sma_20 > 0 and candles:
-      current_volume = candles[-1].volume
-      indicators.volume_ratio = current_volume / features.volume_sma_20
-
+    # IndicatorFeatures has: obv, vwap (но нет volume_sma, рассчитываем отдельно)
     indicators.obv = features.obv
     indicators.vwap = features.vwap
+
+    # Volume SMA - рассчитываем отдельно (не в IndicatorFeatures)
+    if candles and len(candles) >= 20:
+      volumes = np.array([c.volume for c in candles])
+      indicators.volume_sma = float(np.mean(volumes[-20:]))
+      if indicators.volume_sma > 0:
+        current_volume = candles[-1].volume
+        indicators.volume_ratio = current_volume / indicators.volume_sma
 
     # === TIMEFRAME-SPECIFIC ИНДИКАТОРЫ (не из IndicatorFeatureExtractor) ===
     # Эти индикаторы рассчитываем отдельно т.к. зависят от таймфрейма
@@ -1093,9 +1093,20 @@ class TimeframeAnalyzer:
         historical_atrs = []
         for i in range(len(candles) - 100, len(candles)):
           if i >= 14:  # Минимум для ATR
-            atr_val = self._calculate_atr(candles[i - 13:i + 1], 14)
-            if atr_val:
-              historical_atrs.append(atr_val)
+            # Простой inline ATR расчет для исторических данных
+            window = candles[i - 13:i + 1]
+            if len(window) >= 14:
+              true_ranges = []
+              for j in range(1, len(window)):
+                high = window[j].high
+                low = window[j].low
+                prev_close = window[j - 1].close
+                tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+                true_ranges.append(tr)
+
+              if true_ranges:
+                atr_val = float(np.mean(true_ranges[-14:]))
+                historical_atrs.append(atr_val)
 
         if historical_atrs:
           # Percentile текущего ATR
