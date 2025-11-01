@@ -185,22 +185,30 @@ class ConditionalCorrelationAnalyzer:
         # 1. Бычий/медвежий тренд
         trend_regime = self.classifier.classify_trend_regime(avg_prices)
 
+        # Создаем boolean masks для каждого режима
+        bullish_mask: np.ndarray = (trend_regime == 1)
+        bearish_mask: np.ndarray = (trend_regime == -1)
+
         bullish_corr = self._calculate_regime_correlation(
-            returns_a, returns_b, trend_regime == 1
+            returns_a, returns_b, bullish_mask
         )
         bearish_corr = self._calculate_regime_correlation(
-            returns_a, returns_b, trend_regime == -1
+            returns_a, returns_b, bearish_mask
         )
 
         # 2. Волатильность
         avg_returns = (returns_a + returns_b) / 2
         vol_regime = self.classifier.classify_volatility_regime(avg_returns)
 
+        # Создаем boolean masks для волатильности
+        high_vol_mask: np.ndarray = (vol_regime == 1)
+        low_vol_mask: np.ndarray = (vol_regime == -1)
+
         high_vol_corr = self._calculate_regime_correlation(
-            returns_a, returns_b, vol_regime == 1
+            returns_a, returns_b, high_vol_mask
         )
         low_vol_corr = self._calculate_regime_correlation(
-            returns_a, returns_b, vol_regime == -1
+            returns_a, returns_b, low_vol_mask
         )
 
         # 3. Кризисные периоды
