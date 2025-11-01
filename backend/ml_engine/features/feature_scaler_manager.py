@@ -23,7 +23,7 @@ from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler
 from sklearn.feature_selection import VarianceThreshold
 
 from core.logger import get_logger
-from ml_engine.features import FeatureVector
+# from ml_engine.features import FeatureVector
 
 # Type-only imports to avoid circular dependency
 if TYPE_CHECKING:
