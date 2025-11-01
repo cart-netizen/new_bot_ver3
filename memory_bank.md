@@ -4970,3 +4970,375 @@ if success:
 while trading:
     vector = await pipeline.extract_features(current_orderbook, current_candles)
     prediction = ml_model.predict(vector.to_array())  # Нормализованные данные ✓
+
+Адаптивный SignalStrength
+Файл: backend/strategies/mtf/timeframe_analyzer.py:1201-1250
+Алгоритм:
+
+# HIGH volatility (нестабильный рынок):
+if volatility == HIGH:
+    STRONG: confidence ≥ 0.88  # +3% строже
+    MEDIUM: confidence ≥ 0.78  # +3% строже
+    WEAK: confidence < 0.78
+
+# NORMAL/LOW volatility (стабильный рынок):
+else:
+    STRONG: confidence ≥ 0.85  # стандарт
+    MEDIUM: confidence ≥ 0.75  # стандарт
+    WEAK: confidence < 0.75
+Ключевые компоненты:
+
+Адаптивные пороги (строки 1203-1210):
+
+Автоматически подстраиваются под volatility_regime
+Более строгие в HIGH volatility → снижает ложные сигналы
+Стандартные в NORMAL/LOW → не упускает возможности
+Логирование (строки 1219-1223):
+
+logger.debug(
+  f"Signal strength: {strength.value} "
+  f"(confidence={final_confidence:.2f}, volatility={volatility}, "
+  f"thresholds: STRONG≥{strong_threshold}, MEDIUM≥{medium_threshold})"
+)
+Расширенные метаданные (строки 1238-1247):
+
+volatility_regime - режим волатильности
+signal_strength - определенная сила сигнала
+strength_threshold_used - использованный порог
+Полная трассируемость для анализа
+Улучшенный reason (строки 1233-1236):
+
+f"[M15] STRONG signal: 3/4 strategies agree, 
+ regime=trending, volatility=normal"
+
+Итоговая статистика изменений в этой сессии
+✅ Fibonacci retracements - 5 уровней (0.236, 0.382, 0.5, 0.618, 0.786)
+✅ Timestamp cache validation - защита от stale data
+✅ Type hints исправлены - volume_profiles структуры
+✅ Adaptive SignalStrength - динамическое определение силы
+✅ Sync с master - 11 коммитов интегрировано
+Реализация готова для production! Все изменения протестированы, закоммичены и запушены на remote.
+
+feat(layering-detector): Implement professional industry-standard layering detection algorithm
+🎯 Критические исправления:
+✅ FIXED: Hardcoded BTC price (50000) → использует real mid_price
+✅ FIXED: Hardcoded side='bid' → правильно определяется из контекста
+✅ FIXED: Неправильная математика в _is_valid_layer (деление вместо умножения)
+✅ FIXED: min_layer_volume_usdt → min_layer_volume_btc для универсальности
+
+🏗️ Архитектурные улучшения (industry-standard):
+
+1. Two-Sided Analysis (Spoofing + Execution)
+   - Анализ spoofing side: крупные ордера для манипуляции
+   - Анализ execution side: реальные сделки на противоположной стороне
+   - Корреляция между размещением и исполнением
+   - Вычисление spoofing/execution ratio
+
+2. TradeManager Integration
+   - Интеграция с существующими TradeManager для каждого символа
+   - Анализ реальных market trades (publicTrade stream)
+   - ExecutionMetrics: volume, trade_count, aggressive_ratio, correlation_score
+   - Temporal correlation: placement → trades → cancellation
+
+3. Price Impact Analysis
+   - Отслеживание истории цен (price_history)
+   - Вычисление expected vs actual price impact
+   - Проверка направления движения цены
+   - Impact ratio для детекции фейковых ордеров
+
+4. Event-Driven Detection
+   - Trigger на cancellations (3+ отмененных ордеров)
+   - Trigger на trade burst (arrival_rate > 5 trades/sec)
+   - Cooldown механизм (5 секунд) против спама
+   - Fallback: periodic check каждые 50 updates
+
+5. Professional Multi-Factor Confidence Scoring
+   Weighted components:
+   - Volume Score (20%): размер в USDT, количество слоев
+   - Timing Score (20%): скорость размещения
+   - Cancellation Score (25%): rate отмен, быстрые отмены
+   - Execution Correlation Score (20%): ratio, temporal correlation
+   - Price Impact Score (15%): impact ratio, direction matching
+
+6. Enhanced OrderTracker
+   - Отслеживание cancellation rate
+   - Placement times для каждого price level
+   - Recent cancellations deque (100 last)
+   - Lifetime tracking для отмененных ордеров
+
+7. Comprehensive Data Models
+   - ExecutionMetrics: детали исполнения на противоположной стороне
+   - PriceImpactMetrics: анализ влияния на цену
+   - LayeringPattern: полная информация о паттерне
+   - OrderLayer: enhanced с min/max price, volume_cv
+
+📊 Интеграция в main.py:
+- LayeringDetector создается ПОСЛЕ TradeManagers для интеграции
+- Передача trade_managers в конструктор детектора
+- Автообновление при динамическом добавлении/удалении символов
+- Полная синхронизация с market trades потоком
+
+🔌 API Updates (routes.py):
+- Новые поля: spoofing_side, execution_side
+- Добавлены: total_orders, cancellation_rate, spoofing_execution_ratio
+- Backwards compatible с существующим frontend
+
+📈 Результаты:
+- 100% устранение hardcoded значений
+- Реальная интеграция с live trades
+- Industry-standard алгоритм детекции
+- Профессиональная многофакторная оценка
+- Event-driven real-time detection
+
+Файлы:
+- backend/ml_engine/detection/layering_detector.py: полная переработка (~1257 lines)
+- backend/main.py: интеграция trade_managers, динамическое обновление
+- backend/api/routes.py: обновление API response структуры
+
+Implement professional Quote Stuffing, Historical Patterns & Adaptive ML for Layering Detection
+🎯 Новые компоненты Industry-Standard:
+
+1️⃣ QUOTE STUFFING DETECTOR (HFT Manipulation Detection)
+   ✅ OrderBookUpdateTracker для частоты обновлений
+   ✅ Multi-factor scoring: update_rate, cancellation, order_size, concentration
+   ✅ Burst pattern detection (burst → idle cycles)
+   ✅ Real-time alerts для HFT манипуляций
+   ✅ Интеграция в main.py orderbook loop
+
+   Features:
+   - 20+ updates/sec = suspicious
+   - 95%+ cancellation rate detection
+   - Micro orders < 0.01 BTC identification
+   - Price concentration < 5 bps analysis
+   - Pattern types: burst, sustained, elevated
+
+2️⃣ HISTORICAL PATTERN DATABASE (Learning from History)
+   ✅ SQLite storage для persistence
+   ✅ Pattern fingerprinting (behavioral features)
+   ✅ Similarity matching (cosine similarity)
+   ✅ Blacklist management для known manipulators
+   ✅ Risk level calculation (LOW/MEDIUM/HIGH/CRITICAL)
+   ✅ Automatic confidence boosting для known patterns (+10-15%)
+
+   Features:
+   - Pattern occurrence tracking
+   - Success rate analysis
+   - Symbol correlation
+   - Feature importance tracking
+   - Automatic pattern evolution learning
+
+3️⃣ LAYERING DATA COLLECTOR (ML Training Data)
+   ✅ Parquet storage для efficient ML pipelines
+   ✅ Comprehensive feature extraction (24 features)
+   ✅ Market context capture (regime, volatility, liquidity)
+   ✅ Label management (true positive / false positive)
+   ✅ Train/validation split preparation
+   ✅ Auto-save every 100 samples
+   ✅ Works в ONLY_TRAINING и full trading mode
+
+   Features:
+   - Pattern features: volume, duration, cancellation, layers
+   - Market context: regime, volatility, hour, day_of_week
+   - Price impact: expected vs actual
+   - Execution metrics: volume, trades, aggressive_ratio
+   - Label tracking: source, confidence, validation
+
+4️⃣ ADAPTIVE ML MODEL (sklearn Random Forest)
+   ✅ Random Forest Classifier для pattern classification
+   ✅ Adaptive threshold prediction по market conditions
+   ✅ Feature importance analysis
+   ✅ Model evaluation metrics (accuracy, precision, recall, F1, ROC AUC)
+   ✅ Incremental learning support
+   ✅ Model persistence (pickle)
+   ✅ Graceful fallback если sklearn не доступен
+
+   Features:
+   - 24 features для prediction
+   - StandardScaler для normalization
+   - Cross-validation support
+   - Confusion matrix analysis
+   - Optimal threshold calculation
+   - Adaptive confidence adjustment
+
+5️⃣ LAYERING DETECTOR INTEGRATION
+   ✅ Optional ML components integration
+   ✅ Historical pattern matching в _analyze_two_sided_layering
+   ✅ Automatic data collection для каждой детекции
+   ✅ ML prediction для confidence adjustment
+   ✅ Enhanced statistics с ML components info
+
+   Integration Flow:
+   1. Pattern detected → Check historical database
+   2. If match found → Boost confidence (+10-15%)
+   3. Save pattern to database → Learning
+   4. Collect training data → ML pipeline
+   5. ML prediction (if trained) → Adjust confidence
+
+6️⃣ MAIN.PY UPDATES
+   ✅ Initialize all ML components перед LayeringDetector
+   ✅ Quote Stuffing Detector integration в orderbook loop
+   ✅ ML data auto-save при остановке бота
+   ✅ ONLY_TRAINING mode support для data collection
+   ✅ Full ML integration logging
+
+7️⃣ TRAINING PIPELINE SCRIPT
+   ✅ scripts/train_layering_model.py для offline training
+   ✅ Load collected data from Parquet
+   ✅ Train Random Forest model
+   ✅ Display comprehensive metrics
+   ✅ Save trained model для production use
+
+   Usage:
+   python backend/scripts/train_layering_model.py
+   
+Workflow Examples:
+
+**1. Data Collection Mode (ONLY_TRAINING):**
+```bash
+ONLY_TRAINING=true python backend/main.py
+# Собирает данные без торговли
+# Auto-save каждые 100 samples
+# Сохранение при остановке
+```
+
+**2. Full Trading Mode:**
+```bash
+python backend/main.py
+# Торговля + data collection
+# ML prediction если модель обучена
+# Historical pattern matching
+# Quote stuffing protection
+```
+
+**3. Model Training:**
+```bash
+python backend/scripts/train_layering_model.py
+# Load collected data
+# Train Random Forest
+# Evaluate metrics
+# Save model → data/models/layering_adaptive_v1.pkl
+```
+
+**4. Production Use:**
+```bash
+python backend/main.py
+# Автозагрузка trained model
+# Adaptive thresholds
+# Real-time ML prediction
+# Historical pattern recognition
+```
+
+🎓 ML Pipeline:
+Detection → Data Collection → Labeling → Training → Production Deployment
+
+🔐 Backwards Compatible:
+- Graceful fallback если sklearn не установлен
+- Optional ML features (enable_ml_features=True)
+- Works без trained model (только data collection)
+- No breaking changes в API
+
+🚀 Ready for Production with Industry-Standard ML Infrastructure!
+
+Добавленные API Endpoints
+1. Quote Stuffing Detection (2 endpoints)
+GET /api/detection/quote-stuffing/status/{symbol}
+Статус Quote Stuffing для конкретного символа
+Возвращает активность + последние 10 событий
+Метрики: updates/sec, cancellation rate, order size, price range
+GET /api/detection/quote-stuffing/statistics
+Общая статистика по всем символам
+Total events, symbols tracked, active now, detection rate 24h
+
+2. Pattern Database (3 endpoints)
+GET /api/detection/patterns/list
+Список исторических паттернов
+Параметры: limit, sort_by, blacklist_only
+Информация: occurrence count, avg metrics, symbols, risk level
+GET /api/detection/patterns/statistics
+Статистика базы паттернов
+Total patterns, blacklisted, unique symbols, avg success rate
+POST /api/detection/patterns/{pattern_id}/blacklist
+Переключить blacklist статус паттерна
+Для ручного управления known manipulators
+
+3. 3.ML Data Collector (3 endpoints)
+GET /api/ml/data-collector/statistics
+Статистика сбора данных
+Buffer size, total collected, labeled/unlabeled samples
+Data directory, files count
+POST /api/ml/data-collector/save
+Принудительное сохранение buffer на диск
+Для ручного сохранения без ожидания auto_save
+GET /api/ml/data-collector/labeled-data
+Информация о labeled samples
+Positive/negative count, ready for training, balance ratio
+Показывает готовность к обучению (≥100 samples)
+
+4. Adaptive ML Model (3 endpoints)
+GET /api/ml/adaptive-model/status
+Статус модели
+Enabled, is_trained, model_version, feature_count
+GET /api/ml/adaptive-model/metrics
+Метрики обученной модели
+Accuracy, Precision, Recall, F1 Score, ROC AUC
+Confusion matrix
+GET /api/ml/adaptive-model/feature-importance
+Feature importance rankings
+Параметр: top_n (по умолчанию 10)
+Показывает какие features наиболее важны для предсказаний
+
+Примеры Использования
+Проверить Quote Stuffing для BTCUSDT
+GET /api/detection/quote-stuffing/status/BTCUSDT
+Получить список blacklisted паттернов
+GET /api/detection/patterns/list?blacklist_only=true&limit=20
+Проверить готовность данных к обучению
+GET /api/ml/data-collector/labeled-data
+Получить метрики обученной модели
+GET /api/ml/adaptive-model/metrics
+Посмотреть top 15 важных features
+GET /api/ml/adaptive-model/feature-importance?top_n=15
+
+Migrate Pattern Database from SQLite to PostgreSQL
+BREAKING CHANGE: Pattern Database now uses PostgreSQL instead of SQLite
+for consistency with project architecture.
+
+Changes:
+
+1. Database Layer:
+   - Added LayeringPattern model to database/models.py (PostgreSQL/SQLAlchemy)
+   - Created Alembic migration 003_add_layering_patterns.py
+   - Table includes: pattern fingerprints, metadata, blacklist, risk levels
+
+2. Pattern Database Refactor:
+   - Rewrote pattern_database.py to use SQLAlchemy async + PostgreSQL
+   - Removed SQLite dependency (sqlite3)
+   - Added async methods: save_pattern, find_similar_pattern, get_statistics
+   - Added sync wrappers for compatibility with sync code (_run_async helper)
+   - In-memory cache for fast pattern matching
+
+3. Integration Updates:
+   - Updated main.py: PostgreSQL initialization (removed db_path parameter)
+   - Updated layering_detector.py: use sync wrapper methods
+   - Fixed method calls: find_similar_pattern_sync, save_pattern_sync, get_statistics_sync
+
+4. Dependencies:
+   - Added nest-asyncio==1.6.0 (for sync/async interop)
+   - Added pyarrow==18.1.0 (for Parquet ML data storage)
+
+5. Documentation:
+   - Updated ML_DETECTION_SETUP.md for PostgreSQL
+   - Removed SQLite references
+   - Added migration information
+
+Benefits:
+- Consistent with project architecture (PostgreSQL everywhere)
+- Better scalability and concurrency
+- JSONB support for flexible metadata
+- Professional async/await patterns
+- Automatic table creation via migrations
+
+Migration Path:
+- Run database migrations on startup (automatic)
+- No manual database file creation needed
+- Pattern cache loads from PostgreSQL on init

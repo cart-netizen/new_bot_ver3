@@ -1198,15 +1198,14 @@ class LayeringDetector:
     if self.pattern_database:
       pattern_features = self._extract_pattern_features(pattern, mid_price)
 
-      # Find similar patterns
-      match_result = self.pattern_database.find_similar_pattern(
+      # Find similar patterns (using sync wrapper)
+      match_result = self.pattern_database.find_similar_pattern_sync(
         pattern_features,
         similarity_threshold=0.80
       )
 
       if match_result:
-        matched_id, similarity = match_result
-        historical = self.pattern_database.get_pattern(matched_id)
+        historical, similarity = match_result
 
         if historical:
           # Boost confidence for known patterns
@@ -1215,30 +1214,31 @@ class LayeringDetector:
 
           # Update reason
           pattern.reason += (
-            f" | KNOWN PATTERN (id={matched_id[:8]}, "
+            f" | KNOWN PATTERN (id={historical.pattern_id[:8]}, "
             f"seen={historical.occurrence_count}x, "
             f"risk={historical.risk_level})"
           )
 
           logger.info(
-            f"🔍 Historical match: {matched_id[:12]}, "
+            f"🔍 Historical match: {historical.pattern_id[:12]}, "
             f"similarity={similarity:.2f}, "
             f"occurrences={historical.occurrence_count}, "
             f"blacklist={historical.blacklist}"
           )
 
-      # Save pattern to database
+      # Save pattern to database (using sync wrapper)
       try:
         price_impact_bps = (
           pattern.price_impact.price_change_bps
-          if pattern.price_impact else None
+          if pattern.price_impact else 0.0
         )
 
-        self.pattern_database.save_pattern(
+        self.pattern_database.save_pattern_sync(
           pattern_features,
           symbol,
           pattern.confidence,
-          price_impact_bps
+          success_rate=0.0,
+          price_impact_bps=price_impact_bps
         )
       except Exception as e:
         logger.error(f"Error saving pattern to database: {e}")
@@ -1502,7 +1502,7 @@ class LayeringDetector:
     # Add ML component statistics
     if self.enable_ml_features:
       if self.pattern_database:
-        stats['pattern_database'] = self.pattern_database.get_statistics()
+        stats['pattern_database'] = self.pattern_database.get_statistics_sync()
 
       if self.data_collector:
         stats['data_collector'] = self.data_collector.get_statistics()
