@@ -135,7 +135,7 @@ class BalanceTracker:
             "datetime": datetime.fromtimestamp(timestamp / 1000).isoformat()
           })
 
-          from main import bot_controller
+          from backend.main import bot_controller
           if bot_controller and bot_controller.risk_manager:
             bot_controller.risk_manager.update_available_balance(total_balance)
 
