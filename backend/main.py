@@ -288,13 +288,13 @@ class BotController:
     )
     self.spoofing_detector = SpoofingDetector(spoofing_config)
 
-    # Layering Detector
-    layering_config = LayeringConfig(
+    # Layering Detector (будет создан после TradeManagers для интеграции)
+    self.layering_config = LayeringConfig(
       min_orders_in_layer=3,
       max_price_spread_pct=0.005,
-      min_layer_volume_usdt=30000.0
+      min_layer_volume_btc=0.5  # FIXED: Changed from min_layer_volume_usdt to min_layer_volume_btc
     )
-    self.layering_detector = LayeringDetector(layering_config)
+    self.layering_detector = None  # Будет инициализирован позже с trade_managers
 
     # S/R Level Detector
     sr_config = SRLevelConfig(
@@ -940,6 +940,100 @@ class BotController:
         )
       logger.info(f"✓ Создано {len(self.trade_managers)} менеджеров market trades")
 
+      # ===== Создаем Advanced ML компоненты для LayeringDetector =====
+      logger.info("=" * 80)
+      logger.info("🧠 Инициализация Advanced ML Components для Layering Detection")
+      logger.info("=" * 80)
+
+      # 1. Quote Stuffing Detector (HFT manipulation detection)
+      try:
+        from ml_engine.detection.quote_stuffing_detector import (
+          QuoteStuffingDetector, QuoteStuffingConfig
+        )
+
+        quote_stuffing_config = QuoteStuffingConfig()
+        self.quote_stuffing_detector = QuoteStuffingDetector(quote_stuffing_config)
+        logger.info("✅ QuoteStuffingDetector инициализирован")
+      except Exception as e:
+        logger.warning(f"⚠️  QuoteStuffingDetector не доступен: {e}")
+        self.quote_stuffing_detector = None
+
+      # 2. Historical Pattern Database (PostgreSQL)
+      try:
+        from ml_engine.detection.pattern_database import HistoricalPatternDatabase
+
+        self.pattern_database = HistoricalPatternDatabase()
+        # Initialize async (load cache from DB)
+        await self.pattern_database.initialize()
+        logger.info("✅ HistoricalPatternDatabase инициализирован (PostgreSQL)")
+      except Exception as e:
+        logger.warning(f"⚠️  HistoricalPatternDatabase не доступен: {e}")
+        self.pattern_database = None
+
+      # 3. Layering Data Collector (for ML training)
+      try:
+        from ml_engine.detection.layering_data_collector import LayeringDataCollector
+
+        # Enable in both ONLY_TRAINING and full mode
+        data_collection_enabled = True  # Always collect data
+        data_collector_path = "data/ml_training/layering"
+
+        self.layering_data_collector = LayeringDataCollector(
+          data_dir=data_collector_path,
+          enabled=data_collection_enabled,
+          auto_save_interval=100
+        )
+
+        if settings.ONLY_TRAINING:
+          logger.info("✅ LayeringDataCollector активен (ONLY_TRAINING mode)")
+        else:
+          logger.info("✅ LayeringDataCollector активен (full trading mode)")
+
+      except Exception as e:
+        logger.warning(f"⚠️  LayeringDataCollector не доступен: {e}")
+        self.layering_data_collector = None
+
+      # 4. Adaptive ML Model (load if exists)
+      try:
+        from ml_engine.detection.adaptive_layering_model import AdaptiveLayeringModel
+
+        model_path = "data/models/layering_adaptive_v1.pkl"
+        self.adaptive_layering_model = AdaptiveLayeringModel(
+          model_path=model_path if Path(model_path).exists() else None,
+          enabled=True
+        )
+
+        if self.adaptive_layering_model.enabled:
+          model_info = self.adaptive_layering_model.get_info()
+          if model_info['trained']:
+            logger.info(
+              f"✅ AdaptiveLayeringModel загружен: "
+              f"samples={model_info['training_samples']}, "
+              f"trained_at={model_info['trained_at']}"
+            )
+          else:
+            logger.info("✅ AdaptiveLayeringModel инициализирован (untrained)")
+        else:
+          logger.info("⚠️  AdaptiveLayeringModel отключен (sklearn not available)")
+
+      except Exception as e:
+        logger.warning(f"⚠️  AdaptiveLayeringModel не доступен: {e}")
+        self.adaptive_layering_model = None
+
+      logger.info("=" * 80)
+
+      # ===== Создаем LayeringDetector с полной интеграцией =====
+      logger.info("Инициализация Professional LayeringDetector с full ML integration...")
+      self.layering_detector = LayeringDetector(
+        config=self.layering_config,
+        trade_managers=self.trade_managers,  # ← Execution analysis
+        pattern_database=self.pattern_database,  # ← Historical learning
+        data_collector=self.layering_data_collector,  # ← ML training data
+        adaptive_model=self.adaptive_layering_model,  # ← Adaptive thresholds
+        enable_ml_features=True
+      )
+      logger.info("✅ LayeringDetector инициализирован с полной ML интеграцией")
+
       # ========== 10. ML FEATURE PIPELINE - СОЗДАНИЕ ДЛЯ ФИНАЛЬНЫХ СИМВОЛОВ ==========
       # ВАЖНО: Создается ПОСЛЕ trade_managers для интеграции реальных market trades
       logger.info("Создание ML Feature Pipeline с интеграцией market trades...")
@@ -1261,6 +1355,11 @@ class BotController:
               del self.trade_managers[symbol]
             if symbol in self.candle_managers:
               del self.candle_managers[symbol]
+
+          # Обновляем LayeringDetector trade_managers после изменений
+          if self.layering_detector and (added or removed):
+            self.layering_detector.trade_managers = self.trade_managers
+            logger.info(f"✅ LayeringDetector обновлен: {len(self.trade_managers)} TradeManagers")
 
           # Обновляем список
           self.symbols = new_symbols
@@ -2074,6 +2173,22 @@ class BotController:
 
               except Exception as e:
                 logger.error(f"[{symbol}] Ошибка Layering Detector: {e}")
+
+            # 2.3 Quote Stuffing Detection
+            if hasattr(self, 'quote_stuffing_detector') and self.quote_stuffing_detector:
+              try:
+                self.quote_stuffing_detector.update(orderbook_snapshot)
+                has_quote_stuffing = self.quote_stuffing_detector.is_stuffing_active(
+                  symbol,
+                  time_window_seconds=30
+                )
+
+                if has_quote_stuffing:
+                  manipulation_detected = True
+                  manipulation_types.append("quote_stuffing")
+
+              except Exception as e:
+                logger.error(f"[{symbol}] Ошибка Quote Stuffing Detector: {e}")
 
             # Блокировка торговли при манипуляциях
             if manipulation_detected:
@@ -2988,6 +3103,19 @@ class BotController:
       logger.info("=" * 80)
       logger.info("ОСТАНОВКА ТОРГОВОГО БОТА")
       logger.info("=" * 80)
+
+      # ===== Сохранение ML данных перед остановкой =====
+      if hasattr(self, 'layering_data_collector') and self.layering_data_collector:
+        try:
+          logger.info("💾 Сохранение ML training data...")
+          self.layering_data_collector.save_to_disk()
+          stats = self.layering_data_collector.get_statistics()
+          logger.info(
+            f"   Сохранено: {stats['buffer_size']} samples, "
+            f"Total collected: {stats['total_collected']}"
+          )
+        except Exception as e:
+          logger.error(f"Ошибка сохранения ML data: {e}")
 
       # Останавливаем задачи
       tasks_to_cancel = []
@@ -4424,8 +4552,11 @@ from api.app import app
 app.router.lifespan_context = lifespan
 
 # Регистрируем роутеры
-from api.routes import auth_router, bot_router, data_router, trading_router, monitoring_router, screener_router, \
-  adaptive_router
+from api.routes import (
+  auth_router, bot_router, data_router, trading_router,
+  monitoring_router, screener_router, adaptive_router,
+  ml_router, detection_router, strategies_router
+)
 
 app.include_router(auth_router)
 app.include_router(bot_router)
@@ -4434,6 +4565,9 @@ app.include_router(trading_router)
 app.include_router(monitoring_router)
 app.include_router(screener_router)
 app.include_router(adaptive_router)
+app.include_router(ml_router)
+app.include_router(detection_router)
+app.include_router(strategies_router)
 # WebSocket эндпоинт
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

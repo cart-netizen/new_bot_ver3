@@ -990,7 +990,7 @@ class OrderBookFeatureExtractor:
       # Fallback к упрощенной формуле
       spread = snapshot.spread or 0.0
       total_vol = sum(vol for _, vol in snapshot.bids[:5]) + sum(vol for _, vol in snapshot.asks[:5])
-      return spread / max(total_vol, 1.0)
+      return spread / float(max(total_vol, 1))
 
     # Берем последние 20 snapshots для расчета
     recent_snapshots = self.snapshot_history[-20:]
@@ -1027,7 +1027,7 @@ class OrderBookFeatureExtractor:
       # Fallback
       spread = snapshot.spread or 0.0
       total_vol = sum(vol for _, vol in snapshot.bids[:5]) + sum(vol for _, vol in snapshot.asks[:5])
-      return spread / max(total_vol, 1.0)
+      return spread / float(max(total_vol, 1))
 
     # Среднее значение Amihud illiquidity
     amihud = float(np.mean(illiquidity_values))

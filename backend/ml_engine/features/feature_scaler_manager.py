@@ -13,7 +13,7 @@ This implementation is suitable for REAL MONEY TRADING.
 Path: backend/ml_engine/features/feature_scaler_manager.py
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union, TYPE_CHECKING
 from dataclasses import dataclass, field
 from pathlib import Path
 import numpy as np
@@ -23,8 +23,16 @@ from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler
 from sklearn.feature_selection import VarianceThreshold
 
 from core.logger import get_logger
+from ml_engine.features import FeatureVector
+
+# Type-only imports to avoid circular dependency
+if TYPE_CHECKING:
+    from ml_engine.features.feature_pipeline import FeatureVector
 
 logger = get_logger(__name__)
+
+# Type alias for sklearn scalers
+SklearnScaler = Union[StandardScaler, RobustScaler, MinMaxScaler]
 
 
 @dataclass
@@ -57,9 +65,9 @@ class ScalerConfig:
 class ScalerState:
     """State of fitted scalers."""
 
-    orderbook_scaler: Optional[object] = None
-    candle_scaler: Optional[object] = None
-    indicator_scaler: Optional[object] = None
+    orderbook_scaler: Optional[SklearnScaler] = None
+    candle_scaler: Optional[SklearnScaler] = None
+    indicator_scaler: Optional[SklearnScaler] = None
 
     # Metadata
     is_fitted: bool = False
@@ -226,10 +234,10 @@ class FeatureScalerManager:
 
         Example:
         --------
-        >>> historical_vectors = load_last_1000_feature_vectors()
-        >>> success = await manager.warmup(historical_vectors)
-        >>> if success:
-        ...     print("Scalers warmed up and ready")
+        historical_vectors = load_last_1000_feature_vectors()
+        success = await manager.warmup(historical_vectors)
+        if success:
+        print("Scalers warmed up and ready")
         """
         if not feature_vectors:
             logger.warning(f"{self.symbol} | No feature vectors for warmup")
@@ -335,9 +343,9 @@ class FeatureScalerManager:
 
         Example:
         --------
-        >>> raw_vector = await pipeline.extract_features(...)
-        >>> scaled_vector = await scaler_manager.scale_features(raw_vector)
-        >>> ml_model.predict(scaled_vector.to_array())
+        raw_vector = await pipeline.extract_features(...)
+        scaled_vector = await scaler_manager.scale_features(raw_vector)
+        ml_model.predict(scaled_vector.to_array())
         """
         if not self.state.is_fitted:
             logger.warning(

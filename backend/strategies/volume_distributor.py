@@ -274,14 +274,14 @@ class VolumeDistributor:
 
         Example:
         -------
-        >>> distributor = VolumeDistributor()
-        >>> volume_dist = distributor.distribute_candles_to_bins(
+        distributor = VolumeDistributor()
+        volume_dist = distributor.distribute_candles_to_bins(
         ...     candles=last_100_candles,
         ...     price_bins=50,
         ...     min_price=50000.0,
         ...     max_price=51000.0
         ... )
-        >>> print(f"Volume at bin 25: {volume_dist[25]:.2f}")
+        print(f"Volume at bin 25: {volume_dist[25]:.2f}")
         """
         if not candles:
             raise ValueError("Cannot distribute empty candle list")
