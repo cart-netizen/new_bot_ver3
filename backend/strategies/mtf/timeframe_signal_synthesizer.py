@@ -40,6 +40,7 @@ from strategies.mtf.timeframe_aligner import (
 )
 from strategies.mtf.mtf_risk_manager import MTFRiskManager, mtf_risk_manager
 from strategy.risk_models import MarketRegime
+from utils.balance_tracker import balance_tracker
 
 logger = get_logger(__name__)
 
@@ -838,6 +839,15 @@ class TimeframeSignalSynthesizer:
     # 2. Собираем список timeframes для reliability tracking
     timeframes_list = list(tf_results.keys())
 
+    # 2.5. Получаем balance для Kelly Criterion position sizing
+    available_balance = balance_tracker.get_current_balance()
+    if available_balance is None or available_balance <= 0:
+      logger.warning(
+        f"{mtf_signal.signal.symbol} | Balance недоступен для Kelly sizing, "
+        f"будет использован fallback position multiplier"
+      )
+      available_balance = None
+
     # 3. Вызываем MTFRiskManager для professional расчета
     risk_params = self.risk_manager.calculate_risk_parameters(
       signal=mtf_signal.signal,
@@ -850,8 +860,8 @@ class TimeframeSignalSynthesizer:
       market_regime=market_regime,
       volatility_regime=volatility_regime,
       atr=atr,
-      ml_result=None,  # TODO: Интегрировать ML predictions если доступны
-      balance=None  # TODO: Передавать balance если доступен для Kelly sizing
+      ml_result=None,  # ML predictions не доступны в MTF контексте
+      balance=available_balance  # Balance для Kelly Criterion
     )
 
     # 4. Заполняем mtf_signal из professional расчетов
