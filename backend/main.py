@@ -310,6 +310,7 @@ class BotController:
     self.analysis_task: Optional[asyncio.Task] = None
     self.candle_update_task: Optional[asyncio.Task] = None
     self.ml_stats_task: Optional[asyncio.Task] = None
+    self.layering_save_task: Optional[asyncio.Task] = None
     self.screener_broadcast_task: Optional[asyncio.Task] = None
     self.symbols_refresh_task: Optional[asyncio.Task] = None
     self.correlation_update_task: Optional[asyncio.Task] = None
@@ -1129,6 +1130,13 @@ class BotController:
       self.ml_stats_task = asyncio.create_task(
         self._ml_stats_loop()
       )
+
+      # ========== 17a. LAYERING ML DATA SAVE LOOP - ЗАПУСК ==========
+      if hasattr(self, 'layering_data_collector') and self.layering_data_collector:
+        self.layering_save_task = asyncio.create_task(
+          self._layering_ml_save_loop()
+        )
+        logger.info("✓ Цикл сохранения Layering ML data запущен")
 
       self.running = True  # ✅ УСТАНОВИТЬ ФЛАГ
       logger.info("✅ Running flag установлен: True")
@@ -3139,6 +3147,12 @@ class BotController:
       if self.websocket_task:
         tasks_to_cancel.append(self.websocket_task)
 
+      if self.ml_stats_task:
+        tasks_to_cancel.append(self.ml_stats_task)
+
+      if hasattr(self, 'layering_save_task') and self.layering_save_task:
+        tasks_to_cancel.append(self.layering_save_task)
+
       for task in tasks_to_cancel:
         task.cancel()
         try:
@@ -3827,6 +3841,45 @@ class BotController:
 
     except Exception as e:
       logger.error(f"Ошибка очистки памяти: {e}")
+
+  async def _layering_ml_save_loop(self):
+    """
+    Периодическое сохранение Layering ML training data.
+
+    Сохраняет буфер каждые 30 минут для предотвращения потери данных.
+    """
+    logger.info("💾 Запущен цикл периодического сохранения Layering ML data")
+
+    while self.running:
+      try:
+        # Сохраняем каждые 30 минут
+        await asyncio.sleep(1800)
+
+        if self.layering_data_collector:
+          buffer_size = len(self.layering_data_collector.data_buffer)
+
+          if buffer_size > 0:
+            logger.info(
+              f"💾 Периодическое сохранение Layering ML data: "
+              f"{buffer_size} samples в буфере"
+            )
+
+            self.layering_data_collector.save_to_disk()
+
+            stats = self.layering_data_collector.get_statistics()
+            logger.info(
+              f"   Статистика: collected={stats['total_collected']}, "
+              f"labeled={stats['total_labeled']} ({stats['labeling_rate']*100:.1f}%), "
+              f"files={stats['files_on_disk']}"
+            )
+          else:
+            logger.debug("💾 Layering ML buffer пуст, пропускаем сохранение")
+
+      except asyncio.CancelledError:
+        logger.info("Layering ML save loop остановлен (CancelledError)")
+        break
+      except Exception as e:
+        logger.error(f"Ошибка в Layering ML save loop: {e}")
 
   async def _screener_broadcast_loop(self):
     """
