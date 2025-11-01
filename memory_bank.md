@@ -5342,3 +5342,110 @@ Migration Path:
 - Run database migrations on startup (automatic)
 - No manual database file creation needed
 - Pattern cache loads from PostgreSQL on init
+
+Implement automatic ML labeling via price validation for Layering detector
+Добавлена автоматическая разметка ML training data через price validation
+для решения критической проблемы unlabeled data.
+
+## 🎯 Решенные проблемы
+
+**Проблема**: Все ML данные собирались БЕЗ меток (label=None)
+- Supervised learning невозможен без разметки
+- Накапливаются тысячи unlabeled samples
+- ML модель не может обучаться
+
+**Решение**: Автоматическая разметка через price action validation
+
+## 📊 Реализованные функции
+
+### 1. Automatic Price Validation (layering_detector.py)
+
+**Новые структуры данных**:
+```python
+@DataClass
+class PendingValidationPattern:
+  data_id: str  # ML data collection ID
+  pattern: LayeringPattern
+  symbol: str
+  entry_price: float
+  entry_timestamp: int
+  expected_direction: str  # "up" or "down"
+  validation_window_seconds: int
+  # Results
+  validation_completed: bool
+  price_moved_as_expected: Optional[bool]
+  actual_price_change_bps: Optional[float]
+```
+
+**Логика валидации**:
+- Layering на bid (fake demand) → ожидаем DOWN после отмены
+- Layering на ask (fake supply) → ожидаем UP после отмены
+- Validation window: 30 секунд
+- Threshold: ≥3 bps движение в expected direction
+
+**Методы**:
+- `_schedule_price_validation()` - запланировать отложенную валидацию
+- `_validate_pattern_price_action()` - async валидация и обновление метки
+
+**Интеграция**:
+```python
+# После data_collector.collect() автоматически:
+if data_id:
+  self._schedule_price_validation(
+    data_id=data_id,
+    pattern=pattern,
+    symbol=symbol,
+    mid_price=mid_price
+  )
+```
+
+**Label confidence**:
+- Рассчитывается на основе величины price movement
+- Formula: min(abs(price_change_bps) / 10.0, 1.0)
+- Пример: 15 bps движение → 1.0 confidence (full)
+-         5 bps движение → 0.5 confidence (medium)
+
+### 2. Periodic ML Data Save (main.py)
+
+**Новая задача**: `_layering_ml_save_loop()`
+- Периодичность: каждые 30 минут
+- Сохраняет буфер на диск
+- Логирует статистику (collected, labeled, labeling_rate, files)
+
+**Интеграция**:
+```python
+# Запуск в start():
+if hasattr(self, 'layering_data_collector') and self.layering_data_collector:
+  self.layering_save_task = asyncio.create_task(
+    self._layering_ml_save_loop()
+  )
+
+# Остановка в stop():
+if hasattr(self, 'layering_save_task') and self.layering_save_task:
+  tasks_to_cancel.append(self.layering_save_task)
+```
+
+**Преимущества**:
+- Предотвращает потерю данных при сбоях
+- Регулярное сохранение вместо только при buffer full
+- Мониторинг labeling progress
+
+## 📈 Ожидаемые результаты
+
+**До изменений**:
+- Labeling rate: 0% (все unlabeled)
+- Supervised learning: НЕВОЗМОЖЕН
+
+**После изменений**:
+- Labeling rate: ~80-95% (автоматическая разметка через 30s)
+- Supervised learning: ВОЗМОЖЕН
+- True positive detection: улучшится с обучением модели
+
+## 🔄 Workflow
+
+1. **Detection**: Layering pattern обнаружен
+2. **Collection**: ML data собран с label=None
+3. **Scheduling**: Запланирована валидация через 30s
+4. **Validation**: Проверка price movement
+5. **Labeling**: Обновление метки в data_collector
+6. **Periodic Save**: Сохранение каждые 30 минут
