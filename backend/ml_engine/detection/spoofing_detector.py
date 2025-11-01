@@ -19,8 +19,8 @@ from datetime import datetime, timedelta
 from collections import deque, defaultdict
 import numpy as np
 
-from core.logger import get_logger
-from models.orderbook import OrderBookSnapshot, OrderBookLevel
+from backend.core.logger import get_logger
+from backend.models.orderbook import OrderBookSnapshot, OrderBookLevel
 
 logger = get_logger(__name__)
 
@@ -511,7 +511,7 @@ class SpoofingDetector:
 
 # Пример использования
 if __name__ == "__main__":
-  from models.orderbook import OrderBookSnapshot, OrderBookLevel
+  from backend.models.orderbook import OrderBookSnapshot, OrderBookLevel
 
   # Создаем детектор
   config = SpoofingConfig(

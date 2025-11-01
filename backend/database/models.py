@@ -14,7 +14,7 @@ from sqlalchemy.orm import relationship
 import uuid
 import enum
 
-from database.connection import Base
+from backend.database.connection import Base
 
 
 # ==================== ENUMS ====================

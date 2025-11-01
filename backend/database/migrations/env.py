@@ -19,7 +19,7 @@ backend_path = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(backend_path))
 
 # ВАЖНО: Импортируем ВСЕ модели до использования Base.metadata
-from database.models import (
+from backend.database.models import (
     Order,
     Position,
     Trade,
@@ -27,8 +27,8 @@ from database.models import (
     IdempotencyCache,
     MarketDataSnapshot
 )
-from database.connection import Base
-from config import settings
+from backend.database.connection import Base
+from backend.config import settings
 
 # Alembic Config object
 config = context.config

@@ -27,8 +27,8 @@ from unittest.mock import Mock, patch
 
 
 
-from strategy.adaptive_risk_calculator import AdaptiveRiskCalculator
-from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
+from backend.strategy.adaptive_risk_calculator import AdaptiveRiskCalculator
+from backend.models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
 
 
 class TestAdaptiveRiskCalculator:

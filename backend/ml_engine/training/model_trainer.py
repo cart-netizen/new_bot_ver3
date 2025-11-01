@@ -27,9 +27,9 @@ from sklearn.metrics import (
   roc_auc_score, confusion_matrix
 )
 
-from core.logger import get_logger
-from ml_engine.models.hybrid_cnn_lstm import HybridCNNLSTM, ModelConfig
-from ml_engine.training.class_balancing import ClassBalancingConfig, ClassBalancingStrategy
+from backend.core.logger import get_logger
+from backend.ml_engine.models.hybrid_cnn_lstm import HybridCNNLSTM, ModelConfig
+from backend.ml_engine.training.class_balancing import ClassBalancingConfig, ClassBalancingStrategy
 
 logger = get_logger(__name__)
 
@@ -775,8 +775,8 @@ class ModelTrainer:
 
 # Пример использования
 if __name__ == "__main__":
-  from ml_engine.models.hybrid_cnn_lstm import create_model
-  from ml_engine.training.data_loader import HistoricalDataLoader, DataConfig
+  from backend.ml_engine.models.hybrid_cnn_lstm import create_model
+  from backend.ml_engine.training.data_loader import HistoricalDataLoader, DataConfig
 
   # Создаем модель
   model = create_model()

@@ -9,8 +9,8 @@ from typing import List, Dict, Optional, Any
 from collections import deque
 from datetime import datetime
 
-from core.logger import get_logger
-from models.candle import Candle
+from backend.core.logger import get_logger
+from backend.models.candle import Candle
 
 logger = get_logger(__name__)
 

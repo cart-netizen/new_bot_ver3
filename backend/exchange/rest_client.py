@@ -7,12 +7,12 @@ import aiohttp
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
-from config import settings
-from core.logger import get_logger
-from core.exceptions import ExchangeAPIError, RateLimitError
-from exchange.bybit_auth import authenticator
-from utils.constants import BybitEndpoints, BybitAPIPaths, BybitCategory
-from utils.helpers import get_timestamp_ms, retry_async
+from backend.config import settings
+from backend.core.logger import get_logger
+from backend.core.exceptions import ExchangeAPIError, RateLimitError
+from backend.exchange.bybit_auth import authenticator
+from backend.utils.constants import BybitEndpoints, BybitAPIPaths, BybitCategory
+from backend.utils.helpers import get_timestamp_ms, retry_async
 
 logger = get_logger(__name__)
 

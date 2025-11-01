@@ -8,9 +8,9 @@ FSM Registry - Глобальный реестр машин состояний.
 from typing import Dict, Optional, List
 from datetime import datetime
 
-from core.logger import get_logger
-from domain.state_machines.order_fsm import OrderStateMachine
-from domain.state_machines.position_fsm import PositionStateMachine
+from backend.core.logger import get_logger
+from backend.domain.state_machines.order_fsm import OrderStateMachine
+from backend.domain.state_machines.position_fsm import PositionStateMachine
 
 logger = get_logger(__name__)
 

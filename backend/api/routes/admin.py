@@ -10,10 +10,10 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from typing import Dict, Any
 from pydantic import BaseModel
 
-from core.logger import get_logger
-from infrastructure.resilience.recovery_service import recovery_service
-from infrastructure.repositories.order_repository import order_repository
-from exchange.rest_client import rest_client
+from backend.core.logger import get_logger
+from backend.infrastructure.resilience.recovery_service import recovery_service
+from backend.infrastructure.repositories.order_repository import order_repository
+from backend.exchange.rest_client import rest_client
 
 logger = get_logger(__name__)
 

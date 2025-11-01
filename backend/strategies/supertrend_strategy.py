@@ -15,9 +15,9 @@ from dataclasses import dataclass
 import numpy as np
 from datetime import datetime
 
-from core.logger import get_logger
-from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
-from strategy.candle_manager import Candle
+from backend.core.logger import get_logger
+from backend.models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
+from backend.strategy.candle_manager import Candle
 
 logger = get_logger(__name__)
 

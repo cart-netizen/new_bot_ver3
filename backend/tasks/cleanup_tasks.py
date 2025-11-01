@@ -5,9 +5,9 @@
 import asyncio
 from datetime import datetime, timedelta
 
-from core.logger import get_logger
-from domain.services.idempotency_service import idempotency_service
-from infrastructure.resilience.recovery_service import recovery_service
+from backend.core.logger import get_logger
+from backend.domain.services.idempotency_service import idempotency_service
+from backend.infrastructure.resilience.recovery_service import recovery_service
 
 logger = get_logger(__name__)
 
@@ -30,7 +30,7 @@ class CleanupTasks:
     )
 
     # Reconciliation каждый час (если включено)
-    from config import settings
+    from backend.config import settings
     if settings.AUTO_RECONCILE_ON_STARTUP:
       self.tasks.append(
         asyncio.create_task(self._reconciliation_loop())
@@ -65,7 +65,7 @@ class CleanupTasks:
 
   async def _reconciliation_loop(self):
     """Периодическая сверка состояния."""
-    from config import settings
+    from backend.config import settings
     interval_minutes = settings.RECONCILE_INTERVAL_MINUTES
 
     while self.running:

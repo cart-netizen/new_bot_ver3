@@ -3,14 +3,14 @@
 Adaptive consensus components for dynamic strategy optimization.
 """
 
-from strategies.adaptive.strategy_performance_tracker import (
+from backend.strategies.adaptive.strategy_performance_tracker import (
   StrategyPerformanceTracker,
   PerformanceTrackerConfig,
   SignalOutcome,
   StrategyMetrics
 )
 
-from strategies.adaptive.market_regime_detector import (
+from backend.strategies.adaptive.market_regime_detector import (
   MarketRegimeDetector,
   RegimeDetectorConfig,
   MarketRegime,
@@ -19,14 +19,14 @@ from strategies.adaptive.market_regime_detector import (
   LiquidityRegime
 )
 
-from strategies.adaptive.weight_optimizer import (
+from backend.strategies.adaptive.weight_optimizer import (
   WeightOptimizer,
   WeightOptimizerConfig,
   OptimizationMethod,
   WeightUpdate
 )
 
-from strategies.adaptive.adaptive_consensus_manager import (
+from backend.strategies.adaptive.adaptive_consensus_manager import (
   AdaptiveConsensusManager,
   AdaptiveConsensusConfig,
   ConsensusQuality

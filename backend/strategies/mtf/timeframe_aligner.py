@@ -22,10 +22,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 import numpy as np
 
-from core.logger import get_logger
-from models.signal import TradingSignal, SignalType
-from strategies.mtf.timeframe_coordinator import Timeframe
-from strategies.mtf.timeframe_analyzer import (
+from backend.core.logger import get_logger
+from backend.models.signal import TradingSignal, SignalType
+from backend.strategies.mtf.timeframe_coordinator import Timeframe
+from backend.strategies.mtf.timeframe_analyzer import (
   TimeframeAnalysisResult,
   MarketRegime,
   VolatilityRegime

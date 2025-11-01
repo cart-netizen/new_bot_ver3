@@ -22,12 +22,12 @@ from datetime import datetime
 from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler
 from sklearn.feature_selection import VarianceThreshold
 
-from core.logger import get_logger
-from ml_engine.features import FeatureVector
+from backend.core.logger import get_logger
+# from ml_engine.features import FeatureVector
 
 # Type-only imports to avoid circular dependency
 if TYPE_CHECKING:
-    from ml_engine.features.feature_pipeline import FeatureVector
+    from backend.ml_engine.features.feature_pipeline import FeatureVector
 
 logger = get_logger(__name__)
 
@@ -386,9 +386,9 @@ class FeatureScalerManager:
             # STEP 3: Create NEW feature objects with scaled values
             # ========================================================================
 
-            from ml_engine.features.orderbook_feature_extractor import OrderBookFeatures
-            from ml_engine.features.candle_feature_extractor import CandleFeatures
-            from ml_engine.features.indicator_feature_extractor import IndicatorFeatures
+            from backend.ml_engine.features.orderbook_feature_extractor import OrderBookFeatures
+            from backend.ml_engine.features.candle_feature_extractor import CandleFeatures
+            from backend.ml_engine.features.indicator_feature_extractor import IndicatorFeatures
 
             # OrderBook features (scaled)
             ob_dict = feature_vector.orderbook_features.to_dict()
@@ -427,7 +427,7 @@ class FeatureScalerManager:
             # STEP 4: Create new FeatureVector with scaled features
             # ========================================================================
 
-            from ml_engine.features.feature_pipeline import FeatureVector
+            from backend.ml_engine.features.feature_pipeline import FeatureVector
 
             scaled_vector = FeatureVector(
                 symbol=feature_vector.symbol,

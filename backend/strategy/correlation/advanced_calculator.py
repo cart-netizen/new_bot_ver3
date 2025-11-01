@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from scipy import stats
 from scipy.spatial.distance import euclidean
 
-from core.logger import get_logger
+from backend.core.logger import get_logger
 from .models import (
     CorrelationMetrics,
     RollingCorrelationWindow,

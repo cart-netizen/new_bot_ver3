@@ -19,9 +19,9 @@ from enum import Enum
 import numpy as np
 from scipy import stats
 
-from core.logger import get_logger
-from strategy.candle_manager import Candle
-from models.orderbook import OrderBookMetrics
+from backend.core.logger import get_logger
+from backend.strategy.candle_manager import Candle
+from backend.models.orderbook import OrderBookMetrics
 
 logger = get_logger(__name__)
 

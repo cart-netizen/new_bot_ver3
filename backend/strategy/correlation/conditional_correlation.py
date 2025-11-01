@@ -12,7 +12,7 @@ import numpy as np
 from typing import Dict, Tuple, List, Optional, cast
 from datetime import datetime
 
-from core.logger import get_logger
+from backend.core.logger import get_logger
 from .models import ConditionalCorrelationMetrics
 
 logger = get_logger(__name__)

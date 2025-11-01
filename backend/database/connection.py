@@ -15,8 +15,8 @@ from sqlalchemy.pool import NullPool
 from sqlalchemy import text
 from contextlib import asynccontextmanager
 
-from config import settings
-from core.logger import get_logger
+from backend.config import settings
+from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
 

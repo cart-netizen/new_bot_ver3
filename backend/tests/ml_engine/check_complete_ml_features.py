@@ -65,7 +65,7 @@ def check_imports():
 
   # OrderBook
   try:
-    from ml_engine.features.orderbook_feature_extractor import (
+    from backend.ml_engine.features.orderbook_feature_extractor import (
       OrderBookFeatureExtractor,
       OrderBookFeatures
     )
@@ -77,7 +77,7 @@ def check_imports():
 
   # Candle
   try:
-    from ml_engine.features.candle_feature_extractor import (
+    from backend.ml_engine.features.candle_feature_extractor import (
       CandleFeatureExtractor,
       CandleFeatures,
       Candle
@@ -91,7 +91,7 @@ def check_imports():
 
   # Indicator
   try:
-    from ml_engine.features.indicator_feature_extractor import (
+    from backend.ml_engine.features.indicator_feature_extractor import (
       IndicatorFeatureExtractor,
       IndicatorFeatures
     )
@@ -103,7 +103,7 @@ def check_imports():
 
   # Pipeline
   try:
-    from ml_engine.features.feature_pipeline import (
+    from backend.ml_engine.features.feature_pipeline import (
       FeaturePipeline,
       FeatureVector,
       MultiSymbolFeaturePipeline
@@ -118,7 +118,7 @@ def check_imports():
 
   # Existing models
   try:
-    from models.orderbook import OrderBookSnapshot
+    from backend.models.orderbook import OrderBookSnapshot
     print("✓ OrderBookSnapshot импортирован")
   except ImportError as e:
     print(f"✗ Ошибка импорта OrderBookSnapshot: {e}")
@@ -132,8 +132,8 @@ def test_orderbook_extractor():
   """Тест OrderBookFeatureExtractor"""
   print_section("3. ТЕСТ ORDERBOOK FEATURE EXTRACTOR")
 
-  from models.orderbook import OrderBookSnapshot
-  from ml_engine.features.orderbook_feature_extractor import OrderBookFeatureExtractor
+  from backend.models.orderbook import OrderBookSnapshot
+  from backend.ml_engine.features.orderbook_feature_extractor import OrderBookFeatureExtractor
   import numpy as np
 
   # Создаем снимок стакана
@@ -207,7 +207,7 @@ def test_candle_extractor():
   """Тест CandleFeatureExtractor"""
   print_section("4. ТЕСТ CANDLE FEATURE EXTRACTOR")
 
-  from ml_engine.features.candle_feature_extractor import (
+  from backend.ml_engine.features.candle_feature_extractor import (
     CandleFeatureExtractor,
     Candle
   )
@@ -270,8 +270,8 @@ def test_indicator_extractor():
   """Тест IndicatorFeatureExtractor"""
   print_section("5. ТЕСТ INDICATOR FEATURE EXTRACTOR")
 
-  from ml_engine.features.indicator_feature_extractor import IndicatorFeatureExtractor
-  from ml_engine.features.candle_feature_extractor import Candle
+  from backend.ml_engine.features.indicator_feature_extractor import IndicatorFeatureExtractor
+  from backend.ml_engine.features.candle_feature_extractor import Candle
   import numpy as np
 
   # Создаем 60 свечей для индикаторов
@@ -336,8 +336,8 @@ def test_feature_pipeline():
   """Тест полного Feature Pipeline"""
   print_section("6. ТЕСТ FEATURE PIPELINE (ПОЛНАЯ ИНТЕГРАЦИЯ)")
 
-  from models.orderbook import OrderBookSnapshot
-  from ml_engine.features import FeaturePipeline, Candle
+  from backend.models.orderbook import OrderBookSnapshot
+  from backend.ml_engine.features import FeaturePipeline, Candle
   import numpy as np
   import asyncio
 
@@ -447,8 +447,8 @@ def test_multi_symbol_pipeline():
   """Тест MultiSymbolFeaturePipeline"""
   print_section("7. ТЕСТ MULTI-SYMBOL PIPELINE")
 
-  from models.orderbook import OrderBookSnapshot
-  from ml_engine.features import MultiSymbolFeaturePipeline, Candle
+  from backend.models.orderbook import OrderBookSnapshot
+  from backend.ml_engine.features import MultiSymbolFeaturePipeline, Candle
   import numpy as np
   import asyncio
 
@@ -513,8 +513,8 @@ def performance_benchmark():
   """Бенчмарк производительности"""
   print_section("8. БЕНЧМАРК ПРОИЗВОДИТЕЛЬНОСТИ")
 
-  from models.orderbook import OrderBookSnapshot
-  from ml_engine.features import FeaturePipeline, Candle
+  from backend.models.orderbook import OrderBookSnapshot
+  from backend.ml_engine.features import FeaturePipeline, Candle
   import numpy as np
   import asyncio
 

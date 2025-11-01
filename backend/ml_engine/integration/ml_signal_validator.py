@@ -15,11 +15,11 @@ from datetime import datetime
 import numpy as np
 from collections import deque
 
-from core.logger import get_logger
-from models.signal import TradingSignal, SignalType, SignalStrength
-from ml_engine.features import FeatureVector
-from strategy.risk_models import MarketRegime
-from utils.helpers import safe_enum_value
+from backend.core.logger import get_logger
+from backend.models.signal import TradingSignal, SignalType, SignalStrength
+from backend.ml_engine.features import FeatureVector
+from backend.strategy.risk_models import MarketRegime
+from backend.utils.helpers import safe_enum_value
 
 logger = get_logger(__name__)
 

@@ -11,8 +11,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from collections import deque
 
-from core.logger import get_logger
-from utils.helpers import get_timestamp_ms
+from backend.core.logger import get_logger
+from backend.utils.helpers import get_timestamp_ms
 
 logger = get_logger(__name__)
 
@@ -114,8 +114,8 @@ class BalanceTracker:
     while self.is_running:
       try:
         # Получаем текущий баланс
-        from exchange.rest_client import rest_client
-        from config import settings
+        from backend.exchange.rest_client import rest_client
+        from backend.config import settings
 
         # Проверяем что API ключи настроены
         if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
@@ -135,7 +135,7 @@ class BalanceTracker:
             "datetime": datetime.fromtimestamp(timestamp / 1000).isoformat()
           })
 
-          from main import bot_controller
+          from backend.main import bot_controller
           if bot_controller and bot_controller.risk_manager:
             bot_controller.risk_manager.update_available_balance(total_balance)
 

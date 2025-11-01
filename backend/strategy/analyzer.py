@@ -5,12 +5,12 @@
 
 from typing import Dict, Optional
 
-from core.logger import get_logger
-from core.exceptions import AnalysisError
-from models.orderbook import OrderBookSnapshot, OrderBookMetrics
-from strategy.orderbook_manager import OrderBookManager
-from config import settings
-from utils.helpers import safe_divide, get_timestamp_ms
+from backend.core.logger import get_logger
+from backend.core.exceptions import AnalysisError
+from backend.models.orderbook import OrderBookSnapshot, OrderBookMetrics
+from backend.strategy.orderbook_manager import OrderBookManager
+from backend.config import settings
+from backend.utils.helpers import safe_divide, get_timestamp_ms
 
 logger = get_logger(__name__)
 

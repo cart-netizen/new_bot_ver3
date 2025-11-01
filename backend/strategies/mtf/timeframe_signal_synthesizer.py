@@ -28,19 +28,19 @@ from datetime import datetime
 from enum import Enum
 import numpy as np
 
-from core.logger import get_logger
-from models.signal import TradingSignal, SignalType, SignalSource, SignalStrength
-from strategies.mtf import ConfluenceZone
-from strategies.mtf.timeframe_coordinator import Timeframe
-from strategies.mtf.timeframe_analyzer import TimeframeAnalysisResult
-from strategies.mtf.timeframe_aligner import (
+from backend.core.logger import get_logger
+from backend.models.signal import TradingSignal, SignalType, SignalSource, SignalStrength
+from backend.strategies.mtf import ConfluenceZone
+from backend.strategies.mtf.timeframe_coordinator import Timeframe
+from backend.strategies.mtf.timeframe_analyzer import TimeframeAnalysisResult
+from backend.strategies.mtf.timeframe_aligner import (
   TimeframeAlignment,
   AlignmentType,
   DivergenceType
 )
-from strategies.mtf.mtf_risk_manager import MTFRiskManager, mtf_risk_manager
-from strategy.risk_models import MarketRegime
-from utils.balance_tracker import balance_tracker
+from backend.strategies.mtf.mtf_risk_manager import MTFRiskManager, mtf_risk_manager
+from backend.strategy.risk_models import MarketRegime
+from backend.utils.balance_tracker import balance_tracker
 
 logger = get_logger(__name__)
 

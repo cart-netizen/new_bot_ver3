@@ -43,7 +43,7 @@ async def check_imports():
 
   # CandleManager
   try:
-    from strategy.candle_manager import CandleManager
+    from backend.strategy.candle_manager import CandleManager
     print_result("CandleManager", True)
     results.append(("CandleManager", True))
   except Exception as e:
@@ -52,7 +52,7 @@ async def check_imports():
 
   # MLDataCollector
   try:
-    from ml_engine.data_collection import MLDataCollector
+    from backend.ml_engine.data_collection import MLDataCollector
     print_result("MLDataCollector", True)
     results.append(("MLDataCollector", True))
   except Exception as e:
@@ -61,7 +61,7 @@ async def check_imports():
 
   # FeaturePipeline
   try:
-    from ml_engine.features import MultiSymbolFeaturePipeline
+    from backend.ml_engine.features import MultiSymbolFeaturePipeline
     print_result("MultiSymbolFeaturePipeline", True)
     results.append(("FeaturePipeline", True))
   except Exception as e:
@@ -70,7 +70,7 @@ async def check_imports():
 
   # Candle Feature Extractor
   try:
-    from ml_engine.features.candle_feature_extractor import (
+    from backend.ml_engine.features.candle_feature_extractor import (
       CandleFeatureExtractor,
       Candle
     )
@@ -96,7 +96,7 @@ async def check_imports():
 
   # REST Client
   try:
-    from exchange.rest_client import rest_client
+    from backend.exchange.rest_client import rest_client
     print_result("REST Client", True)
     results.append(("REST Client Import", True))
   except Exception as e:
@@ -112,7 +112,7 @@ async def check_rest_api():
   results = []
 
   try:
-    from exchange.rest_client import rest_client
+    from backend.exchange.rest_client import rest_client
 
     # Инициализация
     await rest_client.initialize()
@@ -206,8 +206,8 @@ async def check_candle_manager():
   results = []
 
   try:
-    from strategy.candle_manager import CandleManager
-    from ml_engine.features.candle_feature_extractor import Candle
+    from backend.strategy.candle_manager import CandleManager
+    from backend.ml_engine.features.candle_feature_extractor import Candle
 
     # Создание manager
     manager = CandleManager("TEST", timeframe="1m", max_candles=100)
@@ -249,7 +249,7 @@ async def check_ml_data_collector():
   results = []
 
   try:
-    from ml_engine.data_collection import MLDataCollector
+    from backend.ml_engine.data_collection import MLDataCollector
 
     # Создание collector
     test_path = Path("data/ml_training_test")
@@ -299,12 +299,12 @@ async def check_feature_extraction():
   results = []
 
   try:
-    from ml_engine.features.candle_feature_extractor import (
+    from backend.ml_engine.features.candle_feature_extractor import (
       CandleFeatureExtractor,
       Candle
     )
-    from ml_engine.features import FeaturePipeline
-    from models.orderbook import OrderBookSnapshot
+    from backend.ml_engine.features import FeaturePipeline
+    from backend.models.orderbook import OrderBookSnapshot
     import numpy as np
 
     # Создание тестовых данных

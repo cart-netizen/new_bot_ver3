@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Tuple
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from strategy.candle_manager import Candle
+    from backend.strategy.candle_manager import Candle
 else:
     Candle = None
 
@@ -27,10 +27,10 @@ import numpy as np
 from scipy.signal import find_peaks
 from sklearn.cluster import DBSCAN
 
-from core.logger import get_logger
-from core.periodic_logger import periodic_logger
-from models.orderbook import OrderBookSnapshot
-from strategy.candle_manager import Candle
+from backend.core.logger import get_logger
+from backend.core.periodic_logger import periodic_logger
+from backend.models.orderbook import OrderBookSnapshot
+from backend.strategy.candle_manager import Candle
 
 
 logger = get_logger(__name__)
@@ -578,7 +578,7 @@ class SRLevelDetector:
 
 # Пример использования
 if __name__ == "__main__":
-  from strategy.candle_manager import Candle
+  from backend.strategy.candle_manager import Candle
 
   config = SRLevelConfig(
     price_tolerance_pct=0.001,

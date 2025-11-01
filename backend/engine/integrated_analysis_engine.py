@@ -18,24 +18,24 @@ from datetime import datetime
 from enum import Enum
 import asyncio
 
-from core.logger import get_logger
-from models.orderbook import OrderBookSnapshot, OrderBookMetrics
-from models.signal import TradingSignal, SignalType, SignalSource
+from backend.core.logger import get_logger
+from backend.models.orderbook import OrderBookSnapshot, OrderBookMetrics
+from backend.models.signal import TradingSignal, SignalType, SignalSource
 
-from strategy.candle_manager import Candle
+from backend.strategy.candle_manager import Candle
 
 # Фаза 1: OrderBook-Aware Strategies
-from strategies.strategy_manager import (
+from backend.strategies.strategy_manager import (
   ExtendedStrategyManager,
   ExtendedStrategyManagerConfig,
   ConsensusSignal
 )
 
 # Фаза 2: Adaptive Consensus
-from strategies.adaptive import AdaptiveConsensusConfig, AdaptiveConsensusManager
+from backend.strategies.adaptive import AdaptiveConsensusConfig, AdaptiveConsensusManager
 
 # Фаза 3: Multi-Timeframe Analysis
-from strategies.mtf import (
+from backend.strategies.mtf import (
   MultiTimeframeManager,
   MTFManagerConfig,
   MultiTimeframeSignal,
@@ -389,7 +389,7 @@ class IntegratedAnalysisEngine:
       # - High volatility (CHOPPY_VOLATILE)
       # - Low liquidity (less reliable multi-timeframe data)
 
-      from strategies.adaptive.market_regime_detector import (
+      from backend.strategies.adaptive.market_regime_detector import (
         TrendRegime, VolatilityRegime, LiquidityRegime
       )
 
