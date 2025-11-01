@@ -142,12 +142,12 @@ class AdvancedCorrelationCalculator:
 
         # Выравниваем длину
         min_len = min(len(returns_a), len(returns_b))
-        returns_a = returns_a[-min_len:]
-        returns_b = returns_b[-min_len:]
+        arr_a = returns_a[-min_len:].astype(np.float64)
+        arr_b = returns_b[-min_len:].astype(np.float64)
 
         try:
             # stats.spearmanr возвращает SpearmanrResult (correlation, pvalue)
-            result = stats.spearmanr(returns_a, returns_b)
+            result = stats.spearmanr(arr_a, arr_b)
             correlation = float(result.correlation)
 
             if np.isnan(correlation):
@@ -181,11 +181,19 @@ class AdvancedCorrelationCalculator:
             return 1.0  # Максимальная дистанция = нет корреляции
 
         try:
+            # Вычисляем window_size как 10% от длины данных
+            # (DTWParameters.window_size_hours не используется напрямую,
+            # т.к. неизвестна частота дискретизации данных)
+            max_len = max(len(prices_a), len(prices_b))
+            window_size_points = max(1, int(max_len * 0.1))
+
             # Создаем экземпляр DTWCalculator с параметрами
+            # step_pattern по умолчанию 'symmetric2' (стандартный DTW)
             dtw_calc = DTWCalculator(
-                window_size=self.dtw_params.window_size,
+                window_size=window_size_points,
+                distance_metric=self.dtw_params.distance_measure,  # 'euclidean' or 'manhattan'
                 normalize=self.dtw_params.normalize,
-                step_pattern=self.dtw_params.step_pattern
+                step_pattern='symmetric2'  # Стандартный DTW step pattern
             )
 
             # Используем метод, возвращающий нормализованную дистанцию
@@ -219,17 +227,18 @@ class AdvancedCorrelationCalculator:
             return 1.0
 
         try:
-            vol_a = np.std(returns_a)
-            vol_b = np.std(returns_b)
+            vol_a = float(np.std(returns_a))
+            vol_b = float(np.std(returns_b))
 
-            if vol_a == 0 and vol_b == 0:
+            if vol_a == 0.0 and vol_b == 0.0:
                 return 0.0
 
             # Нормализованная разница
             max_vol = max(vol_a, vol_b)
-            distance = abs(vol_a - vol_b) / max(max_vol, 1e-8)
+            denominator = max(max_vol, 1e-8)
+            distance = abs(vol_a - vol_b) / denominator
 
-            return min(float(distance), 1.0)
+            return min(distance, 1.0)
 
         except Exception as e:
             logger.warning(f"Ошибка расчета volatility distance: {e}")
