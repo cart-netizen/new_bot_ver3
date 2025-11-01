@@ -30,6 +30,7 @@ from datetime import datetime
 from collections import defaultdict, deque
 import numpy as np
 import time
+import asyncio
 
 from backend.core.logger import get_logger
 from backend.models.orderbook import OrderBookSnapshot, OrderBookLevel
@@ -183,6 +184,23 @@ class LayeringPattern:
   price_impact_score: float
 
   reason: str
+
+
+@dataclass
+class PendingValidationPattern:
+  """Pattern pending price validation for ML labeling."""
+  data_id: str  # ML data collection ID
+  pattern: LayeringPattern
+  symbol: str
+  entry_price: float
+  entry_timestamp: int
+  expected_direction: str  # "up" or "down"
+  validation_window_seconds: int  # How long to wait
+
+  # Will be populated after validation
+  validation_completed: bool = False
+  price_moved_as_expected: Optional[bool] = None
+  actual_price_change_bps: Optional[float] = None
 
 
 class OrderTracker:
@@ -395,6 +413,10 @@ class LayeringDetector:
     # Last detection time per symbol (for throttling)
     self.last_detection_time: Dict[str, int] = {}
     self.detection_cooldown_ms = 5000  # 5 seconds cooldown
+
+    # ML auto-labeling: patterns pending price validation
+    self.pending_validations: List[PendingValidationPattern] = []
+    self.validation_tasks: List[asyncio.Task] = []  # Track running validation tasks
 
     logger.info(
       f"✅ Professional LayeringDetector initialized: "
@@ -1313,6 +1335,15 @@ class LayeringDetector:
 
         logger.debug(f"📊 Training data collected: {data_id}")
 
+        # ===== Schedule automatic price validation for labeling =====
+        if data_id:
+          self._schedule_price_validation(
+            data_id=data_id,
+            pattern=pattern,
+            symbol=symbol,
+            mid_price=mid_price
+          )
+
       except Exception as e:
         logger.error(f"Error collecting training data: {e}")
 
@@ -1511,6 +1542,135 @@ class LayeringDetector:
         stats['adaptive_model'] = self.adaptive_model.get_info()
 
     return stats
+
+  def _schedule_price_validation(
+      self,
+      data_id: str,
+      pattern: LayeringPattern,
+      symbol: str,
+      mid_price: float
+  ):
+    """
+    Schedule automatic price validation for ML auto-labeling.
+
+    Args:
+        data_id: ML data collection ID
+        pattern: Detected layering pattern
+        symbol: Trading symbol
+        mid_price: Current mid price
+    """
+    if not self.data_collector:
+      return
+
+    # Determine expected price movement direction based on layering side
+    # Layering on bid (fake demand) → expect price to go DOWN after cancellation
+    # Layering on ask (fake supply) → expect price to go UP after cancellation
+    expected_direction = "down" if pattern.spoofing_side == "bid" else "up"
+
+    # Create pending validation record
+    pending = PendingValidationPattern(
+      data_id=data_id,
+      pattern=pattern,
+      symbol=symbol,
+      entry_price=mid_price,
+      entry_timestamp=pattern.timestamp,
+      expected_direction=expected_direction,
+      validation_window_seconds=30  # Validate after 30 seconds
+    )
+
+    self.pending_validations.append(pending)
+
+    # Schedule async validation task
+    try:
+      task = asyncio.create_task(
+        self._validate_pattern_price_action(pending)
+      )
+      self.validation_tasks.append(task)
+
+      logger.debug(
+        f"⏰ Scheduled price validation: {data_id}, "
+        f"expected_direction={expected_direction}, "
+        f"window=30s"
+      )
+
+    except RuntimeError:
+      # No event loop running (sync context)
+      logger.warning(
+        f"⚠️  Cannot schedule async validation (no event loop): {data_id}"
+      )
+
+  async def _validate_pattern_price_action(
+      self,
+      pending: PendingValidationPattern
+  ):
+    """
+    Validate pattern via price action and update ML label.
+
+    Waits validation_window_seconds then checks if price moved as expected.
+
+    Args:
+        pending: Pending validation pattern
+    """
+    try:
+      # Wait for validation window
+      await asyncio.sleep(pending.validation_window_seconds)
+
+      # Get current price
+      symbol = pending.symbol
+      if symbol not in self.price_history or not self.price_history[symbol]:
+        logger.warning(
+          f"⚠️  No price history for validation: {pending.data_id}"
+        )
+        return
+
+      # Get most recent price
+      latest_timestamp, latest_price = self.price_history[symbol][-1]
+
+      # Calculate price change
+      price_change_bps = (
+        (latest_price - pending.entry_price) / pending.entry_price * 10000
+      )
+
+      # Determine if price moved as expected
+      # Threshold: at least 3 bps movement in expected direction
+      threshold_bps = 3.0
+
+      if pending.expected_direction == "down":
+        price_moved_as_expected = price_change_bps < -threshold_bps
+      else:  # "up"
+        price_moved_as_expected = price_change_bps > threshold_bps
+
+      # Update ML data label
+      label_confidence = min(abs(price_change_bps) / 10.0, 1.0)  # Scale confidence
+
+      self.data_collector.update_label(
+        data_id=pending.data_id,
+        label=price_moved_as_expected,
+        label_source="price_action_30s",
+        label_confidence=label_confidence,
+        notes=f"Price change: {price_change_bps:.1f} bps, "
+             f"expected: {pending.expected_direction}"
+      )
+
+      # Update pending record
+      pending.validation_completed = True
+      pending.price_moved_as_expected = price_moved_as_expected
+      pending.actual_price_change_bps = price_change_bps
+
+      logger.info(
+        f"✅ Price validation completed: {pending.data_id}, "
+        f"label={price_moved_as_expected}, "
+        f"price_change={price_change_bps:.1f}bps, "
+        f"confidence={label_confidence:.2f}"
+      )
+
+    except Exception as e:
+      logger.error(f"Error in price validation: {e}")
+
+    finally:
+      # Remove from pending list
+      if pending in self.pending_validations:
+        self.pending_validations.remove(pending)
 
 
 # Example usage and testing
