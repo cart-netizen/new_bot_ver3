@@ -51,12 +51,12 @@ from enum import Enum
 import numpy as np
 from collections import defaultdict, deque
 
-from core.logger import get_logger
-from models.signal import TradingSignal, SignalType
-from strategy.sltp_calculator import UnifiedSLTPCalculator, sltp_calculator
-from strategy.adaptive_risk_calculator import AdaptiveRiskCalculator, adaptive_risk_calculator
-from strategy.risk_models import SLTPCalculation, RiskPerTradeParams, MarketRegime
-from strategies.mtf.timeframe_coordinator import Timeframe
+from backend.core.logger import get_logger
+from backend.models.signal import TradingSignal, SignalType
+from backend.strategy.sltp_calculator import UnifiedSLTPCalculator, sltp_calculator
+from backend.strategy.adaptive_risk_calculator import AdaptiveRiskCalculator, adaptive_risk_calculator
+from backend.strategy.risk_models import SLTPCalculation, RiskPerTradeParams, MarketRegime
+from backend.strategies.mtf.timeframe_coordinator import Timeframe
 
 logger = get_logger(__name__)
 

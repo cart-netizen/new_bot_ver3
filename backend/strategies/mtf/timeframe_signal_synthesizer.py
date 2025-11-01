@@ -38,9 +38,9 @@ from backend.strategies.mtf.timeframe_aligner import (
   AlignmentType,
   DivergenceType
 )
-from strategies.mtf.mtf_risk_manager import MTFRiskManager, mtf_risk_manager
-from strategy.risk_models import MarketRegime
-from utils.balance_tracker import balance_tracker
+from backend.strategies.mtf.mtf_risk_manager import MTFRiskManager, mtf_risk_manager
+from backend.strategy.risk_models import MarketRegime
+from backend.utils.balance_tracker import balance_tracker
 
 logger = get_logger(__name__)
 
