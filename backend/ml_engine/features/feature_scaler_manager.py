@@ -13,7 +13,7 @@ This implementation is suitable for REAL MONEY TRADING.
 Path: backend/ml_engine/features/feature_scaler_manager.py
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass, field
 from pathlib import Path
 import numpy as np
@@ -25,6 +25,9 @@ from sklearn.feature_selection import VarianceThreshold
 from core.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Type alias for sklearn scalers
+SklearnScaler = Union[StandardScaler, RobustScaler, MinMaxScaler]
 
 
 @dataclass
@@ -57,9 +60,9 @@ class ScalerConfig:
 class ScalerState:
     """State of fitted scalers."""
 
-    orderbook_scaler: Optional[object] = None
-    candle_scaler: Optional[object] = None
-    indicator_scaler: Optional[object] = None
+    orderbook_scaler: Optional[SklearnScaler] = None
+    candle_scaler: Optional[SklearnScaler] = None
+    indicator_scaler: Optional[SklearnScaler] = None
 
     # Metadata
     is_fitted: bool = False
