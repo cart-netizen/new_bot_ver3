@@ -16,11 +16,13 @@ Features:
 Path: backend/ml_engine/detection/adaptive_layering_model.py
 """
 
+from __future__ import annotations  # Makes all type hints strings automatically
+
 import numpy as np
 import pandas as pd
 import pickle
 import json
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, TYPE_CHECKING
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -36,6 +38,10 @@ try:
   SKLEARN_AVAILABLE = True
 except ImportError:
   SKLEARN_AVAILABLE = False
+  # Dummy types for when sklearn is not available
+  if TYPE_CHECKING:
+    from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+    from sklearn.preprocessing import StandardScaler
 
 from core.logger import get_logger
 
