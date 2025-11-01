@@ -15,9 +15,9 @@ from pathlib import Path
 # Добавляем backend в path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from database.connection import db_manager
+from backend.database.connection import db_manager
 from sqlalchemy import text
-from core.logger import get_logger
+from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
 

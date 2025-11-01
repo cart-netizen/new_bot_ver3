@@ -8,8 +8,8 @@ from typing import Dict, Optional
 from dataclasses import dataclass
 from datetime import timedelta, datetime
 
-from core.logger import get_logger
-from models.signal import TradingSignal, SignalType
+from backend.core.logger import get_logger
+from backend.models.signal import TradingSignal, SignalType
 
 logger = get_logger(__name__)
 

@@ -9,8 +9,8 @@
 from typing import Optional, Dict
 from datetime import datetime
 
-from core.logger import get_logger
-from config import settings
+from backend.core.logger import get_logger
+from backend.config import settings
 
 logger = get_logger(__name__)
 

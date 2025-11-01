@@ -18,9 +18,9 @@ from enum import Enum
 import asyncio
 import numpy as np
 
-from core.logger import get_logger
-from strategy.candle_manager import CandleManager, Candle
-from exchange.rest_client import rest_client
+from backend.core.logger import get_logger
+from backend.strategy.candle_manager import CandleManager, Candle
+from backend.exchange.rest_client import rest_client
 
 logger = get_logger(__name__)
 
@@ -503,8 +503,8 @@ class TimeframeCoordinator:
             # Конвертируем timeframe в формат Bybit API
             bybit_interval = self._timeframe_to_bybit_interval(timeframe)
 
-            from exchange.rest_client import rest_client
-            from core.logger import get_logger
+            from backend.exchange.rest_client import rest_client
+            from backend.core.logger import get_logger
 
             logger = get_logger(__name__)
 
@@ -571,8 +571,8 @@ class TimeframeCoordinator:
         """
         global logger
         try:
-            from exchange.rest_client import rest_client
-            from core.logger import get_logger
+            from backend.exchange.rest_client import rest_client
+            from backend.core.logger import get_logger
 
             logger = get_logger(__name__)
 

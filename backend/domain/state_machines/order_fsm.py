@@ -7,9 +7,9 @@ from typing import Optional, Dict, Any
 from transitions import Machine
 from datetime import datetime
 
-from core.logger import get_logger
-from core.exceptions import ExecutionError
-from database.models import OrderStatus
+from backend.core.logger import get_logger
+from backend.core.exceptions import ExecutionError
+from backend.database.models import OrderStatus
 
 logger = get_logger(__name__)
 

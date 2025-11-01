@@ -14,10 +14,10 @@ sys.path.insert(0, str(backend_path))
 if sys.platform == 'win32':
   asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-from database.connection import db_manager
-from database.models import OrderStatus
+from backend.database.connection import db_manager
+from backend.database.models import OrderStatus
 from sqlalchemy import select, delete, func
-from core.logger import get_logger
+from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -33,7 +33,7 @@ class OrderCleanupService:
 
     async with db_manager.session() as session:
       # Общее количество
-      from database.models import Order
+      from backend.database.models import Order
 
       stmt = select(func.count()).select_from(Order)
       result = await session.execute(stmt)
@@ -80,7 +80,7 @@ class OrderCleanupService:
     print("-" * 80)
 
     async with db_manager.session() as session:
-      from database.models import Order
+      from backend.database.models import Order
 
       stmt = select(Order).where(
         Order.status == OrderStatus.PENDING,
@@ -108,7 +108,7 @@ class OrderCleanupService:
     print("-" * 80)
 
     async with db_manager.session() as session:
-      from database.models import Order
+      from backend.database.models import Order
 
       stmt = select(Order).where(
         Order.status == OrderStatus.FAILED
@@ -135,7 +135,7 @@ class OrderCleanupService:
     print("-" * 80)
 
     async with db_manager.session() as session:
-      from database.models import Order
+      from backend.database.models import Order
 
       stmt = select(Order).where(
         Order.reason.ilike('%test%') | Order.reason.ilike('%integration%')
@@ -169,7 +169,7 @@ class OrderCleanupService:
       return 0
 
     async with db_manager.session() as session:
-      from database.models import Order
+      from backend.database.models import Order
 
       stmt = delete(Order).where(
         Order.status == OrderStatus.PENDING,
@@ -196,7 +196,7 @@ class OrderCleanupService:
       return 0
 
     async with db_manager.session() as session:
-      from database.models import Order
+      from backend.database.models import Order
 
       stmt = delete(Order).where(
         Order.status == OrderStatus.FAILED
@@ -222,7 +222,7 @@ class OrderCleanupService:
       return 0
 
     async with db_manager.session() as session:
-      from database.models import Order
+      from backend.database.models import Order
 
       stmt = delete(Order).where(
         Order.reason.ilike('%test%') | Order.reason.ilike('%integration%')
@@ -249,7 +249,7 @@ class OrderCleanupService:
       return 0
 
     async with db_manager.session() as session:
-      from database.models import Order
+      from backend.database.models import Order
 
       stmt = delete(Order)
       result = await session.execute(stmt)

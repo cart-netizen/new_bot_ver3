@@ -13,8 +13,8 @@ sys.path.insert(0, str(backend_path))
 if sys.platform == 'win32':
   asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-from exchange.rest_client import rest_client
-from domain.services.idempotency_service import IdempotencyService
+from backend.exchange.rest_client import rest_client
+from backend.domain.services.idempotency_service import IdempotencyService
 
 
 async def test_place_order():

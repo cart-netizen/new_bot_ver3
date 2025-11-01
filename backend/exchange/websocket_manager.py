@@ -10,15 +10,15 @@ from typing import Dict, List, Callable, Any
 import websockets
 import traceback
 
-from config import settings
-from core.logger import get_logger
-from core.exceptions import (
+from backend.config import settings
+from backend.core.logger import get_logger
+from backend.core.exceptions import (
   WebSocketConnectionError,
   WebSocketDisconnectedError,
   WebSocketTimeoutError
 )
-from utils.constants import BybitEndpoints, BybitWSTopics, ConnectionStatus
-from utils.helpers import ExponentialBackoff, get_timestamp_ms
+from backend.utils.constants import BybitEndpoints, BybitWSTopics, ConnectionStatus
+from backend.utils.helpers import ExponentialBackoff, get_timestamp_ms
 
 logger = get_logger(__name__)
 

@@ -10,13 +10,13 @@ from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-from config import settings
-from core.exceptions import (
+from backend.config import settings
+from backend.core.exceptions import (
   AuthenticationError,
   TokenExpiredError,
   InvalidTokenError
 )
-from core.logger import get_logger
+from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
 

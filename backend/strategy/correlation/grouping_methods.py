@@ -21,7 +21,7 @@ try:
 except ImportError:
     SKLEARN_AVAILABLE = False
 
-from core.logger import get_logger
+from backend.core.logger import get_logger
 from .models import AdvancedCorrelationGroup, GroupingMethod
 
 logger = get_logger(__name__)

@@ -18,57 +18,57 @@ import uvicorn
 from fastapi import WebSocket, WebSocketDisconnect
 
 # from analysis_loop_ml_data_collection import ml_data_collection_loop
-from config import settings
-from core.dynamic_symbols import DynamicSymbolsManager
-from core.logger import get_logger, setup_logging
-from core.exceptions import log_exception, OrderBookSyncError, OrderBookError
-from core.trace_context import trace_operation
-from database.connection import db_manager
-from domain.services.fsm_registry import fsm_registry
-from exchange.rest_client import rest_client
-from exchange.websocket_manager import BybitWebSocketManager
-from infrastructure.repositories.position_repository import position_repository
-from infrastructure.resilience.recovery_service import recovery_service
-from ml_engine.detection.layering_detector import LayeringConfig, LayeringDetector
-from ml_engine.detection.spoofing_detector import SpoofingConfig, SpoofingDetector
-from ml_engine.detection.sr_level_detector import SRLevelConfig, SRLevelDetector, SRLevel
-from ml_engine.integration.ml_signal_validator import ValidationConfig, MLSignalValidator
-from ml_engine.monitoring.drift_detector import DriftDetector
-from models.orderbook import OrderBookSnapshot
-from models.market_data import MarketTrade
+from backend.config import settings
+from backend.core.dynamic_symbols import DynamicSymbolsManager
+from backend.core.logger import get_logger, setup_logging
+from backend.core.exceptions import log_exception, OrderBookSyncError, OrderBookError
+from backend.core.trace_context import trace_operation
+from backend.database.connection import db_manager
+from backend.domain.services.fsm_registry import fsm_registry
+from backend.exchange.rest_client import rest_client
+from backend.exchange.websocket_manager import BybitWebSocketManager
+from backend.infrastructure.repositories.position_repository import position_repository
+from backend.infrastructure.resilience.recovery_service import recovery_service
+from backend.ml_engine.detection.layering_detector import LayeringConfig, LayeringDetector
+from backend.ml_engine.detection.spoofing_detector import SpoofingConfig, SpoofingDetector
+from backend.ml_engine.detection.sr_level_detector import SRLevelConfig, SRLevelDetector, SRLevel
+from backend.ml_engine.integration.ml_signal_validator import ValidationConfig, MLSignalValidator
+from backend.ml_engine.monitoring.drift_detector import DriftDetector
+from backend.models.orderbook import OrderBookSnapshot
+from backend.models.market_data import MarketTrade
 # from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
-from screener.screener_manager import ScreenerManager
-from strategies.adaptive import OptimizationMethod, \
+from backend.screener.screener_manager import ScreenerManager
+from backend.strategies.adaptive import OptimizationMethod, \
   RegimeDetectorConfig, PerformanceTrackerConfig
-from strategies.strategy_manager import ExtendedStrategyManagerConfig, ExtendedStrategyManager
-from strategy.candle_manager import CandleManager
-from strategy.correlation_manager import correlation_manager
-from strategy.daily_loss_killer import daily_loss_killer
-from strategy.orderbook_manager import OrderBookManager
-from strategy.trade_manager import TradeManager
-from strategy.analyzer import MarketAnalyzer, OrderBookAnalyzer
-from strategy.position_monitor import PositionMonitor
-from strategy.reversal_detector import reversal_detector
-from strategy.risk_manager_ml_enhanced import RiskManagerMLEnhanced
-from strategy.risk_models import ReversalSignal
-from strategy.strategy_engine import StrategyEngine
-from strategy.risk_manager import RiskManager
-from execution.execution_manager import ExecutionManager
-from strategy.trailing_stop_manager import trailing_stop_manager
-from utils.balance_tracker import balance_tracker
-from utils.constants import BotStatus
-from api.websocket import manager as ws_manager, handle_websocket_messages
-from tasks.cleanup_tasks import cleanup_tasks
-from utils.helpers import safe_enum_value
+from backend.strategies.strategy_manager import ExtendedStrategyManagerConfig, ExtendedStrategyManager
+from backend.strategy.candle_manager import CandleManager
+from backend.strategy.correlation_manager import correlation_manager
+from backend.strategy.daily_loss_killer import daily_loss_killer
+from backend.strategy.orderbook_manager import OrderBookManager
+from backend.strategy.trade_manager import TradeManager
+from backend.strategy.analyzer import MarketAnalyzer, OrderBookAnalyzer
+from backend.strategy.position_monitor import PositionMonitor
+from backend.strategy.reversal_detector import reversal_detector
+from backend.strategy.risk_manager_ml_enhanced import RiskManagerMLEnhanced
+from backend.strategy.risk_models import ReversalSignal
+from backend.strategy.strategy_engine import StrategyEngine
+from backend.strategy.risk_manager import RiskManager
+from backend.execution.execution_manager import ExecutionManager
+from backend.strategy.trailing_stop_manager import trailing_stop_manager
+from backend.utils.balance_tracker import balance_tracker
+from backend.utils.constants import BotStatus
+from backend.api.websocket import manager as ws_manager, handle_websocket_messages
+from backend.tasks.cleanup_tasks import cleanup_tasks
+from backend.utils.helpers import safe_enum_value
 # ML FEATURE PIPELINE - НОВОЕ
-from ml_engine.features import (
+from backend.ml_engine.features import (
   MultiSymbolFeaturePipeline,
   FeatureVector, Candle
 )
-from ml_engine.data_collection import MLDataCollector  # НОВОЕ
+from backend.ml_engine.data_collection import MLDataCollector  # НОВОЕ
 
 # Фаза 2: Adaptive Consensus
-from strategies.adaptive import (
+from backend.strategies.adaptive import (
     AdaptiveConsensusManager,
     AdaptiveConsensusConfig,
 
@@ -76,7 +76,7 @@ from strategies.adaptive import (
 )
 
 # Фаза 3: Multi-Timeframe
-from strategies.mtf import (
+from backend.strategies.mtf import (
   MultiTimeframeManager,
   MTFManagerConfig,
   MultiTimeframeConfig,
@@ -87,13 +87,13 @@ from strategies.mtf import (
 )
 
 # Фаза 4: Integrated Engine
-from engine.integrated_analysis_engine import (
+from backend.engine.integrated_analysis_engine import (
     IntegratedAnalysisEngine,
     IntegratedAnalysisConfig,
     AnalysisMode
 )
 
-from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
+from backend.models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
 
 # Сохраняем оригинальный __post_init__
 _original_tradingsignal_post_init = TradingSignal.__post_init__
@@ -404,7 +404,7 @@ class BotController:
       # ========== ЭТАП 5: STRATEGY MANAGER (ФАЗА 1) ==========
       logger.info("🎯 [5/10] Инициализация ExtendedStrategyManager (Фаза 1)...")
 
-      from strategies.strategy_manager import StrategyPriority
+      from backend.strategies.strategy_manager import StrategyPriority
 
       # Конфигурация Extended Strategy Manager
       strategy_config = ExtendedStrategyManagerConfig(
@@ -948,7 +948,7 @@ class BotController:
 
       # 1. Quote Stuffing Detector (HFT manipulation detection)
       try:
-        from ml_engine.detection.quote_stuffing_detector import (
+        from backend.ml_engine.detection.quote_stuffing_detector import (
           QuoteStuffingDetector, QuoteStuffingConfig
         )
 
@@ -961,7 +961,7 @@ class BotController:
 
       # 2. Historical Pattern Database (PostgreSQL)
       try:
-        from ml_engine.detection.pattern_database import HistoricalPatternDatabase
+        from backend.ml_engine.detection.pattern_database import HistoricalPatternDatabase
 
         self.pattern_database = HistoricalPatternDatabase()
         # Initialize async (load cache from DB)
@@ -973,7 +973,7 @@ class BotController:
 
       # 3. Layering Data Collector (for ML training)
       try:
-        from ml_engine.detection.layering_data_collector import LayeringDataCollector
+        from backend.ml_engine.detection.layering_data_collector import LayeringDataCollector
 
         # Enable in both ONLY_TRAINING and full mode
         data_collection_enabled = True  # Always collect data
@@ -996,7 +996,7 @@ class BotController:
 
       # 4. Adaptive ML Model (load if exists)
       try:
-        from ml_engine.detection.adaptive_layering_model import AdaptiveLayeringModel
+        from backend.ml_engine.detection.adaptive_layering_model import AdaptiveLayeringModel
 
         model_path = "data/models/layering_adaptive_v1.pkl"
         self.adaptive_layering_model = AdaptiveLayeringModel(
@@ -1246,7 +1246,7 @@ class BotController:
       )
 
       # Уведомляем фронтенд
-      from api.websocket import broadcast_bot_status
+      from backend.api.websocket import broadcast_bot_status
       await broadcast_bot_status("running", {
         "symbols": self.symbols,
         "integrated_mode": True,
@@ -1816,7 +1816,7 @@ class BotController:
       return
 
     try:
-      from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
+      from backend.models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
       from datetime import datetime
       import traceback
 
@@ -2755,7 +2755,7 @@ class BotController:
             if has_drift_detector and feature_vector and drift_signal:
               try:
                 # Убедимся, что drift_signal - это TradingSignal (добавляем type hint)
-                from models.signal import TradingSignal, SignalType
+                from backend.models.signal import TradingSignal, SignalType
 
                 # Type guard для проверки типа
                 if not isinstance(drift_signal, TradingSignal):
@@ -2900,14 +2900,14 @@ class BotController:
 
             try:
               # Broadcast OrderBook Update
-              from api.websocket import broadcast_orderbook_update
+              from backend.api.websocket import broadcast_orderbook_update
               await broadcast_orderbook_update(
                 symbol=symbol,
                 orderbook=orderbook_snapshot.to_dict()
               )
 
               # Broadcast Metrics Update
-              from api.websocket import broadcast_metrics_update
+              from backend.api.websocket import broadcast_metrics_update
               await broadcast_metrics_update(
                 symbol=symbol,
                 metrics=market_metrics.to_dict()
@@ -2915,7 +2915,7 @@ class BotController:
 # +++++включить для основной работы++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
               # Broadcast Signal (если был)
               if integrated_signal:
-                from api.websocket import broadcast_signal
+                from backend.api.websocket import broadcast_signal
 
                 try:
                   await broadcast_signal(
@@ -3214,7 +3214,7 @@ class BotController:
       logger.info("=" * 80)
 
       # Уведомляем фронтенд
-      from api.websocket import broadcast_bot_status
+      from backend.api.websocket import broadcast_bot_status
       await broadcast_bot_status("stopped", {
         "message": "Бот успешно остановлен"
       })
@@ -3681,7 +3681,7 @@ class BotController:
 
     # Balance Tracker
     try:
-      from utils.balance_tracker import balance_tracker
+      from backend.utils.balance_tracker import balance_tracker
       balance_stats = balance_tracker.get_stats()
       status_dict["balance"] = {
         "current": balance_stats.get("current_balance", 0.0),
@@ -3694,7 +3694,7 @@ class BotController:
 
     # Daily Loss Killer
     try:
-      from strategy.daily_loss_killer import daily_loss_killer
+      from backend.strategy.daily_loss_killer import daily_loss_killer
       dlk_stats = daily_loss_killer.get_statistics()
       status_dict["daily_loss_killer"] = {
         "trading_allowed": dlk_stats.get("is_allowed", True),
@@ -3707,7 +3707,7 @@ class BotController:
 
     # Correlation Manager
     try:
-      from strategy.correlation_manager import correlation_manager
+      from backend.strategy.correlation_manager import correlation_manager
       corr_stats = correlation_manager.get_statistics()
       status_dict["correlation_stats"] = {
         "total_groups": corr_stats.get("total_groups", 0),
@@ -3833,7 +3833,7 @@ class BotController:
     Цикл рассылки данных скринера через WebSocket.
     Отправляет обновления каждые N секунд.
     """
-    from api.websocket import broadcast_screener_update
+    from backend.api.websocket import broadcast_screener_update
 
     interval = settings.SCREENER_BROADCAST_INTERVAL
     logger.info(f"Запущен screener broadcast loop (интервал: {interval}s)")
@@ -4548,12 +4548,12 @@ async def fsm_cleanup_task():
       await asyncio.sleep(60)
 
 # Импортируем FastAPI приложение и добавляем lifespan
-from api.app import app
+from backend.api.app import app
 
 app.router.lifespan_context = lifespan
 
 # Регистрируем роутеры
-from api.routes import (
+from backend.api.routes import (
   auth_router, bot_router, data_router, trading_router,
   monitoring_router, screener_router, adaptive_router,
   ml_router, detection_router, strategies_router

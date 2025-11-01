@@ -21,8 +21,8 @@ from dataclasses import dataclass
 import time
 import numpy as np
 
-from core.logger import get_logger
-from models.market_data import MarketTrade
+from backend.core.logger import get_logger
+from backend.models.market_data import MarketTrade
 
 logger = get_logger(__name__)
 

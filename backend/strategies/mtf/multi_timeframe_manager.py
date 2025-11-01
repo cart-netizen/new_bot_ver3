@@ -21,9 +21,9 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from core.logger import get_logger
-from models.orderbook import OrderBookSnapshot, OrderBookMetrics
-from strategies.strategy_manager import ExtendedStrategyManager
+from backend.core.logger import get_logger
+from backend.models.orderbook import OrderBookSnapshot, OrderBookMetrics
+from backend.strategies.strategy_manager import ExtendedStrategyManager
 
 from .timeframe_coordinator import (
   TimeframeCoordinator,

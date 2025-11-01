@@ -24,8 +24,8 @@ from datetime import datetime
 from collections import defaultdict
 import numpy as np
 
-from core.logger import get_logger
-from ml_engine.models.hybrid_cnn_lstm import HybridCNNLSTM, ModelConfig, create_model
+from backend.core.logger import get_logger
+from backend.ml_engine.models.hybrid_cnn_lstm import HybridCNNLSTM, ModelConfig, create_model
 
 logger = get_logger(__name__)
 

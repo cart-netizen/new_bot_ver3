@@ -13,7 +13,7 @@ sys.path.insert(0, str(backend_path))
 
 # ВАЖНО: Импортируем модели ДО инициализации БД
 # Это необходимо, чтобы SQLAlchemy знал о всех таблицах
-from database.models import (
+from backend.database.models import (
     Order,
     Position,
     Trade,
@@ -22,8 +22,8 @@ from database.models import (
     MarketDataSnapshot
 )
 
-from database.connection import db_manager
-from core.logger import setup_logging, get_logger
+from backend.database.connection import db_manager
+from backend.core.logger import setup_logging, get_logger
 
 setup_logging()
 logger = get_logger(__name__)
@@ -145,7 +145,7 @@ async def reset_database():
 
     try:
         # ВАЖНО: Импортируем модели
-        from database.models import (
+        from backend.database.models import (
             Order,
             Position,
             Trade,

@@ -7,9 +7,9 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 from sqlalchemy import select
 
-from core.logger import get_logger
-from database.connection import db_manager
-from database.models import AuditLog, AuditAction
+from backend.core.logger import get_logger
+from backend.database.connection import db_manager
+from backend.database.models import AuditLog, AuditAction
 
 logger = get_logger(__name__)
 

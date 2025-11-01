@@ -3,8 +3,8 @@
 """
 
 import pytest
-from domain.state_machines.order_fsm import OrderStateMachine
-from database.models import OrderStatus
+from backend.domain.state_machines.order_fsm import OrderStateMachine
+from backend.database.models import OrderStatus
 
 
 @pytest.mark.asyncio
@@ -24,7 +24,7 @@ async def test_order_fsm_transitions():
 @pytest.mark.asyncio
 async def test_idempotency():
   """Тест идемпотентности."""
-  from domain.services.idempotency_service import idempotency_service
+  from backend.domain.services.idempotency_service import idempotency_service
 
   # Генерация client_order_id
   coid = idempotency_service.generate_client_order_id(

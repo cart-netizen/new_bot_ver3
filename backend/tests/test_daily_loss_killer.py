@@ -22,8 +22,8 @@ import asyncio
 from datetime import datetime, timedelta
 from unittest.mock import Mock, AsyncMock, patch
 
-from strategy.daily_loss_killer import DailyLossKiller
-from strategy.risk_models import DailyLossMetrics
+from backend.strategy.daily_loss_killer import DailyLossKiller
+from backend.strategy.risk_models import DailyLossMetrics
 
 
 class TestDailyLossKiller:

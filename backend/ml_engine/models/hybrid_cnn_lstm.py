@@ -15,7 +15,7 @@ import torch.nn as nn
 from typing import Dict, Tuple, Optional
 from dataclasses import dataclass
 
-from core.logger import get_logger
+from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
 

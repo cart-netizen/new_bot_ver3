@@ -19,11 +19,11 @@ from datetime import datetime
 from enum import Enum
 import numpy as np
 
-from core.logger import get_logger
-from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
-from models.orderbook import OrderBookSnapshot, OrderBookMetrics
-from strategy.candle_manager import Candle
-from strategies.base_orderbook_strategy import BaseOrderBookStrategy
+from backend.core.logger import get_logger
+from backend.models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
+from backend.models.orderbook import OrderBookSnapshot, OrderBookMetrics
+from backend.strategy.candle_manager import Candle
+from backend.strategies.base_orderbook_strategy import BaseOrderBookStrategy
 
 logger = get_logger(__name__)
 

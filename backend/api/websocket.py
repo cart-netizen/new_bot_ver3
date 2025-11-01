@@ -9,8 +9,8 @@ from typing import Dict, Set
 from fastapi import WebSocket, WebSocketDisconnect, Depends
 from datetime import datetime
 
-from core.logger import get_logger
-from core.auth import TokenManager, InvalidTokenError, TokenExpiredError
+from backend.core.logger import get_logger
+from backend.core.auth import TokenManager, InvalidTokenError, TokenExpiredError
 
 logger = get_logger(__name__)
 
@@ -271,7 +271,7 @@ async def broadcast_signal(signal):
       signal: Торговый сигнал (TradingSignal или dict)
   """
   # ✅ ЗАЩИТА: Автоматическая конвертация TradingSignal в dict
-  from models.signal import TradingSignal
+  from backend.models.signal import TradingSignal
 
   if isinstance(signal, TradingSignal):
     logger.warning(

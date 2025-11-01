@@ -9,8 +9,8 @@ from typing import Any, Callable, Optional, TypeVar, Union
 from functools import wraps
 from datetime import datetime
 
-from core.logger import get_logger
-from models.signal import SignalType, SignalStrength
+from backend.core.logger import get_logger
+from backend.models.signal import SignalType, SignalStrength
 
 logger = get_logger(__name__)
 

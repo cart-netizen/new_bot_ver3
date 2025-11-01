@@ -11,13 +11,13 @@ import asyncio
 from typing import Dict, Optional, List
 from datetime import datetime
 
-from core.logger import get_logger
-from config import settings
-from models.signal import SignalType
-from database.models import PositionStatus, OrderSide
-from strategy.risk_models import TrailingStopState
-from infrastructure.repositories.position_repository import position_repository
-from exchange.rest_client import rest_client
+from backend.core.logger import get_logger
+from backend.config import settings
+from backend.models.signal import SignalType
+from backend.database.models import PositionStatus, OrderSide
+from backend.strategy.risk_models import TrailingStopState
+from backend.infrastructure.repositories.position_repository import position_repository
+from backend.exchange.rest_client import rest_client
 
 logger = get_logger(__name__)
 

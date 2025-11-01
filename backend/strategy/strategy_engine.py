@@ -6,19 +6,19 @@
 from typing import Dict, List, Optional
 from collections import deque
 
-from core.logger import get_logger
-from core.exceptions import StrategyError
-from ml_engine.features import FeatureVector
-from models.orderbook import OrderBookMetrics
-from models.signal import (
+from backend.core.logger import get_logger
+from backend.core.exceptions import StrategyError
+from backend.ml_engine.features import FeatureVector
+from backend.models.orderbook import OrderBookMetrics
+from backend.models.signal import (
   TradingSignal,
   SignalType,
   SignalStrength,
   SignalSource,
   SignalStatistics
 )
-from config import settings
-from utils.helpers import safe_enum_value
+from backend.config import settings
+from backend.utils.helpers import safe_enum_value
 
 logger = get_logger(__name__)
 

@@ -10,7 +10,7 @@ import numpy as np
 from typing import Tuple, Optional
 from numba import jit
 
-from core.logger import get_logger
+from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
 

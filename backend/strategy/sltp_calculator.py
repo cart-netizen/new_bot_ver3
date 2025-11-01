@@ -16,11 +16,11 @@
 from typing import Optional
 import numpy as np
 
-from core.logger import get_logger
-from core.exceptions import RiskManagementError
-from config import settings
-from models.signal import TradingSignal, SignalType
-from strategy.risk_models import SLTPCalculation, MarketRegime
+from backend.core.logger import get_logger
+from backend.core.exceptions import RiskManagementError
+from backend.config import settings
+from backend.models.signal import TradingSignal, SignalType
+from backend.strategy.risk_models import SLTPCalculation, MarketRegime
 
 logger = get_logger(__name__)
 

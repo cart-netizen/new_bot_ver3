@@ -7,7 +7,7 @@ from typing import List, Dict, Tuple
 import numpy as np
 from datetime import datetime
 
-from core.logger import get_logger
+from backend.core.logger import get_logger
 from .models import (
     MarketCorrelationRegime,
     CorrelationRegimeInfo,

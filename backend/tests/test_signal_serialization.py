@@ -12,7 +12,7 @@ import json
 import pytest
 from datetime import datetime
 
-from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
+from backend.models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
 
 
 def test_trading_signal_to_dict():

@@ -6,9 +6,9 @@ FSM для жизненного цикла позиции.
 from transitions import Machine
 from datetime import datetime
 
-from core.logger import get_logger
-from core.exceptions import ExecutionError
-from database.models import PositionStatus
+from backend.core.logger import get_logger
+from backend.core.exceptions import ExecutionError
+from backend.database.models import PositionStatus
 
 logger = get_logger(__name__)
 

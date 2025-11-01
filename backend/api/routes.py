@@ -7,21 +7,21 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from core.logger import get_logger
-from core.auth import (
+from backend.core.logger import get_logger
+from backend.core.auth import (
   AuthService,
   require_auth
 )
-from core.exceptions import AuthenticationError
-from exchange.rest_client import rest_client
-from infrastructure.resilience.circuit_breaker import circuit_breaker_manager
-from infrastructure.resilience.rate_limiter import rate_limiter
+from backend.core.exceptions import AuthenticationError
+from backend.exchange.rest_client import rest_client
+from backend.infrastructure.resilience.circuit_breaker import circuit_breaker_manager
+from backend.infrastructure.resilience.rate_limiter import rate_limiter
 
 
-from models.user import LoginRequest, LoginResponse, ChangePasswordRequest
-from config import settings
-from strategy.correlation_manager import correlation_manager
-from utils.balance_tracker import balance_tracker
+from backend.models.user import LoginRequest, LoginResponse, ChangePasswordRequest
+from backend.config import settings
+from backend.strategy.correlation_manager import correlation_manager
+from backend.utils.balance_tracker import balance_tracker
 
 logger = get_logger(__name__)
 
@@ -437,7 +437,7 @@ async def get_balance(current_user: dict = Depends(require_auth)):
 
   try:
     # Получаем реальный баланс из Bybit
-    from exchange.rest_client import rest_client
+    from backend.exchange.rest_client import rest_client
 
     balance_data = await rest_client.get_wallet_balance()
 
@@ -1708,7 +1708,7 @@ async def get_adaptive_risk_stats(current_user: dict = Depends(require_auth)):
   """API endpoint для статистики Adaptive Risk."""
 
   from main import bot_controller
-  from config import settings
+  from backend.config import settings
 
   # Получаем статистику
   stats = bot_controller.risk_manager.get_adaptive_risk_statistics()

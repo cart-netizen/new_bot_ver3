@@ -1089,7 +1089,7 @@ class Settings(BaseSettings):
     # Логируем критичные настройки ПОСЛЕ валидации
     # Импортируем logger ВНУТРИ метода, чтобы избежать circular import
     try:
-      from core.logger import get_logger
+      from backend.core.logger import get_logger
       logger = get_logger(__name__)
       self._log_critical_settings(logger)
     except ImportError:

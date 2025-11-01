@@ -22,12 +22,12 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from strategies.volume_distributor import (
+from backend.strategies.volume_distributor import (
     VolumeDistributor,
     VolumeDistributionConfig,
     create_distributor
 )
-from strategy.candle_manager import Candle
+from backend.strategy.candle_manager import Candle
 
 
 class TestVolumeDistributionConfig:

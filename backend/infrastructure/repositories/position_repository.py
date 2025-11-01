@@ -7,11 +7,11 @@ from typing import List, Optional
 from datetime import datetime
 from sqlalchemy import select, update
 
-from core.logger import get_logger
-from core.trace_context import trace_operation
-from database.connection import db_manager
-from database.models import Position, PositionStatus, OrderSide
-from core.exceptions import DatabaseError
+from backend.core.logger import get_logger
+from backend.core.trace_context import trace_operation
+from backend.database.connection import db_manager
+from backend.database.models import Position, PositionStatus, OrderSide
+from backend.core.exceptions import DatabaseError
 
 logger = get_logger(__name__)
 

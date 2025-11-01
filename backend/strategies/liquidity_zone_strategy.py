@@ -17,11 +17,11 @@ from dataclasses import dataclass
 from datetime import datetime
 import numpy as np
 
-from core.logger import get_logger
-from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
-from models.orderbook import OrderBookSnapshot, OrderBookMetrics
-from strategy.candle_manager import Candle
-from strategies.base_orderbook_strategy import BaseOrderBookStrategy
+from backend.core.logger import get_logger
+from backend.models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
+from backend.models.orderbook import OrderBookSnapshot, OrderBookMetrics
+from backend.strategy.candle_manager import Candle
+from backend.strategies.base_orderbook_strategy import BaseOrderBookStrategy
 # Импортируем SRLevel и SRLevelDetector, если нужны типы
 # from ml_engine.detection.sr_level_detector import SRLevel, SRLevelDetector
 

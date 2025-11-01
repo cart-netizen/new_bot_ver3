@@ -9,7 +9,7 @@ from typing import Optional, Dict
 from dataclasses import dataclass
 from datetime import datetime
 
-from core.logger import get_logger
+from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
 

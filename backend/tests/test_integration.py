@@ -12,11 +12,11 @@ sys.path.insert(0, str(backend_path))
 if sys.platform == 'win32':
   asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-from exchange.rest_client import rest_client
-from domain.services.idempotency_service import IdempotencyService
-from infrastructure.repositories.order_repository import order_repository
-from database.connection import db_manager
-from database.models import OrderSide, OrderType, OrderStatus
+from backend.exchange.rest_client import rest_client
+from backend.domain.services.idempotency_service import IdempotencyService
+from backend.infrastructure.repositories.order_repository import order_repository
+from backend.database.connection import db_manager
+from backend.database.models import OrderSide, OrderType, OrderStatus
 
 
 async def test_full_order_flow():

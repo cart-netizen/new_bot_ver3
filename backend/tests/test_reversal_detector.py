@@ -15,10 +15,10 @@ import numpy as np
 from datetime import datetime
 from typing import List
 
-from ml_engine.features.candle_feature_extractor import Candle
-from models.signal import SignalType
-from strategy.reversal_detector import ReversalDetector
-from strategy.risk_models import ReversalStrength
+from backend.ml_engine.features.candle_feature_extractor import Candle
+from backend.models.signal import SignalType
+from backend.strategy.reversal_detector import ReversalDetector
+from backend.strategy.risk_models import ReversalStrength
 
 
 @pytest.fixture

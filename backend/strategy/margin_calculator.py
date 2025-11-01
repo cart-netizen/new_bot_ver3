@@ -127,7 +127,7 @@ class MarginCalculator:
 """
 В методе calculate_position_size:
 
-from strategy.margin_calculator import MarginCalculator
+from backend.strategy.margin_calculator import MarginCalculator
 
 # После базового расчета position_size_usdt:
 

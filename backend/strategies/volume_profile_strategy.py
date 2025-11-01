@@ -17,10 +17,10 @@ import numpy as np
 from datetime import datetime
 from collections import defaultdict
 
-from core.logger import get_logger
-from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
-from strategy.candle_manager import Candle
-from strategies.volume_distributor import VolumeDistributor, VolumeDistributionConfig
+from backend.core.logger import get_logger
+from backend.models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
+from backend.strategy.candle_manager import Candle
+from backend.strategies.volume_distributor import VolumeDistributor, VolumeDistributionConfig
 
 logger = get_logger(__name__)
 

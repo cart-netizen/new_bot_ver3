@@ -19,11 +19,11 @@ from typing import List, Optional, Dict
 from datetime import datetime, timedelta
 import numpy as np
 
-from core.logger import get_logger
-from config import settings
-from ml_engine.features.candle_feature_extractor import Candle
-from models.signal import SignalType
-from strategy.risk_models import ReversalSignal, ReversalStrength, ReversalAction
+from backend.core.logger import get_logger
+from backend.config import settings
+from backend.ml_engine.features.candle_feature_extractor import Candle
+from backend.models.signal import SignalType
+from backend.strategy.risk_models import ReversalSignal, ReversalStrength, ReversalAction
 
 logger = get_logger(__name__)
 

@@ -8,9 +8,9 @@ from typing import List, Dict, Optional
 from dataclasses import dataclass
 import numpy as np
 
-from core.logger import get_logger
-from core.periodic_logger import periodic_logger
-from ml_engine.features.candle_feature_extractor import Candle
+from backend.core.logger import get_logger
+from backend.core.periodic_logger import periodic_logger
+from backend.ml_engine.features.candle_feature_extractor import Candle
 
 logger = get_logger(__name__)
 

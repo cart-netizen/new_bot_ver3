@@ -8,16 +8,16 @@ Recovery & State Sync Service - ПОЛНАЯ РЕАЛИЗАЦИЯ.
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 
-from core.logger import get_logger
-from config import settings
-from exchange.rest_client import rest_client
-from infrastructure.repositories.order_repository import order_repository
-from infrastructure.repositories.position_repository import position_repository
-from infrastructure.repositories.audit_repository import audit_repository
-from database.models import OrderStatus, PositionStatus, AuditAction, OrderSide
-from domain.state_machines.order_fsm import OrderStateMachine
-from domain.state_machines.position_fsm import PositionStateMachine
-from domain.services.fsm_registry import fsm_registry
+from backend.core.logger import get_logger
+from backend.config import settings
+from backend.exchange.rest_client import rest_client
+from backend.infrastructure.repositories.order_repository import order_repository
+from backend.infrastructure.repositories.position_repository import position_repository
+from backend.infrastructure.repositories.audit_repository import audit_repository
+from backend.database.models import OrderStatus, PositionStatus, AuditAction, OrderSide
+from backend.domain.state_machines.order_fsm import OrderStateMachine
+from backend.domain.state_machines.position_fsm import PositionStateMachine
+from backend.domain.services.fsm_registry import fsm_registry
 
 logger = get_logger(__name__)
 
@@ -615,7 +615,7 @@ class RecoveryService:
         - update_status() вместо update()
         - get_active_positions() вместо get_by_symbol_and_status()
         """
-        from database.models import Order
+        from backend.database.models import Order
 
         # Обновляем поля ордера
         order.status = OrderStatus.FILLED

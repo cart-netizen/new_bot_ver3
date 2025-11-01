@@ -22,19 +22,19 @@ from decimal import Decimal
 
 
 
-from core.logger import get_logger
-from config import settings
-from database.models import PositionStatus
-from infrastructure.repositories.position_repository import position_repository
-from exchange.rest_client import rest_client
-from strategy.analyzer import OrderBookAnalyzer
-from strategy.reversal_detector import reversal_detector
-from strategy.risk_manager import RiskManager
-from models.signal import SignalType
-from ml_engine.features.candle_feature_extractor import Candle
+from backend.core.logger import get_logger
+from backend.config import settings
+from backend.database.models import PositionStatus
+from backend.infrastructure.repositories.position_repository import position_repository
+from backend.exchange.rest_client import rest_client
+from backend.strategy.analyzer import OrderBookAnalyzer
+from backend.strategy.reversal_detector import reversal_detector
+from backend.strategy.risk_manager import RiskManager
+from backend.models.signal import SignalType
+from backend.ml_engine.features.candle_feature_extractor import Candle
 import numpy as np
 
-from strategy.trailing_stop_manager import trailing_stop_manager
+from backend.strategy.trailing_stop_manager import trailing_stop_manager
 
 logger = get_logger(__name__)
 
@@ -692,7 +692,7 @@ class PositionMonitor:
         OrderBookAnalyzer instance
     """
     if symbol not in self.orderbook_analyzers:
-      from strategy.analyzer import OrderBookAnalyzer
+      from backend.strategy.analyzer import OrderBookAnalyzer
       self.orderbook_analyzers[symbol] = OrderBookAnalyzer(symbol)
       logger.debug(f"{symbol} | Created OrderBookAnalyzer instance")
 

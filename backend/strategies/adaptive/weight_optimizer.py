@@ -19,12 +19,12 @@ from enum import Enum
 import numpy as np
 from scipy.stats import beta
 
-from core.logger import get_logger
-from strategies.adaptive.strategy_performance_tracker import (
+from backend.core.logger import get_logger
+from backend.strategies.adaptive.strategy_performance_tracker import (
     StrategyPerformanceTracker,
     StrategyMetrics
 )
-from strategies.adaptive.market_regime_detector import (
+from backend.strategies.adaptive.market_regime_detector import (
     MarketRegimeDetector,
     MarketRegime
 )

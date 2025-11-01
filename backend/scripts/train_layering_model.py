@@ -19,9 +19,9 @@ from pathlib import Path
 # Add backend to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ml_engine.detection.layering_data_collector import LayeringDataCollector
-from ml_engine.detection.adaptive_layering_model import AdaptiveLayeringModel
-from core.logger import get_logger
+from backend.ml_engine.detection.layering_data_collector import LayeringDataCollector
+from backend.ml_engine.detection.adaptive_layering_model import AdaptiveLayeringModel
+from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
 

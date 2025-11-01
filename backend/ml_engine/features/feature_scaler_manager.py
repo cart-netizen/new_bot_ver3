@@ -22,12 +22,12 @@ from datetime import datetime
 from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler
 from sklearn.feature_selection import VarianceThreshold
 
-from core.logger import get_logger
+from backend.core.logger import get_logger
 # from ml_engine.features import FeatureVector
 
 # Type-only imports to avoid circular dependency
 if TYPE_CHECKING:
-    from ml_engine.features.feature_pipeline import FeatureVector
+    from backend.ml_engine.features.feature_pipeline import FeatureVector
 
 logger = get_logger(__name__)
 

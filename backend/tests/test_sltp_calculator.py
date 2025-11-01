@@ -20,9 +20,9 @@ sys.path.insert(0, str(backend_path))
 import pytest
 from datetime import datetime
 
-from strategy.sltp_calculator import UnifiedSLTPCalculator
-from strategy.risk_models import MarketRegime
-from models.signal import TradingSignal, SignalType, SignalSource, SignalStrength
+from backend.strategy.sltp_calculator import UnifiedSLTPCalculator
+from backend.strategy.risk_models import MarketRegime
+from backend.models.signal import TradingSignal, SignalType, SignalSource, SignalStrength
 
 
 class TestUnifiedSLTPCalculator:

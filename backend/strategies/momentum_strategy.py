@@ -16,10 +16,10 @@ from dataclasses import dataclass
 import numpy as np
 from datetime import datetime
 
-from core.logger import get_logger
-from models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
-from strategy.candle_manager import Candle
-from utils.helpers import safe_enum_value
+from backend.core.logger import get_logger
+from backend.models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
+from backend.strategy.candle_manager import Candle
+from backend.utils.helpers import safe_enum_value
 
 logger = get_logger(__name__)
 
@@ -454,7 +454,7 @@ class MomentumStrategy:
 
 # Пример использования
 if __name__ == "__main__":
-  from strategy.candle_manager import Candle
+  from backend.strategy.candle_manager import Candle
   import random
 
   config = MomentumConfig(

@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 from scipy import stats
 
-from core.logger import get_logger
+from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
 
