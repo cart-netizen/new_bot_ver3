@@ -9,7 +9,7 @@ Conditional Correlation Analysis - корреляции в разных рыно
 Путь: backend/strategy/correlation/conditional_correlation.py
 """
 import numpy as np
-from typing import Dict, Tuple, List, Optional
+from typing import Dict, Tuple, List, Optional, cast
 from datetime import datetime
 
 from core.logger import get_logger
@@ -185,9 +185,9 @@ class ConditionalCorrelationAnalyzer:
         # 1. Бычий/медвежий тренд
         trend_regime = self.classifier.classify_trend_regime(avg_prices)
 
-        # Создаем boolean masks для каждого режима
-        bullish_mask: np.ndarray = (trend_regime == 1)
-        bearish_mask: np.ndarray = (trend_regime == -1)
+        # Создаем boolean masks для каждого режима (используем np.equal для type safety)
+        bullish_mask = np.equal(trend_regime, 1)
+        bearish_mask = np.equal(trend_regime, -1)
 
         bullish_corr = self._calculate_regime_correlation(
             returns_a, returns_b, bullish_mask
@@ -200,9 +200,9 @@ class ConditionalCorrelationAnalyzer:
         avg_returns = (returns_a + returns_b) / 2
         vol_regime = self.classifier.classify_volatility_regime(avg_returns)
 
-        # Создаем boolean masks для волатильности
-        high_vol_mask: np.ndarray = (vol_regime == 1)
-        low_vol_mask: np.ndarray = (vol_regime == -1)
+        # Создаем boolean masks для волатильности (используем np.equal)
+        high_vol_mask = np.equal(vol_regime, 1)
+        low_vol_mask = np.equal(vol_regime, -1)
 
         high_vol_corr = self._calculate_regime_correlation(
             returns_a, returns_b, high_vol_mask
