@@ -146,12 +146,14 @@ class AdvancedCorrelationCalculator:
         returns_b = returns_b[-min_len:]
 
         try:
-            correlation, _ = stats.spearmanr(returns_a, returns_b)
+            # stats.spearmanr возвращает SpearmanrResult (correlation, pvalue)
+            result = stats.spearmanr(returns_a, returns_b)
+            correlation = float(result.correlation)
 
             if np.isnan(correlation):
                 return 0.0
 
-            return float(correlation)
+            return correlation
 
         except Exception as e:
             logger.warning(f"Ошибка расчета Spearman: {e}")
@@ -179,17 +181,20 @@ class AdvancedCorrelationCalculator:
             return 1.0  # Максимальная дистанция = нет корреляции
 
         try:
-            # Используем полную реализацию DTW
-            result = DTWCalculator.calculate_dtw(
-                series_a=prices_a,
-                series_b=prices_b,
+            # Создаем экземпляр DTWCalculator с параметрами
+            dtw_calc = DTWCalculator(
                 window_size=self.dtw_params.window_size,
                 normalize=self.dtw_params.normalize,
                 step_pattern=self.dtw_params.step_pattern
             )
 
-            # Результат уже нормализован к [0, 1]
-            return result.normalized_distance
+            # Используем метод, возвращающий нормализованную дистанцию
+            normalized_distance = dtw_calc.calculate_dtw_distance_normalized(
+                series_a=prices_a,
+                series_b=prices_b
+            )
+
+            return normalized_distance
 
         except Exception as e:
             logger.warning(f"Ошибка расчета DTW: {e}")
@@ -221,7 +226,8 @@ class AdvancedCorrelationCalculator:
                 return 0.0
 
             # Нормализованная разница
-            distance = abs(vol_a - vol_b) / max(vol_a, vol_b, 1e-8)
+            max_vol = max(vol_a, vol_b)
+            distance = abs(vol_a - vol_b) / max(max_vol, 1e-8)
 
             return min(float(distance), 1.0)
 
