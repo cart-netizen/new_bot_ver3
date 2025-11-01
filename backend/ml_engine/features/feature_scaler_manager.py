@@ -23,6 +23,7 @@ from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler
 from sklearn.feature_selection import VarianceThreshold
 
 from core.logger import get_logger
+from ml_engine.features import FeatureVector
 
 logger = get_logger(__name__)
 
@@ -226,10 +227,10 @@ class FeatureScalerManager:
 
         Example:
         --------
-        >>> historical_vectors = load_last_1000_feature_vectors()
-        >>> success = await manager.warmup(historical_vectors)
-        >>> if success:
-        ...     print("Scalers warmed up and ready")
+        historical_vectors = load_last_1000_feature_vectors()
+        success = await manager.warmup(historical_vectors)
+        if success:
+        print("Scalers warmed up and ready")
         """
         if not feature_vectors:
             logger.warning(f"{self.symbol} | No feature vectors for warmup")
@@ -335,9 +336,9 @@ class FeatureScalerManager:
 
         Example:
         --------
-        >>> raw_vector = await pipeline.extract_features(...)
-        >>> scaled_vector = await scaler_manager.scale_features(raw_vector)
-        >>> ml_model.predict(scaled_vector.to_array())
+        raw_vector = await pipeline.extract_features(...)
+        scaled_vector = await scaler_manager.scale_features(raw_vector)
+        ml_model.predict(scaled_vector.to_array())
         """
         if not self.state.is_fitted:
             logger.warning(
