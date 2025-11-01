@@ -315,3 +315,66 @@ class MarketDataSnapshot(Base):
   __table_args__ = (
     Index("idx_market_symbol_timestamp", "symbol", "timestamp"),
   )
+
+
+class LayeringPattern(Base):
+  """
+  Historical layering patterns for ML detection.
+
+  Stores detected layering/spoofing patterns with behavioral fingerprints
+  for pattern matching and blacklist management.
+  """
+
+  __tablename__ = "layering_patterns"
+
+  # Identifiers
+  id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+  pattern_id = Column(String(64), unique=True, nullable=False, index=True)
+
+  # Timestamps
+  first_seen = Column(DateTime, nullable=False, index=True)
+  last_seen = Column(DateTime, nullable=False, index=True)
+  occurrence_count = Column(Integer, default=1, nullable=False)
+
+  # Fingerprint features (behavioral signature)
+  avg_layer_count = Column(Float, nullable=False)
+  avg_cancellation_rate = Column(Float, nullable=False)
+  avg_volume_btc = Column(Float, nullable=False)
+  avg_placement_duration = Column(Float, nullable=False)
+  typical_spread_pct = Column(Float, nullable=False)
+  typical_order_count = Column(Integer, nullable=False)
+  spoofing_execution_ratio = Column(Float, nullable=True)
+
+  # Temporal patterns (JSONB for array storage)
+  time_of_day_pattern = Column(JSONB, nullable=True)  # [0-23] active hours
+  avg_lifetime_seconds = Column(Float, nullable=False)
+
+  # Computed hash for fast matching
+  fingerprint_hash = Column(String(64), nullable=False, index=True)
+
+  # Metadata
+  symbols = Column(JSONB, nullable=False)  # List of symbols
+  success_rate = Column(Float, default=0.0, nullable=False)  # How often manipulation succeeded
+  avg_price_impact_bps = Column(Float, default=0.0, nullable=False)
+  avg_confidence = Column(Float, nullable=False)
+
+  # Risk assessment
+  risk_level = Column(String(20), nullable=False)  # "LOW", "MEDIUM", "HIGH", "CRITICAL"
+  blacklist = Column(Boolean, default=False, nullable=False, index=True)
+
+  # Notes
+  notes = Column(Text, nullable=True)
+
+  # Audit
+  created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+  updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+  __table_args__ = (
+    Index("idx_layering_fingerprint_hash", "fingerprint_hash"),
+    Index("idx_layering_blacklist", "blacklist"),
+    Index("idx_layering_last_seen", "last_seen"),
+    Index("idx_layering_occurrence_count", "occurrence_count"),
+  )
+
+  def __repr__(self):
+    return f"<LayeringPattern {self.pattern_id} blacklist={self.blacklist} occurrences={self.occurrence_count}>"

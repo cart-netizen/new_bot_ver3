@@ -16,18 +16,20 @@
 
 ### Что происходит автоматически:
 
-#### 1. **Pattern Database (SQLite)**
+#### 1. **Pattern Database (PostgreSQL)**
 ```python
-# backend/ml_engine/detection/pattern_database.py:101-104
-Path(db_path).parent.mkdir(parents=True, exist_ok=True)  # Создаёт data/
-self._init_database()  # Создаёт таблицы автоматически
+# backend/ml_engine/detection/pattern_database.py
+# Uses project's PostgreSQL database via SQLAlchemy async
 ```
 
-**Создаётся:**
-- 📁 `data/` директория
-- 📊 `data/layering_patterns.db` - SQLite база данных
-- 🏗️ Таблицы: `patterns`, `pattern_statistics`
-- 📇 Индексы: `idx_fingerprint_hash`, `idx_blacklist`, `idx_last_seen`
+**Создаётся автоматически при первом запуске:**
+- 🏗️ Таблица `layering_patterns` в PostgreSQL
+- 📇 Индексы: `idx_layering_fingerprint_hash`, `idx_layering_blacklist`, `idx_layering_last_seen`, `idx_layering_occurrence_count`
+- 🗄️ In-memory cache для быстрого поиска
+
+**Требования:**
+- PostgreSQL должен быть установлен и запущен
+- Database migration будет применена автоматически при запуске
 
 #### 2. **ML Data Collector (Parquet)**
 ```python
@@ -60,18 +62,17 @@ cd /home/user/new_bot_ver3
 pip install -r requirements.txt
 ```
 
-### 2. Новая зависимость: pyarrow
+### 2. Новые зависимости
 
 **Добавлено в requirements.txt:**
 ```
-pyarrow==18.1.0
+pyarrow==18.1.0     # Parquet storage для ML данных
+nest-asyncio==1.6.0 # Поддержка вложенных async event loops
 ```
 
 **Что это даёт:**
-- Эффективное хранение ML данных в формате Parquet
-- Быстрая загрузка больших датасетов (10x быстрее CSV)
-- Сжатие данных (snappy compression)
-- Совместимость с pandas, sklearn, PyTorch
+- **pyarrow**: Эффективное хранение ML данных в формате Parquet (10x быстрее CSV)
+- **nest-asyncio**: Позволяет вызывать async функции из sync контекста (для Pattern Database)
 
 ### 3. Проверьте установку
 
@@ -91,12 +92,11 @@ python -c "import pyarrow; import sklearn; import pandas; print('✅ All depende
 После первого запуска будет создана следующая структура:
 
 ```
+PostgreSQL Database (project database):
+└── layering_patterns table           # Исторические паттерны (автоматически через миграцию)
+
 backend/
 ├── data/
-│   ├── layering_patterns.db              # SQLite база паттернов
-│   │   ├── patterns table                # Исторические паттерны
-│   │   └── pattern_statistics table      # Статистика
-│   │
 │   ├── ml_training/
 │   │   └── layering/
 │   │       ├── layering_data_20251031_120000.parquet
@@ -106,6 +106,12 @@ backend/
 │   └── models/
 │       └── layering_adaptive_v1.pkl      # Обученная модель (создаётся после обучения)
 ```
+
+**PostgreSQL таблица layering_patterns:**
+- Создаётся автоматически через Alembic migration (003_add_layering_patterns)
+- Хранит исторические паттерны манипуляций
+- Поддерживает blacklist management
+- JSONB поля для гибкого хранения metadata
 
 ---
 
@@ -120,7 +126,7 @@ TRADING_MODE=ONLY_TRAINING
 
 **Что происходит:**
 ```
-1. ✅ SQLite база создаётся автоматически
+1. ✅ PostgreSQL таблица layering_patterns создаётся через миграцию
 2. ✅ Директория data/ml_training/layering/ создаётся автоматически
 3. 📊 Layering Detector начинает работать
 4. 💾 Данные собираются в память (buffer)

@@ -958,13 +958,14 @@ class BotController:
         logger.warning(f"⚠️  QuoteStuffingDetector не доступен: {e}")
         self.quote_stuffing_detector = None
 
-      # 2. Historical Pattern Database
+      # 2. Historical Pattern Database (PostgreSQL)
       try:
         from ml_engine.detection.pattern_database import HistoricalPatternDatabase
 
-        pattern_db_path = "data/layering_patterns.db"
-        self.pattern_database = HistoricalPatternDatabase(pattern_db_path)
-        logger.info("✅ HistoricalPatternDatabase инициализирован")
+        self.pattern_database = HistoricalPatternDatabase()
+        # Initialize async (load cache from DB)
+        await self.pattern_database.initialize()
+        logger.info("✅ HistoricalPatternDatabase инициализирован (PostgreSQL)")
       except Exception as e:
         logger.warning(f"⚠️  HistoricalPatternDatabase не доступен: {e}")
         self.pattern_database = None
