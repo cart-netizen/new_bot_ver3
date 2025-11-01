@@ -1129,23 +1129,99 @@ class TimeframeAnalyzer:
     is_consolidation = False
     is_reversal_pattern = False
 
-    # Breakout detection
+    # === Breakout Detection (Professional) ===
+    # Пробой должен подтверждаться объемом для надежности
     if indicators.bollinger_upper and indicators.bollinger_lower:
-      if current_price > indicators.bollinger_upper:
-        is_breakout = True
-      elif current_price < indicators.bollinger_lower:
-        is_breakout = True
+      price_breakout = False
 
-    # Consolidation detection (узкие Bollinger Bands)
+      if current_price > indicators.bollinger_upper:
+        price_breakout = True
+      elif current_price < indicators.bollinger_lower:
+        price_breakout = True
+
+      # Проверяем подтверждение объемом (если доступно)
+      if price_breakout:
+        if indicators.volume_ratio and indicators.volume_ratio > 1.5:
+          # Высокий объем подтверждает пробой
+          is_breakout = True
+        elif indicators.volume_ratio is None:
+          # Объем недоступен - используем только цену
+          is_breakout = True
+        # Если объем низкий (< 1.5x average) - возможно ложный пробой, не считаем
+
+    # === Consolidation Detection (Professional) ===
+    # Узкие Bollinger Bands + низкий ADX = консолидация
+    consolidation_signals = 0
+
     if indicators.bollinger_width:
       if indicators.bollinger_width < 2.0:  # Узкие bands
-        is_consolidation = True
+        consolidation_signals += 1
 
-    # Reversal pattern (простая версия - MACD divergence)
-    if indicators.macd_histogram:
-      # Если histogram меняет знак - возможный разворот
-      # Упрощенная логика
-      pass
+    if indicators.adx is not None:
+      if indicators.adx < 20:  # Слабый/отсутствующий тренд
+        consolidation_signals += 1
+
+    # Низкая волатильность (ATR)
+    if indicators.atr_percent is not None:
+      if indicators.atr_percent < 1.0:  # Низкая волатильность
+        consolidation_signals += 1
+
+    # Минимум 2 сигнала для подтверждения консолидации
+    if consolidation_signals >= 2:
+      is_consolidation = True
+
+    # === Reversal Pattern Detection (Professional) ===
+    # Используем множественные индикаторы для надежности
+    reversal_signals = 0
+    required_signals = 2  # Минимум 2 сигнала для подтверждения
+
+    # 1. MACD Histogram - приближение к нулю (momentum weakening)
+    if indicators.macd_histogram is not None:
+      # Histogram близок к нулю и меняет направление
+      if abs(indicators.macd_histogram) < abs(indicators.macd * 0.1):
+        # Слабый momentum - возможный разворот
+        reversal_signals += 1
+
+    # 2. RSI Extremes - перекупленность/перепроданность
+    if indicators.rsi is not None:
+      if indicators.rsi > 70:  # Overbought - возможен разворот вниз
+        reversal_signals += 1
+      elif indicators.rsi < 30:  # Oversold - возможен разворот вверх
+        reversal_signals += 1
+
+    # 3. Stochastic Extremes - подтверждение через %K/%D
+    if indicators.stochastic_k is not None and indicators.stochastic_d is not None:
+      # Overbought zone (>80) или Oversold zone (<20)
+      if indicators.stochastic_k > 80 or indicators.stochastic_k < 20:
+        # Дополнительное подтверждение: %K и %D близки (конвергенция)
+        if abs(indicators.stochastic_k - indicators.stochastic_d) < 5:
+          reversal_signals += 1
+
+    # 4. ADX Weakening + DI Crossover
+    if (indicators.adx is not None and
+        indicators.adx_di_plus is not None and
+        indicators.adx_di_minus is not None):
+      # ADX падает (тренд ослабевает) + DI близки к пересечению
+      if indicators.adx < 25:  # Weak trend
+        di_diff = abs(indicators.adx_di_plus - indicators.adx_di_minus)
+        if di_diff < 5:  # DI близки - возможно пересечение
+          reversal_signals += 1
+
+    # 5. Bollinger Band Extremes - цена у границ
+    if (indicators.bollinger_upper is not None and
+        indicators.bollinger_lower is not None and
+        indicators.bollinger_middle is not None):
+      # Цена касается или выходит за границы
+      if current_price >= indicators.bollinger_upper:
+        # Overbought - возможен разворот вниз
+        reversal_signals += 1
+      elif current_price <= indicators.bollinger_lower:
+        # Oversold - возможен разворот вверх
+        reversal_signals += 1
+
+    # Финальное решение: минимум 2 сигнала из 5 индикаторов
+    if reversal_signals >= required_signals:
+      is_reversal_pattern = True
 
     # === Confidence в определении режима ===
     regime_confidence = 0.5  # Base
@@ -1180,10 +1256,20 @@ class TimeframeAnalyzer:
       regime_confidence=regime_confidence
     )
 
+    # Детальное логирование паттернов
+    pattern_details = []
+    if is_breakout:
+      pattern_details.append(f"BREAKOUT(vol_ratio={indicators.volume_ratio:.2f if indicators.volume_ratio else 'N/A'})")
+    if is_consolidation:
+      pattern_details.append(f"CONSOLIDATION({consolidation_signals}/3 signals)")
+    if is_reversal_pattern:
+      pattern_details.append(f"REVERSAL({reversal_signals}/{required_signals}+ signals)")
+
     logger.debug(
       f"[{timeframe.value}] {symbol} режим: "
       f"{market_regime.value}, volatility={volatility_regime.value}, "
       f"confidence={regime_confidence:.2f}"
+      + (f", patterns=[{', '.join(pattern_details)}]" if pattern_details else "")
     )
 
     return regime_info
