@@ -5,13 +5,19 @@ Timeframe Signal Synthesizer - синтез финального multi-timeframe
 - Комбинирование сигналов со всех таймфреймов
 - Три режима synthesis: Top-Down, Consensus, Confluence-Required
 - Модуляция confidence на основе alignment
-- Risk management интеграция (position sizing, stop-loss placement)
+- Professional Risk Management интеграция (MTFRiskManager)
 - Quality scoring финального сигнала
 
 Synthesis Modes:
 1. Top-Down: HTF определяет направление, LTF - точку входа
 2. Consensus: Взвешенный консенсус всех TF
 3. Confluence-Required: Только при согласии всех TF
+
+УЛУЧШЕНИЯ (заменяет упрощенную логику):
+- ML/ATR/Regime-based TP/SL вместо фиксированного R:R 2:1
+- Kelly Criterion position sizing вместо простых multipliers
+- Weighted risk assessment вместо счетчика факторов
+- Historical reliability tracking вместо статичного 0.0
 
 Путь: backend/strategies/mtf/timeframe_signal_synthesizer.py
 """
@@ -32,6 +38,8 @@ from strategies.mtf.timeframe_aligner import (
   AlignmentType,
   DivergenceType
 )
+from strategies.mtf.mtf_risk_manager import MTFRiskManager, mtf_risk_manager
+from strategy.risk_models import MarketRegime
 
 logger = get_logger(__name__)
 
@@ -155,14 +163,20 @@ class TimeframeSignalSynthesizer:
   высококачественный торговый сигнал.
   """
 
-  def __init__(self, config: SynthesizerConfig):
+  def __init__(
+      self,
+      config: SynthesizerConfig,
+      risk_manager: Optional[MTFRiskManager] = None
+  ):
     """
     Инициализация синтезатора.
 
     Args:
         config: Конфигурация synthesis
+        risk_manager: MTF Risk Manager (или использует глобальный)
     """
     self.config = config
+    self.risk_manager = risk_manager or mtf_risk_manager
 
     # Статистика
     self.total_syntheses = 0
@@ -174,7 +188,8 @@ class TimeframeSignalSynthesizer:
       f"Инициализирован TimeframeSignalSynthesizer: "
       f"mode={config.mode.value}, "
       f"primary_tf={config.primary_timeframe.value}, "
-      f"execution_tf={config.execution_timeframe.value}"
+      f"execution_tf={config.execution_timeframe.value}, "
+      f"professional_risk_management=True"
     )
 
   def synthesize_signal(
@@ -783,120 +798,119 @@ class TimeframeSignalSynthesizer:
       current_price: float
   ) -> MultiTimeframeSignal:
     """
-    Рассчитать risk management параметры.
+    Рассчитать risk management параметры используя professional MTFRiskManager.
 
-    - Position size multiplier
-    - Stop-loss placement
-    - Take-profit levels
-    - Risk level assessment
+    УЛУЧШЕНИЯ относительно упрощенной версии:
+    - ML/ATR/Regime-based TP/SL вместо фиксированного R:R 2:1
+    - Kelly Criterion position sizing вместо простых multipliers
+    - Weighted risk assessment вместо счетчика факторов
+    - Historical reliability tracking вместо статичного 0.0
+
+    Args:
+        mtf_signal: Multi-timeframe сигнал
+        tf_results: Результаты анализа по timeframes
+        alignment: Timeframe alignment
+        current_price: Текущая цена
+
+    Returns:
+        mtf_signal с заполненными risk parameters
     """
-    # 1. Position Size Multiplier
-    if self.config.enable_dynamic_position_sizing:
-      base_multiplier = self.config.base_position_size
+    # Собираем данные для MTFRiskManager
 
-      # Модификаторы
-      # a) Alignment boost/penalty (уже есть в alignment)
-      multiplier = base_multiplier * alignment.position_size_multiplier
+    # 1. Определяем market regime (используем HTF)
+    market_regime = None
+    volatility_regime = None
+    atr = None
 
-      # b) Quality boost
-      if mtf_signal.signal_quality >= 0.85:
-        multiplier *= 1.2
-      elif mtf_signal.signal_quality < 0.65:
-        multiplier *= 0.8
+    htf = self.config.primary_timeframe
+    if htf in tf_results:
+      htf_result = tf_results[htf]
 
-      # c) Confluence boost
-      if alignment.has_strong_confluence:
-        multiplier *= self.config.max_position_multiplier
-
-      # Ограничиваем
-      multiplier = max(
-        self.config.min_position_multiplier,
-        min(multiplier, self.config.max_position_multiplier)
+      # Маппинг из TrendRegime/VolatilityRegime в MarketRegime
+      market_regime = self._map_to_market_regime(
+        htf_result.regime.trend_direction,
+        htf_result.regime.volatility_regime.value
       )
 
-      mtf_signal.recommended_position_size_multiplier = multiplier
-    else:
-      mtf_signal.recommended_position_size_multiplier = self.config.base_position_size
+      volatility_regime = htf_result.regime.volatility_regime.value
+      atr = htf_result.indicators.atr
 
-    # 2. Stop-Loss Placement
+    # 2. Собираем список timeframes для reliability tracking
+    timeframes_list = list(tf_results.keys())
+
+    # 3. Вызываем MTFRiskManager для professional расчета
+    risk_params = self.risk_manager.calculate_risk_parameters(
+      signal=mtf_signal.signal,
+      current_price=current_price,
+      synthesis_mode=mtf_signal.synthesis_mode.value,
+      timeframes_analyzed=timeframes_list,
+      signal_quality=mtf_signal.signal_quality,
+      alignment_score=alignment.alignment_score,
+      divergence_severity=alignment.divergence_severity,
+      market_regime=market_regime,
+      volatility_regime=volatility_regime,
+      atr=atr,
+      ml_result=None,  # TODO: Интегрировать ML predictions если доступны
+      balance=None  # TODO: Передавать balance если доступен для Kelly sizing
+    )
+
+    # 4. Заполняем mtf_signal из professional расчетов
+    mtf_signal.recommended_stop_loss_price = risk_params['stop_loss_price']
+    mtf_signal.recommended_take_profit_price = risk_params['take_profit_price']
+    mtf_signal.recommended_position_size_multiplier = risk_params['position_size_multiplier']
+    mtf_signal.reliability_score = risk_params['reliability_score']
+    mtf_signal.risk_level = risk_params['risk_level']
+
+    # Добавляем warnings из MTFRiskManager
+    mtf_signal.warnings.extend(risk_params['warnings'])
+
+    # Для stop_loss_timeframe используем stop_loss_timeframe из конфига
     if self.config.use_higher_tf_for_stops:
-      stop_tf = self.config.stop_loss_timeframe
-
-      if stop_tf in tf_results:
-        result = tf_results[stop_tf]
-
-        # Используем swing levels или ATR
-        if mtf_signal.signal.signal_type == SignalType.BUY:
-          # Stop ниже swing low
-          if result.indicators.swing_low:
-            mtf_signal.recommended_stop_loss_price = result.indicators.swing_low
-          elif result.indicators.atr:
-            # Fallback: ATR-based stop
-            stop_distance = result.indicators.atr * self.config.atr_multiplier_for_stops
-            mtf_signal.recommended_stop_loss_price = current_price - stop_distance
-
-        elif mtf_signal.signal.signal_type == SignalType.SELL:
-          # Stop выше swing high
-          if result.indicators.swing_high:
-            mtf_signal.recommended_stop_loss_price = result.indicators.swing_high
-          elif result.indicators.atr:
-            stop_distance = result.indicators.atr * self.config.atr_multiplier_for_stops
-            mtf_signal.recommended_stop_loss_price = current_price + stop_distance
-
-        mtf_signal.stop_loss_timeframe = stop_tf
-
-    # 3. Take-Profit (упрощенная версия - R:R 2:1)
-    if mtf_signal.recommended_stop_loss_price:
-      stop_distance = abs(current_price - mtf_signal.recommended_stop_loss_price)
-
-      if mtf_signal.signal.signal_type == SignalType.BUY:
-        mtf_signal.recommended_take_profit_price = current_price + (stop_distance * 2)
-      elif mtf_signal.signal.signal_type == SignalType.SELL:
-        mtf_signal.recommended_take_profit_price = current_price - (stop_distance * 2)
-
-    # 4. Risk Level Assessment
-    risk_factors = 0
-
-    # High volatility
-    if tf_results:
-      htf = self.config.primary_timeframe
-      if htf in tf_results:
-        if tf_results[htf].regime.volatility_regime.value == 'high':
-          risk_factors += 1
-
-    # Low alignment
-    if alignment.alignment_score < 0.65:
-      risk_factors += 1
-
-    # Divergence present
-    if alignment.divergence_severity > 0.3:
-      risk_factors += 1
-
-    # Low quality
-    if mtf_signal.signal_quality < 0.65:
-      risk_factors += 1
-
-    # Classify risk level
-    if risk_factors == 0:
-      mtf_signal.risk_level = "LOW"
-    elif risk_factors <= 1:
-      mtf_signal.risk_level = "NORMAL"
-    elif risk_factors <= 2:
-      mtf_signal.risk_level = "HIGH"
-    else:
-      mtf_signal.risk_level = "EXTREME"
-      mtf_signal.warnings.append(
-        f"High risk: {risk_factors} risk factors detected"
-      )
+      mtf_signal.stop_loss_timeframe = self.config.stop_loss_timeframe
 
     logger.debug(
-      f"Risk parameters: "
+      f"Professional risk parameters calculated: "
+      f"SL={mtf_signal.recommended_stop_loss_price:.2f}, "
+      f"TP={mtf_signal.recommended_take_profit_price:.2f}, "
+      f"R:R={risk_params['risk_reward_ratio']:.2f}, "
       f"position_mult={mtf_signal.recommended_position_size_multiplier:.2f}, "
-      f"stop_loss={mtf_signal.recommended_stop_loss_price}, "
-      f"risk_level={mtf_signal.risk_level}"
+      f"reliability={mtf_signal.reliability_score:.2f}, "
+      f"risk_level={mtf_signal.risk_level}, "
+      f"method={risk_params['calculation_method']}"
     )
 
     return mtf_signal
+
+  def _map_to_market_regime(
+      self,
+      trend_direction: int,
+      volatility_regime: str
+  ) -> MarketRegime:
+    """
+    Маппинг из TrendRegime/VolatilityRegime в MarketRegime.
+
+    Args:
+        trend_direction: -1 (down), 0 (ranging), 1 (up)
+        volatility_regime: 'low', 'medium', 'high'
+
+    Returns:
+        MarketRegime
+    """
+    # High volatility override
+    if volatility_regime == 'high':
+      return MarketRegime.HIGH_VOLATILITY
+
+    # Ranging market
+    if trend_direction == 0:
+      return MarketRegime.RANGING
+
+    # Trending market
+    if abs(trend_direction) >= 0.7:
+      return MarketRegime.STRONG_TREND
+    elif abs(trend_direction) >= 0.3:
+      return MarketRegime.MILD_TREND
+
+    return MarketRegime.RANGING
 
   def _confidence_to_strength(self, confidence: float) -> SignalStrength:
     """Конвертировать confidence в strength."""
