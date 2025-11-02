@@ -396,6 +396,22 @@ class LayeringDetector:
     self.adaptive_model = adaptive_model
     self.enable_ml_features = enable_ml_features and ADVANCED_FEATURES_AVAILABLE
 
+    # ===== Adaptive thresholds for data collection mode =====
+    # When collecting ML training data, we need MORE samples with LOWER thresholds
+    # to build a diverse dataset including edge cases
+    if self.data_collector:
+      logger.info(
+        f"📊 ML Data Collection Mode: Lowering thresholds for more training samples"
+      )
+      logger.info(f"   ├─ min_layer_volume_btc: {config.min_layer_volume_btc} → 0.1 BTC")
+      logger.info(f"   └─ min_confidence: {config.min_confidence} → 0.35 (for collection)")
+
+      # Lower volume threshold to capture smaller patterns
+      self.config.min_layer_volume_btc = 0.1  # Was 0.5 BTC
+
+      # Note: min_confidence handled in _analyze_two_sided_layering
+      # (confidence >= 0.35 for ML collection vs >= 0.65 for trading alerts)
+
     # Trackers for each symbol: symbol -> side -> OrderTracker
     self.trackers: Dict[str, Dict[str, OrderTracker]] = {}
 
@@ -412,7 +428,9 @@ class LayeringDetector:
 
     # Last detection time per symbol (for throttling)
     self.last_detection_time: Dict[str, int] = {}
-    self.detection_cooldown_ms = 5000  # 5 seconds cooldown
+    # Reduced cooldown when collecting data for ML (1s vs 5s)
+    # More samples needed for training, less spam protection required
+    self.detection_cooldown_ms = 1000 if self.data_collector else 5000
 
     # ML auto-labeling: patterns pending price validation
     self.pending_validations: List[PendingValidationPattern] = []
@@ -506,8 +524,12 @@ class LayeringDetector:
           trigger="trade_burst"
         )
 
-    # Trigger 3: Periodic check (every 50 updates as fallback)
-    if self.total_checks % 50 == 0:
+    # Trigger 3: Periodic check (more frequent when data_collector enabled for ML training)
+    # Data collection mode: check every 10 updates for more samples
+    # Trading mode: check every 50 updates to reduce false positives
+    check_interval = 10 if self.data_collector else 50
+
+    if self.total_checks % check_interval == 0:
       self._detect_patterns(symbol, timestamp, snapshot.mid_price)
       self._cleanup_old_data(symbol, timestamp)
 
@@ -551,6 +573,13 @@ class LayeringDetector:
     """Detect layering patterns with two-sided analysis."""
     if mid_price is None or mid_price <= 0:
       return
+
+    # Log periodic detection (every 100 checks for data collection mode)
+    if self.data_collector and self.total_checks % 100 == 0:
+      logger.info(
+        f"🔍 Layering periodic detection: {symbol} "
+        f"(check #{self.total_checks}, patterns_found={self.patterns_detected})"
+      )
 
     # Analyze both sides for potential spoofing
     for spoofing_side in ["bid", "ask"]:
@@ -698,7 +727,14 @@ class LayeringDetector:
 
     confidence = confidence_components['total']
 
-    if confidence < self.config.min_confidence:
+    # ===== КРИТИЧНО: Для ML сбора данных НЕ отбрасываем низкоуверенные паттерны =====
+    # В режиме обучения (data_collector включен) собираем ВСЕ подозрительные паттерны
+    # для более полного датасета. Фильтрация по confidence только для торговых алертов.
+    should_collect_for_ml = self.data_collector is not None and confidence >= 0.35
+    should_alert_for_trading = confidence >= self.config.min_confidence
+
+    # Если паттерн не проходит даже минимальный порог для ML - отбрасываем
+    if not should_collect_for_ml and not should_alert_for_trading:
       return None
 
     # ===== STEP 6: Build reason string =====
@@ -1333,7 +1369,11 @@ class LayeringDetector:
           label_confidence=0.0
         )
 
-        logger.debug(f"📊 Training data collected: {data_id}")
+        logger.info(
+          f"📊 Layering ML data collected: {data_id} | "
+          f"{symbol} conf={pattern.confidence:.2f} "
+          f"layers={len(pattern.layers)} vol={pattern.total_spoofing_volume:.3f}BTC"
+        )
 
         # ===== Schedule automatic price validation for labeling =====
         if data_id:
