@@ -1030,6 +1030,454 @@ class ExecutionManager:
                 logger.error(f"❌ Ошибка закрытия позиции: {e}", exc_info=True)
                 return None
 
+    async def partial_close_position(
+        self,
+        position_id: str,
+        close_percentage: float,
+        exit_price: float,
+        exit_reason: str = "Partial close"
+    ) -> Optional[dict]:
+        """
+        Частичное закрытие позиции.
+
+        Args:
+            position_id: ID позиции
+            close_percentage: Процент закрытия (0.0 - 1.0, например 0.5 для 50%)
+            exit_price: Цена закрытия
+            exit_reason: Причина частичного закрытия
+
+        Returns:
+            Dict: {
+                'position_id': str,
+                'closed_quantity': float,
+                'remaining_quantity': float,
+                'partial_pnl': float,
+                'status': 'success'
+            }
+        """
+        with trace_operation("partial_close_position", position_id=position_id):
+            logger.info(
+                f"→ Частичное закрытие позиции: {position_id} @ {close_percentage:.0%}"
+            )
+
+            try:
+                # ==========================================
+                # ШАГ 1: ПОЛУЧЕНИЕ ПОЗИЦИИ
+                # ==========================================
+                position = await position_repository.get_by_id(position_id)
+
+                if not position:
+                    logger.error(f"Позиция {position_id} не найдена")
+                    return None
+
+                symbol = position.symbol
+
+                # ==========================================
+                # ШАГ 2: ВАЛИДАЦИЯ
+                # ==========================================
+                if position.status != PositionStatus.OPEN:
+                    logger.error(
+                        f"Позиция {position_id} не в статусе OPEN "
+                        f"(текущий: {position.status.value})"
+                    )
+                    return None
+
+                if not (0.0 < close_percentage < 1.0):
+                    logger.error(
+                        f"Некорректный close_percentage: {close_percentage}. "
+                        f"Должен быть между 0 и 1"
+                    )
+                    return None
+
+                # ==========================================
+                # ШАГ 3: РАСЧЕТ КОЛИЧЕСТВА ДЛЯ ЗАКРЫТИЯ
+                # ==========================================
+                close_quantity_raw = position.quantity * close_percentage
+
+                # Получаем информацию об инструменте для округления
+                instrument_info = await self._get_instrument_info(symbol)
+                if not instrument_info:
+                    logger.error(f"Не удалось получить instrument info для {symbol}")
+                    return None
+
+                # Округляем quantity
+                close_quantity = self._validate_and_round_quantity(
+                    symbol=symbol,
+                    quantity=close_quantity_raw,
+                    price=exit_price,
+                    instrument_info=instrument_info
+                )
+
+                if close_quantity is None:
+                    logger.error(f"Не удалось валидировать quantity для {symbol}")
+                    return None
+
+                logger.info(
+                    f"{symbol} | Closing {close_quantity:.8f} "
+                    f"({close_percentage:.0%} of {position.quantity:.8f})"
+                )
+
+                # ==========================================
+                # ШАГ 4: РАЗМЕЩЕНИЕ ЗАКРЫВАЮЩЕГО ОРДЕРА
+                # ==========================================
+                # Определяем противоположную сторону
+                if position.side == OrderSide.BUY:
+                    close_side = "Sell"  # Закрываем long
+                else:
+                    close_side = "Buy"   # Закрываем short
+
+                logger.info(
+                    f"📡 Размещение закрывающего ордера: "
+                    f"{symbol} {close_side} {close_quantity:.8f}"
+                )
+
+                # Генерируем client_order_id
+                client_order_id = idempotency_service.generate_client_order_id(
+                    symbol=symbol,
+                    side=close_side,
+                    quantity=close_quantity,
+                    price=exit_price
+                )
+
+                # Размещаем ордер на бирже
+                order_response = await rest_client.place_order(
+                    symbol=symbol,
+                    side=close_side,
+                    order_type="Market",
+                    quantity=close_quantity,
+                    client_order_id=client_order_id
+                )
+
+                result = order_response.get("result", {})
+                exchange_order_id = result.get("orderId")
+
+                if not exchange_order_id:
+                    raise OrderExecutionError("Биржа не вернула orderId")
+
+                logger.info(
+                    f"✓ Закрывающий ордер размещен: {exchange_order_id}"
+                )
+
+                # ==========================================
+                # ШАГ 5: РАСЧЕТ PARTIAL PNL
+                # ==========================================
+                if position.side == OrderSide.BUY:
+                    partial_pnl = (exit_price - position.entry_price) * close_quantity
+                else:
+                    partial_pnl = (position.entry_price - exit_price) * close_quantity
+
+                logger.info(f"💰 Partial PnL: ${partial_pnl:+.2f}")
+
+                # ==========================================
+                # ШАГ 6: ОБНОВЛЕНИЕ ПОЗИЦИИ В БД
+                # ==========================================
+                remaining_quantity = position.quantity - close_quantity
+
+                # Получаем текущую metadata
+                current_metadata = position.metadata or {}
+
+                # Добавляем информацию о частичном закрытии
+                if 'partial_closes' not in current_metadata:
+                    current_metadata['partial_closes'] = []
+
+                current_metadata['partial_closes'].append({
+                    'timestamp': int(datetime.now().timestamp() * 1000),
+                    'close_percentage': close_percentage,
+                    'closed_quantity': close_quantity,
+                    'exit_price': exit_price,
+                    'partial_pnl': partial_pnl,
+                    'exchange_order_id': exchange_order_id,
+                    'reason': exit_reason
+                })
+
+                # Обновляем quantity в БД
+                from backend.database.database import db_manager
+                from sqlalchemy import update
+                from backend.database.models import Position
+
+                async with db_manager.session() as session:
+                    stmt = (
+                        update(Position)
+                        .where(Position.id == position_id)
+                        .values(
+                            quantity=remaining_quantity,
+                            metadata_json=current_metadata,
+                            updated_at=datetime.utcnow()
+                        )
+                    )
+                    await session.execute(stmt)
+                    await session.commit()
+
+                logger.info(
+                    f"✓ Позиция обновлена: quantity {position.quantity:.8f} → "
+                    f"{remaining_quantity:.8f}"
+                )
+
+                # ==========================================
+                # ШАГ 7: ОБНОВЛЕНИЕ RISK MANAGER
+                # ==========================================
+                # Уменьшаем exposure
+                closed_value = close_quantity * exit_price
+
+                if symbol in self.risk_manager.open_positions:
+                    current_exposure = self.risk_manager.open_positions[symbol]
+                    new_exposure = current_exposure - closed_value
+
+                    if new_exposure > 0:
+                        self.risk_manager.open_positions[symbol] = new_exposure
+                        logger.debug(
+                            f"RiskManager exposure updated: "
+                            f"{symbol} ${current_exposure:.2f} → ${new_exposure:.2f}"
+                        )
+
+                # Обновляем total exposure
+                self.risk_manager.metrics.total_exposure_usdt -= closed_value
+
+                # ==========================================
+                # ШАГ 8: ЗАПИСЬ РЕЗУЛЬТАТА ДЛЯ ADAPTIVE RISK
+                # ==========================================
+                is_win = partial_pnl > 0
+                self.risk_manager.record_trade_result(
+                    is_win=is_win,
+                    pnl=partial_pnl
+                )
+
+                logger.info(
+                    f"{symbol} | Partial close result recorded: "
+                    f"win={is_win}, pnl={partial_pnl:.2f} USDT"
+                )
+
+                # ==========================================
+                # ШАГ 9: AUDIT LOG
+                # ==========================================
+                await audit_repository.log(
+                    action=AuditAction.POSITION_UPDATE,
+                    entity_type="Position",
+                    entity_id=position_id,
+                    new_value={
+                        "action": "partial_close",
+                        "close_percentage": close_percentage,
+                        "closed_quantity": close_quantity,
+                        "remaining_quantity": remaining_quantity,
+                        "exit_price": exit_price,
+                        "partial_pnl": partial_pnl,
+                        "exchange_order_id": exchange_order_id
+                    },
+                    reason=exit_reason,
+                    success=True
+                )
+
+                logger.info(
+                    f"✓✓✓ PARTIAL CLOSE COMPLETED ✓✓✓\n"
+                    f"  Position ID: {position_id}\n"
+                    f"  Symbol: {symbol}\n"
+                    f"  Closed: {close_quantity:.8f} ({close_percentage:.0%})\n"
+                    f"  Remaining: {remaining_quantity:.8f}\n"
+                    f"  Exit Price: ${exit_price:.2f}\n"
+                    f"  Partial PnL: ${partial_pnl:+.2f}"
+                )
+
+                return {
+                    'position_id': position_id,
+                    'closed_quantity': close_quantity,
+                    'remaining_quantity': remaining_quantity,
+                    'partial_pnl': partial_pnl,
+                    'exchange_order_id': exchange_order_id,
+                    'status': 'success'
+                }
+
+            except Exception as e:
+                logger.error(
+                    f"❌ Ошибка partial close позиции: {e}",
+                    exc_info=True
+                )
+                return None
+
+    async def update_stop_loss(
+        self,
+        position_id: str,
+        new_stop_loss: float,
+        reason: str = "Manual update"
+    ) -> Optional[dict]:
+        """
+        Обновление Stop Loss для открытой позиции.
+
+        Args:
+            position_id: ID позиции
+            new_stop_loss: Новый уровень Stop Loss
+            reason: Причина обновления
+
+        Returns:
+            Dict: {
+                'position_id': str,
+                'symbol': str,
+                'old_stop_loss': float,
+                'new_stop_loss': float,
+                'status': 'success'
+            }
+        """
+        with trace_operation("update_stop_loss", position_id=position_id):
+            logger.info(
+                f"→ Обновление SL для позиции: {position_id} → ${new_stop_loss:.2f}"
+            )
+
+            try:
+                # ==========================================
+                # ШАГ 1: ПОЛУЧЕНИЕ ПОЗИЦИИ
+                # ==========================================
+                position = await position_repository.get_by_id(position_id)
+
+                if not position:
+                    logger.error(f"Позиция {position_id} не найдена")
+                    return None
+
+                symbol = position.symbol
+                old_stop_loss = position.stop_loss
+
+                # ==========================================
+                # ШАГ 2: ВАЛИДАЦИЯ СТАТУСА
+                # ==========================================
+                if position.status != PositionStatus.OPEN:
+                    logger.error(
+                        f"Позиция {position_id} не в статусе OPEN "
+                        f"(текущий: {position.status.value})"
+                    )
+                    return None
+
+                # ==========================================
+                # ШАГ 3: ВАЛИДАЦИЯ SL LOGIC
+                # ==========================================
+                # Получаем текущую цену
+                current_price = None
+                try:
+                    ticker = await rest_client.get_ticker(symbol=symbol)
+                    result = ticker.get("result", {})
+                    if isinstance(result, dict):
+                        ticker_list = result.get("list", [])
+                        if ticker_list:
+                            current_price = float(ticker_list[0].get("lastPrice", 0))
+                except Exception as e:
+                    logger.warning(f"Не удалось получить текущую цену: {e}")
+
+                # Валидация для LONG
+                if position.side == OrderSide.BUY:
+                    if current_price and new_stop_loss >= current_price:
+                        logger.error(
+                            f"Некорректный SL для LONG: "
+                            f"new_sl={new_stop_loss:.2f} >= current_price={current_price:.2f}"
+                        )
+                        return None
+
+                    if new_stop_loss >= position.entry_price:
+                        logger.warning(
+                            f"SL выше entry price для LONG: "
+                            f"new_sl={new_stop_loss:.2f} >= entry={position.entry_price:.2f} "
+                            f"(будет в прибыли)"
+                        )
+
+                # Валидация для SHORT
+                else:
+                    if current_price and new_stop_loss <= current_price:
+                        logger.error(
+                            f"Некорректный SL для SHORT: "
+                            f"new_sl={new_stop_loss:.2f} <= current_price={current_price:.2f}"
+                        )
+                        return None
+
+                    if new_stop_loss <= position.entry_price:
+                        logger.warning(
+                            f"SL ниже entry price для SHORT: "
+                            f"new_sl={new_stop_loss:.2f} <= entry={position.entry_price:.2f} "
+                            f"(будет в прибыли)"
+                        )
+
+                logger.debug(f"{symbol} | SL validation passed ✓")
+
+                # ==========================================
+                # ШАГ 4: ОБНОВЛЕНИЕ SL НА БИРЖЕ
+                # ==========================================
+                logger.info(f"📡 Обновление SL на бирже для {symbol}")
+
+                try:
+                    update_response = await rest_client.set_trading_stop(
+                        symbol=symbol,
+                        stop_loss=new_stop_loss,
+                        take_profit=None  # Не трогаем TP
+                    )
+
+                    logger.info(
+                        f"✓ SL обновлен на бирже: {symbol} | "
+                        f"${old_stop_loss:.2f} → ${new_stop_loss:.2f}"
+                    )
+
+                except Exception as exchange_error:
+                    logger.error(
+                        f"❌ Ошибка обновления SL на бирже: {exchange_error}",
+                        exc_info=True
+                    )
+                    return None
+
+                # ==========================================
+                # ШАГ 5: ОБНОВЛЕНИЕ SL В БД
+                # ==========================================
+                success = await position_repository.update_stop_loss(
+                    position_id=position_id,
+                    new_stop_loss=new_stop_loss
+                )
+
+                if not success:
+                    logger.error(f"Не удалось обновить SL в БД для {position_id}")
+                    # SL обновлен на бирже, но не в БД - это не критично
+                else:
+                    logger.info(f"✓ SL обновлен в БД: {position_id}")
+
+                # ==========================================
+                # ШАГ 6: ОБНОВЛЕНИЕ В TRAILING STOP MANAGER
+                # ==========================================
+                try:
+                    if symbol in trailing_stop_manager.tracked_positions:
+                        trailing_stop_manager.tracked_positions[symbol]['stop_loss'] = new_stop_loss
+                        logger.debug(f"TrailingStopManager updated for {symbol}")
+                except Exception as tsm_error:
+                    logger.warning(f"Не удалось обновить TrailingStopManager: {tsm_error}")
+
+                # ==========================================
+                # ШАГ 7: AUDIT LOG
+                # ==========================================
+                await audit_repository.log(
+                    action=AuditAction.POSITION_UPDATE,
+                    entity_type="Position",
+                    entity_id=position_id,
+                    old_value={'stop_loss': old_stop_loss},
+                    new_value={'stop_loss': new_stop_loss},
+                    reason=reason,
+                    success=True
+                )
+
+                logger.info(
+                    f"✓✓✓ STOP LOSS UPDATED ✓✓✓\n"
+                    f"  Position ID: {position_id}\n"
+                    f"  Symbol: {symbol}\n"
+                    f"  Old SL: ${old_stop_loss:.2f}\n"
+                    f"  New SL: ${new_stop_loss:.2f}\n"
+                    f"  Reason: {reason}"
+                )
+
+                return {
+                    'position_id': position_id,
+                    'symbol': symbol,
+                    'old_stop_loss': old_stop_loss,
+                    'new_stop_loss': new_stop_loss,
+                    'status': 'success'
+                }
+
+            except Exception as e:
+                logger.error(
+                    f"❌ Ошибка обновления SL: {e}",
+                    exc_info=True
+                )
+                return None
+
     # ==================== ПРИВАТНЫЕ МЕТОДЫ ====================
 
     # async def _process_queue(self):
