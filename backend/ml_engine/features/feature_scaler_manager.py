@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import numpy as np
 import joblib
+import asyncio
 from datetime import datetime
 from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler
 from sklearn.feature_selection import VarianceThreshold
@@ -79,6 +80,13 @@ class ScalerState:
     feature_means: Optional[Dict[str, float]] = None
     feature_stds: Optional[Dict[str, float]] = None
     feature_variances: Optional[Dict[str, float]] = None
+
+    # Refit tracking (async)
+    is_refitting: bool = False
+    refit_task: Optional[asyncio.Task] = None
+    last_refit_timestamp: int = 0
+    refit_count: int = 0
+    failed_refits: int = 0
 
     # Version for backward compatibility
     version: str = "v1.0.0"
@@ -316,6 +324,125 @@ class FeatureScalerManager:
             logger.error(f"{self.symbol} | Error during warmup: {e}", exc_info=True)
             return False
 
+    def _fit_scalers_sync(
+        self,
+        orderbook_data: np.ndarray,
+        candle_data: np.ndarray,
+        indicator_data: np.ndarray
+    ):
+        """
+        Synchronous scaler fitting (called from thread pool).
+
+        This method is CPU-bound and should NOT be called directly
+        from async code. Use _refit_scalers_async() instead.
+
+        Args:
+            orderbook_data: OrderBook features array (N x 50)
+            candle_data: Candle features array (N x 25)
+            indicator_data: Indicator features array (N x 35)
+        """
+        self.state.orderbook_scaler.fit(orderbook_data)
+        self.state.candle_scaler.fit(candle_data)
+        self.state.indicator_scaler.fit(indicator_data)
+
+    async def _refit_scalers_async(self) -> bool:
+        """
+        Async refit scalers on accumulated feature history.
+
+        Uses asyncio.to_thread to avoid blocking the event loop.
+        Sklearn fit() is CPU-bound, so we offload it to a thread pool.
+
+        Returns:
+            True if successful, False otherwise
+
+        Algorithm:
+        ----------
+        1. Check if already refitting (prevent concurrent refits)
+        2. Check minimum history requirements
+        3. Mark as refitting
+        4. Prepare data (fast, in event loop)
+        5. Offload CPU-bound fit() to thread pool via asyncio.to_thread
+        6. Update state (back in event loop)
+        7. Auto-save if enabled
+
+        Why asyncio.to_thread?
+        ----------------------
+        - sklearn.fit() is CPU-bound (NumPy operations)
+        - Blocking the event loop would freeze all async operations
+        - asyncio.to_thread runs in ThreadPoolExecutor (available in Python 3.9+)
+        - Event loop continues processing other tasks while fitting
+        """
+        # 1. Check if already refitting
+        if self.state.is_refitting:
+            logger.warning(f"{self.symbol} | Refit already in progress, skipping")
+            return False
+
+        # 2. Check minimum history
+        if len(self.feature_history) < self.config.min_samples_for_fitting:
+            logger.warning(
+                f"{self.symbol} | Insufficient history for refit: "
+                f"{len(self.feature_history)} < {self.config.min_samples_for_fitting}"
+            )
+            return False
+
+        # 3. Mark as refitting
+        self.state.is_refitting = True
+
+        try:
+            logger.info(
+                f"{self.symbol} | Starting async refit on "
+                f"{len(self.feature_history)} samples..."
+            )
+
+            # 4. Prepare data (fast, in event loop)
+            feature_arrays = np.vstack(self.feature_history)
+
+            # Split into channels (assume 110 features total: 50 + 25 + 35)
+            # NOTE: Adjust indices based on actual feature counts
+            orderbook_data = feature_arrays[:, :50]      # First 50 features
+            candle_data = feature_arrays[:, 50:75]       # Next 25 features
+            indicator_data = feature_arrays[:, 75:]      # Remaining features
+
+            # Clean data
+            orderbook_data = np.nan_to_num(orderbook_data, nan=0.0, posinf=0.0, neginf=0.0)
+            candle_data = np.nan_to_num(candle_data, nan=0.0, posinf=0.0, neginf=0.0)
+            indicator_data = np.nan_to_num(indicator_data, nan=0.0, posinf=0.0, neginf=0.0)
+
+            # 5. Offload CPU-bound fit() to thread pool
+            # asyncio.to_thread runs in default ThreadPoolExecutor
+            await asyncio.to_thread(
+                self._fit_scalers_sync,
+                orderbook_data,
+                candle_data,
+                indicator_data
+            )
+
+            # 6. Update state (back in event loop)
+            self.state.last_refit_timestamp = int(datetime.now().timestamp() * 1000)
+            self.state.refit_count += 1
+
+            # 7. Auto-save
+            if self.config.auto_save:
+                self._save_state()
+
+            logger.info(
+                f"{self.symbol} | ✅ Async refit completed successfully "
+                f"(refit #{self.state.refit_count})"
+            )
+
+            return True
+
+        except Exception as e:
+            logger.error(
+                f"{self.symbol} | Async refit failed: {e}",
+                exc_info=True
+            )
+            self.state.failed_refits += 1
+            return False
+
+        finally:
+            self.state.is_refitting = False
+
     async def scale_features(
         self,
         feature_vector: 'FeatureVector',
@@ -335,11 +462,12 @@ class FeatureScalerManager:
 
         Algorithm:
         ----------
-        1. Extract channel arrays from feature_vector
-        2. Scale each channel independently using fitted scaler
-        3. Create NEW feature objects with scaled values
-        4. Preserve original values in metadata
-        5. Return new FeatureVector with normalized features
+        1. Clean up completed refit tasks
+        2. Extract channel arrays from feature_vector
+        3. Scale each channel independently using fitted scaler
+        4. Create NEW feature objects with scaled values
+        5. Preserve original values in metadata
+        6. Return new FeatureVector with normalized features
 
         Example:
         --------
@@ -347,6 +475,9 @@ class FeatureScalerManager:
         scaled_vector = await scaler_manager.scale_features(raw_vector)
         ml_model.predict(scaled_vector.to_array())
         """
+        # Clean up completed refit tasks
+        self._cleanup_refit_task()
+
         if not self.state.is_fitted:
             logger.warning(
                 f"{self.symbol} | Scalers not fitted, call warmup() first. "
@@ -469,7 +600,29 @@ class FeatureScalerManager:
                         f"{self.symbol} | Periodic refit triggered after "
                         f"{self.state.samples_processed} samples"
                     )
-                    # TODO: Implement async refit without blocking
+
+                    # Launch async refit in background (non-blocking)
+                    if not self.state.is_refitting:
+                        refit_task = asyncio.create_task(self._refit_scalers_async())
+                        self.state.refit_task = refit_task
+
+                        # Add done callback for logging
+                        def log_refit_completion(task: asyncio.Task):
+                            try:
+                                success = task.result() if not task.exception() else False
+                                logger.info(
+                                    f"{self.symbol} | Background refit task completed: "
+                                    f"success={success}"
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"{self.symbol} | Error in refit callback: {e}",
+                                    exc_info=True
+                                )
+
+                        refit_task.add_done_callback(log_refit_completion)
+                    else:
+                        logger.debug(f"{self.symbol} | Refit already running, skipping")
 
                 # Auto-save check
                 if (self.config.auto_save and
@@ -583,6 +736,11 @@ class FeatureScalerManager:
         importance = self.get_feature_importance()
         return [name for name, score in importance.items() if score < threshold]
 
+    def _cleanup_refit_task(self):
+        """Clean up completed refit task."""
+        if self.state.refit_task and self.state.refit_task.done():
+            self.state.refit_task = None
+
     def _save_state(self):
         """Save scaler state to disk."""
         try:
@@ -640,6 +798,13 @@ class FeatureScalerManager:
 
     def get_state_info(self) -> Dict:
         """Get current scaler state information."""
+        # Calculate time since last refit
+        last_refit_ago_seconds = None
+        if self.state.last_refit_timestamp > 0:
+            last_refit_ago_seconds = (
+                (datetime.now().timestamp() * 1000 - self.state.last_refit_timestamp) / 1000
+            )
+
         return {
             'symbol': self.symbol,
             'is_fitted': self.state.is_fitted,
@@ -650,10 +815,20 @@ class FeatureScalerManager:
             'config': {
                 'orderbook_scaler': self.config.orderbook_scaler_type,
                 'candle_scaler': self.config.candle_scaler_type,
-                'indicator_scaler': self.config.indicator_scaler_type
+                'indicator_scaler': self.config.indicator_scaler_type,
+                'refit_interval': self.config.refit_interval_samples,
+                'min_samples_for_fitting': self.config.min_samples_for_fitting
             },
             'feature_count': len(self.feature_names) if self.feature_names else 0,
-            'history_size': len(self.feature_history)
+            'history_size': len(self.feature_history),
+            'refit_status': {
+                'is_refitting': self.state.is_refitting,
+                'refit_count': self.state.refit_count,
+                'failed_refits': self.state.failed_refits,
+                'last_refit_timestamp': self.state.last_refit_timestamp,
+                'last_refit_ago_seconds': last_refit_ago_seconds,
+                'has_active_task': self.state.refit_task is not None and not self.state.refit_task.done() if self.state.refit_task else False
+            }
         }
 
 
