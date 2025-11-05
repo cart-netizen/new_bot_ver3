@@ -831,8 +831,10 @@ class BotController:
       logger.info("✓ Трекер баланса запущен")
 
       # ========== 5. DAILY LOSS KILLER - ЗАПУСК ===========
+      # Передаем ExecutionManager для закрытия позиций при emergency shutdown
+      daily_loss_killer.execution_manager = self.execution_manager
       await daily_loss_killer.start()
-      logger.info("✓ Daily Loss Killer запущен")
+      logger.info("✓ Daily Loss Killer запущен с интеграцией ExecutionManager")
 
       # ========== 6. SCREENER MANAGER (ОПЦИОНАЛЬНО) - ЗАПУСК ==========
       if self.screener_manager:
