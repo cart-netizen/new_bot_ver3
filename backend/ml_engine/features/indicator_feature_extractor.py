@@ -536,32 +536,6 @@ class IndicatorFeatureExtractor:
     return float(rsi)
 
   @staticmethod
-  def _calculate_stochastic(
-      highs: np.ndarray,
-      lows: np.ndarray,
-      closes: np.ndarray,
-      period: int = 14
-  ) -> tuple:
-    """Вычисляет Stochastic Oscillator (%K, %D)"""
-    if len(closes) < period:
-      return 50.0, 50.0
-
-    highest_high = np.max(highs[-period:])
-    lowest_low = np.min(lows[-period:])
-
-    if highest_high == lowest_low:
-      stochastic_k = 50.0
-    else:
-      stochastic_k = (
-          (closes[-1] - lowest_low) / (highest_high - lowest_low) * 100
-      )
-
-    # %D = 3-period SMA of %K (упрощение)
-    stochastic_d = stochastic_k  # В полной версии нужна история %K
-
-    return float(stochastic_k), float(stochastic_d)
-
-  @staticmethod
   def _calculate_williams_r(
       highs: np.ndarray,
       lows: np.ndarray,
@@ -659,66 +633,6 @@ class IndicatorFeatureExtractor:
     atr = np.mean(true_ranges[-period:])
 
     return float(atr)
-
-  @staticmethod
-  def _calculate_adx(
-      highs: np.ndarray,
-      lows: np.ndarray,
-      closes: np.ndarray,
-      period: int = 14
-  ) -> tuple:
-    """Вычисляет ADX, +DI, -DI (упрощенная версия)"""
-    if len(closes) < period + 1:
-      return 25.0, 25.0, 25.0
-
-    # True Range
-    tr_values = []
-    plus_dm = []
-    minus_dm = []
-
-    for i in range(1, len(closes)):
-      high_diff = highs[i] - highs[i - 1]
-      low_diff = lows[i - 1] - lows[i]
-
-      # +DM
-      if high_diff > low_diff and high_diff > 0:
-        plus_dm.append(high_diff)
-      else:
-        plus_dm.append(0)
-
-      # -DM
-      if low_diff > high_diff and low_diff > 0:
-        minus_dm.append(low_diff)
-      else:
-        minus_dm.append(0)
-
-      # TR
-      high_low = float(highs[i] - lows[i])
-      high_close = float(abs(highs[i] - closes[i - 1]))
-      low_close = float(abs(lows[i] - closes[i - 1]))
-      tr_values.append(max(high_low, high_close, low_close))
-
-    # Сглаживание
-    smooth_tr = np.mean(tr_values[-period:])
-    smooth_plus_dm = np.mean(plus_dm[-period:])
-    smooth_minus_dm = np.mean(minus_dm[-period:])
-
-    # DI
-    if smooth_tr > 0:
-      plus_di = (smooth_plus_dm / smooth_tr) * 100
-      minus_di = (smooth_minus_dm / smooth_tr) * 100
-    else:
-      plus_di = 25.0
-      minus_di = 25.0
-
-    # DX и ADX
-    if (plus_di + minus_di) > 0:
-      dx = abs(plus_di - minus_di) / (plus_di + minus_di) * 100
-      adx = dx  # Упрощение: в полной версии ADX = EMA(DX)
-    else:
-      adx = 25.0
-
-    return float(adx), float(plus_di), float(minus_di)
 
   @staticmethod
   def _calculate_cmf(
