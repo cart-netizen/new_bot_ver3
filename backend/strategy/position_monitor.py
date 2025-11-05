@@ -462,15 +462,93 @@ class PositionMonitor:
 
       elif reversal.suggested_action == "reduce_size":
         logger.warning(
-          f"{symbol} | STRONG REVERSAL - Consider reducing 50%"
+          f"{symbol} | STRONG REVERSAL - Auto-reducing position by 50%"
         )
-        # TODO: Реализовать partial close
+        # Частичное закрытие позиции на 50%
+        try:
+          result = await self.execution_manager.partial_close_position(
+            position_id=position_id,
+            close_percentage=0.5,  # Закрываем 50%
+            exit_price=current_price,
+            exit_reason=f"Strong reversal detected: {reversal.reason}"
+          )
+
+          if result and result.get('status') == 'success':
+            logger.info(
+              f"{symbol} | ✓ Partial close успешно | "
+              f"Closed: {result['closed_quantity']}, "
+              f"Remaining: {result['remaining_quantity']}, "
+              f"Partial PnL: ${result['partial_pnl']:.2f}"
+            )
+          else:
+            logger.error(f"{symbol} | ✗ Partial close failed")
+        except Exception as e:
+          logger.error(
+            f"{symbol} | Error during partial close: {e}",
+            exc_info=True
+          )
 
       elif reversal.suggested_action == "tighten_sl":
         logger.warning(
-          f"{symbol} | MODERATE REVERSAL - Consider tightening SL"
+          f"{symbol} | MODERATE REVERSAL - Auto-tightening Stop Loss"
         )
-        # TODO: Реализовать dynamic SL update
+        # Динамическое обновление Stop Loss (подтягивание к текущей цене)
+        try:
+          # Проверяем, есть ли текущий SL
+          current_sl = position.stop_loss
+
+          if not current_sl:
+            logger.debug(f"{symbol} | No current SL set, skipping tighten")
+          else:
+            # Рассчитываем новый подтянутый SL
+            entry_price = position.entry_price
+            side = position.side.value
+
+            if side == "BUY":
+              # LONG: Подтягиваем SL вверх (к текущей цене)
+              # Переводим в breakeven + 0.3% для защиты прибыли
+              new_sl = entry_price * 1.003
+
+              # Проверяем, что новый SL лучше старого и ниже текущей цены
+              if new_sl > current_sl and new_sl < current_price:
+                pass  # Новый SL валиден
+              else:
+                # Фоллбэк: середина между entry и current
+                new_sl = (entry_price + current_price) / 2
+
+            else:  # SELL
+              # SHORT: Подтягиваем SL вниз (к текущей цене)
+              # Переводим в breakeven - 0.3% для защиты прибыли
+              new_sl = entry_price * 0.997
+
+              # Проверяем, что новый SL лучше старого и выше текущей цены
+              if new_sl < current_sl and new_sl > current_price:
+                pass  # Новый SL валиден
+              else:
+                # Фоллбэк: середина между entry и current
+                new_sl = (entry_price + current_price) / 2
+
+            # Обновляем SL через ExecutionManager
+            result = await self.execution_manager.update_stop_loss(
+              position_id=position_id,
+              new_stop_loss=new_sl,
+              reason=f"Moderate reversal: tighten SL from {reversal.reason}"
+            )
+
+            if result and result.get('status') == 'success':
+              logger.info(
+                f"{symbol} | ✓ Stop Loss updated | "
+                f"Old SL: ${result['old_stop_loss']:.2f} → "
+                f"New SL: ${result['new_stop_loss']:.2f}"
+              )
+            else:
+              logger.error(f"{symbol} | ✗ SL update failed")
+
+        except Exception as e:
+          logger.error(
+            f"{symbol} | Error during SL update: {e}",
+            exc_info=True
+          )
 
       return False
 

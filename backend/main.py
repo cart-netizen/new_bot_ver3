@@ -3361,12 +3361,49 @@ class BotController:
             f"Suggestion: Reduce position size by 50%"
           )
 
-          # TODO: Реализовать частичное закрытие позиции
-          # Требуется добавить метод partial_close в ExecutionManager
-          logger.info(
-            f"{symbol} | Partial close not yet implemented - "
-            f"consider manual reduction"
-          )
+          # Частичное закрытие позиции на 50%
+          position_in_db = await position_repository.find_open_by_symbol(symbol)
+
+          if position_in_db:
+            # Получаем текущую цену
+            current_price = position.get('entry_price', 0) * 1.01  # Fallback
+
+            orderbook_manager = self.orderbook_managers.get(symbol)
+            if orderbook_manager:
+              snapshot = orderbook_manager.get_snapshot()
+              if snapshot and snapshot.mid_price:
+                current_price = snapshot.mid_price
+
+            # Выполняем частичное закрытие через ExecutionManager
+            try:
+              result = await self.execution_manager.partial_close_position(
+                position_id=str(position_in_db.id),
+                close_percentage=0.5,  # Закрываем 50%
+                exit_price=current_price,
+                exit_reason=f"Strong reversal: {reversal.reason}"
+              )
+
+              if result and result.get('status') == 'success':
+                logger.info(
+                  f"{symbol} | ✓ Partial close успешно | "
+                  f"Closed: {result['closed_quantity']}, "
+                  f"Remaining: {result['remaining_quantity']}, "
+                  f"Partial PnL: ${result['partial_pnl']:.2f}"
+                )
+              else:
+                logger.error(
+                  f"{symbol} | ✗ Partial close failed - "
+                  f"consider manual reduction"
+                )
+            except Exception as e:
+              logger.error(
+                f"{symbol} | Error during partial close: {e}",
+                exc_info=True
+              )
+          else:
+            logger.error(
+              f"{symbol} | Position found in RiskManager but not in DB!"
+            )
 
         elif reversal.suggested_action == "tighten_sl":
           logger.warning(
@@ -3375,12 +3412,77 @@ class BotController:
             f"Suggestion: Tighten stop loss"
           )
 
-          # TODO: Реализовать динамическое обновление SL
-          # Требуется добавить метод update_stop_loss в ExecutionManager
-          logger.info(
-            f"{symbol} | Stop loss update not yet implemented - "
-            f"consider manual adjustment"
-          )
+          # Динамическое обновление Stop Loss
+          position_in_db = await position_repository.find_open_by_symbol(symbol)
+
+          if position_in_db:
+            # Проверяем, есть ли текущий SL
+            current_sl = position_in_db.stop_loss
+
+            if not current_sl:
+              logger.debug(f"{symbol} | No current SL set, skipping tighten")
+            else:
+              # Получаем текущую цену
+              current_price = position.get('entry_price', 0) * 1.01  # Fallback
+
+              orderbook_manager = self.orderbook_managers.get(symbol)
+              if orderbook_manager:
+                snapshot = orderbook_manager.get_snapshot()
+                if snapshot and snapshot.mid_price:
+                  current_price = snapshot.mid_price
+
+              # Рассчитываем новый подтянутый SL
+              entry_price = position_in_db.entry_price
+              side = position_in_db.side.value
+
+              if side == "BUY":
+                # LONG: Подтягиваем SL вверх (к текущей цене)
+                # Переводим в breakeven + 0.3% для защиты прибыли
+                new_sl = entry_price * 1.003
+
+                # Проверяем, что новый SL лучше старого и ниже текущей цены
+                if not (new_sl > current_sl and new_sl < current_price):
+                  # Фоллбэк: середина между entry и current
+                  new_sl = (entry_price + current_price) / 2
+
+              else:  # SELL
+                # SHORT: Подтягиваем SL вниз (к текущей цене)
+                # Переводим в breakeven - 0.3% для защиты прибыли
+                new_sl = entry_price * 0.997
+
+                # Проверяем, что новый SL лучше старого и выше текущей цены
+                if not (new_sl < current_sl and new_sl > current_price):
+                  # Фоллбэк: середина между entry и current
+                  new_sl = (entry_price + current_price) / 2
+
+              # Обновляем SL через ExecutionManager
+              try:
+                result = await self.execution_manager.update_stop_loss(
+                  position_id=str(position_in_db.id),
+                  new_stop_loss=new_sl,
+                  reason=f"Moderate reversal: {reversal.reason}"
+                )
+
+                if result and result.get('status') == 'success':
+                  logger.info(
+                    f"{symbol} | ✓ Stop Loss updated | "
+                    f"Old SL: ${result['old_stop_loss']:.2f} → "
+                    f"New SL: ${result['new_stop_loss']:.2f}"
+                  )
+                else:
+                  logger.error(
+                    f"{symbol} | ✗ SL update failed - "
+                    f"consider manual adjustment"
+                  )
+              except Exception as e:
+                logger.error(
+                  f"{symbol} | Error during SL update: {e}",
+                  exc_info=True
+                )
+          else:
+            logger.error(
+              f"{symbol} | Position found in RiskManager but not in DB!"
+            )
 
         else:
           logger.debug(
