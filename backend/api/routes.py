@@ -1508,7 +1508,7 @@ async def get_screener_pairs(
   try:
     from backend.main import bot_controller
 
-    if not bot_controller or not hasattr(bot_controller, 'screener_manager'):
+    if not bot_controller or not hasattr(bot_controller, 'screener_manager') or not bot_controller.screener_manager:
       raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="Screener не инициализирован"
@@ -1566,7 +1566,7 @@ async def toggle_pair_selection(
   try:
     from backend.main import bot_controller
 
-    if not bot_controller or not hasattr(bot_controller, 'screener_manager'):
+    if not bot_controller or not hasattr(bot_controller, 'screener_manager') or not bot_controller.screener_manager:
       raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="Screener не инициализирован"
@@ -1611,7 +1611,7 @@ async def get_selected_pairs(current_user: dict = Depends(require_auth)):
   try:
     from backend.main import bot_controller
 
-    if not bot_controller or not hasattr(bot_controller, 'screener_manager'):
+    if not bot_controller or not hasattr(bot_controller, 'screener_manager') or not bot_controller.screener_manager:
       raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="Screener не инициализирован"
@@ -1647,7 +1647,7 @@ async def get_screener_stats(current_user: dict = Depends(require_auth)):
   try:
     from backend.main import bot_controller
 
-    if not bot_controller or not hasattr(bot_controller, 'screener_manager'):
+    if not bot_controller or not hasattr(bot_controller, 'screener_manager') or not bot_controller.screener_manager:
       raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="Screener не инициализирован"
