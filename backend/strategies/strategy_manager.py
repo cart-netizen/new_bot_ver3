@@ -233,9 +233,6 @@ class ExtendedStrategyManager:
       **self.hybrid_strategies
     }
 
-    # Alias for API compatibility (routes.py uses 'strategies')
-    self.strategies = self.all_strategies
-
     # Статистика
     self.total_analyses = 0
     self.signals_generated = 0
