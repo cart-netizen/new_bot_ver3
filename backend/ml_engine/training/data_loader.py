@@ -55,7 +55,6 @@ class DataConfig:
     use_feature_store: bool = True  # Try Feature Store first
     feature_store_date_range_days: int = 90  # Last N days for training
     feature_store_group: str = "training_features"  # Feature group name
-    feature_store_symbols: Optional[List[str]] = None  # Auto-detect if None
     fallback_to_legacy: bool = True  # Fallback to .npy files if FS fails
 
 
