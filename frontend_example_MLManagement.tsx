@@ -67,7 +67,8 @@ const MLManagementPage: React.FC = () => {
 
   const [models, setModels] = useState<Model[]>([]);
   const [loading, setLoading] = useState(false);
-  const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
+  // Note: In browser environment, setInterval returns number, not NodeJS.Timeout
+  const [pollingInterval, setPollingInterval] = useState<number | null>(null);
 
   // Fetch training status
   const fetchTrainingStatus = async () => {
