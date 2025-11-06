@@ -378,6 +378,9 @@ class BotController:
         logger.info("Инициализация Screener Manager...")
         self.screener_manager = ScreenerManager()
         logger.info("✓ Screener Manager инициализирован")
+      else:
+        self.screener_manager = None
+        logger.info("Screener Manager отключен в конфигурации")
 
       # ===== DYNAMIC SYMBOLS - Инициализируем менеджер =====
       if settings.DYNAMIC_SYMBOLS_ENABLED:
