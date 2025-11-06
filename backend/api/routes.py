@@ -44,6 +44,10 @@ strategies_router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 screener_router = APIRouter(prefix="/screener", tags=["Screener"])
 
 adaptive_router = APIRouter(prefix="/adaptive", tags=["adaptive"])
+
+# ML Management Router - для управления обучением и моделями через фронтенд
+from backend.api.ml_management_api import router as ml_management_router
+
 # ===== МОДЕЛИ ОТВЕТОВ =====
 
 class StatusResponse(BaseModel):

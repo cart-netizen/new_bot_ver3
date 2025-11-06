@@ -1,0 +1,22 @@
+# ML Infrastructure Dependencies
+# Install with: pip install -r requirements_ml.txt
+
+# MLflow - Experiment tracking and model registry
+mlflow>=2.9.0
+
+# Feature Store dependencies
+pandas>=2.0.0
+pyarrow>=14.0.0  # For Parquet storage
+
+# Already in main requirements.txt but ensuring versions:
+torch>=2.0.0
+scikit-learn>=1.3.0
+numpy>=1.24.0
+
+# Optional: ONNXRuntime (for ONNX inference)
+onnx>=1.15.0
+onnxruntime>=1.16.0
+
+# Optional: MLflow UI server
+# If you want to run MLflow tracking server separately:
+# gunicorn>=21.2.0
