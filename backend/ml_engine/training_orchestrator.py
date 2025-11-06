@@ -117,9 +117,20 @@ class TrainingOrchestrator:
                 raise ValueError("Failed to load training data")
 
             # Log data info
-            train_size = len(train_loader.dataset) if hasattr(train_loader.dataset, '__len__') else 0
-            val_size = len(val_loader.dataset) if val_loader and hasattr(val_loader.dataset, '__len__') else 0
-            test_size = len(test_loader.dataset) if test_loader and hasattr(test_loader.dataset, '__len__') else 0
+            try:
+                train_size = len(train_loader.dataset)  # type: ignore[arg-type]
+            except (AttributeError, TypeError):
+                train_size = 0
+
+            try:
+                val_size = len(val_loader.dataset) if val_loader else 0  # type: ignore[arg-type]
+            except (AttributeError, TypeError):
+                val_size = 0
+
+            try:
+                test_size = len(test_loader.dataset) if test_loader else 0  # type: ignore[arg-type]
+            except (AttributeError, TypeError):
+                test_size = 0
 
             self.mlflow_tracker.log_params({
                 "train_samples": train_size,
