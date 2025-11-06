@@ -117,9 +117,9 @@ class TrainingOrchestrator:
                 raise ValueError("Failed to load training data")
 
             # Log data info
-            train_size = len(train_loader.dataset)
-            val_size = len(val_loader.dataset) if val_loader else 0
-            test_size = len(test_loader.dataset) if test_loader else 0
+            train_size = len(train_loader.dataset) if hasattr(train_loader.dataset, '__len__') else 0
+            val_size = len(val_loader.dataset) if val_loader and hasattr(val_loader.dataset, '__len__') else 0
+            test_size = len(test_loader.dataset) if test_loader and hasattr(test_loader.dataset, '__len__') else 0
 
             self.mlflow_tracker.log_params({
                 "train_samples": train_size,
@@ -150,20 +150,27 @@ class TrainingOrchestrator:
 
             # Step 4: Train model
             logger.info("Step 4/7: Training model...")
-            training_results = trainer.train(
+            training_history = trainer.train(
                 train_loader,
-                val_loader,
-                mlflow_tracker=self.mlflow_tracker  # Pass tracker for epoch metrics
+                val_loader
             )
 
-            # Log final training metrics
-            final_metrics = {
-                "final_train_loss": training_results.get("final_train_loss", 0),
-                "final_val_loss": training_results.get("final_val_loss", 0),
-                "best_val_accuracy": training_results.get("best_val_accuracy", 0),
-                "total_epochs": training_results.get("epochs_trained", 0)
-            }
-            self.mlflow_tracker.log_metrics(final_metrics)
+            # Extract final training metrics from history
+            # training_history is a list of dicts with metrics for each epoch
+            if training_history:
+                final_epoch = training_history[-1]
+                final_metrics = {
+                    "final_train_loss": final_epoch.get("train_loss", 0),
+                    "final_val_loss": final_epoch.get("val_loss", 0),
+                    "final_train_accuracy": final_epoch.get("train_acc", 0),
+                    "final_val_accuracy": final_epoch.get("val_acc", 0),
+                    "best_val_accuracy": max([m.get("val_acc", 0) for m in training_history]),
+                    "total_epochs": len(training_history)
+                }
+                self.mlflow_tracker.log_metrics(final_metrics)
+            else:
+                final_metrics = {}
+                logger.warning("Training history is empty")
 
             # Step 5: Evaluate on test set
             logger.info("Step 5/7: Evaluating model...")
@@ -185,7 +192,8 @@ class TrainingOrchestrator:
             torch.save({
                 'model_state_dict': model.state_dict(),
                 'model_config': vars(self.model_config),
-                'training_results': training_results,
+                'training_history': training_history,
+                'final_metrics': final_metrics,
                 'test_metrics': test_metrics,
                 'timestamp': timestamp
             }, model_path)
@@ -199,7 +207,8 @@ class TrainingOrchestrator:
                     k: v for k, v in vars(self.trainer_config).items()
                     if not k.startswith('_')
                 },
-                'training_results': training_results,
+                'training_history': training_history,
+                'final_metrics': final_metrics,
                 'test_metrics': test_metrics,
                 'created_at': datetime.now().isoformat()
             }
@@ -226,7 +235,7 @@ class TrainingOrchestrator:
                 description=f"Trained model - {run_name}",
                 training_params={
                     **vars(self.model_config),
-                    **training_results,
+                    **final_metrics,
                     **test_metrics
                 }
             )
@@ -277,7 +286,7 @@ class TrainingOrchestrator:
                 "model_path": str(model_path),
                 "onnx_path": str(onnx_path) if onnx_path else None,
                 "promoted_to_production": promoted,
-                "training_results": training_results,
+                "final_metrics": final_metrics,
                 "test_metrics": test_metrics,
                 "run_name": run_name,
                 "timestamp": datetime.now().isoformat()
@@ -315,10 +324,15 @@ class TrainingOrchestrator:
                 logger.error("No training data available")
                 return None, None, None
 
+            # Get dataset sizes safely
+            train_size = len(train_data.dataset) if hasattr(train_data.dataset, '__len__') else 0
+            val_size = len(val_data.dataset) if val_data and hasattr(val_data.dataset, '__len__') else 0
+            test_size = len(test_data.dataset) if test_data and hasattr(test_data.dataset, '__len__') else 0
+
             logger.info(
-                f"Data loaded: train={len(train_data.dataset)}, "
-                f"val={len(val_data.dataset) if val_data else 0}, "
-                f"test={len(test_data.dataset) if test_data else 0}"
+                f"Data loaded: train={train_size}, "
+                f"val={val_size}, "
+                f"test={test_size}"
             )
 
             return train_data, val_data, test_data
