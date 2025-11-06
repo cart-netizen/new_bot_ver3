@@ -14,6 +14,7 @@ import { ChartsPage } from './pages/ChartsPage';
 import { OrdersPage } from './pages/OrdersPage';
 import { ScreenerPage } from './pages/ScreenerPage';
 import { StrategiesPage } from './pages/StrategiesPage';
+import MLManagementPage from "@/pages/MLManagement/frontend_example_MLManagement";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -53,12 +54,13 @@ export default function App() {
             <Route path="dashboard" element={<DashboardPage />} />
             <Route path="market" element={<MarketPage />} />
             <Route path="trading" element={<TradingPage />} />
-            
+
             {/* Новые страницы */}
             <Route path="charts" element={<ChartsPage />} />
             <Route path="orders" element={<OrdersPage />} />
             <Route path="screener" element={<ScreenerPage />} />
             <Route path="strategies" element={<StrategiesPage />} />
+            <Route path="ML" element={<MLManagementPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

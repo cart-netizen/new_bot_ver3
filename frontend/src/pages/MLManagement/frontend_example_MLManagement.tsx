@@ -12,7 +12,7 @@ import {
   ReloadOutlined,
   CloudUploadOutlined,
   DownloadOutlined,
-  DeleteOutlined,
+
   BarChartOutlined
 } from '@ant-design/icons';
 
@@ -67,7 +67,7 @@ const MLManagementPage: React.FC = () => {
 
   const [models, setModels] = useState<Model[]>([]);
   const [loading, setLoading] = useState(false);
-  const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
+  const [pollingInterval, setPollingInterval] = useState<number | null>(null);
 
   // Fetch training status
   const fetchTrainingStatus = async () => {

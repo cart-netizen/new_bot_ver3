@@ -124,10 +124,10 @@ pip install onnx onnxruntime fastapi uvicorn scipy
 ```bash
 # В отдельном терминале
 cd backend
-python -m ml_engine.inference.model_server_v2
+python -m backend.ml_engine.inference.model_server_v2
 
 # Или через uvicorn
-uvicorn ml_engine.inference.model_server_v2:app --host 0.0.0.0 --port 8001
+uvicorn backend.ml_engine.inference.model_server_v2:app --host 0.0.0.0 --port 8001
 ```
 
 Server запустится на `http://localhost:8001`
