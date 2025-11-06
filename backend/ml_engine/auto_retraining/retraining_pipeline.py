@@ -424,21 +424,51 @@ class RetrainingPipeline:
 
             if features_df.empty:
                 logger.warning("No features found in Feature Store")
+                logger.warning("Falling back to legacy data loader (.npy files)")
                 # Fallback to legacy data loader
                 data_loader = HistoricalDataLoader(self.config.data_config or DataConfig())
                 return data_loader.load_and_split()
 
-            # Convert to sequences (simplified - should match your feature pipeline)
-            # This is a placeholder - implement according to your data structure
-            logger.info(f"Collected {len(features_df)} samples from Feature Store")
+            # ✅ НОВОЕ: Используем Feature Store данные!
+            logger.info(f"✓ Collected {len(features_df)} samples from Feature Store")
 
-            # For now, fallback to legacy loader
-            # TODO: Implement proper Feature Store → sequences conversion
+            # Import schema
+            from backend.ml_engine.feature_store.feature_schema import DEFAULT_SCHEMA
+
+            # Validate DataFrame schema
+            logger.info("Validating Feature Store DataFrame schema...")
+            try:
+                DEFAULT_SCHEMA.validate_dataframe(features_df, strict=False)
+            except ValueError as e:
+                logger.error(f"Invalid DataFrame schema: {e}")
+                logger.warning("Falling back to legacy data loader")
+                data_loader = HistoricalDataLoader(self.config.data_config or DataConfig())
+                return data_loader.load_and_split()
+
+            # Convert Feature Store DataFrame to DataLoaders
+            logger.info("Converting Feature Store data to sequences and DataLoaders...")
+
             data_loader = HistoricalDataLoader(self.config.data_config or DataConfig())
-            return data_loader.load_and_split()
+
+            train_loader, val_loader, test_loader = data_loader.load_from_dataframe(
+                features_df=features_df,
+                feature_columns=DEFAULT_SCHEMA.get_all_feature_columns(),
+                label_column=DEFAULT_SCHEMA.label_column,
+                timestamp_column=DEFAULT_SCHEMA.timestamp_column,
+                symbol_column=DEFAULT_SCHEMA.symbol_column,
+                apply_resampling=True  # Enable class balancing for better model quality
+            )
+
+            logger.info("✓ Successfully converted Feature Store data to DataLoaders")
+            logger.info(f"  • Using fresh data from Feature Store (last 30 days)")
+            logger.info(f"  • Class balancing applied")
+            logger.info(f"  • Ready for training")
+
+            return train_loader, val_loader, test_loader
 
         except Exception as e:
             logger.error(f"Failed to collect training data: {e}")
+            logger.exception("Exception details:")
             return None, None, None
 
     async def _train_model(self, train_data, val_data) -> tuple:

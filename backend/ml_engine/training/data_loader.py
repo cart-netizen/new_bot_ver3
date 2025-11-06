@@ -611,6 +611,201 @@ class HistoricalDataLoader:
 
         return train_loader, val_loader, test_loader
 
+    def load_from_dataframe(
+        self,
+        features_df: pd.DataFrame,
+        feature_columns: List[str],
+        label_column: str = 'future_direction_60s',
+        timestamp_column: str = 'timestamp',
+        symbol_column: Optional[str] = 'symbol',
+        apply_resampling: bool = False
+    ) -> Tuple[DataLoader, DataLoader, Optional[DataLoader]]:
+        """
+        Загрузка данных из DataFrame (Feature Store) и создание DataLoaders.
+
+        Это альтернатива load_and_prepare() для работы с Feature Store.
+        Вместо загрузки из .npy файлов, загружает из pandas DataFrame.
+
+        Workflow:
+        1. Валидация DataFrame
+        2. Сортировка по времени (КРИТИЧНО!)
+        3. Извлечение features/labels/timestamps
+        4. Опциональный class balancing
+        5. Создание sequences (переиспользует create_sequences)
+        6. Train/Val/Test split (переиспользует train_val_test_split)
+        7. Создание DataLoaders (переиспользует create_dataloaders)
+
+        Args:
+            features_df: DataFrame с данными из Feature Store
+            feature_columns: Список колонок с фичами (обычно 110 колонок)
+            label_column: Колонка с метками (0, 1, 2)
+            timestamp_column: Колонка с timestamps
+            symbol_column: Колонка с символами (опционально)
+            apply_resampling: Применять ли class balancing
+
+        Returns:
+            Tuple из:
+            - train_loader: DataLoader для обучения
+            - val_loader: DataLoader для валидации
+            - test_loader: DataLoader для тестирования (может быть None)
+
+        Raises:
+            ValueError: Если DataFrame пустой, отсутствуют колонки или недостаточно данных
+        """
+        logger.info(f"\n{'='*80}")
+        logger.info(f"ЗАГРУЗКА ДАННЫХ ИЗ DATAFRAME (Feature Store)")
+        logger.info(f"{'='*80}")
+
+        # 1. Валидация входных данных
+        if features_df.empty:
+            raise ValueError("DataFrame is empty")
+
+        # Проверить наличие необходимых колонок
+        required_cols = feature_columns + [label_column, timestamp_column]
+        missing = set(required_cols) - set(features_df.columns)
+        if missing:
+            logger.error(f"Missing columns in DataFrame: {sorted(missing)[:10]}...")
+            logger.error(f"Available columns: {list(features_df.columns)[:20]}...")
+            raise ValueError(f"Missing required columns: {len(missing)} columns")
+
+        logger.info(f"DataFrame shape: {features_df.shape}")
+        logger.info(f"Features: {len(feature_columns)} columns")
+
+        # Показать информацию о символах (если есть)
+        if symbol_column and symbol_column in features_df.columns:
+            symbols = features_df[symbol_column].unique()
+            logger.info(f"Symbols in data: {len(symbols)} ({list(symbols)[:5]}...)")
+
+        # 2. КРИТИЧНО: Сортировка по времени
+        # Для временных рядов порядок данных критичен!
+        logger.info("Сортировка по timestamp...")
+        features_df = features_df.sort_values(timestamp_column).reset_index(drop=True)
+
+        # 3. Извлечение данных
+        logger.info("Извлечение features, labels и timestamps...")
+        X = features_df[feature_columns].values  # (N, feature_dim)
+        y = features_df[label_column].values     # (N,)
+        timestamps = features_df[timestamp_column].values  # (N,)
+
+        logger.info(f"Extracted data:")
+        logger.info(f"  • Features shape: {X.shape}")
+        logger.info(f"  • Labels shape: {y.shape}")
+        logger.info(f"  • Timestamps shape: {timestamps.shape}")
+
+        # Проверить диапазон labels
+        unique_labels = np.unique(y)
+        logger.info(f"  • Unique labels: {unique_labels}")
+
+        # 4. Проверка распределения классов
+        from collections import Counter
+        class_dist = Counter(y)
+        logger.info(f"\nРаспределение классов ДО resampling:")
+        for label, count in sorted(class_dist.items()):
+            pct = 100 * count / len(y)
+            logger.info(f"  • Class {label}: {count:,} ({pct:.1f}%)")
+
+        # Проверить на NaN
+        nan_features = np.isnan(X).sum()
+        nan_labels = np.isnan(y).sum()
+        if nan_features > 0 or nan_labels > 0:
+            logger.warning(f"Found NaN values: features={nan_features}, labels={nan_labels}")
+            # Удалить строки с NaN
+            valid_mask = ~(np.isnan(X).any(axis=1) | np.isnan(y))
+            X = X[valid_mask]
+            y = y[valid_mask]
+            timestamps = timestamps[valid_mask]
+            logger.warning(f"After removing NaN: {len(X):,} samples")
+
+        # 5. Resampling (если включен)
+        if apply_resampling and self.balancing_strategy:
+            logger.info("\n" + "="*80)
+            logger.info("ПРИМЕНЕНИЕ CLASS BALANCING")
+            logger.info("="*80)
+
+            # Применяем балансировку
+            X, y = self.balancing_strategy.balance_dataset(X, y)
+
+            # Логируем новое распределение
+            class_dist_after = Counter(y)
+            logger.info(f"Распределение классов ПОСЛЕ resampling:")
+            for label, count in sorted(class_dist_after.items()):
+                pct = 100 * count / len(y)
+                logger.info(f"  • Class {label}: {count:,} ({pct:.1f}%)")
+
+            logger.info(f"Новый размер данных: {len(X):,} samples")
+
+            # Обновить timestamps
+            # Простая стратегия: если размер изменился, пересэмплируем timestamps
+            if len(timestamps) != len(X):
+                if len(timestamps) < len(X):
+                    # Oversample: дублируем timestamps
+                    indices = np.random.choice(len(timestamps), len(X), replace=True)
+                    timestamps = timestamps[indices]
+                    logger.info(f"Oversampled timestamps to {len(timestamps)}")
+                else:
+                    # Undersample: обрезаем timestamps
+                    timestamps = timestamps[:len(X)]
+                    logger.info(f"Undersampled timestamps to {len(timestamps)}")
+
+        # Проверить минимальное количество данных
+        min_samples_required = self.config.sequence_length * 10
+        if len(X) < min_samples_required:
+            raise ValueError(
+                f"Insufficient data: {len(X)} samples, "
+                f"need at least {min_samples_required} "
+                f"(sequence_length={self.config.sequence_length} × 10)"
+            )
+
+        # 6. Создание sequences (переиспользуем существующий метод)
+        logger.info("\n" + "="*80)
+        logger.info("СОЗДАНИЕ ВРЕМЕННЫХ ПОСЛЕДОВАТЕЛЬНОСТЕЙ")
+        logger.info("="*80)
+
+        sequences, seq_labels, seq_timestamps = self.create_sequences(
+            X, y, timestamps
+        )
+
+        logger.info(f"Создано sequences:")
+        logger.info(f"  • Shape: {sequences.shape}")
+        logger.info(f"  • Labels: {seq_labels.shape}")
+        logger.info(f"  • Timestamps: {seq_timestamps.shape}")
+
+        # 7. Train/Val/Test split (переиспользуем существующий метод)
+        logger.info("\n" + "="*80)
+        logger.info("SPLIT НА TRAIN/VAL/TEST")
+        logger.info("="*80)
+
+        train_data, val_data, test_data = self.train_val_test_split(
+            sequences, seq_labels, seq_timestamps
+        )
+
+        logger.info(f"Split completed:")
+        logger.info(f"  • Train: {len(train_data[0]):,} sequences")
+        logger.info(f"  • Val: {len(val_data[0]):,} sequences")
+        if test_data:
+            logger.info(f"  • Test: {len(test_data[0]):,} sequences")
+
+        # 8. Create DataLoaders (переиспользуем существующий метод)
+        logger.info("\n" + "="*80)
+        logger.info("СОЗДАНИЕ DATALOADERS")
+        logger.info("="*80)
+
+        dataloaders = self.create_dataloaders(train_data, val_data, test_data)
+
+        train_loader = dataloaders['train']
+        val_loader = dataloaders['val']
+        test_loader = dataloaders.get('test', None)
+
+        logger.info(f"\n✓ DataLoaders созданы из Feature Store данных:")
+        logger.info(f"  • Train batches: {len(train_loader)}")
+        logger.info(f"  • Val batches: {len(val_loader)}")
+        if test_loader:
+            logger.info(f"  • Test batches: {len(test_loader)}")
+        logger.info(f"  • Batch size: {self.config.batch_size}")
+        logger.info(f"{'='*80}\n")
+
+        return train_loader, val_loader, test_loader
+
     def walk_forward_split(
         self,
         sequences: np.ndarray,
