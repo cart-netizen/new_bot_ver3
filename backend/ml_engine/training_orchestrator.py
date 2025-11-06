@@ -361,8 +361,7 @@ class TrainingOrchestrator:
             features_df = self.feature_store.read_offline_features(
                 feature_group=self.data_config.feature_store_group,
                 start_date=start_date.strftime("%Y-%m-%d"),
-                end_date=end_date.strftime("%Y-%m-%d"),
-                symbols=self.data_config.feature_store_symbols
+                end_date=end_date.strftime("%Y-%m-%d")
             )
 
             # 2.3: Check if data exists
