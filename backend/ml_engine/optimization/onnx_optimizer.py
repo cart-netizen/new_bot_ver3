@@ -99,7 +99,7 @@ class ONNXOptimizer:
             logger.info(f"Exporting to ONNX: {output_path}")
             torch.onnx.export(
                 model,
-                dummy_input,
+                (dummy_input,),  # Must be a tuple
                 str(output_path),
                 export_params=True,
                 opset_version=opset_version,
@@ -185,6 +185,11 @@ class ONNXOptimizer:
 
         Returns:
             True если успешно
+
+        Note:
+            Начиная с ONNX 1.13+, модуль onnx.optimizer удален.
+            Оптимизации графа теперь выполняются автоматически в ONNXRuntime
+            или через onnxruntime.transformers.optimizer для трансформеров.
         """
         if not ONNX_AVAILABLE:
             logger.error("ONNX not available")
@@ -194,26 +199,17 @@ class ONNXOptimizer:
             # Загрузить модель
             model = onnx.load(str(onnx_path))
 
-            # Применить оптимизации
-            # - Constant folding
-            # - Dead code elimination
-            # - Common subexpression elimination
-            from onnx import optimizer
+            # Применить базовые оптимизации через встроенные инструменты ONNX
+            # shape inference для лучшей оптимизации
+            inferred_model = onnx.shape_inference.infer_shapes(model)
 
-            passes = [
-                'eliminate_identity',
-                'eliminate_nop_dropout',
-                'eliminate_nop_transpose',
-                'fuse_consecutive_transposes',
-                'fuse_transpose_into_gemm',
-            ]
+            # Сохранить оптимизированную модель
+            onnx.save(inferred_model, str(output_path))
 
-            optimized_model = optimizer.optimize(model, passes)
-
-            # Сохранить
-            onnx.save(optimized_model, str(output_path))
-
-            logger.info(f"Graph optimization successful: {output_path}")
+            logger.info(
+                f"Graph optimization successful: {output_path}. "
+                f"Note: Advanced optimizations are applied automatically by ONNXRuntime."
+            )
             return True
 
         except Exception as e:
