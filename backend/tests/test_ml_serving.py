@@ -42,14 +42,21 @@ async def model_registry():
 @pytest.fixture
 def sample_model():
     """Fixture для sample модели"""
-    model = HybridCNNLSTM(
-        input_size=110,
-        lstm_hidden_size=128,
+    from backend.ml_engine.models.hybrid_cnn_lstm import ModelConfig
+
+    config = ModelConfig(
+        input_features=110,
+        sequence_length=60,
+        cnn_channels=(32, 64),
+        cnn_kernel_sizes=(3, 5),
+        lstm_hidden=128,
         lstm_layers=1,
-        cnn_channels=[32, 64],
-        kernel_sizes=[3, 5],
+        lstm_dropout=0.2,
+        attention_units=64,
+        num_classes=3,
         dropout=0.2
     )
+    model = HybridCNNLSTM(config)
     return model
 
 
@@ -414,14 +421,21 @@ async def test_end_to_end_workflow(tmp_path):
     # 1. Create и register model
     registry = ModelRegistry(registry_dir=str(tmp_path / "models"))
 
-    model = HybridCNNLSTM(
-        input_size=110,
-        lstm_hidden_size=64,
+    from backend.ml_engine.models.hybrid_cnn_lstm import ModelConfig
+
+    config = ModelConfig(
+        input_features=110,
+        sequence_length=60,
+        cnn_channels=(32,),
+        cnn_kernel_sizes=(3,),
+        lstm_hidden=64,
         lstm_layers=1,
-        cnn_channels=[32],
-        kernel_sizes=[3],
+        lstm_dropout=0.1,
+        attention_units=32,
+        num_classes=3,
         dropout=0.1
     )
+    model = HybridCNNLSTM(config)
 
     model_path = tmp_path / "model_v1.pt"
     torch.save(model.state_dict(), model_path)

@@ -187,16 +187,28 @@ class ModelServer:
                 # Создать архитектуру модели (зависит от model_type)
                 model_type = model_info.metadata.model_type
                 if model_type == "HybridCNNLSTM":
+                    # Импортировать ModelConfig
+                    from backend.ml_engine.models.hybrid_cnn_lstm import ModelConfig
+
                     # Загрузить параметры из metadata
                     training_params = model_info.metadata.training_params
-                    model = HybridCNNLSTM(
-                        input_size=training_params.get("input_size", 110),
-                        lstm_hidden_size=training_params.get("lstm_hidden_size", 256),
+
+                    # Создать config
+                    config = ModelConfig(
+                        input_features=training_params.get("input_features", 110),
+                        sequence_length=training_params.get("sequence_length", 60),
+                        cnn_channels=tuple(training_params.get("cnn_channels", [64, 128, 256])),
+                        cnn_kernel_sizes=tuple(training_params.get("cnn_kernel_sizes", [3, 5, 7])),
+                        lstm_hidden=training_params.get("lstm_hidden", 256),
                         lstm_layers=training_params.get("lstm_layers", 2),
-                        cnn_channels=training_params.get("cnn_channels", [64, 128, 256]),
-                        kernel_sizes=training_params.get("kernel_sizes", [3, 5, 7]),
+                        lstm_dropout=training_params.get("lstm_dropout", 0.2),
+                        attention_units=training_params.get("attention_units", 128),
+                        num_classes=training_params.get("num_classes", 3),
                         dropout=training_params.get("dropout", 0.3)
                     )
+
+                    # Создать модель с config
+                    model = HybridCNNLSTM(config)
 
                     # Загрузить веса
                     checkpoint = torch.load(model_info.model_path, map_location='cpu')
