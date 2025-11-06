@@ -30,7 +30,14 @@ python train_model.py --epochs 100 --lr 0.0001
 ### 3. Проверить результаты
 
 ```bash
+# ВАЖНО: MLflow использует PostgreSQL как backend store
+# Убедитесь, что PostgreSQL запущен и настроен в .env:
+# MLFLOW_TRACKING_URI=postgresql://trading_bot:robocop@localhost:5432/trading_bot
+
 # Открыть MLflow UI
+mlflow ui --backend-store-uri postgresql://trading_bot:robocop@localhost:5432/trading_bot
+
+# Или если MLFLOW_TRACKING_URI установлен в environment:
 mlflow ui
 
 # Открыть в браузере: http://localhost:5000
@@ -236,11 +243,21 @@ await collector.start()
 
 ### Ошибка: "MLflow tracking URI not set"
 
-Установите tracking URI:
+Установите tracking URI в `.env`:
 
 ```bash
-export MLFLOW_TRACKING_URI=file:./mlruns
+# .env файл
+MLFLOW_TRACKING_URI=postgresql://trading_bot:robocop@localhost:5432/trading_bot
+MLFLOW_ARTIFACT_LOCATION=./mlruns/artifacts
+MLFLOW_EXPERIMENT_NAME=trading_bot_ml
 ```
+
+Или в environment:
+```bash
+export MLFLOW_TRACKING_URI=postgresql://trading_bot:robocop@localhost:5432/trading_bot
+```
+
+**ВАЖНО**: Убедитесь, что PostgreSQL запущен и доступен.
 
 ### Ошибка: "Model not loading"
 

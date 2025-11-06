@@ -225,12 +225,20 @@ tracker.end_run()
 
 **MLflow UI**:
 ```bash
-# Start MLflow UI
-mlflow ui --backend-store-uri file:./mlruns --port 5000
+# Start MLflow UI (использует PostgreSQL из MLFLOW_TRACKING_URI в .env)
+mlflow ui --backend-store-uri postgresql://trading_bot:robocop@localhost:5432/trading_bot --port 5000
+
+# Или просто (если MLFLOW_TRACKING_URI установлен в environment)
+mlflow ui --port 5000
 
 # Open browser
 http://localhost:5000
 ```
+
+**ВАЖНО**: MLflow использует PostgreSQL как backend store:
+- Tracking data (runs, params, metrics) хранятся в PostgreSQL
+- Model Registry (versions, stages) также в PostgreSQL
+- Artifacts (модели, plots) хранятся на filesystem (./mlruns/artifacts)
 
 ### 2. Feature Store
 
@@ -562,11 +570,22 @@ Manually trigger retraining.
 
 **Решение**:
 ```bash
-# Проверить, что MLflow tracking URI настроен
-export MLFLOW_TRACKING_URI=file:./mlruns
+# 1. Проверить, что PostgreSQL запущен
+# Windows:
+sc query postgresql-x64-16
 
-# Или в коде
-mlflow.set_tracking_uri("file:./mlruns")
+# Linux/Mac:
+systemctl status postgresql
+
+# 2. Проверить, что MLFLOW_TRACKING_URI настроен в .env
+# Должно быть:
+MLFLOW_TRACKING_URI=postgresql://trading_bot:robocop@localhost:5432/trading_bot
+
+# 3. Проверить подключение к PostgreSQL
+psql -h localhost -U trading_bot -d trading_bot
+
+# 4. MLflow автоматически создаст нужные таблицы при первом запуске
+# Таблицы: experiments, runs, metrics, params, tags, model_versions, etc.
 ```
 
 ### Проблема: Feature Store возвращает пустые данные

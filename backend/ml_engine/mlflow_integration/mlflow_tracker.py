@@ -26,38 +26,50 @@ logger = get_logger(__name__)
 
 class MLflowTracker:
     """
-    MLflow Tracker для эксперим��нтов и моделей
+    MLflow Tracker для экспериментов и моделей
 
     Интеграция:
-    - Tracking Server: http://localhost:5000
-    - Registry: SQLite backend
+    - Tracking Server: PostgreSQL backend
+    - Registry: PostgreSQL (shared with tracking)
     - Artifacts: Local filesystem
+
+    ВАЖНО: MLflow использует PostgreSQL как единый backend store для:
+    - Experiment tracking (runs, params, metrics)
+    - Model Registry (versions, stages, tags)
+
+    PostgreSQL URI берется из config.MLFLOW_TRACKING_URI
     """
 
     def __init__(
         self,
         tracking_uri: Optional[str] = None,
-        experiment_name: str = "trading_bot_ml",
+        experiment_name: Optional[str] = None,
         artifact_location: Optional[str] = None
     ):
         """
         Инициализация MLflow Tracker
 
         Args:
-            tracking_uri: URI MLflow tracking server (default: local)
-            experiment_name: Название эксперимента
-            artifact_location: Путь для хранения артефактов
+            tracking_uri: URI MLflow tracking server (default: from config.MLFLOW_TRACKING_URI)
+            experiment_name: Название эксперимента (default: from config.MLFLOW_EXPERIMENT_NAME)
+            artifact_location: Путь для хранения артефактов (default: from config.MLFLOW_ARTIFACT_LOCATION)
         """
-        # Setup tracking URI
+        # Setup tracking URI from config
         if tracking_uri is None:
-            tracking_uri = "file:./mlruns"
+            tracking_uri = config.MLFLOW_TRACKING_URI
+
+        if experiment_name is None:
+            experiment_name = config.MLFLOW_EXPERIMENT_NAME
+
+        if artifact_location is None:
+            artifact_location = config.MLFLOW_ARTIFACT_LOCATION
 
         mlflow.set_tracking_uri(tracking_uri)
         self.tracking_uri = tracking_uri
 
         # Setup experiment
         self.experiment_name = experiment_name
-        self.artifact_location = artifact_location or str(Path("mlruns") / "artifacts")
+        self.artifact_location = artifact_location
 
         # Create or get experiment
         try:
