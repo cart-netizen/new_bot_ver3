@@ -542,6 +542,104 @@ class HistoricalDataLoader:
 
         return result
 
+    def load_and_split(
+        self,
+        symbols: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        apply_resampling: bool = False
+    ) -> Tuple[Tuple[np.ndarray, np.ndarray], Tuple[np.ndarray, np.ndarray], Optional[Tuple[np.ndarray, np.ndarray]]]:
+        """
+        Упрощенная версия load_and_prepare, возвращающая raw splits вместо DataLoaders.
+
+        Используется в retraining_pipeline где нужны raw данные без оборачивания в DataLoaders.
+
+        Args:
+            symbols: Список символов для загрузки (если None - загружаются все доступные)
+            start_date: Начальная дата
+            end_date: Конечная дата
+            apply_resampling: Применять ли балансировку классов
+
+        Returns:
+            Tuple из:
+            - train_data: (sequences, labels)
+            - val_data: (sequences, labels)
+            - test_data: (sequences, labels) or None
+        """
+        logger.info(f"\n{'='*80}")
+        logger.info(f"ЗАГРУЗКА И SPLIT ДАННЫХ (raw splits)")
+        logger.info(f"{'='*80}")
+
+        # Если symbols не указаны, пытаемся найти все доступные
+        if symbols is None:
+            storage_path = Path(self.config.storage_path)
+            if storage_path.exists():
+                # Ищем все .npy файлы с features
+                feature_files = list(storage_path.glob("*_features.npy"))
+                symbols = [f.stem.replace("_features", "") for f in feature_files]
+                logger.info(f"Найдено {len(symbols)} символов: {symbols}")
+            else:
+                logger.warning(f"Storage path не существует: {storage_path}")
+                symbols = []
+
+        if not symbols:
+            raise ValueError("No symbols to load. Please provide symbols or ensure data exists.")
+
+        # Загружаем данные
+        all_features = []
+        all_labels = []
+        all_timestamps = []
+
+        for symbol in symbols:
+            try:
+                logger.info(f"Загрузка {symbol}...")
+                X, y, timestamps = self.load_symbol_data(
+                    symbol, start_date, end_date
+                )
+                all_features.append(X)
+                all_labels.append(y)
+                all_timestamps.append(timestamps)
+            except Exception as e:
+                logger.warning(f"Не удалось загрузить {symbol}: {e}")
+                continue
+
+        if not all_features:
+            raise ValueError(f"No data loaded from symbols: {symbols}")
+
+        # Объединяем
+        X = np.concatenate(all_features, axis=0)
+        y = np.concatenate(all_labels, axis=0)
+        timestamps = np.concatenate(all_timestamps, axis=0)
+
+        logger.info(f"Всего данных: {len(X):,} семплов")
+
+        # Resampling (если нужно)
+        if apply_resampling and self.balancing_strategy:
+            logger.info("Применение resampling...")
+            X, y = self.balancing_strategy.balance_dataset(X, y)
+            logger.info(f"После resampling: {len(X):,} семплов")
+
+        # Создание sequences
+        logger.info("Создание временных последовательностей...")
+        sequences, seq_labels, seq_timestamps = self.create_sequences(
+            X, y, timestamps
+        )
+        logger.info(f"Создано последовательностей: {len(sequences):,}")
+
+        # Train/Val/Test split
+        logger.info("Split на train/val/test...")
+        train_data, val_data, test_data = self.train_val_test_split(
+            sequences, seq_labels, seq_timestamps
+        )
+
+        logger.info(f"\n✓ Данные разделены:")
+        logger.info(f"  • Train: {len(train_data[0]):,}")
+        logger.info(f"  • Val: {len(val_data[0]):,}")
+        logger.info(f"  • Test: {len(test_data[0]) if test_data else 0:,}")
+        logger.info(f"{'='*80}\n")
+
+        return train_data, val_data, test_data
+
     def walk_forward_split(
         self,
         sequences: np.ndarray,

@@ -467,5 +467,45 @@ if __name__ == "__main__":
 
   # Получаем отчет
   report = detector.get_drift_report()
-  print("\nDrift Report:")
-  print(json.dumps(report, indent=2))
+
+
+# ===================================================================
+# Singleton Pattern для DriftDetector
+# ===================================================================
+
+_drift_detector_instance: Optional[DriftDetector] = None
+
+
+def get_drift_detector(
+    window_size: int = 10000,
+    baseline_window_size: int = 50000,
+    drift_threshold: float = 0.1,
+    accuracy_drop_threshold: float = 0.05,
+    check_interval_hours: int = 24
+) -> DriftDetector:
+  """
+  Получить singleton instance DriftDetector.
+
+  Args:
+      window_size: Размер окна для текущих данных
+      baseline_window_size: Размер окна для baseline
+      drift_threshold: Порог для KS test
+      accuracy_drop_threshold: Порог падения accuracy
+      check_interval_hours: Интервал проверки drift
+
+  Returns:
+      DriftDetector instance
+  """
+  global _drift_detector_instance
+
+  if _drift_detector_instance is None:
+    _drift_detector_instance = DriftDetector(
+        window_size=window_size,
+        baseline_window_size=baseline_window_size,
+        drift_threshold=drift_threshold,
+        accuracy_drop_threshold=accuracy_drop_threshold,
+        check_interval_hours=check_interval_hours
+    )
+    logger.info("✓ Created DriftDetector singleton instance")
+
+  return _drift_detector_instance
