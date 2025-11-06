@@ -282,9 +282,11 @@ class ModelServer:
         """
         start_time = time.perf_counter()
 
+        # Initialize variant outside try block to avoid "referenced before assignment" error
+        variant = None
+
         try:
             # Определить модель для использования
-            variant = None
             if experiment_id:
                 # A/B testing
                 variant = await self.ab_manager.route_traffic(experiment_id)
@@ -370,9 +372,18 @@ class ModelServer:
             if isinstance(prediction_tensor, dict):
                 prediction = prediction_tensor
             else:
-                # Default format
+                # Default format - handle numpy array output
+                if hasattr(prediction_tensor, 'tolist'):
+                    output_value = prediction_tensor.tolist()
+                elif hasattr(prediction_tensor, 'item'):
+                    # Single scalar numpy value
+                    output_value = float(prediction_tensor.item())
+                else:
+                    # Fallback for other array-like types
+                    output_value = float(prediction_tensor.flatten()[0])
+
                 prediction = {
-                    "output": prediction_tensor.tolist() if hasattr(prediction_tensor, 'tolist') else float(prediction_tensor[0]),
+                    "output": output_value,
                     "confidence": 0.5
                 }
 
