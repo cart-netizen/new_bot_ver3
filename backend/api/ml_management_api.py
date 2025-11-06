@@ -52,7 +52,10 @@ class TrainingRequest(BaseModel):
     min_accuracy: float = Field(default=0.80, ge=0, le=1, description="Min accuracy for promotion")
 
     # Optional advanced configs
-    model_config: Optional[Dict[str, Any]] = None
+    ml_model_config: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Model configuration (replaces deprecated 'model_config')"
+    )
     trainer_config: Optional[Dict[str, Any]] = None
     data_config: Optional[Dict[str, Any]] = None
 
@@ -187,7 +190,7 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
         logger.info(f"Starting training job: {job_id}")
 
         # Create configs
-        model_config = ModelConfig(**request.model_config) if request.model_config else ModelConfig()
+        model_config = ModelConfig(**request.ml_model_config) if request.ml_model_config else ModelConfig()
         trainer_config = TrainerConfig(
             epochs=request.epochs,
             learning_rate=request.learning_rate
