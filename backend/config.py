@@ -433,6 +433,20 @@ class Settings(BaseSettings):
   DB_MAX_OVERFLOW: int = 20
   DB_ECHO: bool = False
 
+  # MLflow Tracking (PostgreSQL Backend)
+  MLFLOW_TRACKING_URI: str = Field(
+    default="postgresql://trading_bot:robocop@localhost:5432/trading_bot",
+    description="MLflow Tracking URI (PostgreSQL backend)"
+  )
+  MLFLOW_ARTIFACT_LOCATION: str = Field(
+    default="./mlruns/artifacts",
+    description="Path for MLflow artifacts storage"
+  )
+  MLFLOW_EXPERIMENT_NAME: str = Field(
+    default="trading_bot_ml",
+    description="Default MLflow experiment name"
+  )
+
   # Redis (для будущего использования)
   REDIS_URL: Optional[str] = None
   REDIS_HOST: str = "localhost"

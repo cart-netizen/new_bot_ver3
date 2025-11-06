@@ -464,13 +464,22 @@ export const TrainingPanel: React.FC = () => {
 
 ### MLflow Storage
 
-MLflow данные хранятся в:
-- **Tracking**: `./mlruns/` (SQLite backend)
-- **Artifacts**: `./mlruns/artifacts/` (local filesystem)
+✅ **MLflow интегрирован с PostgreSQL!**
 
-Для production рекомендуется:
-- PostgreSQL для tracking
-- S3/Azure Blob для artifacts
+MLflow данные хранятся в:
+- **Tracking**: PostgreSQL (эксперименты, метрики, параметры, теги)
+- **Model Registry**: PostgreSQL (версии моделей, stages, metadata)
+- **Artifacts**: `./mlruns/artifacts/` (local filesystem - модели, plots, configs)
+
+**Конфигурация** (в `.env`):
+```bash
+MLFLOW_TRACKING_URI=postgresql://trading_bot:robocop@localhost:5432/trading_bot
+MLFLOW_ARTIFACT_LOCATION=./mlruns/artifacts
+MLFLOW_EXPERIMENT_NAME=trading_bot_ml
+```
+
+Для production artifacts рекомендуется:
+- S3/Azure Blob/GCS для artifacts (вместо local filesystem)
 
 ### Feature Store Storage
 
@@ -481,9 +490,18 @@ Feature Store данные хранятся в:
 
 ### Model Registry Storage
 
-Model Registry данные хранятся в:
-- **Registry DB**: `models/registry/registry.db` (SQLite)
-- **Models**: `models/registry/{name}/{stage}/` (symlinks to actual models)
+✅ **Model Registry интегрирован с MLflow (PostgreSQL)!**
+
+Model Registry использует MLflow Model Registry:
+- **Registry Metadata**: PostgreSQL (версии, stages, tags, metrics)
+- **Model Artifacts**: MLflow artifacts store (`./mlruns/artifacts/`)
+- **Unified System**: Single source of truth для всех моделей
+
+Преимущества:
+- Нет дублирования данных (SQLite + PostgreSQL)
+- Git-like workflow для моделей (stages, versions)
+- Rich metadata (metrics, params, tags)
+- Web UI через MLflow
 
 ---
 
