@@ -325,9 +325,20 @@ class TrainingOrchestrator:
                 return None, None, None
 
             # Get dataset sizes safely
-            train_size = len(train_data.dataset) if hasattr(train_data.dataset, '__len__') else 0
-            val_size = len(val_data.dataset) if val_data and hasattr(val_data.dataset, '__len__') else 0
-            test_size = len(test_data.dataset) if test_data and hasattr(test_data.dataset, '__len__') else 0
+            try:
+                train_size = len(train_data.dataset)  # type: ignore[arg-type]
+            except (AttributeError, TypeError):
+                train_size = 0
+
+            try:
+                val_size = len(val_data.dataset) if val_data else 0  # type: ignore[arg-type]
+            except (AttributeError, TypeError):
+                val_size = 0
+
+            try:
+                test_size = len(test_data.dataset) if test_data else 0  # type: ignore[arg-type]
+            except (AttributeError, TypeError):
+                test_size = 0
 
             logger.info(
                 f"Data loaded: train={train_size}, "
