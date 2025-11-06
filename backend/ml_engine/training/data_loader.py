@@ -548,11 +548,14 @@ class HistoricalDataLoader:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         apply_resampling: bool = False
-    ) -> Tuple[Tuple[np.ndarray, np.ndarray], Tuple[np.ndarray, np.ndarray], Optional[Tuple[np.ndarray, np.ndarray]]]:
+    ) -> Tuple[DataLoader, DataLoader, Optional[DataLoader]]:
         """
-        Упрощенная версия load_and_prepare, возвращающая raw splits вместо DataLoaders.
+        Загрузка данных и создание DataLoaders (полная версия).
 
-        Используется в retraining_pipeline где нужны raw данные без оборачивания в DataLoaders.
+        Это обертка над load_and_prepare() с более простым интерфейсом.
+        Возвращает готовые DataLoaders вместо Dict со статистикой.
+
+        Используется в retraining_pipeline где нужны готовые DataLoaders для тренировки.
 
         Args:
             symbols: Список символов для загрузки (если None - загружаются все доступные)
@@ -562,12 +565,12 @@ class HistoricalDataLoader:
 
         Returns:
             Tuple из:
-            - train_data: (sequences, labels)
-            - val_data: (sequences, labels)
-            - test_data: (sequences, labels) or None
+            - train_loader: DataLoader для обучения
+            - val_loader: DataLoader для валидации
+            - test_loader: DataLoader для тестирования (может быть None)
         """
         logger.info(f"\n{'='*80}")
-        logger.info(f"ЗАГРУЗКА И SPLIT ДАННЫХ (raw splits)")
+        logger.info(f"ЗАГРУЗКА ДАННЫХ И СОЗДАНИЕ DATALOADERS")
         logger.info(f"{'='*80}")
 
         # Если symbols не указаны, пытаемся найти все доступные
@@ -585,60 +588,28 @@ class HistoricalDataLoader:
         if not symbols:
             raise ValueError("No symbols to load. Please provide symbols or ensure data exists.")
 
-        # Загружаем данные
-        all_features = []
-        all_labels = []
-        all_timestamps = []
-
-        for symbol in symbols:
-            try:
-                logger.info(f"Загрузка {symbol}...")
-                X, y, timestamps = self.load_symbol_data(
-                    symbol, start_date, end_date
-                )
-                all_features.append(X)
-                all_labels.append(y)
-                all_timestamps.append(timestamps)
-            except Exception as e:
-                logger.warning(f"Не удалось загрузить {symbol}: {e}")
-                continue
-
-        if not all_features:
-            raise ValueError(f"No data loaded from symbols: {symbols}")
-
-        # Объединяем
-        X = np.concatenate(all_features, axis=0)
-        y = np.concatenate(all_labels, axis=0)
-        timestamps = np.concatenate(all_timestamps, axis=0)
-
-        logger.info(f"Всего данных: {len(X):,} семплов")
-
-        # Resampling (если нужно)
-        if apply_resampling and self.balancing_strategy:
-            logger.info("Применение resampling...")
-            X, y = self.balancing_strategy.balance_dataset(X, y)
-            logger.info(f"После resampling: {len(X):,} семплов")
-
-        # Создание sequences
-        logger.info("Создание временных последовательностей...")
-        sequences, seq_labels, seq_timestamps = self.create_sequences(
-            X, y, timestamps
-        )
-        logger.info(f"Создано последовательностей: {len(sequences):,}")
-
-        # Train/Val/Test split
-        logger.info("Split на train/val/test...")
-        train_data, val_data, test_data = self.train_val_test_split(
-            sequences, seq_labels, seq_timestamps
+        # Вызываем полную версию load_and_prepare
+        result = self.load_and_prepare(
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date,
+            apply_resampling=apply_resampling
         )
 
-        logger.info(f"\n✓ Данные разделены:")
-        logger.info(f"  • Train: {len(train_data[0]):,}")
-        logger.info(f"  • Val: {len(val_data[0]):,}")
-        logger.info(f"  • Test: {len(test_data[0]) if test_data else 0:,}")
+        # Извлекаем DataLoaders из результата
+        dataloaders = result['dataloaders']
+        train_loader = dataloaders['train']
+        val_loader = dataloaders['val']
+        test_loader = dataloaders.get('test', None)
+
+        logger.info(f"\n✓ DataLoaders созданы:")
+        logger.info(f"  • Train batches: {len(train_loader)}")
+        logger.info(f"  • Val batches: {len(val_loader)}")
+        if test_loader:
+            logger.info(f"  • Test batches: {len(test_loader)}")
         logger.info(f"{'='*80}\n")
 
-        return train_data, val_data, test_data
+        return train_loader, val_loader, test_loader
 
     def walk_forward_split(
         self,
