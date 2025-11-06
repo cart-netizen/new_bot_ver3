@@ -1479,10 +1479,10 @@ async def get_strategies_status():
 async def get_strategy_stats(strategy_name: str):
   """Статистика конкретной стратегии."""
   from backend.main import bot_controller
-  if strategy_name not in bot_controller.strategy_manager.strategies:
+  if strategy_name not in bot_controller.strategy_manager.strategies:  # type: ignore[union-attr]
     raise HTTPException(status_code=404, detail="Strategy not found")
 
-  strategy = bot_controller.strategy_manager.strategies[strategy_name]
+  strategy = bot_controller.strategy_manager.strategies[strategy_name]  # type: ignore[union-attr]
   return strategy.get_statistics()
 
 
@@ -1757,12 +1757,12 @@ async def get_adaptive_statistics():
   """Статистика Adaptive Consensus."""
   from backend.main import bot_controller
 
-  if not bot_controller.adaptive_consensus_manager:
+  if not bot_controller.adaptive_consensus_manager:  # type: ignore[attr-defined]
     return {"enabled": False}
 
   return {
     "enabled": True,
-    "statistics": bot_controller.adaptive_consensus_manager.get_statistics()
+    "statistics": bot_controller.adaptive_consensus_manager.get_statistics()  # type: ignore[attr-defined]
   }
 
 
@@ -1771,10 +1771,10 @@ async def get_market_regime(symbol: str):
   """Текущий режим рынка для символа."""
   from backend.main import bot_controller
 
-  if not bot_controller.adaptive_consensus_manager:
+  if not bot_controller.adaptive_consensus_manager:  # type: ignore[attr-defined]
     return {"error": "Adaptive Consensus disabled"}
 
-  regime_detector = bot_controller.adaptive_consensus_manager.regime_detector
+  regime_detector = bot_controller.adaptive_consensus_manager.regime_detector  # type: ignore[attr-defined]
 
   if not regime_detector:
     return {"error": "Regime Detector not available"}
@@ -1801,10 +1801,10 @@ async def get_strategy_performance(symbol: str, time_window: str = "7d"):
   """Performance метрики стратегий для символа."""
   from backend.main import bot_controller
 
-  if not bot_controller.adaptive_consensus_manager:
+  if not bot_controller.adaptive_consensus_manager:  # type: ignore[attr-defined]
     return {"error": "Adaptive Consensus disabled"}
 
-  tracker = bot_controller.adaptive_consensus_manager.performance_tracker
+  tracker = bot_controller.adaptive_consensus_manager.performance_tracker  # type: ignore[attr-defined]
 
   if not tracker:
     return {"error": "Performance Tracker not available"}
@@ -1835,10 +1835,10 @@ async def get_current_weights(symbol: str):
   """Текущие веса стратегий для символа."""
   from backend.main import bot_controller
 
-  if not bot_controller.adaptive_consensus_manager:
+  if not bot_controller.adaptive_consensus_manager:  # type: ignore[attr-defined]
     return {"error": "Adaptive Consensus disabled"}
 
-  optimizer = bot_controller.adaptive_consensus_manager.weight_optimizer
+  optimizer = bot_controller.adaptive_consensus_manager.weight_optimizer  # type: ignore[attr-defined]
 
   if not optimizer:
     return {"error": "Weight Optimizer not available"}
