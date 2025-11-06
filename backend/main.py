@@ -235,6 +235,8 @@ class BotController:
 
     # ==================== ФАЗА 2: ADAPTIVE CONSENSUS ====================
     self.adaptive_consensus: Optional[AdaptiveConsensusManager] = None
+    # Alias for API compatibility
+    self.adaptive_consensus_manager: Optional[AdaptiveConsensusManager] = None
 
     # ==================== ФАЗА 3: MULTI-TIMEFRAME ====================
     self.mtf_manager: Optional[MultiTimeframeManager] = None
@@ -517,6 +519,7 @@ class BotController:
           logger.error(f"❌ Ошибка инициализации Adaptive Consensus: {e}")
           logger.warning("⚠️ Продолжаем без Adaptive Consensus")
           self.adaptive_consensus = None
+          self.adaptive_consensus_manager = None  # Update alias
       else:
         logger.info("ℹ️ [6/10] Adaptive Consensus отключен в настройках")
 
@@ -662,6 +665,7 @@ class BotController:
 
         self.strategy_manager = self.integrated_engine.strategy_manager
         self.adaptive_consensus = self.integrated_engine.adaptive_consensus
+        self.adaptive_consensus_manager = self.adaptive_consensus  # Update alias
         self.mtf_manager = self.integrated_engine.mtf_manager
 
         # НОВОЕ: Передаем trade_managers в Strategy Manager для реальных market trades фичей
