@@ -15,7 +15,7 @@ import asyncio
 import json
 from pathlib import Path
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 import torch
 import pandas as pd
 import numpy as np
@@ -117,22 +117,17 @@ class TrainingOrchestrator:
                 raise ValueError("Failed to load training data")
 
             # Log data info
-            try:
-                train_size = len(train_loader.dataset)  # type: ignore[arg-type]
-            except (AttributeError, TypeError):
-                train_size = 0
+            train_size = self._get_dataset_size(train_loader)
+            val_size = self._get_dataset_size(val_loader)
+            test_size = self._get_dataset_size(test_loader)
 
-            try:
-                val_size = len(val_loader.dataset) if val_loader else 0  # type: ignore[arg-type]
-            except (AttributeError, TypeError):
-                val_size = 0
-
-            try:
-                test_size = len(test_loader.dataset) if test_loader else 0  # type: ignore[arg-type]
-            except (AttributeError, TypeError):
-                test_size = 0
+            # Determine data source
+            data_source = "feature_store" if self.data_config.use_feature_store else "legacy"
 
             self.mlflow_tracker.log_params({
+                "data_source": data_source,
+                "data_date_range_days": self.data_config.feature_store_date_range_days,
+                "data_feature_store_enabled": self.data_config.use_feature_store,
                 "train_samples": train_size,
                 "val_samples": val_size,
                 "test_samples": test_size
@@ -321,47 +316,172 @@ class TrainingOrchestrator:
             }
 
     async def _load_data(self):
-        """Загрузить данные для обучения"""
+        """
+        Загрузить данные для обучения
+
+        Workflow:
+        1. Check if Feature Store enabled
+        2. Try to load from Feature Store
+           - Define date range
+           - Read offline features
+           - Validate schema
+           - Convert to DataLoaders
+        3. Fallback to legacy loader if:
+           - Feature Store disabled
+           - No data in Feature Store
+           - Schema validation fails
+           - Any exception occurs
+        4. Return DataLoaders
+
+        Returns:
+            Tuple of (train_loader, val_loader, test_loader) or (None, None, None)
+        """
         try:
-            # Try to load from Feature Store first
+            # Step 1: Check configuration
+            if not self.data_config.use_feature_store:
+                logger.info("Feature Store disabled by config, using legacy loader")
+                return self._load_from_legacy()
+
+            # Step 2: Try Feature Store
             logger.info("Attempting to load from Feature Store...")
 
-            # For now, fallback to legacy data loader
-            # TODO: Implement proper Feature Store integration
-            data_loader = HistoricalDataLoader(self.data_config)
-            train_data, val_data, test_data = data_loader.load_and_split()
-
-            if train_data is None:
-                logger.error("No training data available")
-                return None, None, None
-
-            # Get dataset sizes safely
-            try:
-                train_size = len(train_data.dataset)  # type: ignore[arg-type]
-            except (AttributeError, TypeError):
-                train_size = 0
-
-            try:
-                val_size = len(val_data.dataset) if val_data else 0  # type: ignore[arg-type]
-            except (AttributeError, TypeError):
-                val_size = 0
-
-            try:
-                test_size = len(test_data.dataset) if test_data else 0  # type: ignore[arg-type]
-            except (AttributeError, TypeError):
-                test_size = 0
-
-            logger.info(
-                f"Data loaded: train={train_size}, "
-                f"val={val_size}, "
-                f"test={test_size}"
+            # 2.1: Define date range
+            end_date = datetime.now()
+            start_date = end_date - timedelta(
+                days=self.data_config.feature_store_date_range_days
             )
 
-            return train_data, val_data, test_data
+            logger.info(
+                f"Date range: {start_date.strftime('%Y-%m-%d')} to "
+                f"{end_date.strftime('%Y-%m-%d')} "
+                f"({self.data_config.feature_store_date_range_days} days)"
+            )
+
+            # 2.2: Read from Feature Store
+            features_df = self.feature_store.read_offline_features(
+                feature_group=self.data_config.feature_store_group,
+                start_date=start_date.strftime("%Y-%m-%d"),
+                end_date=end_date.strftime("%Y-%m-%d"),
+                symbols=self.data_config.feature_store_symbols
+            )
+
+            # 2.3: Check if data exists
+            if features_df.empty:
+                logger.warning(
+                    f"No features found in Feature Store for date range "
+                    f"{start_date.date()} to {end_date.date()}"
+                )
+                if self.data_config.fallback_to_legacy:
+                    logger.info("Falling back to legacy data loader")
+                    return self._load_from_legacy()
+                else:
+                    logger.error("Fallback disabled, no data available")
+                    return None, None, None
+
+            logger.info(f"✓ Collected {len(features_df)} samples from Feature Store")
+
+            # 2.4: Validate schema
+            from backend.ml_engine.feature_store.feature_schema import DEFAULT_SCHEMA
+
+            logger.info("Validating DataFrame schema...")
+            try:
+                DEFAULT_SCHEMA.validate_dataframe(features_df, strict=False)
+                logger.info("✓ Schema validation passed")
+            except ValueError as e:
+                logger.error(f"Schema validation failed: {e}")
+                if self.data_config.fallback_to_legacy:
+                    logger.info("Falling back to legacy data loader")
+                    return self._load_from_legacy()
+                else:
+                    raise
+
+            # 2.5: Convert to DataLoaders
+            logger.info("Converting Feature Store data to DataLoaders...")
+
+            data_loader = HistoricalDataLoader(self.data_config)
+
+            train_loader, val_loader, test_loader = data_loader.load_from_dataframe(
+                features_df=features_df,
+                feature_columns=DEFAULT_SCHEMA.get_all_feature_columns(),
+                label_column=DEFAULT_SCHEMA.label_column,
+                timestamp_column=DEFAULT_SCHEMA.timestamp_column,
+                symbol_column=DEFAULT_SCHEMA.symbol_column,
+                apply_resampling=True  # Enable class balancing
+            )
+
+            # 2.6: Log success
+            logger.info("✓ Successfully loaded data from Feature Store")
+            logger.info(f"  • Date range: {self.data_config.feature_store_date_range_days} days")
+            logger.info(f"  • Samples: {len(features_df)}")
+            logger.info(f"  • Features: {len(DEFAULT_SCHEMA.get_all_feature_columns())}")
+            logger.info(f"  • Class balancing: enabled")
+
+            # Get sizes for logging
+            train_size = self._get_dataset_size(train_loader)
+            val_size = self._get_dataset_size(val_loader)
+            test_size = self._get_dataset_size(test_loader)
+
+            logger.info(
+                f"  • Split: train={train_size}, val={val_size}, test={test_size}"
+            )
+
+            return train_loader, val_loader, test_loader
 
         except Exception as e:
-            logger.error(f"Failed to load data: {e}")
+            logger.error(f"Feature Store loading failed: {e}")
+            logger.exception("Exception details:")
+
+            if self.data_config.fallback_to_legacy:
+                logger.info("Falling back to legacy data loader")
+                return self._load_from_legacy()
+            else:
+                logger.error("Fallback disabled, re-raising exception")
+                raise
+
+    def _get_dataset_size(self, dataloader) -> int:
+        """
+        Safely get dataset size from DataLoader
+
+        Args:
+            dataloader: DataLoader instance or None
+
+        Returns:
+            Dataset size or 0 if unavailable
+        """
+        if dataloader is None:
+            return 0
+        try:
+            return len(dataloader.dataset)  # type: ignore[arg-type]
+        except (AttributeError, TypeError):
+            return 0
+
+    def _load_from_legacy(self) -> tuple:
+        """
+        Load data from legacy .npy files
+
+        Returns:
+            Tuple of (train_loader, val_loader, test_loader) or (None, None, None)
+        """
+        logger.info("Loading data from legacy .npy files...")
+
+        data_loader = HistoricalDataLoader(self.data_config)
+        train_data, val_data, test_data = data_loader.load_and_split()
+
+        if train_data is None:
+            logger.error("No training data available in legacy storage")
             return None, None, None
+
+        # Get sizes
+        train_size = self._get_dataset_size(train_data)
+        val_size = self._get_dataset_size(val_data)
+        test_size = self._get_dataset_size(test_data)
+
+        logger.info(
+            f"✓ Data loaded from legacy files: "
+            f"train={train_size}, val={val_size}, test={test_size}"
+        )
+
+        return train_data, val_data, test_data
 
     async def _evaluate_model(
         self,
@@ -526,6 +646,14 @@ async def main():
     parser.add_argument("--no-onnx", action="store_true", help="Skip ONNX export")
     parser.add_argument("--no-promote", action="store_true", help="Skip auto-promotion")
 
+    # Feature Store parameters
+    parser.add_argument("--no-feature-store", action="store_true",
+                       help="Skip Feature Store, use legacy .npy loader")
+    parser.add_argument("--date-range", type=int, default=90,
+                       help="Date range in days for Feature Store (default: 90)")
+    parser.add_argument("--no-fallback", action="store_true",
+                       help="Disable fallback to legacy loader if Feature Store fails")
+
     args = parser.parse_args()
 
     # Create orchestrator
@@ -535,6 +663,11 @@ async def main():
     orchestrator.trainer_config.epochs = args.epochs
     orchestrator.trainer_config.learning_rate = args.lr
     orchestrator.data_config.batch_size = args.batch_size
+
+    # Feature Store configs
+    orchestrator.data_config.use_feature_store = not args.no_feature_store
+    orchestrator.data_config.feature_store_date_range_days = args.date_range
+    orchestrator.data_config.fallback_to_legacy = not args.no_fallback
 
     # Train
     result = await orchestrator.train_model(
