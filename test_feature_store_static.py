@@ -61,7 +61,7 @@ try:
         sys.exit(1)
 
     # Check for methods
-    with open(filepath, 'r') as f:
+    with open(filepath, 'r', encoding='utf-8') as f:
         content = f.read()
 
     required_methods = [
@@ -94,7 +94,7 @@ print("\n2. Checking load_from_dataframe() in data_loader.py...")
 try:
     filepath = "backend/ml_engine/training/data_loader.py"
 
-    with open(filepath, 'r') as f:
+    with open(filepath, 'r', encoding='utf-8') as f:
         content = f.read()
 
     # Check method exists
@@ -136,7 +136,7 @@ print("\n3. Checking retraining_pipeline.py updates...")
 try:
     filepath = "backend/ml_engine/auto_retraining/retraining_pipeline.py"
 
-    with open(filepath, 'r') as f:
+    with open(filepath, 'r', encoding='utf-8') as f:
         content = f.read()
 
     # Check for schema import
@@ -180,7 +180,7 @@ print("\n4. Checking feature definitions...")
 try:
     filepath = "backend/ml_engine/feature_store/feature_schema.py"
 
-    with open(filepath, 'r') as f:
+    with open(filepath, 'r', encoding='utf-8') as f:
         content = f.read()
 
     # Count features in each category
@@ -214,7 +214,7 @@ try:
         "backend/ml_engine/feature_store/feature_schema.py",
         "backend/ml_engine/training/data_loader.py",
     ]:
-        with open(filepath, 'r') as f:
+        with open(filepath, 'r', encoding='utf-8') as f:
             tree = ast.parse(f.read())
 
         for node in ast.walk(tree):
