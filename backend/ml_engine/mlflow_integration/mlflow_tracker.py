@@ -19,7 +19,7 @@ import torch
 import json
 
 from backend.core.logger import get_logger
-from backend.config import config
+from backend.config import settings
 
 logger = get_logger(__name__)
 
@@ -56,13 +56,13 @@ class MLflowTracker:
         """
         # Setup tracking URI from config
         if tracking_uri is None:
-            tracking_uri = config.MLFLOW_TRACKING_URI
+            tracking_uri = settings.MLFLOW_TRACKING_URI
 
         if experiment_name is None:
-            experiment_name = config.MLFLOW_EXPERIMENT_NAME
+            experiment_name = settings.MLFLOW_EXPERIMENT_NAME
 
         if artifact_location is None:
-            artifact_location = config.MLFLOW_ARTIFACT_LOCATION
+            artifact_location = settings.MLFLOW_ARTIFACT_LOCATION
 
         mlflow.set_tracking_uri(tracking_uri)
         self.tracking_uri = tracking_uri
