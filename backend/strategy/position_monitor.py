@@ -79,7 +79,7 @@ class PositionMonitor:
     self.enabled = settings.POSITION_MONITOR_ENABLED
     self.check_interval = settings.POSITION_MONITOR_INTERVAL
     self.enable_reversal_check = settings.POSITION_MONITOR_REVERSAL_CHECK
-    self.enable_trailing_stop = settings.POSITION_MONITOR_TRAILING_STOP
+    self.enable_trailing_stop = settings.TRAILING_STOP_ENABLED
     self.enable_sltp_check = settings.POSITION_MONITOR_SLTP_CHECK
 
     # Статус
