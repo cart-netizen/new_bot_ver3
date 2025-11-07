@@ -747,7 +747,7 @@ async def _run_backtest_job(backtest_id: str, config: BacktestConfig):
         engine = BacktestingEngine(
             config=config,
             data_handler=data_handler,
-            exchange=simulated_exchange
+            simulated_exchange=simulated_exchange
         )
 
         # Запустить бэктест
