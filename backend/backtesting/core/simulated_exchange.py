@@ -304,8 +304,8 @@ class SimulatedExchange:
         total_quantity = 0.0
 
         for level in levels:
-            level_price = level.price
-            level_quantity = level.quantity
+            # level is a tuple (price, quantity)
+            level_price, level_quantity = level
 
             # Сколько можем взять с этого уровня
             take_quantity = min(remaining_quantity, level_quantity)
@@ -320,7 +320,7 @@ class SimulatedExchange:
         # Если недостаточно ликвидности, добавляем penalty
         if remaining_quantity > 0:
             # Худшая цена + penalty
-            worst_price = levels[-1].price
+            worst_price, _ = levels[-1]
             penalty = 0.1  # 0.1% penalty за недостаток ликвидности
 
             if side == OrderSide.BUY:
@@ -426,7 +426,7 @@ class SimulatedExchange:
         """Симуляция задержки исполнения."""
         # Нормальное распределение задержки
         latency_ms = max(
-            0,
+            0.0,
             random.gauss(
                 self.config.latency_mean_ms,
                 self.config.latency_std_ms
