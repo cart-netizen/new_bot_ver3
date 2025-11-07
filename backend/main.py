@@ -329,6 +329,10 @@ class BotController:
 
     self.running = False
 
+    # ========== WATCHDOG TRACKING ==========
+    # FIXED: Track last analysis iteration time for watchdog
+    self.last_analysis_iteration_time = time.time()
+
     # ========== STATISTICS & DIAGNOSTICS ==========
     self.stats = {
       'signals_generated': 0,
@@ -3006,6 +3010,8 @@ class BotController:
             continue  # Следующий символ
 
         self.stats['analysis_cycles'] += 1
+        # FIXED: Update last iteration time for watchdog
+        self.last_analysis_iteration_time = time.time()
 
         # Периодическое логирование статистики (каждые 100 циклов)
         # if cycle_number % 100 == 0:
@@ -3092,15 +3098,15 @@ class BotController:
     """
     logger.info("🐕 Запущен Analysis Loop Watchdog")
 
-    last_iteration_time = asyncio.get_event_loop().time()
     watchdog_interval = 30  # Проверяем каждые 30 секунд
     max_stall_time = 60  # Максимум 60 секунд без итераций
 
     while self.status == BotStatus.RUNNING:
       await asyncio.sleep(watchdog_interval)
 
-      current_time = asyncio.get_event_loop().time()
-      elapsed = current_time - last_iteration_time
+      # FIXED: Use instance variable instead of local variable
+      current_time = time.time()
+      elapsed = current_time - self.last_analysis_iteration_time
 
       if elapsed > max_stall_time:
         logger.error(
