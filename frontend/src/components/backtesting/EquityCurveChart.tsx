@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { cn } from '../../utils/helpers';
-import { EquityPoint } from '../../api/backtesting.api';
+import type { EquityPoint } from '../../api/backtesting.api';
 
 interface EquityCurveChartProps {
   equityCurve: EquityPoint[];
