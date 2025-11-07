@@ -152,7 +152,7 @@ def upgrade() -> None:
     op.create_table(
         'backtest_equity',
         # Идентификаторы
-        sa.Column('id', UUID(as_uuid=True), primary_key=True, default=uuid.uuid4),
+        sa.Column('id', UUID(as_uuid=True), nullable=False, default=uuid.uuid4),
         sa.Column('backtest_run_id', UUID(as_uuid=True),
                   sa.ForeignKey('backtest_runs.id', ondelete='CASCADE'),
                   nullable=False, index=True),
@@ -176,7 +176,10 @@ def upgrade() -> None:
         sa.Column('total_return_pct', sa.Float, default=0.0),
 
         # Количество открытых позиций
-        sa.Column('open_positions_count', sa.Integer, default=0)
+        sa.Column('open_positions_count', sa.Integer, default=0),
+
+        # Составной первичный ключ для TimescaleDB hypertable
+        sa.PrimaryKeyConstraint('id', 'timestamp')
     )
 
     # Индексы для backtest_equity
