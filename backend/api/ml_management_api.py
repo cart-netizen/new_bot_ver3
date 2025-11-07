@@ -273,21 +273,26 @@ async def list_models(
         # Get all models
         models = []
         for name in ["hybrid_cnn_lstm"]:  # Add more model names as needed
-            model_versions = await registry.list_model_versions(name)
+            try:
+                model_versions = await registry.list_model_versions(name)
 
-            for version_info in model_versions:
-                model_data = {
-                    "name": name,
-                    "version": version_info["version"],
-                    "stage": version_info["stage"].value,
-                    "created_at": version_info["created_at"],
-                    "description": version_info.get("description", ""),
-                    "metrics": version_info.get("training_params", {})
-                }
+                for version_info in model_versions:
+                    model_data = {
+                        "name": name,
+                        "version": version_info["version"],
+                        "stage": version_info["stage"].value if hasattr(version_info["stage"], "value") else str(version_info["stage"]),
+                        "created_at": version_info["created_at"],
+                        "description": version_info.get("description", ""),
+                        "metrics": version_info.get("training_params", {})
+                    }
 
-                # Filter by stage if specified
-                if stage is None or version_info["stage"].value.lower() == stage.lower():
-                    models.append(model_data)
+                    # Filter by stage if specified
+                    stage_value = version_info["stage"].value if hasattr(version_info["stage"], "value") else str(version_info["stage"])
+                    if stage is None or stage_value.lower() == stage.lower():
+                        models.append(model_data)
+            except Exception as e:
+                logger.warning(f"Failed to get versions for model {name}: {e}")
+                # Continue to next model
 
         return ModelListResponse(
             models=models,
@@ -295,8 +300,9 @@ async def list_models(
         )
 
     except Exception as e:
-        logger.error(f"Failed to list models: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Failed to list models: {e}", exc_info=True)
+        # Return empty list instead of 500 error
+        return ModelListResponse(models=[], total=0)
 
 
 @router.post("/models/{name}/{version}/promote")
@@ -509,9 +515,20 @@ async def get_retraining_status() -> RetrainingStatusResponse:
     try:
         pipeline = get_retraining_pipeline()
 
+        # Safely convert config to dict
+        try:
+            from dataclasses import asdict, is_dataclass
+            if is_dataclass(pipeline.config):
+                config_dict = asdict(pipeline.config)
+            else:
+                config_dict = vars(pipeline.config) if hasattr(pipeline.config, '__dict__') else {}
+        except Exception as e:
+            logger.warning(f"Failed to convert config to dict: {e}")
+            config_dict = {}
+
         return RetrainingStatusResponse(
             is_running=pipeline.is_running,
-            config=vars(pipeline.config),
+            config=config_dict,
             last_training_time=pipeline.last_training_time.isoformat() if pipeline.last_training_time else None,
             last_drift_check_time=pipeline.last_drift_check_time.isoformat() if pipeline.last_drift_check_time else None,
             last_performance_check_time=pipeline.last_performance_check_time.isoformat() if pipeline.last_performance_check_time else None
