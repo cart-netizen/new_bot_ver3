@@ -384,3 +384,279 @@ class LayeringPattern(Base):
 
   def __repr__(self):
     return f"<LayeringPattern {self.pattern_id} blacklist={self.blacklist} occurrences={self.occurrence_count}>"
+
+
+# ==================== BACKTESTING MODELS ====================
+
+class BacktestStatus(str, enum.Enum):
+  """Статус бэктеста."""
+  PENDING = "pending"
+  RUNNING = "running"
+  COMPLETED = "completed"
+  FAILED = "failed"
+  CANCELLED = "cancelled"
+
+
+class BacktestRun(Base):
+  """
+  История запусков бэктестов.
+
+  Хранит конфигурацию, параметры и результаты каждого бэктеста.
+  """
+
+  __tablename__ = "backtest_runs"
+
+  # Идентификаторы
+  id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+  name = Column(String(200), nullable=False)  # Название теста
+  description = Column(Text, nullable=True)  # Описание
+
+  # Параметры бэктеста
+  symbol = Column(String(20), nullable=False, index=True)
+  start_date = Column(DateTime, nullable=False, index=True)
+  end_date = Column(DateTime, nullable=False, index=True)
+  initial_capital = Column(Float, nullable=False)
+
+  # Конфигурация стратегий (JSONB для гибкости)
+  strategies_config = Column(JSONB, nullable=False)
+  # Пример: {
+  #   "enabled_strategies": ["momentum", "sar_wave"],
+  #   "strategy_params": {
+  #     "momentum": {"period": 14, "threshold": 0.7},
+  #     "sar_wave": {"acceleration": 0.02, "maximum": 0.2}
+  #   },
+  #   "consensus_mode": "weighted",
+  #   "min_strategies_for_signal": 2
+  # }
+
+  # Risk Management конфигурация
+  risk_config = Column(JSONB, nullable=False)
+  # Пример: {
+  #   "position_size_pct": 10.0,
+  #   "max_open_positions": 3,
+  #   "stop_loss_pct": 2.0,
+  #   "take_profit_pct": 4.0,
+  #   "use_trailing_stop": true
+  # }
+
+  # Exchange simulation конфигурация
+  exchange_config = Column(JSONB, nullable=True)
+  # Пример: {
+  #   "commission_rate": 0.001,
+  #   "slippage_model": "fixed",
+  #   "slippage_pct": 0.01,
+  #   "simulate_latency": false
+  # }
+
+  # Статус выполнения
+  status = Column(
+    Enum(BacktestStatus, values_callable=lambda x: [e.value for e in x], name='backteststatus'),
+    nullable=False,
+    default=BacktestStatus.PENDING,
+    index=True
+  )
+
+  # Прогресс выполнения
+  progress_pct = Column(Float, default=0.0)  # 0-100%
+  current_date = Column(DateTime, nullable=True)  # Текущая дата в симуляции
+
+  # Результаты - базовые
+  total_trades = Column(Integer, default=0)
+  winning_trades = Column(Integer, default=0)
+  losing_trades = Column(Integer, default=0)
+  final_capital = Column(Float, nullable=True)
+  total_pnl = Column(Float, nullable=True)
+  total_pnl_pct = Column(Float, nullable=True)
+
+  # Результаты - детальные метрики (JSONB)
+  metrics = Column(JSONB, nullable=True)
+  # Пример: {
+  #   "returns": {
+  #     "total_return_pct": 45.2,
+  #     "annual_return_pct": 18.5,
+  #     "monthly_returns": [...]
+  #   },
+  #   "risk": {
+  #     "sharpe_ratio": 1.85,
+  #     "sortino_ratio": 2.1,
+  #     "calmar_ratio": 1.2,
+  #     "volatility_annual": 15.3
+  #   },
+  #   "drawdown": {
+  #     "max_drawdown_pct": 12.5,
+  #     "max_drawdown_duration_days": 45,
+  #     "avg_drawdown_pct": 5.2
+  #   },
+  #   "trade_stats": {
+  #     "win_rate_pct": 55.0,
+  #     "profit_factor": 1.8,
+  #     "avg_win": 120.5,
+  #     "avg_loss": -65.3,
+  #     "largest_win": 450.0,
+  #     "largest_loss": -180.0
+  #   },
+  #   "advanced": {
+  #     "omega_ratio": 1.45,
+  #     "tail_ratio": 1.2,
+  #     "var_95": -8.5,
+  #     "cvar_95": -12.3
+  #   }
+  # }
+
+  # Временные метки
+  created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+  started_at = Column(DateTime, nullable=True)
+  completed_at = Column(DateTime, nullable=True)
+  duration_seconds = Column(Float, nullable=True)
+
+  # Ошибки (если failed)
+  error_message = Column(Text, nullable=True)
+  error_traceback = Column(Text, nullable=True)
+
+  # Метаданные
+  metadata_json = Column(JSONB, nullable=True)
+
+  # Связи
+  trades = relationship("BacktestTrade", back_populates="backtest_run", cascade="all, delete-orphan")
+  equity_curve = relationship("BacktestEquity", back_populates="backtest_run", cascade="all, delete-orphan")
+
+  __table_args__ = (
+    Index("idx_backtest_runs_symbol_status", "symbol", "status"),
+    Index("idx_backtest_runs_created_at", "created_at"),
+    Index("idx_backtest_runs_start_end", "start_date", "end_date"),
+  )
+
+  def __repr__(self):
+    return f"<BacktestRun {self.name} {self.symbol} {self.status.value}>"
+
+
+class BacktestTrade(Base):
+  """
+  Сделки бэктеста.
+
+  Хранит все трейды выполненные во время бэктеста.
+  """
+
+  __tablename__ = "backtest_trades"
+
+  # Идентификаторы
+  id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+  backtest_run_id = Column(UUID(as_uuid=True), ForeignKey("backtest_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+
+  # Основные данные трейда
+  symbol = Column(String(20), nullable=False)
+  side = Column(Enum(OrderSide), nullable=False)
+
+  # Время входа и выхода
+  entry_time = Column(DateTime, nullable=False, index=True)
+  exit_time = Column(DateTime, nullable=True)
+
+  # Цены
+  entry_price = Column(Float, nullable=False)
+  exit_price = Column(Float, nullable=True)
+
+  # Объем
+  quantity = Column(Float, nullable=False)
+
+  # Stop Loss / Take Profit
+  stop_loss = Column(Float, nullable=True)
+  take_profit = Column(Float, nullable=True)
+
+  # PnL
+  pnl = Column(Float, nullable=True)  # Абсолютный PnL в USDT
+  pnl_pct = Column(Float, nullable=True)  # PnL в процентах
+  commission = Column(Float, default=0.0)  # Комиссии
+
+  # Контекст входа
+  entry_signal = Column(JSONB, nullable=True)  # Данные сигнала входа
+  # Пример: {
+  #   "signal_type": "BUY",
+  #   "source": "CONSENSUS",
+  #   "confidence": 0.85,
+  #   "contributing_strategies": ["momentum", "sar_wave"],
+  #   "reason": "Strong uptrend momentum"
+  # }
+
+  # Причина выхода
+  exit_reason = Column(String(100), nullable=True)  # "TP", "SL", "SIGNAL", "TIMEOUT", "END_OF_BACKTEST"
+  exit_signal = Column(JSONB, nullable=True)  # Данные сигнала выхода (если есть)
+
+  # Метрики трейда
+  max_favorable_excursion = Column(Float, nullable=True)  # MFE - максимальная прибыль во время позиции
+  max_adverse_excursion = Column(Float, nullable=True)   # MAE - максимальный убыток во время позиции
+  duration_seconds = Column(Float, nullable=True)  # Длительность позиции
+
+  # Рыночные условия при входе
+  entry_market_data = Column(JSONB, nullable=True)
+  # Пример: {
+  #   "price": 42500.0,
+  #   "volume_24h": 1500000000,
+  #   "volatility": 2.5,
+  #   "trend": "bullish"
+  # }
+
+  # Рыночные условия при выходе
+  exit_market_data = Column(JSONB, nullable=True)
+
+  # Метаданные
+  metadata_json = Column(JSONB, nullable=True)
+
+  # Связь
+  backtest_run = relationship("BacktestRun", back_populates="trades")
+
+  __table_args__ = (
+    Index("idx_backtest_trades_run_time", "backtest_run_id", "entry_time"),
+    Index("idx_backtest_trades_symbol", "symbol"),
+  )
+
+  def __repr__(self):
+    return f"<BacktestTrade {self.symbol} {self.side.value} PnL={self.pnl}>"
+
+
+class BacktestEquity(Base):
+  """
+  Кривая доходности (equity curve) бэктеста.
+
+  Хранит снимки состояния капитала через определенные интервалы времени.
+  Используется для построения графиков и расчета просадок.
+  """
+
+  __tablename__ = "backtest_equity"
+
+  # Идентификаторы
+  id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+  backtest_run_id = Column(UUID(as_uuid=True), ForeignKey("backtest_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+
+  # Временная метка
+  timestamp = Column(DateTime, nullable=False, index=True)
+
+  # Порядковый номер (для быстрой сортировки)
+  sequence = Column(Integer, nullable=False)
+
+  # Состояние капитала
+  equity = Column(Float, nullable=False)  # Текущий капитал (USDT)
+  cash = Column(Float, nullable=False)  # Свободные средства
+  positions_value = Column(Float, default=0.0)  # Стоимость открытых позиций
+
+  # Просадка
+  peak_equity = Column(Float, nullable=False)  # Пиковый капитал до этого момента
+  drawdown = Column(Float, default=0.0)  # Абсолютная просадка
+  drawdown_pct = Column(Float, default=0.0)  # Процентная просадка
+
+  # Доходность
+  total_return = Column(Float, default=0.0)  # Абсолютная доходность
+  total_return_pct = Column(Float, default=0.0)  # Процентная доходность
+
+  # Количество открытых позиций
+  open_positions_count = Column(Integer, default=0)
+
+  # Связь
+  backtest_run = relationship("BacktestRun", back_populates="equity_curve")
+
+  __table_args__ = (
+    Index("idx_backtest_equity_run_time", "backtest_run_id", "timestamp"),
+    Index("idx_backtest_equity_sequence", "backtest_run_id", "sequence"),
+  )
+
+  def __repr__(self):
+    return f"<BacktestEquity equity={self.equity} drawdown={self.drawdown_pct}%>"
