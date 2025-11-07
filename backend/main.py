@@ -4735,6 +4735,7 @@ from backend.api.routes import (
   ml_router, detection_router, strategies_router,
   ml_management_router
 )
+from backend.api.backtesting_api import router as backtesting_router
 
 app.include_router(auth_router)
 app.include_router(bot_router)
@@ -4747,6 +4748,7 @@ app.include_router(ml_router)
 app.include_router(detection_router)
 app.include_router(strategies_router)
 app.include_router(ml_management_router)
+app.include_router(backtesting_router)
 # WebSocket эндпоинт
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
