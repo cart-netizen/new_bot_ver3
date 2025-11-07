@@ -1259,7 +1259,8 @@ class TimeframeAnalyzer:
     # Детальное логирование паттернов
     pattern_details = []
     if is_breakout:
-      pattern_details.append(f"BREAKOUT(vol_ratio={indicators.volume_ratio:.2f if indicators.volume_ratio else 'N/A'})")
+      vol_ratio_str = f"{indicators.volume_ratio:.2f}" if indicators.volume_ratio else "N/A"
+      pattern_details.append(f"BREAKOUT(vol_ratio={vol_ratio_str})")
     if is_consolidation:
       pattern_details.append(f"CONSOLIDATION({consolidation_signals}/3 signals)")
     if is_reversal_pattern:
