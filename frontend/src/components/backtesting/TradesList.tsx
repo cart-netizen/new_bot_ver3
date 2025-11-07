@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { ArrowUpRight, ArrowDownRight, Clock, DollarSign, TrendingUp, TrendingDown } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { cn } from '../../utils/helpers';
-import { Trade } from '../../api/backtesting.api';
+import type { Trade } from '../../api/backtesting.api';
 
 interface TradesListProps {
   trades: Trade[];
@@ -63,7 +63,7 @@ export function TradesList({ trades }: TradesListProps) {
     }
   };
 
-  const winning Trades = trades.filter(t => t.pnl > 0);
+  const winningTrades = trades.filter(t => t.pnl > 0);
   const losingTrades = trades.filter(t => t.pnl < 0);
 
   return (
