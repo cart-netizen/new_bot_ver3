@@ -241,10 +241,34 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
     except Exception as e:
         logger.error(f"Training job failed: {job_id}, error={e}", exc_info=True)
 
+        # Provide user-friendly error messages
+        error_message = str(e)
+        user_friendly_message = error_message
+
+        if "Failed to load training data" in error_message:
+            user_friendly_message = (
+                "No training data available. Please collect data first:\n"
+                "1. Start the bot to collect live data, or\n"
+                "2. Run the data collector: python -m backend.ml_engine.data_collection.data_collector\n"
+                "See data/README.md for details."
+            )
+        elif "Insufficient data" in error_message:
+            user_friendly_message = (
+                f"{error_message}\n"
+                "Let the bot run longer to collect more samples. "
+                "Recommended: 10,000+ samples for good performance."
+            )
+        elif "No such file or directory" in error_message or "not found" in error_message.lower():
+            user_friendly_message = (
+                "Training data directory not found. Please collect data first. "
+                "See data/README.md for instructions."
+            )
+
         current_training_job.update({
             "status": "failed",
             "completed_at": datetime.now().isoformat(),
-            "error": str(e)
+            "error": user_friendly_message,
+            "raw_error": error_message
         })
 
         training_history.append(current_training_job.copy())
