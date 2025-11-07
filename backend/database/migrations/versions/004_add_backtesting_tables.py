@@ -21,8 +21,14 @@ def upgrade() -> None:
     """Создание таблиц для бэктестинга."""
 
     # ========== Создание enum для статусов бэктеста ==========
-    # Используем IF NOT EXISTS чтобы не было ошибки если enum уже существует
-    op.execute("CREATE TYPE IF NOT EXISTS backteststatus AS ENUM ('pending', 'running', 'completed', 'failed', 'cancelled')")
+    # Используем DO блок с обработкой исключения для идемпотентности
+    op.execute("""
+        DO $$ BEGIN
+            CREATE TYPE backteststatus AS ENUM ('pending', 'running', 'completed', 'failed', 'cancelled');
+        EXCEPTION
+            WHEN duplicate_object THEN null;
+        END $$;
+    """)
 
     # ========== Таблица backtest_runs ==========
     op.create_table(
