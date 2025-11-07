@@ -7,7 +7,7 @@ Create Date: 2025-01-15
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID, JSONB, ENUM
 import uuid
 
 # revision identifiers
@@ -30,6 +30,13 @@ def upgrade() -> None:
         END $$;
     """)
 
+    # Создаем объект ENUM для использования в колонках (create_type=False чтобы не создавать тип повторно)
+    backtest_status_enum = ENUM('pending', 'running', 'completed', 'failed', 'cancelled',
+                                 name='backteststatus', create_type=False)
+
+    # ENUM для orderside (должен уже существовать из предыдущих миграций)
+    order_side_enum = ENUM('Buy', 'Sell', name='orderside', create_type=False)
+
     # ========== Таблица backtest_runs ==========
     op.create_table(
         'backtest_runs',
@@ -50,8 +57,7 @@ def upgrade() -> None:
         sa.Column('exchange_config', JSONB, nullable=True),
 
         # Статус выполнения
-        sa.Column('status', sa.Enum('pending', 'running', 'completed', 'failed', 'cancelled',
-                                     name='backteststatus', create_type=False),
+        sa.Column('status', backtest_status_enum,
                   nullable=False, server_default='pending', index=True),
         sa.Column('progress_pct', sa.Float, default=0.0),
         sa.Column('current_date', sa.DateTime, nullable=True),
@@ -97,7 +103,7 @@ def upgrade() -> None:
 
         # Основные данные трейда
         sa.Column('symbol', sa.String(20), nullable=False),
-        sa.Column('side', sa.Enum('Buy', 'Sell', name='orderside'), nullable=False),
+        sa.Column('side', order_side_enum, nullable=False),
 
         # Время входа и выхода
         sa.Column('entry_time', sa.DateTime, nullable=False, index=True),
