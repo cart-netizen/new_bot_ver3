@@ -73,7 +73,7 @@ class Position:
 class Portfolio:
     """Состояние портфеля бэктеста."""
     initial_capital: float
-    cash: float
+    cash: float = 0.0  # Будет установлен в __post_init__
     positions: Dict[str, Position] = field(default_factory=dict)
 
     # Tracking
@@ -81,7 +81,8 @@ class Portfolio:
     peak_equity: float = 0.0
 
     def __post_init__(self):
-        self.cash = self.initial_capital
+        if self.cash == 0.0:  # Если не задан вручную
+            self.cash = self.initial_capital
         self.peak_equity = self.initial_capital
 
     @property
@@ -174,8 +175,9 @@ class BacktestingEngine:
 
         # Candle Manager для хранения истории свечей
         self.candle_manager = CandleManager(
-            max_candles=1000,  # Достаточно для индикаторов
-            interval_minutes=self._parse_interval(config.candle_interval)
+            symbol=config.symbol,
+            timeframe=f"{config.candle_interval}m",  # "1m", "5m", etc.
+            max_candles=1000  # Достаточно для индикаторов
         )
 
         # Trade tracking
@@ -251,7 +253,9 @@ class BacktestingEngine:
             logger.info(f"🔥 Warmup period: {self.config.warmup_period_bars} свечей")
             warmup_candles = candles[:self.config.warmup_period_bars]
             for candle in warmup_candles:
-                self.candle_manager.update_candle(candle)
+                # Преобразуем Candle в список для CandleManager
+                candle_data = [candle.timestamp, candle.open, candle.high, candle.low, candle.close, candle.volume]
+                await self.candle_manager.update_candle(candle_data, is_closed=True)
 
             # 4. Main backtest loop
             logger.info("🔄 Запуск main event loop...")
@@ -350,7 +354,8 @@ class BacktestingEngine:
         8. Record equity
         """
         # 1. Update candle manager
-        self.candle_manager.update_candle(candle)
+        candle_data = [candle.timestamp, candle.open, candle.high, candle.low, candle.close, candle.volume]
+        await self.candle_manager.update_candle(candle_data, is_closed=True)
 
         # 2. Update current market state
         self.current_time = datetime.fromtimestamp(candle.timestamp / 1000)
