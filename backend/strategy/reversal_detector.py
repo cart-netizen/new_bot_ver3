@@ -58,7 +58,8 @@ class ReversalDetector:
       candles: List[Candle],
       current_trend: SignalType,
       indicators: Dict,
-      orderbook_metrics: Optional[Dict] = None
+      orderbook_metrics: Optional[Dict] = None,
+      trade_metrics: Optional[Dict] = None
   ) -> Optional[ReversalSignal]:
     """
     Обнаружение сигнала разворота.
@@ -69,6 +70,7 @@ class ReversalDetector:
         current_trend: Текущий тренд позиции
         indicators: Текущие индикаторы (RSI, MACD, etc)
         orderbook_metrics: Метрики стакана (optional)
+        trade_metrics: Метрики market trades (optional)
 
     Returns:
         ReversalSignal если обнаружен разворот, иначе None
@@ -123,6 +125,28 @@ class ReversalDetector:
     if sr_signal:
       reversal_indicators.append(sr_signal)
 
+    # ===== НОВЫЕ ИНДИКАТОРЫ НА ОСНОВЕ MARKET TRADES =====
+    if trade_metrics:
+      # 8. ORDER FLOW TOXICITY
+      toxicity_signal = self._detect_order_flow_toxicity(trade_metrics, current_trend)
+      if toxicity_signal:
+        reversal_indicators.append(toxicity_signal)
+
+      # 9. BUY/SELL RATIO SHIFT
+      ratio_signal = self._detect_buy_sell_ratio_shift(trade_metrics, current_trend)
+      if ratio_signal:
+        reversal_indicators.append(ratio_signal)
+
+      # 10. AGGRESSIVE SELLING AFTER GROWTH
+      aggressive_signal = self._detect_aggressive_selling(trade_metrics, candles, current_trend)
+      if aggressive_signal:
+        reversal_indicators.append(aggressive_signal)
+
+      # 11. BLOCK TRADES (SMART MONEY)
+      block_signal = self._detect_smart_money_blocks(trade_metrics, current_trend)
+      if block_signal:
+        reversal_indicators.append(block_signal)
+
     # Проверяем минимальное количество подтверждений
     if len(reversal_indicators) < self.min_indicators:
       logger.debug(
@@ -143,7 +167,7 @@ class ReversalDetector:
       detected_at=datetime.now(),
       strength=strength,
       indicators_confirming=reversal_indicators,
-      confidence=len(reversal_indicators) / 7.0,  # Максимум 7 индикаторов
+      confidence=len(reversal_indicators) / 11.0,  # Максимум 11 индикаторов (7 старых + 4 новых)
       suggested_action=suggested_action,
       reason=self._build_reason(reversal_indicators, current_trend)
     )
@@ -507,6 +531,165 @@ class ReversalDetector:
       return False
 
     return True
+
+  # ==================== НОВЫЕ МЕТОДЫ НА ОСНОВЕ MARKET TRADES ====================
+
+  def _detect_order_flow_toxicity(
+      self,
+      trade_metrics: Dict,
+      current_trend: SignalType
+  ) -> Optional[str]:
+    """
+    Детекция разворота по высокой токсичности order flow.
+
+    Высокая токсичность означает, что в потоке преобладают
+    информированные трейдеры (институционалы), которые могут
+    знать о развороте раньше рынка.
+
+    Args:
+        trade_metrics: Метрики market trades
+        current_trend: Текущий тренд позиции
+
+    Returns:
+        Название индикатора если обнаружен разворот
+    """
+    toxicity = trade_metrics.get('order_flow_toxicity', 0)
+
+    # Высокая токсичность (> 0.6) указывает на информированную торговлю
+    # Если токсичность высокая - возможен разворот
+    if toxicity > 0.6:
+      logger.debug(f"High order flow toxicity detected: {toxicity:.4f}")
+      return "high_order_flow_toxicity"
+
+    return None
+
+  def _detect_buy_sell_ratio_shift(
+      self,
+      trade_metrics: Dict,
+      current_trend: SignalType
+  ) -> Optional[str]:
+    """
+    Детекция резкого изменения buy/sell ratio против текущего тренда.
+
+    Если мы в LONG позиции, но buy/sell ratio < 0.7 (преобладают продажи),
+    это может указывать на начало разворота вниз.
+
+    Args:
+        trade_metrics: Метрики market trades
+        current_trend: Текущий тренд позиции
+
+    Returns:
+        Название индикатора если обнаружен разворот
+    """
+    buy_sell_ratio = trade_metrics.get('buy_sell_ratio', 1.0)
+
+    if current_trend == SignalType.BUY:
+      # В LONG позиции ожидаем преобладание покупок (ratio > 1.0)
+      # Если ratio < 0.7 - сильное преобладание продаж
+      if buy_sell_ratio < 0.7:
+        logger.debug(
+          f"Buy/Sell ratio shift in LONG: {buy_sell_ratio:.2f} "
+          f"(sell pressure dominates)"
+        )
+        return "buy_sell_ratio_bearish_shift"
+
+    else:  # SHORT позиция
+      # В SHORT позиции ожидаем преобладание продаж (ratio < 1.0)
+      # Если ratio > 1.3 - сильное преобладание покупок
+      if buy_sell_ratio > 1.3:
+        logger.debug(
+          f"Buy/Sell ratio shift in SHORT: {buy_sell_ratio:.2f} "
+          f"(buy pressure dominates)"
+        )
+        return "buy_sell_ratio_bullish_shift"
+
+    return None
+
+  def _detect_aggressive_selling(
+      self,
+      trade_metrics: Dict,
+      candles: List[Candle],
+      current_trend: SignalType
+  ) -> Optional[str]:
+    """
+    Детекция агрессивных продаж после роста (распределение институционалов).
+
+    Институционалы часто продают агрессивно на пике роста,
+    забирая ликвидность у розничных трейдеров.
+
+    Args:
+        trade_metrics: Метрики market trades
+        candles: История свечей
+        current_trend: Текущий тренд позиции
+
+    Returns:
+        Название индикатора если обнаружен разворот
+    """
+    # Работает только для LONG позиций (разворот вниз)
+    if current_trend != SignalType.BUY:
+      return None
+
+    aggressive_sell_volume = trade_metrics.get('aggressive_sell_volume', 0)
+    aggressive_buy_volume = trade_metrics.get('aggressive_buy_volume', 0)
+
+    # Проверяем, был ли недавний рост
+    if len(candles) >= 10:
+      last_10_closes = [c.close for c in candles[-10:]]
+      price_change = (last_10_closes[-1] - last_10_closes[0]) / last_10_closes[0]
+
+      # Если был рост > 2% И сейчас агрессивные продажи преобладают (ratio > 2.0)
+      if price_change > 0.02 and aggressive_sell_volume > 0:
+        aggressive_ratio = aggressive_sell_volume / (aggressive_buy_volume + 1e-8)
+
+        if aggressive_ratio > 2.0:
+          logger.debug(
+            f"Aggressive selling after growth: "
+            f"price_change={price_change:.2%}, "
+            f"aggressive_sell_ratio={aggressive_ratio:.2f}"
+          )
+          return "aggressive_selling_after_growth"
+
+    return None
+
+  def _detect_smart_money_blocks(
+      self,
+      trade_metrics: Dict,
+      current_trend: SignalType
+  ) -> Optional[str]:
+    """
+    Детекция block trades (крупные институциональные сделки).
+
+    Block trades часто предшествуют разворотам, так как
+    крупные игроки закрывают позиции или открывают против тренда.
+
+    Args:
+        trade_metrics: Метрики market trades
+        current_trend: Текущий тренд позиции
+
+    Returns:
+        Название индикатора если обнаружен разворот
+    """
+    block_trades_count = trade_metrics.get('block_trades_count', 0)
+    block_trades_volume = trade_metrics.get('block_trades_volume', 0)
+    avg_trade_size = trade_metrics.get('avg_trade_size', 0)
+
+    # Если есть block trades И их средний размер в 5+ раз больше обычного
+    if block_trades_count > 0 and avg_trade_size > 0:
+      # Оцениваем размер block trades относительно среднего
+      avg_block_size = block_trades_volume / block_trades_count
+      size_ratio = avg_block_size / (avg_trade_size + 1e-8)
+
+      # Если block trades значительно крупнее обычных (> 5x)
+      # И их было несколько (> 2), это может указывать на умные деньги
+      if size_ratio > 5.0 and block_trades_count >= 2:
+        logger.debug(
+          f"Smart money block trades detected: "
+          f"count={block_trades_count}, "
+          f"size_ratio={size_ratio:.1f}x"
+        )
+        return "smart_money_block_trades"
+
+    return None
 
 
 # Глобальный экземпляр

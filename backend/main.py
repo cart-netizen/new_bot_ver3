@@ -1095,12 +1095,14 @@ class BotController:
         risk_manager=self.risk_manager,
         candle_managers=self.candle_managers,
         orderbook_managers=self.orderbook_managers,
-        execution_manager=self.execution_manager
+        execution_manager=self.execution_manager,
+        trade_managers=self.trade_managers
       )
 
       logger.info(
-        f"✓ Position Monitor создан с {len(self.candle_managers)} "
-        f"candle managers и {len(self.orderbook_managers)} orderbook managers"
+        f"✓ Position Monitor создан с {len(self.candle_managers)} candle managers, "
+        f"{len(self.orderbook_managers)} orderbook managers и "
+        f"{len(self.trade_managers)} trade managers"
       )
 
       # ========== 13. WEBSOCKET MANAGER - СОЗДАНИЕ И ПОДКЛЮЧЕНИЕ ==========
@@ -1205,6 +1207,12 @@ class BotController:
       # ========== 23. TRAILING STOP MANAGER - ЗАПУСК ==========
 
       logger.info("Запуск Trailing Stop Manager...")
+      # Обновляем trailing_stop_manager с trade_managers для адаптивной логики
+      from backend.strategy.trailing_stop_manager import TrailingStopManager
+      global trailing_stop_manager
+      trailing_stop_manager.__init__(trade_managers=self.trade_managers)
+      logger.info(f"✓ Trailing Stop Manager обновлен с {len(self.trade_managers)} trade managers")
+
       await trailing_stop_manager.start()
 
       # ===========23/5 ИНИЦИАЛИЗАЦИЯ СИМВОЛОВ В MTF ==========

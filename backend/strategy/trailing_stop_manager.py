@@ -30,12 +30,18 @@ class TrailingStopManager:
     - Использует asyncio.wait_for() вместо asyncio.timeout()
     """
 
-    def __init__(self):
-        """Инициализация Trailing Stop Manager."""
+    def __init__(self, trade_managers: Optional[Dict] = None):
+        """
+        Инициализация Trailing Stop Manager.
+
+        Args:
+            trade_managers: Dict[symbol, TradeManager] для market trades метрик
+        """
         self.enabled = settings.TRAILING_STOP_ENABLED
         self.activation_profit_percent = settings.TRAILING_STOP_ACTIVATION_PROFIT_PERCENT / 100
         self.distance_percent = settings.TRAILING_STOP_DISTANCE_PERCENT / 100
         self.update_interval = settings.TRAILING_STOP_UPDATE_INTERVAL_SEC
+        self.trade_managers = trade_managers or {}
 
         # Активные trailing stops: {symbol: TrailingStopState}
         self.active_trails: Dict[str, TrailingStopState] = {}
@@ -64,7 +70,8 @@ class TrailingStopManager:
             f"enabled={self.enabled}, "
             f"activation={self.activation_profit_percent:.1%}, "
             f"base_distance={self.distance_percent:.1%}, "
-            f"update_interval={self.update_interval}s"
+            f"update_interval={self.update_interval}s, "
+            f"trade_managers={len(self.trade_managers)} symbols"
         )
 
     async def start(self):
@@ -322,7 +329,11 @@ class TrailingStopManager:
                 return
 
         # ===== ШАГ 6: РАСЧЕТ НОВОГО STOP LOSS =====
-        trail_distance = self._get_trail_distance(profit_percent)
+        trail_distance = self._get_trail_distance(
+            profit_percent=profit_percent,
+            symbol=symbol,
+            side=side
+        )
         trail_state.trailing_distance_percent = trail_distance
 
         if side == OrderSide.BUY:
@@ -412,13 +423,106 @@ class TrailingStopManager:
             )
             trail_state.current_stop_loss = old_sl
 
-    def _get_trail_distance(self, profit_percent: float) -> float:
-        """Определение trail distance на основе текущей прибыли."""
+    def _get_trail_distance(
+        self,
+        profit_percent: float,
+        symbol: str,
+        side: OrderSide
+    ) -> float:
+        """
+        Определение trail distance на основе текущей прибыли,
+        arrival rate и buy/sell pressure.
+
+        ЛОГИКА:
+        1. Базовая дистанция из ступенчатых уровней
+        2. Адаптация на основе arrival rate (высокая волатильность → шире SL)
+        3. Адаптация на основе buy/sell pressure (давление против позиции → уже SL)
+
+        Args:
+            profit_percent: Текущая прибыль позиции
+            symbol: Торговая пара
+            side: Сторона позиции (BUY/SELL)
+
+        Returns:
+            Адаптированная дистанция trailing stop
+        """
+        # Базовая дистанция из ступенчатых уровней
+        base_distance = self.distance_percent
         for level in reversed(self.distance_levels):
             if profit_percent >= level['profit']:
-                return level['distance']
+                base_distance = level['distance']
+                break
 
-        return self.distance_percent
+        # Если нет TradeManager - возвращаем базовую дистанцию
+        trade_manager = self.trade_managers.get(symbol)
+        if not trade_manager:
+            return base_distance
+
+        try:
+            # Получаем метрики за 60 секунд
+            stats = trade_manager.get_statistics(window_seconds=60)
+            if not stats:
+                return base_distance
+
+            arrival_rate = stats.trades_per_second
+            buy_sell_ratio = stats.buy_sell_ratio
+
+            # ===== АДАПТАЦИЯ 1: ARRIVAL RATE (ВОЛАТИЛЬНОСТЬ) =====
+            # Высокий arrival rate → быстрый рынок → расширяем дистанцию
+            # Низкий arrival rate → медленный рынок → сужаем дистанцию
+            volatility_multiplier = 1.0
+
+            if arrival_rate > 10.0:  # Очень быстрый рынок (> 10 trades/sec)
+                volatility_multiplier = 1.3  # +30% к дистанции
+            elif arrival_rate > 5.0:  # Быстрый рынок (5-10 trades/sec)
+                volatility_multiplier = 1.15  # +15% к дистанции
+            elif arrival_rate < 1.0:  # Медленный рынок (< 1 trade/sec)
+                volatility_multiplier = 0.85  # -15% к дистанции
+
+            # ===== АДАПТАЦИЯ 2: BUY/SELL PRESSURE =====
+            # Если давление против нашей позиции → сужаем дистанцию (защита)
+            pressure_multiplier = 1.0
+
+            if side == OrderSide.BUY:
+                # LONG позиция: опасно если sell pressure (ratio < 1.0)
+                if buy_sell_ratio < 0.8:  # Сильное давление продаж
+                    pressure_multiplier = 0.75  # -25% (подтягиваем SL ближе)
+                elif buy_sell_ratio < 1.0:  # Умеренное давление продаж
+                    pressure_multiplier = 0.9  # -10%
+                elif buy_sell_ratio > 1.5:  # Сильное давление покупок
+                    pressure_multiplier = 1.1  # +10% (даем больше пространства)
+
+            else:  # SHORT позиция
+                # SHORT позиция: опасно если buy pressure (ratio > 1.0)
+                if buy_sell_ratio > 1.25:  # Сильное давление покупок
+                    pressure_multiplier = 0.75  # -25% (подтягиваем SL ближе)
+                elif buy_sell_ratio > 1.0:  # Умеренное давление покупок
+                    pressure_multiplier = 0.9  # -10%
+                elif buy_sell_ratio < 0.7:  # Сильное давление продаж
+                    pressure_multiplier = 1.1  # +10% (даем больше пространства)
+
+            # Итоговая дистанция
+            adaptive_distance = base_distance * volatility_multiplier * pressure_multiplier
+
+            # Ограничиваем диапазон (не меньше 0.3%, не больше 3%)
+            adaptive_distance = max(0.003, min(adaptive_distance, 0.03))
+
+            logger.debug(
+                f"{symbol} | Trail distance adaptive calculation: "
+                f"base={base_distance:.2%}, "
+                f"arrival_rate={arrival_rate:.2f}t/s (x{volatility_multiplier:.2f}), "
+                f"buy/sell={buy_sell_ratio:.2f} (x{pressure_multiplier:.2f}), "
+                f"final={adaptive_distance:.2%}"
+            )
+
+            return adaptive_distance
+
+        except Exception as e:
+            logger.warning(
+                f"{symbol} | Error in adaptive trail distance: {e}",
+                exc_info=False
+            )
+            return base_distance
 
     def register_position_opened(
         self,
