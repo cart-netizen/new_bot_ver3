@@ -4783,7 +4783,7 @@ if __name__ == "__main__":
 
   # Запускаем Uvicorn сервер
   uvicorn.run(
-    "main:app",
+    "backend.main:app",
     host=settings.API_HOST,
     port=settings.API_PORT,
     reload=settings.DEBUG,
