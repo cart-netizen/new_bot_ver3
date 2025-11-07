@@ -191,6 +191,11 @@ class HistoricalDataHandler:
             start_ms = int(start.timestamp() * 1000)
             end_ms = int(end.timestamp() * 1000)
 
+            logger.debug(
+                f"📡 Запрос к Bybit API: symbol={symbol}, interval={interval}, "
+                f"start={start.isoformat()}, end={end.isoformat()}"
+            )
+
             # Запрос к Bybit API
             response = await rest_client.get_kline(
                 symbol=symbol,
@@ -200,13 +205,34 @@ class HistoricalDataHandler:
                 limit=1000
             )
 
-            if not response or 'list' not in response:
+            logger.debug(f"📥 Ответ API: {response.get('retCode') if response else 'None'}")
+
+            if not response:
                 logger.warning(f"Пустой ответ от API для {symbol}")
+                return []
+
+            # Проверка кода ответа
+            if response.get('retCode') != 0:
+                logger.error(
+                    f"Ошибка API Bybit: code={response.get('retCode')}, "
+                    f"msg={response.get('retMsg')}"
+                )
+                return []
+
+            # Проверка наличия данных
+            result = response.get('result', {})
+            klines = result.get('list', [])
+
+            if not klines:
+                logger.warning(
+                    f"API вернул пустой список свечей для {symbol} "
+                    f"({start.isoformat()} - {end.isoformat()})"
+                )
                 return []
 
             # Парсинг свечей
             candles = []
-            for kline in response['list']:
+            for kline in klines:
                 # Bybit kline format: [startTime, open, high, low, close, volume, turnover]
                 candle = Candle(
                     timestamp=int(kline[0]),
@@ -219,6 +245,7 @@ class HistoricalDataHandler:
                 )
                 candles.append(candle)
 
+            logger.debug(f"✅ Получено {len(candles)} свечей")
             return candles
 
         except Exception as e:
