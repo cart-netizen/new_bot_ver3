@@ -167,7 +167,14 @@ class FeatureStore:
             if len(features) > 0:
                 first_timestamp = features[timestamp_column].iloc[0]
                 if isinstance(first_timestamp, (int, float)):
-                    date_str = datetime.fromtimestamp(first_timestamp).strftime("%Y-%m-%d")
+                    # FIXED: Check if timestamp is in milliseconds (>10 digits)
+                    # Crypto exchanges (Bybit, Binance) use milliseconds
+                    if first_timestamp > 1e10:  # milliseconds (13 digits)
+                        timestamp_seconds = first_timestamp / 1000.0
+                    else:  # already in seconds (10 digits)
+                        timestamp_seconds = first_timestamp
+
+                    date_str = datetime.fromtimestamp(timestamp_seconds).strftime("%Y-%m-%d")
                 else:
                     date_str = pd.to_datetime(first_timestamp).strftime("%Y-%m-%d")
             else:
