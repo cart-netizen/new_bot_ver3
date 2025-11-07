@@ -1,12 +1,12 @@
 // frontend/src/components/layout/Sidebar.tsx
 
 import { Link, useLocation } from 'react-router-dom';
-import { User, Home, BarChart3, TrendingUp, LineChart, FileText, Search, Layers, Brain } from 'lucide-react';
+import { User, Home, BarChart3, TrendingUp, LineChart, FileText, Search, Layers, Brain, Activity } from 'lucide-react';
 import { cn } from '../../utils/helpers';
 
 /**
  * Конфигурация элементов навигации.
- * Добавлены новые пункты: Графики, Ордера, Скринер, Стратегии, ML Management
+ * Добавлены новые пункты: Графики, Ордера, Скринер, Стратегии, ML Management, Backtesting
  */
 const NAV_ITEMS = [
   { path: '/account', label: 'Личный Кабинет', icon: User },
@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { path: '/orders', label: 'Ордера', icon: FileText },
   { path: '/screener', label: 'Скринер', icon: Search },
   { path: '/strategies', label: 'Стратегии', icon: Layers },
+  { path: '/backtesting', label: 'Backtesting', icon: Activity },
   { path: '/ml-management', label: 'ML Management', icon: Brain },
 ];
 

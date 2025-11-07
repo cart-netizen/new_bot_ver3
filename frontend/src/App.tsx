@@ -15,6 +15,7 @@ import { OrdersPage } from './pages/OrdersPage';
 import { ScreenerPage } from './pages/ScreenerPage';
 import { StrategiesPage } from './pages/StrategiesPage';
 import {MLManagementPage} from "@/pages/MLManagementPage";
+import { BacktestingPage } from './pages/BacktestingPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -61,6 +62,7 @@ export default function App() {
             <Route path="screener" element={<ScreenerPage />} />
             <Route path="strategies" element={<StrategiesPage />} />
             <Route path="ml-management" element={<MLManagementPage />} />
+            <Route path="backtesting" element={<BacktestingPage />} />
           </Route>
         </Routes>
       </BrowserRouter>
