@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 from pathlib import Path
 import numpy as np
+import pandas as pd
 
 from backend.core.logger import get_logger
 from backend.ml_engine.features import FeatureVector
@@ -50,17 +51,24 @@ class MLDataCollector:
       max_samples_per_file: int = 2000,  # ОПТИМИЗИРОВАНО: 10000 → 2000 (~2 MB/файл)
       collection_interval: int = 10,
       # auto_save_interval_seconds: int = 40000,# Каждые N итераций
-      max_buffer_memory_mb: int = 200  # ОПТИМИЗИРОВАНО: 200 → 80 (запас для адаптивности)
+      max_buffer_memory_mb: int = 200,  # ОПТИМИЗИРОВАНО: 200 → 80 (запас для адаптивности)
+      # НОВОЕ: Feature Store integration
+      enable_feature_store: bool = True,  # Записывать в Feature Store (parquet)
+      use_legacy_format: bool = True,     # Записывать в legacy формат (.npy/.json)
+      feature_store_group: str = "training_features"
   ):
     """
     Инициализация сборщика данных.
 
     Args:
-        storage_path: Путь для хранения данных
+        storage_path: Путь для хранения данных (legacy формат)
         max_samples_per_file: Максимум семплов в одном файле
         collection_interval: Интервал сбора (каждые N итераций)
         # auto_save_interval_seconds: Интервал автосохранения (секунды)
         max_buffer_memory_mb: Максимум памяти на буфер символа (МБ)
+        enable_feature_store: Записывать ли в Feature Store (parquet)
+        use_legacy_format: Записывать ли в legacy формат (.npy/.json)
+        feature_store_group: Название feature group для Feature Store
     """
     self.storage_path = Path(storage_path)
     self.max_samples_per_file = max_samples_per_file
@@ -68,6 +76,11 @@ class MLDataCollector:
     self.collection_interval = collection_interval
     # self.auto_save_interval = auto_save_interval_seconds
     self.max_buffer_memory_mb = max_buffer_memory_mb
+
+    # Feature Store integration
+    self.enable_feature_store = enable_feature_store
+    self.use_legacy_format = use_legacy_format
+    self.feature_store_group = feature_store_group
 
 
     # Буферы для каждого символа
@@ -86,12 +99,14 @@ class MLDataCollector:
     self.total_samples_collected = 0
     self.files_written = 0
 
+    # Feature Store (lazy initialization)
+    self._feature_store = None
+
     logger.info(
       f"MLDataCollector инициализирован, storage_path={storage_path}, "
       f"max_samples={max_samples_per_file}, interval={collection_interval}, "
-      # f"auto_save={auto_save_interval_seconds}s, max_buffer_mem={max_buffer_memory_mb}MB"
-      # f"auto_save={auto_save_interval_seconds}s"
-      f"interval={collection_interval}"
+      f"feature_store={'✅' if enable_feature_store else '❌'}, "
+      f"legacy={'✅' if use_legacy_format else '❌'}"
     )
 
   async def initialize(self):
@@ -260,6 +275,7 @@ class MLDataCollector:
   async def _save_batch(self, symbol: str):
     """
     Сохранение batch данных на диск.
+    Поддерживает legacy формат (.npy/.json) и Feature Store (parquet).
 
     Args:
         symbol: Торговая пара
@@ -268,6 +284,40 @@ class MLDataCollector:
       if not self.feature_buffers[symbol]:
         return
 
+      # 1. Сохраняем в Feature Store (если включено)
+      if self.enable_feature_store:
+        await self._save_to_feature_store(symbol)
+
+      # 2. Сохраняем в legacy формат (если включено)
+      if self.use_legacy_format:
+        await self._save_legacy_batch(symbol)
+
+      # Очищаем буферы (после обоих сохранений)
+      buffer_size = len(self.feature_buffers[symbol])
+      self.feature_buffers[symbol].clear()
+      self.label_buffers[symbol].clear()
+      self.metadata_buffers[symbol].clear()
+
+      # Инкрементируем batch number
+      self.batch_numbers[symbol] += 1
+
+      logger.info(
+        f"✓ {symbol} | Batch сохранен: {buffer_size} семплов "
+        f"(FS={'✅' if self.enable_feature_store else '❌'}, "
+        f"Legacy={'✅' if self.use_legacy_format else '❌'})"
+      )
+
+    except Exception as e:
+      logger.error(f"{symbol} | Ошибка сохранения batch: {e}", exc_info=True)
+
+  async def _save_legacy_batch(self, symbol: str):
+    """
+    Сохранение в legacy формат (.npy/.json).
+
+    Args:
+        symbol: Торговая пара
+    """
+    try:
       # Создаем директории для символа
       symbol_dir = self.storage_path / symbol
       features_dir = symbol_dir / "features"
@@ -287,8 +337,7 @@ class MLDataCollector:
       features_file = features_dir / f"{filename_base}.npy"
       np.save(features_file, features_array)
 
-      # Сохраняем labels (numpy)
-      # Конвертируем labels в структурированный массив
+      # Сохраняем labels (json)
       labels_file = labels_dir / f"{filename_base}.json"
       with open(labels_file, 'w') as f:
         json.dump(self.label_buffers[symbol], f, indent=2)
@@ -310,21 +359,97 @@ class MLDataCollector:
       self.files_written += 3  # features, labels, metadata
 
       logger.info(
-        f"{symbol} | Сохранен batch #{batch_num}: "
+        f"{symbol} | Legacy batch #{batch_num}: "
         f"{len(self.feature_buffers[symbol])} семплов, "
-        f"features_shape={features_array.shape}"
+        f"shape={features_array.shape}"
       )
 
-      # Очищаем буферы
-      self.feature_buffers[symbol].clear()
-      self.label_buffers[symbol].clear()
-      self.metadata_buffers[symbol].clear()
+    except Exception as e:
+      logger.error(f"{symbol} | Ошибка сохранения legacy batch: {e}", exc_info=True)
 
-      # Инкрементируем batch number
-      self.batch_numbers[symbol] += 1
+  def _get_feature_store(self):
+    """Lazy initialization Feature Store"""
+    if self._feature_store is None:
+      from backend.ml_engine.feature_store.feature_store import get_feature_store
+      self._feature_store = get_feature_store()
+    return self._feature_store
+
+  async def _save_to_feature_store(self, symbol: str):
+    """
+    Сохранение данных в Feature Store (parquet формат).
+
+    Args:
+        symbol: Торговая пара
+    """
+    try:
+      if not self.feature_buffers[symbol]:
+        return
+
+      logger.info(f"{symbol} | Сохранение в Feature Store...")
+
+      # Получаем буферы
+      features_list = self.feature_buffers[symbol]
+      labels_list = self.label_buffers[symbol]
+      metadata_list = self.metadata_buffers[symbol]
+
+      # Конвертируем в DataFrame
+      rows = []
+
+      for feature_arr, label_dict, meta_dict in zip(features_list, labels_list, metadata_list):
+        # Базовая информация
+        row = {
+          'symbol': symbol,
+          'timestamp': meta_dict['timestamp'],
+          'mid_price': meta_dict['mid_price'],
+        }
+
+        # Распаковываем 110 признаков
+        # feature_arr имеет shape (110,)
+        for i in range(len(feature_arr)):
+          row[f'feature_{i:03d}'] = feature_arr[i]
+
+        # Добавляем метки (labels)
+        # Метки могут быть None (будут заполнены позже через preprocessing)
+        row['future_direction_10s'] = label_dict.get('future_direction_10s')
+        row['future_direction_30s'] = label_dict.get('future_direction_30s')
+        row['future_direction_60s'] = label_dict.get('future_direction_60s')
+        row['future_movement_10s'] = label_dict.get('future_movement_10s')
+        row['future_movement_30s'] = label_dict.get('future_movement_30s')
+        row['future_movement_60s'] = label_dict.get('future_movement_60s')
+
+        # Сохраняем current_mid_price для preprocessing
+        row['current_mid_price'] = label_dict.get('current_mid_price')
+
+        # Метаданные сигнала (опционально)
+        row['signal_type'] = meta_dict.get('signal_type')
+        row['signal_confidence'] = meta_dict.get('signal_confidence')
+        row['signal_strength'] = meta_dict.get('signal_strength')
+
+        rows.append(row)
+
+      # Создаем DataFrame
+      df = pd.DataFrame(rows)
+
+      # Сортируем по timestamp
+      df = df.sort_values('timestamp').reset_index(drop=True)
+
+      # Записываем в Feature Store
+      feature_store = self._get_feature_store()
+      success = feature_store.write_offline_features(
+        feature_group=self.feature_store_group,
+        features=df,
+        timestamp_column='timestamp'
+      )
+
+      if success:
+        logger.info(
+          f"✓ {symbol} | Feature Store: сохранено {len(df)} семплов в parquet"
+        )
+      else:
+        logger.error(f"{symbol} | Ошибка записи в Feature Store")
 
     except Exception as e:
-      logger.error(f"{symbol} | Ошибка сохранения batch: {e}")
+      logger.error(f"{symbol} | Ошибка сохранения в Feature Store: {e}", exc_info=True)
 
   async def finalize(self):
     """Финализация - сохранение всех оставшихся буферов."""
