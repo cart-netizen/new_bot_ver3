@@ -362,7 +362,7 @@ async def list_backtests(
                 created_at=run.created_at,
                 started_at=run.started_at,
                 completed_at=run.completed_at,
-                progress=run.progress,
+                progress=run.progress_pct,
                 error_message=run.error_message,
                 metrics=run.metrics
             ))
@@ -738,7 +738,7 @@ async def _run_backtest_job(backtest_id: str, config: BacktestConfig):
         logger.info(f"🚀 Запуск бэктеста: {backtest_id}")
 
         # Обновить статус на RUNNING
-        await repository.update_status(backtest_id, BacktestStatus.RUNNING, progress=0.0)
+        await repository.update_status(backtest_id, BacktestStatus.RUNNING, progress_pct=0.0)
 
         # Создать компоненты
         data_handler = HistoricalDataHandler()
@@ -804,7 +804,7 @@ async def _run_backtest_job(backtest_id: str, config: BacktestConfig):
             )
 
         # Обновить статус на COMPLETED
-        await repository.update_status(backtest_id, BacktestStatus.COMPLETED, progress=100.0)
+        await repository.update_status(backtest_id, BacktestStatus.COMPLETED, progress_pct=100.0)
 
         logger.info(
             f"✅ Бэктест завершен: {backtest_id}, "
