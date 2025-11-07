@@ -1479,10 +1479,10 @@ async def get_strategies_status():
 async def get_strategy_stats(strategy_name: str):
   """Статистика конкретной стратегии."""
   from backend.main import bot_controller
-  if strategy_name not in bot_controller.strategy_manager.strategies:
+  if strategy_name not in bot_controller.strategy_manager.all_strategies:
     raise HTTPException(status_code=404, detail="Strategy not found")
 
-  strategy = bot_controller.strategy_manager.strategies[strategy_name]
+  strategy = bot_controller.strategy_manager.all_strategies[strategy_name]
   return strategy.get_statistics()
 
 

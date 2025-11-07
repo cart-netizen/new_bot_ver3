@@ -35,6 +35,7 @@ from backend.strategies.imbalance_strategy import ImbalanceStrategy, ImbalanceCo
 from backend.strategies.volume_flow_strategy import VolumeFlowStrategy, VolumeFlowConfig
 from backend.strategies.liquidity_zone_strategy import LiquidityZoneStrategy, LiquidityZoneConfig
 from backend.strategies.smart_money_strategy import SmartMoneyStrategy, SmartMoneyConfig
+from backend.strategy.trade_manager import TradeManager
 
 from backend.utils.helpers import safe_enum_value
 
