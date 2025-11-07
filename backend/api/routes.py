@@ -949,10 +949,10 @@ async def get_ml_status():
   from backend import main
   return {
     "ml_validator": main.bot_controller.ml_validator.get_statistics(),
-    "spoofing_detector": bot_controller.spoofing_detector.get_statistics(),
-    "layering_detector": bot_controller.layering_detector.get_statistics(),
-    "sr_detector": bot_controller.sr_detector.get_statistics(),
-    "drift_detector": bot_controller.drift_detector.get_drift_report()
+    "spoofing_detector": main.bot_controller.spoofing_detector.get_statistics(),
+    "layering_detector": main.bot_controller.layering_detector.get_statistics(),
+    "sr_detector": main.bot_controller.sr_detector.get_statistics(),
+    "drift_detector": main.bot_controller.drift_detector.get_drift_report()
   }
 
 
@@ -964,10 +964,10 @@ async def get_detection_status(symbol: str):
   from backend import main
 
   spoofing_active = main.bot_controller.spoofing_detector.is_spoofing_active(symbol)
-  layering_active = bot_controller.layering_detector.is_layering_active(symbol)
+  layering_active = main.bot_controller.layering_detector.is_layering_active(symbol)
 
-  spoofing_patterns = bot_controller.spoofing_detector.get_recent_patterns(symbol)
-  layering_patterns = bot_controller.layering_detector.get_recent_patterns(symbol)
+  spoofing_patterns = main.bot_controller.spoofing_detector.get_recent_patterns(symbol)
+  layering_patterns = main.bot_controller.layering_detector.get_recent_patterns(symbol)
 
   return {
     "symbol": symbol,
@@ -1038,7 +1038,7 @@ async def get_quote_stuffing_status(symbol: str, current_user: dict = Depends(re
   """
   from backend import main
 
-  if not hasattr(main.bot_controller, 'quote_stuffing_detector') or not bot_controller.quote_stuffing_detector:
+  if not hasattr(main.bot_controller, 'quote_stuffing_detector') or not main.bot_controller.quote_stuffing_detector:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Quote Stuffing Detector недоступен"
@@ -1080,7 +1080,7 @@ async def get_quote_stuffing_statistics(current_user: dict = Depends(require_aut
   """
   from backend import main
 
-  if not hasattr(main.bot_controller, 'quote_stuffing_detector') or not bot_controller.quote_stuffing_detector:
+  if not hasattr(main.bot_controller, 'quote_stuffing_detector') or not main.bot_controller.quote_stuffing_detector:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Quote Stuffing Detector недоступен"
@@ -1119,7 +1119,7 @@ async def get_pattern_list(
   """
   from backend import main
 
-  if not hasattr(main.bot_controller, 'pattern_database') or not bot_controller.pattern_database:
+  if not hasattr(main.bot_controller, 'pattern_database') or not main.bot_controller.pattern_database:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Pattern Database недоступна"
@@ -1159,7 +1159,7 @@ async def get_pattern_database_statistics(current_user: dict = Depends(require_a
   """
   from backend import main
 
-  if not hasattr(main.bot_controller, 'pattern_database') or not bot_controller.pattern_database:
+  if not hasattr(main.bot_controller, 'pattern_database') or not main.bot_controller.pattern_database:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Pattern Database недоступна"
@@ -1193,7 +1193,7 @@ async def toggle_pattern_blacklist(
   """
   from backend import main
 
-  if not hasattr(main.bot_controller, 'pattern_database') or not bot_controller.pattern_database:
+  if not hasattr(main.bot_controller, 'pattern_database') or not main.bot_controller.pattern_database:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Pattern Database недоступна"
@@ -1233,7 +1233,7 @@ async def get_data_collector_statistics(current_user: dict = Depends(require_aut
   """
   from backend import main
 
-  if not hasattr(main.bot_controller, 'layering_data_collector') or not bot_controller.layering_data_collector:
+  if not hasattr(main.bot_controller, 'layering_data_collector') or not main.bot_controller.layering_data_collector:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Layering Data Collector недоступен"
@@ -1264,7 +1264,7 @@ async def save_collected_data(current_user: dict = Depends(require_auth)):
   """
   from backend import main
 
-  if not hasattr(main.bot_controller, 'layering_data_collector') or not bot_controller.layering_data_collector:
+  if not hasattr(main.bot_controller, 'layering_data_collector') or not main.bot_controller.layering_data_collector:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Layering Data Collector недоступен"
@@ -1299,7 +1299,7 @@ async def get_labeled_data_info(current_user: dict = Depends(require_auth)):
   """
   from backend import main
 
-  if not hasattr(main.bot_controller, 'layering_data_collector') or not bot_controller.layering_data_collector:
+  if not hasattr(main.bot_controller, 'layering_data_collector') or not main.bot_controller.layering_data_collector:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Layering Data Collector недоступен"
@@ -1348,7 +1348,7 @@ async def get_adaptive_model_status(current_user: dict = Depends(require_auth)):
   """
   from backend import main
 
-  if not hasattr(main.bot_controller, 'adaptive_layering_model') or not bot_controller.adaptive_layering_model:
+  if not hasattr(main.bot_controller, 'adaptive_layering_model') or not main.bot_controller.adaptive_layering_model:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Adaptive Layering Model недоступна"
@@ -1375,7 +1375,7 @@ async def get_adaptive_model_metrics(current_user: dict = Depends(require_auth))
   """
   from backend import main
 
-  if not hasattr(main.bot_controller, 'adaptive_layering_model') or not bot_controller.adaptive_layering_model:
+  if not hasattr(main.bot_controller, 'adaptive_layering_model') or not main.bot_controller.adaptive_layering_model:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Adaptive Layering Model недоступна"
@@ -1424,7 +1424,7 @@ async def get_feature_importance(
   """
   from backend import main
 
-  if not hasattr(main.bot_controller, 'adaptive_layering_model') or not bot_controller.adaptive_layering_model:
+  if not hasattr(main.bot_controller, 'adaptive_layering_model') or not main.bot_controller.adaptive_layering_model:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Adaptive Layering Model недоступна"
@@ -1508,7 +1508,7 @@ async def get_screener_pairs(
   try:
     from backend import main
 
-    if not main.bot_controller or not hasattr(bot_controller, 'screener_manager') or not bot_controller.screener_manager:
+    if not main.bot_controller or not hasattr(main.bot_controller, 'screener_manager') or not main.bot_controller.screener_manager:
       raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="Screener не инициализирован"
@@ -1566,7 +1566,7 @@ async def toggle_pair_selection(
   try:
     from backend import main
 
-    if not main.bot_controller or not hasattr(bot_controller, 'screener_manager') or not bot_controller.screener_manager:
+    if not main.bot_controller or not hasattr(main.bot_controller, 'screener_manager') or not main.bot_controller.screener_manager:
       raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="Screener не инициализирован"
@@ -1611,7 +1611,7 @@ async def get_selected_pairs(current_user: dict = Depends(require_auth)):
   try:
     from backend import main
 
-    if not main.bot_controller or not hasattr(bot_controller, 'screener_manager') or not bot_controller.screener_manager:
+    if not main.bot_controller or not hasattr(main.bot_controller, 'screener_manager') or not main.bot_controller.screener_manager:
       raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="Screener не инициализирован"
@@ -1647,7 +1647,7 @@ async def get_screener_stats(current_user: dict = Depends(require_auth)):
   try:
     from backend import main
 
-    if not main.bot_controller or not hasattr(bot_controller, 'screener_manager') or not bot_controller.screener_manager:
+    if not main.bot_controller or not hasattr(main.bot_controller, 'screener_manager') or not main.bot_controller.screener_manager:
       raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="Screener не инициализирован"
@@ -1743,7 +1743,7 @@ async def get_position_monitor_stats(current_user: dict = Depends(require_auth))
   """Получение статистики Position Monitor."""
   from backend import main
 
-  if not main.bot_controller or not bot_controller.position_monitor:
+  if not main.bot_controller or not main.bot_controller.position_monitor:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Position Monitor недоступен"
