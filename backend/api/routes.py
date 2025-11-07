@@ -158,10 +158,10 @@ async def get_bot_status(current_user: dict = Depends(require_auth)):
       dict: Статус бота
   """
   # Импортируем здесь, чтобы избежать циклической зависимости
-  from backend.main import bot_controller
+  from backend import main
 
-  if bot_controller:
-    return bot_controller.get_status()
+  if main.bot_controller:
+    return main.bot_controller.get_status()
 
   return {
     "status": "stopped",
@@ -180,16 +180,16 @@ async def start_bot(current_user: dict = Depends(require_auth)):
   Returns:
       StatusResponse: Статус операции
   """
-  from backend.main import bot_controller
+  from backend import main
 
-  if not bot_controller:
+  if not main.bot_controller:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Бот не инициализирован"
     )
 
   try:
-    await bot_controller.start()
+    await main.bot_controller.start()
     logger.info("Бот запущен через API")
     return StatusResponse(
       status="success",
@@ -214,16 +214,16 @@ async def stop_bot(current_user: dict = Depends(require_auth)):
   Returns:
       StatusResponse: Статус операции
   """
-  from backend.main import bot_controller
+  from backend import main
 
-  if not bot_controller:
+  if not main.bot_controller:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Бот не инициализирован"
     )
 
   try:
-    await bot_controller.stop()
+    await main.bot_controller.stop()
     logger.info("Бот остановлен через API")
     return StatusResponse(
       status="success",
@@ -293,15 +293,15 @@ async def get_orderbook(
   Returns:
       dict: Данные стакана
   """
-  from backend.main import bot_controller
+  from backend import main
 
-  if not bot_controller or not bot_controller.orderbook_managers:
+  if not main.bot_controller or not main.bot_controller.orderbook_managers:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Данные стакана недоступны"
     )
 
-  manager = bot_controller.orderbook_managers.get(symbol)
+  manager = main.bot_controller.orderbook_managers.get(symbol)
   if not manager:
     raise HTTPException(
       status_code=status.HTTP_404_NOT_FOUND,
@@ -333,15 +333,15 @@ async def get_metrics(
   Returns:
       dict: Метрики
   """
-  from backend.main import bot_controller
+  from backend import main
 
-  if not bot_controller or not bot_controller.market_analyzer:
+  if not main.bot_controller or not main.bot_controller.market_analyzer:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Анализатор недоступен"
     )
 
-  metrics = bot_controller.market_analyzer.get_latest_metrics(symbol)
+  metrics = main.bot_controller.market_analyzer.get_latest_metrics(symbol)
   if not metrics:
     raise HTTPException(
       status_code=status.HTTP_404_NOT_FOUND,
@@ -362,15 +362,15 @@ async def get_all_metrics(current_user: dict = Depends(require_auth)):
   Returns:
       dict: Метрики всех символов
   """
-  from backend.main import bot_controller
+  from backend import main
 
-  if not bot_controller or not bot_controller.market_analyzer:
+  if not main.bot_controller or not main.bot_controller.market_analyzer:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Анализатор недоступен"
     )
 
-  all_metrics = bot_controller.market_analyzer.get_all_metrics()
+  all_metrics = main.bot_controller.market_analyzer.get_all_metrics()
 
   return {
     "metrics": {
@@ -400,23 +400,23 @@ async def get_signals(
   Returns:
       dict: Торговые сигналы
   """
-  from backend.main import bot_controller
+  from backend import main
 
-  if not bot_controller or not bot_controller.strategy_engine:
+  if not main.bot_controller or not main.bot_controller.strategy_engine:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Стратегия недоступна"
     )
 
   if symbol:
-    signals = bot_controller.strategy_engine.get_signal_history(symbol, limit)
+    signals = main.bot_controller.strategy_engine.get_signal_history(symbol, limit)
     return {
       "symbol": symbol,
       "signals": [s.to_dict() for s in signals],
       "count": len(signals)
     }
   else:
-    all_stats = bot_controller.strategy_engine.get_all_statistics()
+    all_stats = main.bot_controller.strategy_engine.get_all_statistics()
     return {
       "statistics": {
         sym: stats.to_dict()
@@ -726,15 +726,15 @@ async def get_positions(current_user: dict = Depends(require_auth)):
   Returns:
       dict: Позиции
   """
-  from backend.main import bot_controller
+  from backend import main
 
-  if not bot_controller or not bot_controller.risk_manager:
+  if not main.bot_controller or not main.bot_controller.risk_manager:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Риск-менеджер недоступен"
     )
 
-  positions = bot_controller.risk_manager.get_all_positions()
+  positions = main.bot_controller.risk_manager.get_all_positions()
   return {
     "positions": positions,
     "count": len(positions)
@@ -752,15 +752,15 @@ async def get_risk_status(current_user: dict = Depends(require_auth)):
   Returns:
       dict: Статус риска
   """
-  from backend.main import bot_controller
+  from backend import main
 
-  if not bot_controller or not bot_controller.risk_manager:
+  if not main.bot_controller or not main.bot_controller.risk_manager:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Риск-менеджер недоступен"
     )
 
-  return bot_controller.risk_manager.get_risk_status()
+  return main.bot_controller.risk_manager.get_risk_status()
 
 
 @trading_router.get("/execution-stats")
@@ -774,23 +774,23 @@ async def get_execution_stats(current_user: dict = Depends(require_auth)):
   Returns:
       dict: Статистика
   """
-  from backend.main import bot_controller
+  from backend import main
 
-  if not bot_controller or not bot_controller.execution_manager:
+  if not main.bot_controller or not main.bot_controller.execution_manager:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Менеджер исполнения недоступен"
     )
 
-  return bot_controller.execution_manager.get_statistics()
+  return main.bot_controller.execution_manager.get_statistics()
 
 
 @trading_router.get("/circuit-breaker/status")
 async def get_circuit_breaker_status(current_user: dict = Depends(require_auth)):
   """Статус защиты от слива депозита."""
-  from backend.main import bot_controller
+  from backend import main
 
-  rm = bot_controller.risk_manager
+  rm = main.bot_controller.risk_manager
   current = rm.metrics.open_positions_count
   max_allowed = rm.limits.max_open_positions
 
@@ -818,17 +818,17 @@ async def can_open_position(
     current_user: dict = Depends(require_auth)
 ):
   """Проверка возможности открыть позицию."""
-  from backend.main import bot_controller
+  from backend import main
 
-  can_open, reason = bot_controller.risk_manager.can_open_new_position(symbol)
+  can_open, reason = main.bot_controller.risk_manager.can_open_new_position(symbol)
 
   return {
     "symbol": symbol,
     "can_open": can_open,
     "reason": reason,
-    "open_positions_count": bot_controller.risk_manager.metrics.open_positions_count,
-    "max_positions": bot_controller.risk_manager.limits.max_open_positions,
-    "open_positions": list(bot_controller.risk_manager.open_positions.keys())
+    "open_positions_count": main.bot_controller.risk_manager.metrics.open_positions_count,
+    "max_positions": main.bot_controller.risk_manager.limits.max_open_positions,
+    "open_positions": list(main.bot_controller.risk_manager.open_positions.keys())
   }
 
 @data_router.get("/candles/{symbol}")
@@ -946,9 +946,9 @@ async def reset_circuit_breaker(
 @ml_router.get("/status")
 async def get_ml_status():
   """Статус ML компонентов."""
-  from backend.main import bot_controller
+  from backend import main
   return {
-    "ml_validator": bot_controller.ml_validator.get_statistics(),
+    "ml_validator": main.bot_controller.ml_validator.get_statistics(),
     "spoofing_detector": bot_controller.spoofing_detector.get_statistics(),
     "layering_detector": bot_controller.layering_detector.get_statistics(),
     "sr_detector": bot_controller.sr_detector.get_statistics(),
@@ -961,9 +961,9 @@ async def get_ml_status():
 @detection_router.get("/status/{symbol}")
 async def get_detection_status(symbol: str):
   """Статус детекторов для символа."""
-  from backend.main import bot_controller
+  from backend import main
 
-  spoofing_active = bot_controller.spoofing_detector.is_spoofing_active(symbol)
+  spoofing_active = main.bot_controller.spoofing_detector.is_spoofing_active(symbol)
   layering_active = bot_controller.layering_detector.is_layering_active(symbol)
 
   spoofing_patterns = bot_controller.spoofing_detector.get_recent_patterns(symbol)
@@ -1004,8 +1004,8 @@ async def get_detection_status(symbol: str):
 @detection_router.get("/sr-levels/{symbol}")
 async def get_sr_levels(symbol: str):
   """S/R уровни для символа."""
-  from backend.main import bot_controller
-  levels = bot_controller.sr_detector.levels.get(symbol, [])
+  from backend import main
+  levels = main.bot_controller.sr_detector.levels.get(symbol, [])
 
   return {
     "symbol": symbol,
@@ -1036,15 +1036,15 @@ async def get_quote_stuffing_status(symbol: str, current_user: dict = Depends(re
   Returns:
       dict: Статус и метрики quote stuffing
   """
-  from backend.main import bot_controller
+  from backend import main
 
-  if not hasattr(bot_controller, 'quote_stuffing_detector') or not bot_controller.quote_stuffing_detector:
+  if not hasattr(main.bot_controller, 'quote_stuffing_detector') or not bot_controller.quote_stuffing_detector:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Quote Stuffing Detector недоступен"
     )
 
-  detector = bot_controller.quote_stuffing_detector
+  detector = main.bot_controller.quote_stuffing_detector
 
   # Проверяем активность
   is_active = detector.is_stuffing_active(symbol, time_window_seconds=30)
@@ -1078,15 +1078,15 @@ async def get_quote_stuffing_statistics(current_user: dict = Depends(require_aut
   Returns:
       dict: Статистика по всем символам
   """
-  from backend.main import bot_controller
+  from backend import main
 
-  if not hasattr(bot_controller, 'quote_stuffing_detector') or not bot_controller.quote_stuffing_detector:
+  if not hasattr(main.bot_controller, 'quote_stuffing_detector') or not bot_controller.quote_stuffing_detector:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Quote Stuffing Detector недоступен"
     )
 
-  detector = bot_controller.quote_stuffing_detector
+  detector = main.bot_controller.quote_stuffing_detector
   stats = detector.get_statistics()
 
   return {
@@ -1117,15 +1117,15 @@ async def get_pattern_list(
   Returns:
       dict: Список паттернов
   """
-  from backend.main import bot_controller
+  from backend import main
 
-  if not hasattr(bot_controller, 'pattern_database') or not bot_controller.pattern_database:
+  if not hasattr(main.bot_controller, 'pattern_database') or not bot_controller.pattern_database:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Pattern Database недоступна"
     )
 
-  db = bot_controller.pattern_database
+  db = main.bot_controller.pattern_database
   patterns = db.get_all_patterns(limit=limit, sort_by=sort_by, blacklist_only=blacklist_only)
 
   return {
@@ -1157,15 +1157,15 @@ async def get_pattern_database_statistics(current_user: dict = Depends(require_a
   Returns:
       dict: Общая статистика базы паттернов
   """
-  from backend.main import bot_controller
+  from backend import main
 
-  if not hasattr(bot_controller, 'pattern_database') or not bot_controller.pattern_database:
+  if not hasattr(main.bot_controller, 'pattern_database') or not bot_controller.pattern_database:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Pattern Database недоступна"
     )
 
-  db = bot_controller.pattern_database
+  db = main.bot_controller.pattern_database
   stats = db.get_statistics()
 
   return {
@@ -1191,15 +1191,15 @@ async def toggle_pattern_blacklist(
   Returns:
       dict: Новый статус
   """
-  from backend.main import bot_controller
+  from backend import main
 
-  if not hasattr(bot_controller, 'pattern_database') or not bot_controller.pattern_database:
+  if not hasattr(main.bot_controller, 'pattern_database') or not bot_controller.pattern_database:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Pattern Database недоступна"
     )
 
-  db = bot_controller.pattern_database
+  db = main.bot_controller.pattern_database
 
   # Получаем текущий паттерн
   pattern = db.get_pattern_by_id(pattern_id)
@@ -1231,15 +1231,15 @@ async def get_data_collector_statistics(current_user: dict = Depends(require_aut
   Returns:
       dict: Статистика data collector
   """
-  from backend.main import bot_controller
+  from backend import main
 
-  if not hasattr(bot_controller, 'layering_data_collector') or not bot_controller.layering_data_collector:
+  if not hasattr(main.bot_controller, 'layering_data_collector') or not bot_controller.layering_data_collector:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Layering Data Collector недоступен"
     )
 
-  collector = bot_controller.layering_data_collector
+  collector = main.bot_controller.layering_data_collector
   stats = collector.get_statistics()
 
   return {
@@ -1262,15 +1262,15 @@ async def save_collected_data(current_user: dict = Depends(require_auth)):
   Returns:
       dict: Результат сохранения
   """
-  from backend.main import bot_controller
+  from backend import main
 
-  if not hasattr(bot_controller, 'layering_data_collector') or not bot_controller.layering_data_collector:
+  if not hasattr(main.bot_controller, 'layering_data_collector') or not bot_controller.layering_data_collector:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Layering Data Collector недоступен"
     )
 
-  collector = bot_controller.layering_data_collector
+  collector = main.bot_controller.layering_data_collector
 
   try:
     collector.save_to_disk()
@@ -1297,15 +1297,15 @@ async def get_labeled_data_info(current_user: dict = Depends(require_auth)):
   Returns:
       dict: Статистика labeled samples
   """
-  from backend.main import bot_controller
+  from backend import main
 
-  if not hasattr(bot_controller, 'layering_data_collector') or not bot_controller.layering_data_collector:
+  if not hasattr(main.bot_controller, 'layering_data_collector') or not bot_controller.layering_data_collector:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Layering Data Collector недоступен"
     )
 
-  collector = bot_controller.layering_data_collector
+  collector = main.bot_controller.layering_data_collector
 
   try:
     labeled_df = collector.get_labeled_data()
@@ -1346,15 +1346,15 @@ async def get_adaptive_model_status(current_user: dict = Depends(require_auth)):
   Returns:
       dict: Статус модели
   """
-  from backend.main import bot_controller
+  from backend import main
 
-  if not hasattr(bot_controller, 'adaptive_layering_model') or not bot_controller.adaptive_layering_model:
+  if not hasattr(main.bot_controller, 'adaptive_layering_model') or not bot_controller.adaptive_layering_model:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Adaptive Layering Model недоступна"
     )
 
-  model = bot_controller.adaptive_layering_model
+  model = main.bot_controller.adaptive_layering_model
 
   return {
     "enabled": model.enabled,
@@ -1373,15 +1373,15 @@ async def get_adaptive_model_metrics(current_user: dict = Depends(require_auth))
   Returns:
       dict: Метрики модели (accuracy, precision, recall, F1, ROC AUC)
   """
-  from backend.main import bot_controller
+  from backend import main
 
-  if not hasattr(bot_controller, 'adaptive_layering_model') or not bot_controller.adaptive_layering_model:
+  if not hasattr(main.bot_controller, 'adaptive_layering_model') or not bot_controller.adaptive_layering_model:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Adaptive Layering Model недоступна"
     )
 
-  model = bot_controller.adaptive_layering_model
+  model = main.bot_controller.adaptive_layering_model
 
   if not model.is_trained:
     raise HTTPException(
@@ -1422,15 +1422,15 @@ async def get_feature_importance(
   Returns:
       dict: Список feature importance
   """
-  from backend.main import bot_controller
+  from backend import main
 
-  if not hasattr(bot_controller, 'adaptive_layering_model') or not bot_controller.adaptive_layering_model:
+  if not hasattr(main.bot_controller, 'adaptive_layering_model') or not bot_controller.adaptive_layering_model:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Adaptive Layering Model недоступна"
     )
 
-  model = bot_controller.adaptive_layering_model
+  model = main.bot_controller.adaptive_layering_model
 
   if not model.is_trained:
     raise HTTPException(
@@ -1471,18 +1471,18 @@ async def get_feature_importance(
 @strategies_router.get("/status")
 async def get_strategies_status():
   """Статус всех стратегий."""
-  from backend.main import bot_controller
-  return bot_controller.strategy_manager.get_statistics()
+  from backend import main
+  return main.bot_controller.strategy_manager.get_statistics()
 
 
 @strategies_router.get("/{strategy_name}/stats")
 async def get_strategy_stats(strategy_name: str):
   """Статистика конкретной стратегии."""
-  from backend.main import bot_controller
-  if strategy_name not in bot_controller.strategy_manager.all_strategies:
+  from backend import main
+  if strategy_name not in main.bot_controller.strategy_manager.all_strategies:
     raise HTTPException(status_code=404, detail="Strategy not found")
 
-  strategy = bot_controller.strategy_manager.all_strategies[strategy_name]
+  strategy = main.bot_controller.strategy_manager.all_strategies[strategy_name]
   return strategy.get_statistics()
 
 
@@ -1506,15 +1506,15 @@ async def get_screener_pairs(
       List[dict]: Список торговых пар
   """
   try:
-    from backend.main import bot_controller
+    from backend import main
 
-    if not bot_controller or not hasattr(bot_controller, 'screener_manager') or not bot_controller.screener_manager:
+    if not main.bot_controller or not hasattr(bot_controller, 'screener_manager') or not bot_controller.screener_manager:
       raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="Screener не инициализирован"
       )
 
-    screener = bot_controller.screener_manager
+    screener = main.bot_controller.screener_manager
     pairs = screener.get_all_pairs()
 
     # Фильтрация по объему
@@ -1564,15 +1564,15 @@ async def toggle_pair_selection(
       dict: Результат операции
   """
   try:
-    from backend.main import bot_controller
+    from backend import main
 
-    if not bot_controller or not hasattr(bot_controller, 'screener_manager') or not bot_controller.screener_manager:
+    if not main.bot_controller or not hasattr(bot_controller, 'screener_manager') or not bot_controller.screener_manager:
       raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="Screener не инициализирован"
       )
 
-    screener = bot_controller.screener_manager
+    screener = main.bot_controller.screener_manager
     success = screener.toggle_selection(symbol.upper())
 
     if not success:
@@ -1609,15 +1609,15 @@ async def get_selected_pairs(current_user: dict = Depends(require_auth)):
       dict: Список выбранных пар
   """
   try:
-    from backend.main import bot_controller
+    from backend import main
 
-    if not bot_controller or not hasattr(bot_controller, 'screener_manager') or not bot_controller.screener_manager:
+    if not main.bot_controller or not hasattr(bot_controller, 'screener_manager') or not bot_controller.screener_manager:
       raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="Screener не инициализирован"
       )
 
-    screener = bot_controller.screener_manager
+    screener = main.bot_controller.screener_manager
     selected = screener.get_selected_pairs()
 
     return {
@@ -1645,15 +1645,15 @@ async def get_screener_stats(current_user: dict = Depends(require_auth)):
       dict: Статистика скринера
   """
   try:
-    from backend.main import bot_controller
+    from backend import main
 
-    if not bot_controller or not hasattr(bot_controller, 'screener_manager') or not bot_controller.screener_manager:
+    if not main.bot_controller or not hasattr(bot_controller, 'screener_manager') or not bot_controller.screener_manager:
       raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="Screener не инициализирован"
       )
 
-    screener = bot_controller.screener_manager
+    screener = main.bot_controller.screener_manager
     stats = screener.get_stats()
 
     return stats
@@ -1711,11 +1711,11 @@ async def get_correlation_groups(current_user: dict = Depends(require_auth)):
 async def get_adaptive_risk_stats(current_user: dict = Depends(require_auth)):
   """API endpoint для статистики Adaptive Risk."""
 
-  from backend.main import bot_controller
+  from backend import main
   from backend.config import settings
 
   # Получаем статистику
-  stats = bot_controller.risk_manager.get_adaptive_risk_statistics()
+  stats = main.bot_controller.risk_manager.get_adaptive_risk_statistics()
 
   return {
     "mode": settings.RISK_PER_TRADE_MODE,
@@ -1741,40 +1741,40 @@ async def get_adaptive_risk_stats(current_user: dict = Depends(require_auth)):
 @trading_router.get("/position-monitor/stats")
 async def get_position_monitor_stats(current_user: dict = Depends(require_auth)):
   """Получение статистики Position Monitor."""
-  from backend.main import bot_controller
+  from backend import main
 
-  if not bot_controller or not bot_controller.position_monitor:
+  if not main.bot_controller or not bot_controller.position_monitor:
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Position Monitor недоступен"
     )
 
-  return bot_controller.position_monitor.get_statistics()
+  return main.bot_controller.position_monitor.get_statistics()
 
 
 @adaptive_router.get("/statistics")
 async def get_adaptive_statistics():
   """Статистика Adaptive Consensus."""
-  from backend.main import bot_controller
+  from backend import main
 
-  if not bot_controller.adaptive_consensus_manager:
+  if not main.bot_controller.adaptive_consensus_manager:
     return {"enabled": False}
 
   return {
     "enabled": True,
-    "statistics": bot_controller.adaptive_consensus_manager.get_statistics()
+    "statistics": main.bot_controller.adaptive_consensus_manager.get_statistics()
   }
 
 
 @adaptive_router.get("/regime/{symbol}")
 async def get_market_regime(symbol: str):
   """Текущий режим рынка для символа."""
-  from backend.main import bot_controller
+  from backend import main
 
-  if not bot_controller.adaptive_consensus_manager:
+  if not main.bot_controller.adaptive_consensus_manager:
     return {"error": "Adaptive Consensus disabled"}
 
-  regime_detector = bot_controller.adaptive_consensus_manager.regime_detector
+  regime_detector = main.bot_controller.adaptive_consensus_manager.regime_detector
 
   if not regime_detector:
     return {"error": "Regime Detector not available"}
@@ -1799,12 +1799,12 @@ async def get_market_regime(symbol: str):
 @adaptive_router.get("/performance/{symbol}")
 async def get_strategy_performance(symbol: str, time_window: str = "7d"):
   """Performance метрики стратегий для символа."""
-  from backend.main import bot_controller
+  from backend import main
 
-  if not bot_controller.adaptive_consensus_manager:
+  if not main.bot_controller.adaptive_consensus_manager:
     return {"error": "Adaptive Consensus disabled"}
 
-  tracker = bot_controller.adaptive_consensus_manager.performance_tracker
+  tracker = main.bot_controller.adaptive_consensus_manager.performance_tracker
 
   if not tracker:
     return {"error": "Performance Tracker not available"}
@@ -1812,7 +1812,7 @@ async def get_strategy_performance(symbol: str, time_window: str = "7d"):
   # Получаем метрики для всех стратегий
   metrics = {}
 
-  for strategy_name in bot_controller.strategy_manager.all_strategies.keys():
+  for strategy_name in main.bot_controller.strategy_manager.all_strategies.keys():
     strategy_metrics = tracker.get_strategy_metrics(
       strategy_name, symbol, time_window
     )
@@ -1833,12 +1833,12 @@ async def get_strategy_performance(symbol: str, time_window: str = "7d"):
 @adaptive_router.get("/weights/{symbol}")
 async def get_current_weights(symbol: str):
   """Текущие веса стратегий для символа."""
-  from backend.main import bot_controller
+  from backend import main
 
-  if not bot_controller.adaptive_consensus_manager:
+  if not main.bot_controller.adaptive_consensus_manager:
     return {"error": "Adaptive Consensus disabled"}
 
-  optimizer = bot_controller.adaptive_consensus_manager.weight_optimizer
+  optimizer = main.bot_controller.adaptive_consensus_manager.weight_optimizer
 
   if not optimizer:
     return {"error": "Weight Optimizer not available"}
