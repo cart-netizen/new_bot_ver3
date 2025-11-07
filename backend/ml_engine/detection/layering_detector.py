@@ -597,12 +597,15 @@ class LayeringDetector:
         self.detected_patterns[symbol].append(pattern)
         self.patterns_detected += 1
 
+        # Format ratio safely (can be None)
+        ratio_str = f"{pattern.spoofing_execution_ratio:.1f}x" if pattern.spoofing_execution_ratio is not None else "N/A"
+
         logger.warning(
           f"🚨 LAYERING DETECTED [{symbol}]: "
           f"spoofing_side={pattern.spoofing_side}, "
           f"layers={len(pattern.layers)}, "
           f"confidence={pattern.confidence:.2%}, "
-          f"ratio={pattern.spoofing_execution_ratio:.1f}x, "
+          f"ratio={ratio_str}, "
           f"reason={pattern.reason}"
         )
 
