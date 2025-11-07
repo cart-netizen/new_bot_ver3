@@ -293,7 +293,7 @@ class PositionMonitor:
 
     # Попытка 2: Из REST API ticker
     try:
-      ticker = await rest_client.get_ticker(symbol)
+      ticker = await rest_client.get_tickers(symbol)
       if ticker and 'last_price' in ticker:
         return float(ticker['last_price'])
     except Exception as e:

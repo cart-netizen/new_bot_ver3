@@ -293,6 +293,12 @@ class AdaptiveLayeringModel:
       # Fallback to detector confidence
       return (True, features.get('detector_confidence', 0.5))
 
+    # Check if scaler is fitted (has been trained)
+    if self.scaler is None or not hasattr(self.scaler, 'mean_'):
+      # Scaler not fitted yet - fallback to detector confidence
+      logger.warning("StandardScaler not fitted yet - using fallback confidence")
+      return (True, features.get('detector_confidence', 0.5))
+
     # Prepare features
     X = self._prepare_single_sample(features)
     X_scaled = self.scaler.transform(X)

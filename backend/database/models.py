@@ -227,7 +227,13 @@ class AuditLog(Base):
   id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
   # Контекст операции
-  action = Column(Enum(AuditAction), nullable=False, index=True)
+  # action = Column(Enum(AuditAction), nullable=False, index=True)
+  # FIXED: Используем values_callable чтобы SQLAlchemy передавал .value (lowercase), а не .name (uppercase)
+  action = Column(
+    Enum(AuditAction, values_callable=lambda x: [e.value for e in x], name='auditaction'),
+    nullable=False,
+    index=True
+  )
   entity_type = Column(String(50), nullable=False)
   entity_id = Column(String(100), nullable=False)
 
