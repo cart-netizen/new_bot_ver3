@@ -188,26 +188,33 @@ class HistoricalDataHandler:
 
         API endpoint: GET /v5/market/kline
         Limit: 1000 candles per request
+
+        Note: Bybit API лучше работает с start + limit, чем с start + end + limit
         """
         try:
             # Конвертация временных меток
             start_ms = int(start.timestamp() * 1000)
             end_ms = int(end.timestamp() * 1000)
 
+            # Вычисляем нужное количество свечей
+            interval_minutes = int(interval) if interval.isdigit() else 1440  # D = 1440 минут
+            time_diff_minutes = (end - start).total_seconds() / 60
+            expected_candles = min(int(time_diff_minutes / interval_minutes) + 1, 1000)
+
             logger.info(
                 f"📡 Запрос к Bybit API: symbol={symbol}, interval={interval}, "
                 f"start={start.isoformat()}, end={end.isoformat()}, "
-                f"start_ms={start_ms}, end_ms={end_ms}"
+                f"start_ms={start_ms}, expected_candles={expected_candles}"
             )
 
             # Запрос к Bybit API
+            # Используем только start + limit (без end) для более стабильной работы
             # Метод get_kline уже возвращает распакованный список: response["result"]["list"]
             klines = await rest_client.get_kline(
                 symbol=symbol,
                 interval=interval,
                 start=start_ms,
-                end=end_ms,
-                limit=1000
+                limit=expected_candles
             )
 
             logger.info(f"📊 API ответ: получено {len(klines) if klines else 0} klines, type={type(klines)}")
@@ -223,11 +230,17 @@ class HistoricalDataHandler:
             candles = []
             for i, kline in enumerate(klines):
                 # Bybit kline format: [startTime, open, high, low, close, volume, turnover]
+                candle_timestamp = int(kline[0])
+
+                # Фильтруем свечи по end времени (могут прийти лишние)
+                if candle_timestamp > end_ms:
+                    continue
+
                 if i == 0:
                     logger.info(f"📝 Первая свеча (raw): {kline}")
 
                 candle = Candle(
-                    timestamp=int(kline[0]),
+                    timestamp=candle_timestamp,
                     open=float(kline[1]),
                     high=float(kline[2]),
                     low=float(kline[3]),
@@ -240,7 +253,7 @@ class HistoricalDataHandler:
                 if i == 0:
                     logger.info(f"📝 Первая свеча (parsed): {candle}")
 
-            logger.info(f"✅ Получено {len(candles)} свечей")
+            logger.info(f"✅ Получено {len(candles)} свечей (после фильтрации)")
             return candles
 
         except Exception as e:
