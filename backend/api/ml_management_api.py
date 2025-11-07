@@ -298,20 +298,22 @@ async def list_models(
         models = []
         for name in ["hybrid_cnn_lstm"]:  # Add more model names as needed
             try:
-                model_versions = await registry.list_model_versions(name)
+                # list_models returns List[ModelInfo]
+                model_infos = await registry.list_models(name)
 
-                for version_info in model_versions:
+                for model_info in model_infos:
+                    metadata = model_info.metadata
                     model_data = {
-                        "name": name,
-                        "version": version_info["version"],
-                        "stage": version_info["stage"].value if hasattr(version_info["stage"], "value") else str(version_info["stage"]),
-                        "created_at": version_info["created_at"],
-                        "description": version_info.get("description", ""),
-                        "metrics": version_info.get("training_params", {})
+                        "name": metadata.name,
+                        "version": metadata.version,
+                        "stage": metadata.stage.value if hasattr(metadata.stage, "value") else str(metadata.stage),
+                        "created_at": metadata.created_at.isoformat() if hasattr(metadata.created_at, "isoformat") else str(metadata.created_at),
+                        "description": metadata.description or "",
+                        "metrics": metadata.metrics or {}
                     }
 
                     # Filter by stage if specified
-                    stage_value = version_info["stage"].value if hasattr(version_info["stage"], "value") else str(version_info["stage"])
+                    stage_value = metadata.stage.value if hasattr(metadata.stage, "value") else str(metadata.stage)
                     if stage is None or stage_value.lower() == stage.lower():
                         models.append(model_data)
             except Exception as e:

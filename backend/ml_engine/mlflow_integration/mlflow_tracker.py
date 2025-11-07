@@ -64,8 +64,26 @@ class MLflowTracker:
         if artifact_location is None:
             artifact_location = settings.MLFLOW_ARTIFACT_LOCATION
 
-        mlflow.set_tracking_uri(tracking_uri)
-        self.tracking_uri = tracking_uri
+        # Try to use configured tracking URI, fallback to SQLite if PostgreSQL unavailable
+        try:
+            mlflow.set_tracking_uri(tracking_uri)
+            # Test connection by trying to list experiments
+            mlflow.search_experiments(max_results=1)
+            self.tracking_uri = tracking_uri
+            logger.info(f"✓ Connected to MLflow tracking URI: {tracking_uri}")
+        except Exception as e:
+            logger.warning(
+                f"Failed to connect to configured MLflow tracking URI ({tracking_uri}): {e}\n"
+                f"Falling back to SQLite..."
+            )
+            # Fallback to SQLite
+            import os
+            sqlite_path = os.path.join("data", "mlflow", "mlruns.db")
+            os.makedirs(os.path.dirname(sqlite_path), exist_ok=True)
+            tracking_uri = f"sqlite:///{sqlite_path}"
+            mlflow.set_tracking_uri(tracking_uri)
+            self.tracking_uri = tracking_uri
+            logger.info(f"✓ Using SQLite MLflow tracking: {tracking_uri}")
 
         # Setup experiment
         self.experiment_name = experiment_name
