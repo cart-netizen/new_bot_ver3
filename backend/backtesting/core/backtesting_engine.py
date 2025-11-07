@@ -44,6 +44,9 @@ from backend.backtesting.models import (
 )
 from backend.backtesting.core.data_handler import HistoricalDataHandler
 from backend.backtesting.core.simulated_exchange import SimulatedExchange, SimulatedOrder
+from backend.backtesting.core.orderbook_data_handler import OrderBookDataHandler, OrderBookSimulationConfig
+from backend.backtesting.core.trade_data_handler import TradeDataHandler, TradeSimulationConfig
+from backend.models.market_data import MarketTrade
 
 logger = get_logger(__name__)
 
@@ -163,6 +166,26 @@ class BacktestingEngine:
         self.data_handler = data_handler
         self.exchange = simulated_exchange
 
+        # OrderBook and Trades handlers (НОВОЕ в Фазе 1)
+        if config.use_orderbook_data:
+            orderbook_config = OrderBookSimulationConfig(
+                num_levels=config.orderbook_num_levels,
+                base_spread_bps=config.orderbook_base_spread_bps
+            )
+            self.orderbook_handler = OrderBookDataHandler(orderbook_config)
+            logger.info("✅ OrderBook симулятор включен")
+        else:
+            self.orderbook_handler = None
+
+        if config.use_market_trades:
+            trade_config = TradeSimulationConfig(
+                trades_per_volume_unit=config.trades_per_volume_unit
+            )
+            self.trade_handler = TradeDataHandler(trade_config)
+            logger.info("✅ Market Trades симулятор включен")
+        else:
+            self.trade_handler = None
+
         # Strategy Manager
         if strategy_manager is None:
             # Создать из конфигурации
@@ -187,6 +210,11 @@ class BacktestingEngine:
         self.current_time: Optional[datetime] = None
         self.current_price: float = 0.0
         self.current_orderbook: Optional[OrderBookSnapshot] = None
+        self.current_market_trades: List[MarketTrade] = []  # НОВОЕ
+
+        # Исторические данные (НОВОЕ)
+        self.historical_orderbooks: List[OrderBookSnapshot] = []
+        self.historical_trades: List[MarketTrade] = []
 
         # Progress tracking
         self.total_candles = 0
@@ -235,6 +263,21 @@ class BacktestingEngine:
                 raise ValueError("Не удалось загрузить исторические данные")
 
             logger.info(f"✅ Загружено {len(candles)} свечей")
+
+            # 1.5. Генерация OrderBook и Market Trades (НОВОЕ в Фазе 1)
+            if self.config.use_orderbook_data and self.orderbook_handler:
+                logger.info("📚 Генерация orderbook snapshots из свечей...")
+                self.historical_orderbooks = self.orderbook_handler.generate_orderbook_sequence(
+                    candles, self.config.symbol
+                )
+                logger.info(f"✅ Сгенерировано {len(self.historical_orderbooks)} orderbook snapshots")
+
+            if self.config.use_market_trades and self.trade_handler:
+                logger.info("💱 Генерация market trades из свечей...")
+                self.historical_trades = self.trade_handler.generate_trades_from_candles(
+                    candles, self.config.symbol
+                )
+                logger.info(f"✅ Сгенерировано {len(self.historical_trades)} market trades")
 
             # 2. Валидация данных
             logger.info("🔍 Валидация качества данных...")
@@ -345,7 +388,7 @@ class BacktestingEngine:
 
         Steps:
         1. Update candle manager
-        2. Update market state
+        2. Update market state (включая orderbook и trades)
         3. Process limit orders (simulated exchange)
         4. Update open positions
         5. Check stop loss / take profit
@@ -360,6 +403,25 @@ class BacktestingEngine:
         # 2. Update current market state
         self.current_time = datetime.fromtimestamp(candle.timestamp / 1000)
         self.current_price = candle.close
+
+        # 2.1. Update current orderbook (НОВОЕ в Фазе 1)
+        if self.historical_orderbooks:
+            # Найти orderbook для текущей свечи
+            matching_orderbook = next(
+                (ob for ob in self.historical_orderbooks if ob.timestamp == candle.timestamp),
+                None
+            )
+            if matching_orderbook:
+                self.current_orderbook = matching_orderbook
+
+        # 2.2. Update current market trades (НОВОЕ в Фазе 1)
+        if self.historical_trades:
+            # Найти trades для текущей свечи (60 секунд окно)
+            candle_end_time = candle.timestamp + 60000  # +60 секунд
+            self.current_market_trades = [
+                t for t in self.historical_trades
+                if candle.timestamp <= t.timestamp < candle_end_time
+            ]
 
         # 3. Process limit orders
         await self.exchange.process_tick(
@@ -619,7 +681,10 @@ class BacktestingEngine:
         self.portfolio.equity_history.append(point)
 
     def _calculate_performance_metrics(self) -> PerformanceMetrics:
-        """Расчет финальных метрик производительности."""
+        """Расчет финальных метрик производительности (ОБНОВЛЕНО в Фазе 1)."""
+        import numpy as np
+        from scipy import stats
+
         # Basic metrics
         total_trades = len(self.closed_trades)
         winning_trades = len([t for t in self.closed_trades if t.pnl > 0])
@@ -642,13 +707,93 @@ class BacktestingEngine:
         total_losses = abs(sum(losing_pnls))
         profit_factor = total_wins / total_losses if total_losses > 0 else 0.0
 
-        # TODO: Calculate advanced metrics (Sharpe, Sortino, etc.)
-        # This will be implemented in Performance Analyzer
+        # Trade duration
+        if self.closed_trades:
+            avg_duration = np.mean([t.duration_seconds for t in self.closed_trades]) / 60  # minutes
+        else:
+            avg_duration = 0.0
+
+        # Drawdown metrics (НОВОЕ)
+        max_dd_pct = 0.0
+        max_dd_duration_days = 0.0
+        avg_dd_pct = 0.0
+
+        if self.portfolio.equity_history:
+            equities = [ep.equity for ep in self.portfolio.equity_history]
+            drawdowns = [ep.drawdown_pct for ep in self.portfolio.equity_history]
+
+            if drawdowns:
+                max_dd_pct = max(drawdowns)
+                avg_dd_pct = np.mean([dd for dd in drawdowns if dd > 0])
+
+                # Drawdown duration
+                in_drawdown = False
+                dd_start = None
+                dd_durations = []
+
+                for i, ep in enumerate(self.portfolio.equity_history):
+                    if ep.drawdown_pct > 0 and not in_drawdown:
+                        in_drawdown = True
+                        dd_start = ep.timestamp
+                    elif ep.drawdown_pct == 0 and in_drawdown:
+                        in_drawdown = False
+                        if dd_start:
+                            duration = (ep.timestamp - dd_start).total_seconds() / (24 * 3600)
+                            dd_durations.append(duration)
+
+                if dd_durations:
+                    max_dd_duration_days = max(dd_durations)
+
+        # Risk-adjusted returns (НОВОЕ)
+        sharpe_ratio = 0.0
+        sortino_ratio = 0.0
+        calmar_ratio = 0.0
+        volatility_annual_pct = 0.0
+        stability = 0.0
+
+        if len(self.portfolio.equity_history) > 2:
+            returns = []
+            for i in range(1, len(self.portfolio.equity_history)):
+                prev_equity = self.portfolio.equity_history[i-1].equity
+                curr_equity = self.portfolio.equity_history[i].equity
+                if prev_equity > 0:
+                    ret = (curr_equity - prev_equity) / prev_equity
+                    returns.append(ret)
+
+            if returns:
+                returns_array = np.array(returns)
+
+                # Volatility
+                volatility_annual_pct = np.std(returns) * np.sqrt(252) * 100
+
+                # Sharpe Ratio (assuming 0% risk-free rate)
+                if volatility_annual_pct > 0:
+                    mean_return = np.mean(returns) * 252  # Annualized
+                    sharpe_ratio = mean_return / (volatility_annual_pct / 100)
+
+                # Sortino Ratio (only downside volatility)
+                negative_returns = returns_array[returns_array < 0]
+                if len(negative_returns) > 0:
+                    downside_std = np.std(negative_returns) * np.sqrt(252)
+                    if downside_std > 0:
+                        sortino_ratio = (np.mean(returns) * 252) / downside_std
+
+                # Calmar Ratio
+                if max_dd_pct > 0:
+                    annual_return_pct = self.portfolio.total_return_pct * (365 / max(1, (self.config.end_date - self.config.start_date).days))
+                    calmar_ratio = annual_return_pct / max_dd_pct
+
+                # Stability (R-squared of equity curve)
+                x = np.arange(len(self.portfolio.equity_history))
+                y = np.array([ep.equity for ep in self.portfolio.equity_history])
+                if len(x) > 1:
+                    slope, intercept, r_value, p_value, std_err = stats.linregress(x, y)
+                    stability = r_value ** 2  # R-squared
 
         return PerformanceMetrics(
             total_return=self.portfolio.total_return,
             total_return_pct=self.portfolio.total_return_pct,
-            annual_return_pct=0.0,  # TODO: Calculate annualized return
+            annual_return_pct=self.portfolio.total_return_pct * (365 / max(1, (self.config.end_date - self.config.start_date).days)),
             total_trades=total_trades,
             winning_trades=winning_trades,
             losing_trades=losing_trades,
@@ -658,7 +803,15 @@ class BacktestingEngine:
             avg_loss=avg_loss,
             largest_win=largest_win,
             largest_loss=largest_loss,
-            max_drawdown_pct=0.0,  # TODO: Calculate from equity curve
+            avg_trade_duration_minutes=avg_duration,
+            max_drawdown_pct=max_dd_pct,
+            max_drawdown_duration_days=max_dd_duration_days,
+            avg_drawdown_pct=avg_dd_pct,
+            sharpe_ratio=sharpe_ratio,
+            sortino_ratio=sortino_ratio,
+            calmar_ratio=calmar_ratio,
+            volatility_annual_pct=volatility_annual_pct,
+            stability=stability
         )
 
     def _parse_interval(self, interval: str) -> int:

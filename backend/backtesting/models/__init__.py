@@ -7,6 +7,9 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from enum import Enum
 
+# Импорт Candle из основных моделей
+from backend.models.candle import Candle
+
 
 # ==================== ENUMS ====================
 
@@ -101,8 +104,15 @@ class BacktestConfig:
 
     # Параметры данных
     candle_interval: str = "1m"  # 1m, 5m, 15m, 1h
-    use_orderbook_data: bool = True
-    orderbook_sampling_interval_ms: int = 500  # Каждые 500ms
+
+    # OrderBook данные (НОВОЕ в Фазе 1)
+    use_orderbook_data: bool = True  # Использовать симулированный orderbook
+    orderbook_num_levels: int = 20  # Количество уровней в стакане
+    orderbook_base_spread_bps: float = 2.0  # Базовый spread (basis points)
+
+    # Market Trades данные (НОВОЕ в Фазе 1)
+    use_market_trades: bool = True  # Использовать симулированные trades
+    trades_per_volume_unit: float = 100.0  # Trades на единицу объема
 
     # Оптимизации
     warmup_period_bars: int = 100  # Количество свечей для прогрева индикаторов
@@ -268,6 +278,7 @@ class BacktestResult:
 
 
 __all__ = [
+    'Candle',
     'SlippageModel',
     'ExchangeConfig',
     'StrategyConfig',
