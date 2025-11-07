@@ -14,9 +14,9 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 
-# Добавляем backend в путь
-backend_path = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(backend_path))
+# Добавляем корень проекта в путь
+project_root = Path(__file__).parent.parent.parent.parent  # new_bot_ver3/
+sys.path.insert(0, str(project_root))
 
 # ВАЖНО: Импортируем ВСЕ модели до использования Base.metadata
 from backend.database.models import (
@@ -25,7 +25,11 @@ from backend.database.models import (
     Trade,
     AuditLog,
     IdempotencyCache,
-    MarketDataSnapshot
+    MarketDataSnapshot,
+    BacktestRun,
+    BacktestTrade,
+    BacktestEquity,
+    BacktestStatus
 )
 from backend.database.connection import Base
 from backend.config import settings
