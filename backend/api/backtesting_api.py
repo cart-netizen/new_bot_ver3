@@ -31,7 +31,7 @@ from backend.backtesting.models import (
 from backend.backtesting.core.backtesting_engine import BacktestingEngine
 from backend.backtesting.core.data_handler import HistoricalDataHandler
 from backend.backtesting.core.simulated_exchange import SimulatedExchange
-from backend.database.models import BacktestStatus
+from backend.database.models import BacktestStatus, OrderSide
 
 logger = get_logger(__name__)
 
@@ -747,7 +747,7 @@ async def _run_backtest_job(backtest_id: str, config: BacktestConfig):
         engine = BacktestingEngine(
             config=config,
             data_handler=data_handler,
-            exchange=simulated_exchange
+            simulated_exchange=simulated_exchange
         )
 
         # Запустить бэктест

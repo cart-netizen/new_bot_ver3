@@ -331,7 +331,7 @@ class SimulatedExchange:
             total_cost += remaining_quantity * penalty_price
             total_quantity += remaining_quantity
 
-        vwap = total_cost / total_quantity if total_quantity > 0 else levels[0].price
+        vwap = total_cost / total_quantity if total_quantity > 0 else levels[0][0]
         return vwap
 
     async def process_tick(
