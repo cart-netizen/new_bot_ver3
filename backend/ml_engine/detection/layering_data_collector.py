@@ -436,6 +436,7 @@ class LayeringDataCollector:
           df.to_parquet(filepath, engine='pyarrow', compression='snappy')
 
           logger.info(f"🏷️  Label updated in {filepath.name}: {data_id}")
+          logger.info(f"💾 File saved to disk: {filepath.name}")
           return
 
       except Exception as e:
