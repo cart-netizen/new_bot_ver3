@@ -56,7 +56,8 @@ class PositionMonitor:
       risk_manager: RiskManager,
       candle_managers: Dict,
       orderbook_managers: Dict,
-      execution_manager
+      execution_manager,
+      trade_managers: Optional[Dict] = None
   ):
     """
     Инициализация Position Monitor.
@@ -66,11 +67,13 @@ class PositionMonitor:
         candle_managers: Dict[symbol, CandleManager]
         orderbook_managers: Dict[symbol, OrderBookManager]
         execution_manager: ExecutionManager instance
+        trade_managers: Dict[symbol, TradeManager] для market trades метрик
     """
     self.risk_manager = risk_manager
     self.candle_managers = candle_managers
     self.orderbook_managers = orderbook_managers
     self.execution_manager = execution_manager
+    self.trade_managers = trade_managers or {}
 
     # ===== ДОБАВЛЕНО: Кеш для OrderBookAnalyzer =====
     self.orderbook_analyzers: Dict[str, OrderBookAnalyzer] = {}
@@ -98,7 +101,8 @@ class PositionMonitor:
       f"interval={self.check_interval}s, "
       f"reversal={self.enable_reversal_check}, "
       f"trailing={self.enable_trailing_stop}, "
-      f"sltp={self.enable_sltp_check}"
+      f"sltp={self.enable_sltp_check}, "
+      f"trade_managers={len(self.trade_managers)} symbols"
     )
 
   async def start(self):
@@ -414,13 +418,25 @@ class PositionMonitor:
           )
           orderbook_metrics = None
 
+      # ===== ДОБАВЛЕНО: Метрики market trades =====
+      trade_metrics = self._get_trade_metrics(symbol, window_seconds=60)
+
+      if trade_metrics:
+        logger.debug(
+          f"{symbol} | Trade metrics: "
+          f"arrival_rate={trade_metrics['arrival_rate']:.2f} trades/s, "
+          f"buy/sell ratio={trade_metrics['buy_sell_ratio']:.2f}, "
+          f"toxicity={trade_metrics['order_flow_toxicity']:.4f}"
+        )
+
       # Проверяем разворот
       reversal = reversal_detector.detect_reversal(
         symbol=symbol,
         candles=candles,
         current_trend=current_trend,
         indicators=indicators,
-        orderbook_metrics=orderbook_metrics
+        orderbook_metrics=orderbook_metrics,
+        trade_metrics=trade_metrics
       )
 
       if not reversal:
@@ -775,6 +791,52 @@ class PositionMonitor:
       logger.debug(f"{symbol} | Created OrderBookAnalyzer instance")
 
     return self.orderbook_analyzers[symbol]
+
+  def _get_trade_metrics(self, symbol: str, window_seconds: int = 60) -> Optional[Dict]:
+    """
+    Получение метрик market trades для символа.
+
+    Args:
+        symbol: Торговая пара
+        window_seconds: Временное окно для расчета
+
+    Returns:
+        Dict с метриками или None если TradeManager недоступен
+    """
+    trade_manager = self.trade_managers.get(symbol)
+
+    if not trade_manager:
+      return None
+
+    try:
+      # Получаем статистику за временное окно
+      stats = trade_manager.get_statistics(window_seconds=window_seconds)
+
+      if not stats:
+        return None
+
+      # Формируем метрики для reversal detector
+      return {
+        'arrival_rate': stats.trades_per_second,
+        'buy_sell_ratio': stats.buy_sell_ratio,
+        'buy_volume': stats.buy_volume,
+        'sell_volume': stats.sell_volume,
+        'aggressive_buy_volume': stats.aggressive_buy_volume,
+        'aggressive_sell_volume': stats.aggressive_sell_volume,
+        'aggressive_ratio': stats.aggressive_ratio,
+        'order_flow_toxicity': stats.order_flow_toxicity,
+        'vwap': stats.vwap,
+        'block_trades_count': stats.block_trades_count,
+        'block_trades_volume': stats.block_trades_volume,
+        'avg_trade_size': stats.avg_trade_size
+      }
+
+    except Exception as e:
+      logger.warning(
+        f"{symbol} | Failed to get trade metrics: {e}",
+        exc_info=False
+      )
+      return None
 
 
 # Глобальный экземпляр (инициализируется в main.py)
