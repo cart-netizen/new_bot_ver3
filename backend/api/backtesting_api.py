@@ -31,7 +31,7 @@ from backend.backtesting.models import (
 from backend.backtesting.core.backtesting_engine import BacktestingEngine
 from backend.backtesting.core.data_handler import HistoricalDataHandler
 from backend.backtesting.core.simulated_exchange import SimulatedExchange
-from backend.database.models import BacktestStatus
+from backend.database.models import BacktestStatus, OrderSide
 
 logger = get_logger(__name__)
 
