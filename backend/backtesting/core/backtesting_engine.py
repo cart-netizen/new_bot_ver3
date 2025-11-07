@@ -233,9 +233,33 @@ class BacktestingEngine:
             min_consensus_confidence=self.config.strategy_config.min_consensus_confidence
         )
 
-        # TODO: Настроить параметры стратегий из config.strategy_config.strategy_params
+        # Создаем менеджер
+        strategy_manager = ExtendedStrategyManager(strategy_config)
 
-        return ExtendedStrategyManager(strategy_config)
+        # Настроить параметры стратегий из config.strategy_config.strategy_params
+        if self.config.strategy_config.strategy_params:
+            for strategy_name, params in self.config.strategy_config.strategy_params.items():
+                if strategy_name in strategy_manager.all_strategies:
+                    strategy_instance = strategy_manager.all_strategies[strategy_name]
+
+                    # Обновляем параметры config объекта стратегии
+                    if hasattr(strategy_instance, 'config'):
+                        for param_name, param_value in params.items():
+                            if hasattr(strategy_instance.config, param_name):
+                                setattr(strategy_instance.config, param_name, param_value)
+                                logger.debug(
+                                    f"Установлен параметр {strategy_name}.{param_name} = {param_value}"
+                                )
+                            else:
+                                logger.warning(
+                                    f"Параметр {param_name} не найден в {strategy_name}.config"
+                                )
+                    else:
+                        logger.warning(f"Стратегия {strategy_name} не имеет config объекта")
+                else:
+                    logger.warning(f"Стратегия {strategy_name} не найдена в менеджере")
+
+        return strategy_manager
 
     async def run(self) -> BacktestResult:
         """
@@ -456,6 +480,11 @@ class BacktestingEngine:
             # Недостаточно данных для стратегий
             return None
 
+        # Calculate OrderBookMetrics if orderbook available
+        orderbook_metrics = None
+        if self.current_orderbook:
+            orderbook_metrics = self._calculate_orderbook_metrics(self.current_orderbook)
+
         # Run strategy manager
         consensus = await asyncio.to_thread(
             self.strategy_manager.analyze_with_consensus,
@@ -463,7 +492,7 @@ class BacktestingEngine:
             candles=candles,
             current_price=self.current_price,
             orderbook=self.current_orderbook,
-            metrics=None,  # TODO: Calculate OrderBookMetrics if needed
+            metrics=orderbook_metrics,
             sr_levels=None,
             volume_profile=None,
             ml_prediction=None
@@ -473,6 +502,91 @@ class BacktestingEngine:
             return consensus.final_signal
 
         return None
+
+    def _calculate_orderbook_metrics(self, orderbook: OrderBookSnapshot) -> OrderBookMetrics:
+        """
+        Рассчитать метрики из OrderBookSnapshot.
+
+        Args:
+            orderbook: Snapshot стакана ордеров
+
+        Returns:
+            OrderBookMetrics с рассчитанными метриками
+        """
+        # Basic prices
+        best_bid = orderbook.best_bid
+        best_ask = orderbook.best_ask
+        spread = orderbook.spread
+        mid_price = orderbook.mid_price
+
+        # Volume calculations
+        total_bid_volume = sum(qty for _, qty in orderbook.bids)
+        total_ask_volume = sum(qty for _, qty in orderbook.asks)
+
+        bid_volume_depth_5 = sum(qty for _, qty in orderbook.bids[:5])
+        ask_volume_depth_5 = sum(qty for _, qty in orderbook.asks[:5])
+
+        bid_volume_depth_10 = sum(qty for _, qty in orderbook.bids[:10])
+        ask_volume_depth_10 = sum(qty for _, qty in orderbook.asks[:10])
+
+        # Imbalance calculations
+        total_volume = total_bid_volume + total_ask_volume
+        imbalance = bid_volume_depth_5 / (bid_volume_depth_5 + ask_volume_depth_5) if (bid_volume_depth_5 + ask_volume_depth_5) > 0 else 0.5
+
+        depth_5_total = bid_volume_depth_5 + ask_volume_depth_5
+        imbalance_depth_5 = bid_volume_depth_5 / depth_5_total if depth_5_total > 0 else 0.5
+
+        depth_10_total = bid_volume_depth_10 + ask_volume_depth_10
+        imbalance_depth_10 = bid_volume_depth_10 / depth_10_total if depth_10_total > 0 else 0.5
+
+        # VWAP calculations
+        def calculate_vwap(levels: List[Tuple[float, float]], depth: int = 5) -> Optional[float]:
+            """Calculate Volume-Weighted Average Price for N levels."""
+            if not levels:
+                return None
+            top_levels = levels[:depth]
+            total_value = sum(price * qty for price, qty in top_levels)
+            total_volume = sum(qty for _, qty in top_levels)
+            return total_value / total_volume if total_volume > 0 else None
+
+        vwap_bid = calculate_vwap(orderbook.bids, 5)
+        vwap_ask = calculate_vwap(orderbook.asks, 5)
+        vwmp = (vwap_bid + vwap_ask) / 2 if vwap_bid and vwap_ask else mid_price
+
+        # Cluster detection (largest volume level)
+        largest_bid = max(orderbook.bids, key=lambda x: x[1], default=None) if orderbook.bids else None
+        largest_ask = max(orderbook.asks, key=lambda x: x[1], default=None) if orderbook.asks else None
+
+        largest_bid_cluster_price = largest_bid[0] if largest_bid else None
+        largest_bid_cluster_volume = largest_bid[1] if largest_bid else 0.0
+
+        largest_ask_cluster_price = largest_ask[0] if largest_ask else None
+        largest_ask_cluster_volume = largest_ask[1] if largest_ask else 0.0
+
+        return OrderBookMetrics(
+            symbol=orderbook.symbol,
+            timestamp=orderbook.timestamp,
+            best_bid=best_bid,
+            best_ask=best_ask,
+            spread=spread,
+            mid_price=mid_price,
+            total_bid_volume=total_bid_volume,
+            total_ask_volume=total_ask_volume,
+            bid_volume_depth_5=bid_volume_depth_5,
+            ask_volume_depth_5=ask_volume_depth_5,
+            bid_volume_depth_10=bid_volume_depth_10,
+            ask_volume_depth_10=ask_volume_depth_10,
+            imbalance=imbalance,
+            imbalance_depth_5=imbalance_depth_5,
+            imbalance_depth_10=imbalance_depth_10,
+            vwap_bid=vwap_bid,
+            vwap_ask=vwap_ask,
+            vwmp=vwmp,
+            largest_bid_cluster_price=largest_bid_cluster_price,
+            largest_bid_cluster_volume=largest_bid_cluster_volume,
+            largest_ask_cluster_price=largest_ask_cluster_price,
+            largest_ask_cluster_volume=largest_ask_cluster_volume
+        )
 
     async def _process_signal(self, signal: TradingSignal):
         """Обработать торговый сигнал."""
