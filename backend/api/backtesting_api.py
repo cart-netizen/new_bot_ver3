@@ -428,7 +428,7 @@ async def get_backtest(
             "created_at": run.created_at.isoformat(),
             "started_at": run.started_at.isoformat() if run.started_at else None,
             "completed_at": run.completed_at.isoformat() if run.completed_at else None,
-            "progress": run.progress,
+            "progress": run.progress_pct,
             "error_message": run.error_message,
             "exchange_config": run.exchange_config,
             "strategies_config": run.strategies_config,
@@ -547,10 +547,7 @@ async def get_equity_curve(
     """
     try:
         # Получить equity curve из БД
-        equity_points = await repository.get_equity_curve(
-            backtest_id,
-            sampling_interval_minutes=sampling_interval_minutes
-        )
+        equity_points = await repository.get_equity_curve(backtest_id)
 
         return {
             "backtest_id": str(backtest_id),
@@ -725,9 +722,12 @@ async def _run_backtest_job(backtest_id: str, config: BacktestConfig):
     Background task для выполнения бэктеста
 
     Args:
-        backtest_id: ID бэктеста
+        backtest_id: ID бэктеста (строка)
         config: Конфигурация бэктеста
     """
+    # Конвертировать ID в UUID
+    backtest_uuid = UUID(backtest_id)
+
     # Добавить в tracking
     running_backtests[backtest_id] = {
         "cancelled": False,
@@ -738,7 +738,7 @@ async def _run_backtest_job(backtest_id: str, config: BacktestConfig):
         logger.info(f"🚀 Запуск бэктеста: {backtest_id}")
 
         # Обновить статус на RUNNING
-        await repository.update_status(backtest_id, BacktestStatus.RUNNING, progress_pct=0.0)
+        await repository.update_status(backtest_uuid, BacktestStatus.RUNNING, progress_pct=0.0)
 
         # Создать компоненты
         data_handler = HistoricalDataHandler()
@@ -760,17 +760,20 @@ async def _run_backtest_job(backtest_id: str, config: BacktestConfig):
 
         # Сохранить результаты
         await repository.update_results(
-            UUID(backtest_id),
+            backtest_uuid,
             final_capital=result.final_capital,
             total_pnl=result.total_pnl,
             total_pnl_pct=result.total_pnl_pct,
+            total_trades=len(result.trades),
+            winning_trades=len([t for t in result.trades if t.pnl > 0]),
+            losing_trades=len([t for t in result.trades if t.pnl < 0]),
             metrics=result.metrics.to_dict()
         )
 
         # Сохранить сделки
         for trade in result.trades:
             await repository.create_trade(
-                backtest_id=UUID(backtest_id),
+                backtest_run_id=backtest_uuid,
                 symbol=trade.symbol,
                 side=trade.side,
                 entry_time=trade.entry_time,
@@ -781,7 +784,6 @@ async def _run_backtest_job(backtest_id: str, config: BacktestConfig):
                 pnl=trade.pnl,
                 pnl_pct=trade.pnl_pct,
                 commission=trade.commission,
-                duration_seconds=trade.duration_seconds,
                 exit_reason=trade.exit_reason,
                 max_favorable_excursion=trade.max_favorable_excursion,
                 max_adverse_excursion=trade.max_adverse_excursion
@@ -790,12 +792,13 @@ async def _run_backtest_job(backtest_id: str, config: BacktestConfig):
         # Сохранить equity curve
         for point in result.equity_curve:
             await repository.create_equity_point(
-                backtest_id=UUID(backtest_id),
+                backtest_run_id=backtest_uuid,
                 timestamp=point.timestamp,
                 sequence=point.sequence,
                 equity=point.equity,
                 cash=point.cash,
                 positions_value=point.positions_value,
+                peak_equity=point.peak_equity,
                 drawdown=point.drawdown,
                 drawdown_pct=point.drawdown_pct,
                 total_return=point.total_return,
@@ -804,7 +807,7 @@ async def _run_backtest_job(backtest_id: str, config: BacktestConfig):
             )
 
         # Обновить статус на COMPLETED
-        await repository.update_status(backtest_id, BacktestStatus.COMPLETED, progress_pct=100.0)
+        await repository.update_status(backtest_uuid, BacktestStatus.COMPLETED, progress_pct=100.0)
 
         logger.info(
             f"✅ Бэктест завершен: {backtest_id}, "
@@ -817,7 +820,7 @@ async def _run_backtest_job(backtest_id: str, config: BacktestConfig):
 
         # Обновить статус на FAILED
         await repository.update_status(
-            backtest_id,
+            backtest_uuid,
             BacktestStatus.FAILED,
             error_message=str(e)
         )
