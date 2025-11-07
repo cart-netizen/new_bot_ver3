@@ -133,9 +133,12 @@ class HistoricalDataHandler:
         cache_key = self._generate_cache_key(symbol, start, end, interval)
         cached_candles = self._load_from_cache(cache_key)
 
-        if cached_candles is not None:
+        # Возвращаем кэш только если он не пустой
+        if cached_candles:
             logger.info(f"✅ Загружено из кэша: {len(cached_candles)} свечей")
             return cached_candles
+        elif cached_candles is not None:
+            logger.warning(f"⚠️ Кэш найден, но пустой. Загружаем данные заново...")
 
         # Загрузка по чанкам
         all_candles = []
@@ -191,9 +194,10 @@ class HistoricalDataHandler:
             start_ms = int(start.timestamp() * 1000)
             end_ms = int(end.timestamp() * 1000)
 
-            logger.debug(
+            logger.info(
                 f"📡 Запрос к Bybit API: symbol={symbol}, interval={interval}, "
-                f"start={start.isoformat()}, end={end.isoformat()}"
+                f"start={start.isoformat()}, end={end.isoformat()}, "
+                f"start_ms={start_ms}, end_ms={end_ms}"
             )
 
             # Запрос к Bybit API
@@ -206,17 +210,22 @@ class HistoricalDataHandler:
                 limit=1000
             )
 
+            logger.info(f"📊 API ответ: получено {len(klines) if klines else 0} klines, type={type(klines)}")
+
             if not klines:
                 logger.warning(
-                    f"API вернул пустой список свечей для {symbol} "
+                    f"⚠️ API вернул пустой список свечей для {symbol} "
                     f"({start.isoformat()} - {end.isoformat()})"
                 )
                 return []
 
             # Парсинг свечей
             candles = []
-            for kline in klines:
+            for i, kline in enumerate(klines):
                 # Bybit kline format: [startTime, open, high, low, close, volume, turnover]
+                if i == 0:
+                    logger.info(f"📝 Первая свеча (raw): {kline}")
+
                 candle = Candle(
                     timestamp=int(kline[0]),
                     open=float(kline[1]),
@@ -228,7 +237,10 @@ class HistoricalDataHandler:
                 )
                 candles.append(candle)
 
-            logger.debug(f"✅ Получено {len(candles)} свечей")
+                if i == 0:
+                    logger.info(f"📝 Первая свеча (parsed): {candle}")
+
+            logger.info(f"✅ Получено {len(candles)} свечей")
             return candles
 
         except Exception as e:
