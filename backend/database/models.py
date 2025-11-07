@@ -627,8 +627,8 @@ class BacktestEquity(Base):
   id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
   backtest_run_id = Column(UUID(as_uuid=True), ForeignKey("backtest_runs.id", ondelete="CASCADE"), nullable=False, index=True)
 
-  # Временная метка
-  timestamp = Column(DateTime, nullable=False, index=True)
+  # Временная метка (часть составного первичного ключа для TimescaleDB hypertable)
+  timestamp = Column(DateTime, primary_key=True, nullable=False, index=True)
 
   # Порядковый номер (для быстрой сортировки)
   sequence = Column(Integer, nullable=False)
