@@ -214,8 +214,8 @@ class HistoricalDataHandler:
                     high=float(kline[2]),
                     low=float(kline[3]),
                     close=float(kline[4]),
-                    volume=float(kline[5]),
-                    quote_volume=float(kline[6]) if len(kline) > 6 else 0.0
+                    volume=float(kline[5])
+                    # Note: kline[6] is turnover/quote_volume, but Candle model doesn't have this field
                 )
                 candles.append(candle)
 
