@@ -4782,10 +4782,10 @@ if __name__ == "__main__":
   logger.info("=" * 80)
 
   # Запускаем Uvicorn сервер
-  # ВАЖНО: Используем объект app напрямую, а не строку "main:app"
-  # чтобы избежать двойной загрузки модуля при запуске через PyCharm
+  # ВАЖНО: Используем полный путь модуля "backend.main:app"
+  # чтобы правильно работать при запуске через PyCharm
   uvicorn.run(
-    app,
+    "backend.main:app",
     host=settings.API_HOST,
     port=settings.API_PORT,
     reload=settings.DEBUG,
