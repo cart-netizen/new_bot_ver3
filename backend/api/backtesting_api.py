@@ -775,7 +775,7 @@ async def _run_backtest_job(backtest_id: str, config: BacktestConfig):
             await repository.create_trade(
                 backtest_run_id=backtest_uuid,
                 symbol=trade.symbol,
-                side=trade.side,
+                side=OrderSide(trade.side),  # Преобразовать строку в enum
                 entry_time=trade.entry_time,
                 exit_time=trade.exit_time,
                 entry_price=trade.entry_price,
@@ -791,6 +791,9 @@ async def _run_backtest_job(backtest_id: str, config: BacktestConfig):
 
         # Сохранить equity curve
         for point in result.equity_curve:
+            # Вычислить peak_equity из equity и drawdown
+            peak_equity = point.equity + point.drawdown
+
             await repository.create_equity_point(
                 backtest_run_id=backtest_uuid,
                 timestamp=point.timestamp,
@@ -798,7 +801,7 @@ async def _run_backtest_job(backtest_id: str, config: BacktestConfig):
                 equity=point.equity,
                 cash=point.cash,
                 positions_value=point.positions_value,
-                peak_equity=point.peak_equity,
+                peak_equity=peak_equity,  # Вычисленное значение
                 drawdown=point.drawdown,
                 drawdown_pct=point.drawdown_pct,
                 total_return=point.total_return,
