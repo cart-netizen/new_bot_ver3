@@ -1,0 +1,825 @@
+"""
+Backtesting Management API - REST API для управления бэктестами через фронтенд
+
+Endpoints:
+- POST /api/backtesting/runs - Create and start backtest
+- GET /api/backtesting/runs - List backtests with filtering
+- GET /api/backtesting/runs/{id} - Get backtest details
+- GET /api/backtesting/runs/{id}/trades - Get backtest trades
+- GET /api/backtesting/runs/{id}/equity-curve - Get equity curve
+- POST /api/backtesting/runs/{id}/cancel - Cancel running backtest
+- DELETE /api/backtesting/runs/{id} - Delete backtest
+- GET /api/backtesting/statistics - Get aggregate statistics
+"""
+
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
+from pydantic import BaseModel, Field, validator
+from typing import Dict, Any, Optional, List
+from datetime import datetime
+from uuid import UUID
+import asyncio
+
+from backend.core.logger import get_logger
+from backend.infrastructure.repositories.backtesting.backtest_repository import BacktestRepository
+from backend.backtesting.models import (
+    BacktestConfig,
+    ExchangeConfig,
+    StrategyConfig,
+    RiskConfig,
+    SlippageModel
+)
+from backend.backtesting.core.backtesting_engine import BacktestingEngine
+from backend.backtesting.core.data_handler import HistoricalDataHandler
+from backend.backtesting.core.simulated_exchange import SimulatedExchange
+from backend.database.models import BacktestStatus
+
+logger = get_logger(__name__)
+
+# Create router
+router = APIRouter(prefix="/api/backtesting", tags=["Backtesting"])
+
+
+# ============================================================
+# Request/Response Models
+# ============================================================
+
+class CreateBacktestRequest(BaseModel):
+    """Request для создания бэктеста"""
+    name: str = Field(..., min_length=1, max_length=200, description="Название бэктеста")
+    description: Optional[str] = Field(None, max_length=1000, description="Описание бэктеста")
+
+    # Основные параметры
+    symbol: str = Field(default="BTCUSDT", description="Торговая пара")
+    start_date: datetime = Field(..., description="Начальная дата бэктеста")
+    end_date: datetime = Field(..., description="Конечная дата бэктеста")
+    initial_capital: float = Field(default=10000.0, gt=0, description="Начальный капитал (USDT)")
+    candle_interval: str = Field(default="1", description="Интервал свечей (1, 5, 15, 60)")
+
+    # Конфигурация биржи
+    commission_rate: float = Field(default=0.0006, ge=0, le=0.1, description="Комиссия (0.06%)")
+    maker_commission: Optional[float] = Field(default=0.0002, ge=0, le=0.1, description="Maker комиссия")
+    taker_commission: Optional[float] = Field(default=0.0006, ge=0, le=0.1, description="Taker комиссия")
+    slippage_model: str = Field(default="fixed", description="Модель slippage (fixed, volume_based, percentage)")
+    slippage_pct: float = Field(default=0.01, ge=0, le=1.0, description="Процент slippage")
+    simulate_latency: bool = Field(default=False, description="Симулировать задержку")
+
+    # Конфигурация стратегий
+    enabled_strategies: List[str] = Field(
+        default=["momentum", "sar_wave", "supertrend", "volume_profile"],
+        description="Включенные стратегии"
+    )
+    strategy_params: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="Параметры стратегий")
+    consensus_mode: str = Field(default="weighted", description="Режим консенсуса (weighted, majority, unanimous)")
+    min_strategies_for_signal: int = Field(default=2, ge=1, description="Минимум стратегий для сигнала")
+    min_consensus_confidence: float = Field(default=0.6, ge=0, le=1, description="Минимальная уверенность консенсуса")
+    strategy_weights: Dict[str, float] = Field(default_factory=dict, description="Веса стратегий")
+
+    # Конфигурация риск-менеджмента
+    position_size_pct: float = Field(default=10.0, ge=0.1, le=100, description="Размер позиции (% капитала)")
+    position_size_mode: str = Field(default="percentage", description="Режим размера позиции")
+    max_open_positions: int = Field(default=3, ge=1, le=20, description="Максимум открытых позиций")
+    stop_loss_pct: float = Field(default=2.0, ge=0.1, le=50, description="Stop Loss (%)")
+    take_profit_pct: float = Field(default=4.0, ge=0.1, le=100, description="Take Profit (%)")
+    use_trailing_stop: bool = Field(default=True, description="Использовать trailing stop")
+    trailing_stop_activation_pct: float = Field(default=1.0, ge=0, description="Активация trailing stop (%)")
+    trailing_stop_distance_pct: float = Field(default=0.5, ge=0, description="Расстояние trailing stop (%)")
+    risk_per_trade_pct: float = Field(default=1.0, ge=0.1, le=10, description="Риск на сделку (%)")
+
+    # Дополнительные параметры
+    use_orderbook_data: bool = Field(default=False, description="Использовать данные orderbook")
+    warmup_period_bars: int = Field(default=100, ge=0, description="Период прогрева индикаторов (свечей)")
+    verbose: bool = Field(default=False, description="Подробное логирование")
+
+    @validator('start_date', 'end_date')
+    def validate_dates(cls, v):
+        """Валидация дат"""
+        if v > datetime.now():
+            raise ValueError("Дата не может быть в будущем")
+        return v
+
+    @validator('end_date')
+    def validate_date_range(cls, v, values):
+        """Валидация диапазона дат"""
+        if 'start_date' in values and v <= values['start_date']:
+            raise ValueError("end_date должна быть больше start_date")
+        return v
+
+    @validator('slippage_model')
+    def validate_slippage_model(cls, v):
+        """Валидация модели slippage"""
+        valid_models = ["fixed", "volume_based", "percentage"]
+        if v not in valid_models:
+            raise ValueError(f"Недопустимая модель slippage. Используйте: {', '.join(valid_models)}")
+        return v
+
+
+class BacktestRunResponse(BaseModel):
+    """Response с информацией о бэктесте"""
+    id: str
+    name: str
+    description: Optional[str]
+    status: str
+    symbol: str
+    start_date: datetime
+    end_date: datetime
+    initial_capital: float
+    final_capital: Optional[float]
+    total_pnl: Optional[float]
+    total_pnl_pct: Optional[float]
+    created_at: datetime
+    started_at: Optional[datetime]
+    completed_at: Optional[datetime]
+    progress: Optional[float]
+    error_message: Optional[str]
+    metrics: Optional[Dict[str, Any]]
+
+
+class BacktestListResponse(BaseModel):
+    """Response списка бэктестов"""
+    runs: List[BacktestRunResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+class TradeResponse(BaseModel):
+    """Response одной сделки"""
+    symbol: str
+    side: str
+    entry_time: datetime
+    exit_time: datetime
+    entry_price: float
+    exit_price: float
+    quantity: float
+    pnl: float
+    pnl_pct: float
+    commission: float
+    duration_seconds: float
+    exit_reason: str
+
+
+class EquityPointResponse(BaseModel):
+    """Response точки на кривой доходности"""
+    timestamp: datetime
+    equity: float
+    cash: float
+    positions_value: float
+    drawdown: float
+    drawdown_pct: float
+    total_return: float
+    total_return_pct: float
+    open_positions_count: int
+
+
+class StatisticsResponse(BaseModel):
+    """Response агрегированной статистики"""
+    total_backtests: int
+    completed_backtests: int
+    running_backtests: int
+    failed_backtests: int
+    avg_total_return_pct: float
+    avg_sharpe_ratio: float
+    avg_max_drawdown_pct: float
+    avg_win_rate_pct: float
+    best_backtest: Optional[Dict[str, Any]]
+    worst_backtest: Optional[Dict[str, Any]]
+
+
+# ============================================================
+# Global State
+# ============================================================
+
+# Repository instance
+repository = BacktestRepository()
+
+# Background task tracking
+running_backtests: Dict[str, Any] = {}
+
+
+# ============================================================
+# Backtest Management Endpoints
+# ============================================================
+
+@router.post("/runs")
+async def create_backtest(
+    request: CreateBacktestRequest,
+    background_tasks: BackgroundTasks
+) -> Dict[str, Any]:
+    """
+    Создать и запустить новый бэктест
+
+    Args:
+        request: Параметры бэктеста
+        background_tasks: FastAPI background tasks
+
+    Returns:
+        ID и статус созданного бэктеста
+    """
+    logger.info(f"📊 Создание бэктеста: {request.name} ({request.symbol})")
+
+    try:
+        # Создать конфигурацию
+        exchange_config = ExchangeConfig(
+            commission_rate=request.commission_rate,
+            maker_commission=request.maker_commission,
+            taker_commission=request.taker_commission,
+            slippage_model=SlippageModel(request.slippage_model),
+            slippage_pct=request.slippage_pct,
+            simulate_latency=request.simulate_latency
+        )
+
+        strategy_config = StrategyConfig(
+            enabled_strategies=request.enabled_strategies,
+            strategy_params=request.strategy_params,
+            consensus_mode=request.consensus_mode,
+            min_strategies_for_signal=request.min_strategies_for_signal,
+            min_consensus_confidence=request.min_consensus_confidence,
+            strategy_weights=request.strategy_weights
+        )
+
+        risk_config = RiskConfig(
+            position_size_pct=request.position_size_pct,
+            position_size_mode=request.position_size_mode,
+            max_open_positions=request.max_open_positions,
+            stop_loss_pct=request.stop_loss_pct,
+            take_profit_pct=request.take_profit_pct,
+            use_trailing_stop=request.use_trailing_stop,
+            trailing_stop_activation_pct=request.trailing_stop_activation_pct,
+            trailing_stop_distance_pct=request.trailing_stop_distance_pct,
+            risk_per_trade_pct=request.risk_per_trade_pct
+        )
+
+        backtest_config = BacktestConfig(
+            name=request.name,
+            description=request.description,
+            symbol=request.symbol,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            initial_capital=request.initial_capital,
+            exchange_config=exchange_config,
+            strategy_config=strategy_config,
+            risk_config=risk_config,
+            candle_interval=request.candle_interval,
+            use_orderbook_data=request.use_orderbook_data,
+            warmup_period_bars=request.warmup_period_bars,
+            verbose=request.verbose
+        )
+
+        # Сохранить в БД
+        backtest_run = await repository.create_run(
+            name=request.name,
+            description=request.description,
+            symbol=request.symbol,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            initial_capital=request.initial_capital,
+            exchange_config=exchange_config.__dict__,
+            strategies_config={
+                "enabled_strategies": strategy_config.enabled_strategies,
+                "strategy_params": strategy_config.strategy_params,
+                "consensus_mode": strategy_config.consensus_mode,
+                "min_strategies_for_signal": strategy_config.min_strategies_for_signal,
+                "min_consensus_confidence": strategy_config.min_consensus_confidence,
+                "strategy_weights": strategy_config.strategy_weights
+            },
+            risk_config=risk_config.__dict__
+        )
+
+        backtest_id = str(backtest_run.id)
+
+        logger.info(f"✅ Бэктест создан: {backtest_id}")
+
+        # Запустить в background
+        background_tasks.add_task(
+            _run_backtest_job,
+            backtest_id=backtest_id,
+            config=backtest_config
+        )
+
+        return {
+            "id": backtest_id,
+            "name": request.name,
+            "status": "pending",
+            "message": "Бэктест создан и запущен в фоновом режиме",
+            "created_at": backtest_run.created_at.isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка создания бэктеста: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Ошибка создания бэктеста: {str(e)}")
+
+
+@router.get("/runs")
+async def list_backtests(
+    status: Optional[str] = Query(None, description="Фильтр по статусу"),
+    symbol: Optional[str] = Query(None, description="Фильтр по символу"),
+    page: int = Query(1, ge=1, description="Номер страницы"),
+    page_size: int = Query(20, ge=1, le=100, description="Размер страницы")
+) -> BacktestListResponse:
+    """
+    Получить список бэктестов с фильтрацией и пагинацией
+
+    Args:
+        status: Фильтр по статусу (pending, running, completed, failed, cancelled)
+        symbol: Фильтр по торговой паре
+        page: Номер страницы
+        page_size: Размер страницы
+
+    Returns:
+        Список бэктестов
+    """
+    try:
+        # Валидация статуса
+        if status and status not in ["pending", "running", "completed", "failed", "cancelled"]:
+            raise HTTPException(status_code=400, detail="Недопустимый статус")
+
+        # Получить список из БД
+        runs = await repository.list_runs(
+            status=BacktestStatus(status) if status else None,
+            symbol=symbol,
+            page=page,
+            page_size=page_size
+        )
+
+        # Преобразовать в response
+        run_responses = []
+        for run in runs:
+            run_responses.append(BacktestRunResponse(
+                id=str(run.id),
+                name=run.name,
+                description=run.description,
+                status=run.status.value,
+                symbol=run.symbol,
+                start_date=run.start_date,
+                end_date=run.end_date,
+                initial_capital=run.initial_capital,
+                final_capital=run.final_capital,
+                total_pnl=run.total_pnl,
+                total_pnl_pct=run.total_pnl_pct,
+                created_at=run.created_at,
+                started_at=run.started_at,
+                completed_at=run.completed_at,
+                progress=run.progress,
+                error_message=run.error_message,
+                metrics=run.metrics
+            ))
+
+        # Подсчитать общее количество
+        total = await repository.count_runs(status=BacktestStatus(status) if status else None, symbol=symbol)
+
+        return BacktestListResponse(
+            runs=run_responses,
+            total=total,
+            page=page,
+            page_size=page_size
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка получения списка бэктестов: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/runs/{backtest_id}")
+async def get_backtest(
+    backtest_id: UUID,
+    include_trades: bool = Query(False, description="Включить сделки"),
+    include_equity: bool = Query(False, description="Включить equity curve")
+) -> Dict[str, Any]:
+    """
+    Получить детальную информацию о бэктесте
+
+    Args:
+        backtest_id: ID бэктеста
+        include_trades: Включить сделки в ответ
+        include_equity: Включить equity curve в ответ
+
+    Returns:
+        Детальная информация о бэктесте
+    """
+    try:
+        # Получить из БД
+        run = await repository.get_by_id(
+            backtest_id,
+            include_trades=include_trades,
+            include_equity=include_equity
+        )
+
+        if not run:
+            raise HTTPException(status_code=404, detail=f"Бэктест {backtest_id} не найден")
+
+        # Базовая информация
+        response = {
+            "id": str(run.id),
+            "name": run.name,
+            "description": run.description,
+            "status": run.status.value,
+            "symbol": run.symbol,
+            "start_date": run.start_date.isoformat(),
+            "end_date": run.end_date.isoformat(),
+            "initial_capital": run.initial_capital,
+            "final_capital": run.final_capital,
+            "total_pnl": run.total_pnl,
+            "total_pnl_pct": run.total_pnl_pct,
+            "created_at": run.created_at.isoformat(),
+            "started_at": run.started_at.isoformat() if run.started_at else None,
+            "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+            "progress": run.progress,
+            "error_message": run.error_message,
+            "exchange_config": run.exchange_config,
+            "strategies_config": run.strategies_config,
+            "risk_config": run.risk_config,
+            "metrics": run.metrics
+        }
+
+        # Добавить сделки если запрошены
+        if include_trades and run.trades:
+            response["trades"] = [
+                {
+                    "symbol": trade.symbol,
+                    "side": trade.side.value,
+                    "entry_time": trade.entry_time.isoformat(),
+                    "exit_time": trade.exit_time.isoformat(),
+                    "entry_price": trade.entry_price,
+                    "exit_price": trade.exit_price,
+                    "quantity": trade.quantity,
+                    "pnl": trade.pnl,
+                    "pnl_pct": trade.pnl_pct,
+                    "commission": trade.commission,
+                    "duration_seconds": trade.duration_seconds,
+                    "exit_reason": trade.exit_reason
+                }
+                for trade in run.trades
+            ]
+
+        # Добавить equity curve если запрошена
+        if include_equity and run.equity_curve:
+            response["equity_curve"] = [
+                {
+                    "timestamp": point.timestamp.isoformat(),
+                    "equity": point.equity,
+                    "cash": point.cash,
+                    "positions_value": point.positions_value,
+                    "drawdown": point.drawdown,
+                    "drawdown_pct": point.drawdown_pct,
+                    "total_return": point.total_return,
+                    "total_return_pct": point.total_return_pct,
+                    "open_positions_count": point.open_positions_count
+                }
+                for point in run.equity_curve
+            ]
+
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка получения бэктеста {backtest_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/runs/{backtest_id}/trades")
+async def get_backtest_trades(
+    backtest_id: UUID,
+    limit: int = Query(100, ge=1, le=1000, description="Максимум сделок")
+) -> Dict[str, Any]:
+    """
+    Получить сделки бэктеста
+
+    Args:
+        backtest_id: ID бэктеста
+        limit: Максимальное количество сделок
+
+    Returns:
+        Список сделок
+    """
+    try:
+        # Получить сделки из БД
+        trades = await repository.get_trades(backtest_id, limit=limit)
+
+        return {
+            "backtest_id": str(backtest_id),
+            "trades": [
+                {
+                    "symbol": trade.symbol,
+                    "side": trade.side.value,
+                    "entry_time": trade.entry_time.isoformat(),
+                    "exit_time": trade.exit_time.isoformat(),
+                    "entry_price": trade.entry_price,
+                    "exit_price": trade.exit_price,
+                    "quantity": trade.quantity,
+                    "pnl": trade.pnl,
+                    "pnl_pct": trade.pnl_pct,
+                    "commission": trade.commission,
+                    "duration_seconds": trade.duration_seconds,
+                    "exit_reason": trade.exit_reason,
+                    "max_favorable_excursion": trade.max_favorable_excursion,
+                    "max_adverse_excursion": trade.max_adverse_excursion
+                }
+                for trade in trades
+            ],
+            "total": len(trades)
+        }
+
+    except Exception as e:
+        logger.error(f"Ошибка получения сделок бэктеста {backtest_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/runs/{backtest_id}/equity-curve")
+async def get_equity_curve(
+    backtest_id: UUID,
+    sampling_interval_minutes: int = Query(60, ge=1, description="Интервал выборки (минуты)")
+) -> Dict[str, Any]:
+    """
+    Получить equity curve бэктеста
+
+    Args:
+        backtest_id: ID бэктеста
+        sampling_interval_minutes: Интервал выборки точек (минуты)
+
+    Returns:
+        Equity curve
+    """
+    try:
+        # Получить equity curve из БД
+        equity_points = await repository.get_equity_curve(
+            backtest_id,
+            sampling_interval_minutes=sampling_interval_minutes
+        )
+
+        return {
+            "backtest_id": str(backtest_id),
+            "equity_curve": [
+                {
+                    "timestamp": point.timestamp.isoformat(),
+                    "sequence": point.sequence,
+                    "equity": point.equity,
+                    "cash": point.cash,
+                    "positions_value": point.positions_value,
+                    "drawdown": point.drawdown,
+                    "drawdown_pct": point.drawdown_pct,
+                    "total_return": point.total_return,
+                    "total_return_pct": point.total_return_pct,
+                    "open_positions_count": point.open_positions_count
+                }
+                for point in equity_points
+            ],
+            "total_points": len(equity_points)
+        }
+
+    except Exception as e:
+        logger.error(f"Ошибка получения equity curve бэктеста {backtest_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/runs/{backtest_id}/cancel")
+async def cancel_backtest(backtest_id: UUID) -> Dict[str, Any]:
+    """
+    Отменить выполняющийся бэктест
+
+    Args:
+        backtest_id: ID бэктеста
+
+    Returns:
+        Результат операции
+    """
+    try:
+        # Проверить существование
+        run = await repository.get_by_id(backtest_id)
+
+        if not run:
+            raise HTTPException(status_code=404, detail=f"Бэктест {backtest_id} не найден")
+
+        # Проверить статус
+        if run.status not in [BacktestStatus.PENDING, BacktestStatus.RUNNING]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Нельзя отменить бэктест в статусе {run.status.value}"
+            )
+
+        # Обновить статус
+        await repository.update_status(backtest_id, BacktestStatus.CANCELLED)
+
+        # Остановить background task если запущен
+        if str(backtest_id) in running_backtests:
+            running_backtests[str(backtest_id)]["cancelled"] = True
+
+        logger.info(f"🚫 Бэктест отменен: {backtest_id}")
+
+        return {
+            "success": True,
+            "backtest_id": str(backtest_id),
+            "message": "Бэктест отменен"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка отмены бэктеста {backtest_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/runs/{backtest_id}")
+async def delete_backtest(backtest_id: UUID) -> Dict[str, Any]:
+    """
+    Удалить бэктест
+
+    Args:
+        backtest_id: ID бэктеста
+
+    Returns:
+        Результат операции
+    """
+    try:
+        # Проверить существование
+        run = await repository.get_by_id(backtest_id)
+
+        if not run:
+            raise HTTPException(status_code=404, detail=f"Бэктест {backtest_id} не найден")
+
+        # Нельзя удалить запущенный бэктест
+        if run.status == BacktestStatus.RUNNING:
+            raise HTTPException(
+                status_code=400,
+                detail="Нельзя удалить выполняющийся бэктест. Сначала отмените его."
+            )
+
+        # Удалить из БД
+        await repository.delete_run(backtest_id)
+
+        logger.info(f"🗑️ Бэктест удален: {backtest_id}")
+
+        return {
+            "success": True,
+            "backtest_id": str(backtest_id),
+            "message": "Бэктест удален"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка удаления бэктеста {backtest_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/statistics")
+async def get_statistics() -> StatisticsResponse:
+    """
+    Получить агрегированную статистику по всем бэктестам
+
+    Returns:
+        Статистика
+    """
+    try:
+        stats = await repository.get_statistics()
+
+        return StatisticsResponse(
+            total_backtests=stats["total_backtests"],
+            completed_backtests=stats["completed_backtests"],
+            running_backtests=stats["running_backtests"],
+            failed_backtests=stats["failed_backtests"],
+            avg_total_return_pct=stats["avg_total_return_pct"],
+            avg_sharpe_ratio=stats["avg_sharpe_ratio"],
+            avg_max_drawdown_pct=stats["avg_max_drawdown_pct"],
+            avg_win_rate_pct=stats["avg_win_rate_pct"],
+            best_backtest=stats.get("best_backtest"),
+            worst_backtest=stats.get("worst_backtest")
+        )
+
+    except Exception as e:
+        logger.error(f"Ошибка получения статистики: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# Health Check
+# ============================================================
+
+@router.get("/health")
+async def health_check() -> Dict[str, Any]:
+    """
+    Health check для backtesting API
+
+    Returns:
+        Health status
+    """
+    return {
+        "status": "healthy",
+        "service": "backtesting",
+        "timestamp": datetime.now().isoformat(),
+        "running_backtests": len([b for b in running_backtests.values() if not b.get("cancelled")])
+    }
+
+
+# ============================================================
+# Background Job
+# ============================================================
+
+async def _run_backtest_job(backtest_id: str, config: BacktestConfig):
+    """
+    Background task для выполнения бэктеста
+
+    Args:
+        backtest_id: ID бэктеста
+        config: Конфигурация бэктеста
+    """
+    # Добавить в tracking
+    running_backtests[backtest_id] = {
+        "cancelled": False,
+        "started_at": datetime.now()
+    }
+
+    try:
+        logger.info(f"🚀 Запуск бэктеста: {backtest_id}")
+
+        # Обновить статус на RUNNING
+        await repository.update_status(backtest_id, BacktestStatus.RUNNING, progress=0.0)
+
+        # Создать компоненты
+        data_handler = HistoricalDataHandler()
+        simulated_exchange = SimulatedExchange(config.exchange_config)
+
+        engine = BacktestingEngine(
+            config=config,
+            data_handler=data_handler,
+            exchange=simulated_exchange
+        )
+
+        # Запустить бэктест
+        result = await engine.run()
+
+        # Проверка на отмену
+        if running_backtests[backtest_id].get("cancelled"):
+            logger.info(f"⏹️ Бэктест отменен: {backtest_id}")
+            return
+
+        # Сохранить результаты
+        await repository.update_results(
+            UUID(backtest_id),
+            final_capital=result.final_capital,
+            total_pnl=result.total_pnl,
+            total_pnl_pct=result.total_pnl_pct,
+            metrics=result.metrics.to_dict()
+        )
+
+        # Сохранить сделки
+        for trade in result.trades:
+            await repository.create_trade(
+                backtest_id=UUID(backtest_id),
+                symbol=trade.symbol,
+                side=trade.side,
+                entry_time=trade.entry_time,
+                exit_time=trade.exit_time,
+                entry_price=trade.entry_price,
+                exit_price=trade.exit_price,
+                quantity=trade.quantity,
+                pnl=trade.pnl,
+                pnl_pct=trade.pnl_pct,
+                commission=trade.commission,
+                duration_seconds=trade.duration_seconds,
+                exit_reason=trade.exit_reason,
+                max_favorable_excursion=trade.max_favorable_excursion,
+                max_adverse_excursion=trade.max_adverse_excursion
+            )
+
+        # Сохранить equity curve
+        for point in result.equity_curve:
+            await repository.create_equity_point(
+                backtest_id=UUID(backtest_id),
+                timestamp=point.timestamp,
+                sequence=point.sequence,
+                equity=point.equity,
+                cash=point.cash,
+                positions_value=point.positions_value,
+                drawdown=point.drawdown,
+                drawdown_pct=point.drawdown_pct,
+                total_return=point.total_return,
+                total_return_pct=point.total_return_pct,
+                open_positions_count=point.open_positions_count
+            )
+
+        # Обновить статус на COMPLETED
+        await repository.update_status(backtest_id, BacktestStatus.COMPLETED, progress=100.0)
+
+        logger.info(
+            f"✅ Бэктест завершен: {backtest_id}, "
+            f"PnL={result.total_pnl:.2f} ({result.total_pnl_pct:.2f}%), "
+            f"Sharpe={result.metrics.sharpe_ratio:.2f}"
+        )
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка выполнения бэктеста {backtest_id}: {e}", exc_info=True)
+
+        # Обновить статус на FAILED
+        await repository.update_status(
+            backtest_id,
+            BacktestStatus.FAILED,
+            error_message=str(e)
+        )
+
+    finally:
+        # Удалить из tracking
+        if backtest_id in running_backtests:
+            del running_backtests[backtest_id]
