@@ -333,12 +333,15 @@ async def list_backtests(
         if status and status not in ["pending", "running", "completed", "failed", "cancelled"]:
             raise HTTPException(status_code=400, detail="Недопустимый статус")
 
+        # Конвертировать page в offset
+        offset = (page - 1) * page_size
+
         # Получить список из БД
         runs = await repository.list_runs(
             status=BacktestStatus(status) if status else None,
             symbol=symbol,
-            page=page,
-            page_size=page_size
+            limit=page_size,
+            offset=offset
         )
 
         # Преобразовать в response

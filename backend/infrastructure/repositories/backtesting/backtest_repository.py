@@ -186,6 +186,40 @@ class BacktestRepository:
             logger.error(f"Ошибка получения списка backtests: {e}")
             raise DatabaseError(f"Failed to list backtests: {str(e)}")
 
+    async def count_runs(
+        self,
+        symbol: Optional[str] = None,
+        status: Optional[BacktestStatus] = None
+    ) -> int:
+        """
+        Подсчитать количество backtest runs с фильтрацией.
+
+        Args:
+            symbol: Фильтр по символу
+            status: Фильтр по статусу
+
+        Returns:
+            Количество runs
+        """
+        try:
+            async with db_manager.session() as session:
+                query = select(func.count(BacktestRun.id))
+
+                # Filters
+                if symbol:
+                    query = query.where(BacktestRun.symbol == symbol)
+                if status:
+                    query = query.where(BacktestRun.status == status)
+
+                result = await session.execute(query)
+                count = result.scalar()
+
+                return count or 0
+
+        except Exception as e:
+            logger.error(f"Ошибка подсчета backtests: {e}")
+            raise DatabaseError(f"Failed to count backtests: {str(e)}")
+
     async def update_status(
         self,
         backtest_id: uuid.UUID,
