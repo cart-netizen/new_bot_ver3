@@ -197,31 +197,14 @@ class HistoricalDataHandler:
             )
 
             # Запрос к Bybit API
-            response = await rest_client.get_kline(
+            # Метод get_kline уже возвращает распакованный список: response["result"]["list"]
+            klines = await rest_client.get_kline(
                 symbol=symbol,
                 interval=interval,
                 start=start_ms,
                 end=end_ms,
                 limit=1000
             )
-
-            logger.debug(f"📥 Ответ API: {response.get('retCode') if response else 'None'}")
-
-            if not response:
-                logger.warning(f"Пустой ответ от API для {symbol}")
-                return []
-
-            # Проверка кода ответа
-            if response.get('retCode') != 0:
-                logger.error(
-                    f"Ошибка API Bybit: code={response.get('retCode')}, "
-                    f"msg={response.get('retMsg')}"
-                )
-                return []
-
-            # Проверка наличия данных
-            result = response.get('result', {})
-            klines = result.get('list', [])
 
             if not klines:
                 logger.warning(
