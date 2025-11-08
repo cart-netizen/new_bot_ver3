@@ -6,7 +6,7 @@ from datetime import datetime
 from sqlalchemy import select, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.database.session_manager import get_session
+from backend.database.connection import db_manager
 from backend.database.models.backtest_template import BacktestTemplate
 from backend.core.logger import get_logger
 
@@ -26,7 +26,7 @@ class TemplateRepository:
         is_public: bool = False
     ) -> BacktestTemplate:
         """Создать новый шаблон"""
-        async with get_session() as session:
+        async with db_manager.session() as session:
             template = BacktestTemplate(
                 name=name,
                 description=description,
@@ -45,7 +45,7 @@ class TemplateRepository:
 
     async def get_by_id(self, template_id: UUID) -> Optional[BacktestTemplate]:
         """Получить шаблон по ID"""
-        async with get_session() as session:
+        async with db_manager.session() as session:
             result = await session.execute(
                 select(BacktestTemplate).where(BacktestTemplate.id == template_id)
             )
@@ -58,7 +58,7 @@ class TemplateRepository:
         tags: Optional[List[str]] = None
     ) -> List[BacktestTemplate]:
         """Получить список шаблонов с фильтрацией"""
-        async with get_session() as session:
+        async with db_manager.session() as session:
             query = select(BacktestTemplate)
 
             # Фильтр по user_id и публичным шаблонам
@@ -99,7 +99,7 @@ class TemplateRepository:
         tags: Optional[List[str]] = None
     ) -> Optional[BacktestTemplate]:
         """Обновить шаблон"""
-        async with get_session() as session:
+        async with db_manager.session() as session:
             template = await self.get_by_id(template_id)
 
             if not template:
@@ -125,7 +125,7 @@ class TemplateRepository:
 
     async def delete(self, template_id: UUID) -> bool:
         """Удалить шаблон"""
-        async with get_session() as session:
+        async with db_manager.session() as session:
             result = await session.execute(
                 delete(BacktestTemplate).where(BacktestTemplate.id == template_id)
             )
@@ -139,7 +139,7 @@ class TemplateRepository:
 
     async def increment_usage(self, template_id: UUID) -> None:
         """Увеличить счетчик использования"""
-        async with get_session() as session:
+        async with db_manager.session() as session:
             template = await self.get_by_id(template_id)
 
             if template:
