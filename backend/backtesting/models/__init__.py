@@ -156,9 +156,23 @@ class TradeResult:
     max_favorable_excursion: float
     max_adverse_excursion: float
 
-    # Контекст
-    entry_signal: Optional[Dict] = None
+    # Контекст (РАСШИРЕНО в Фазе 3)
+    entry_signal: Optional[Dict] = None  # {'signal_type': 'BUY', 'source': 'consensus', 'confidence': 0.75, ...}
     exit_signal: Optional[Dict] = None
+
+    # Информация о консенсусе (НОВОЕ)
+    consensus_info: Optional[Dict] = None  # Детали консенсуса при входе в сделку
+    # Формат consensus_info:
+    # {
+    #   'mode': 'weighted',  # Режим консенсуса
+    #   'strategies_voted': ['momentum', 'sar', 'imbalance'],  # Стратегии проголосовавшие
+    #   'strategies_buy': ['momentum', 'imbalance'],  # Стратегии за BUY
+    #   'strategies_sell': ['sar'],  # Стратегии за SELL
+    #   'buy_confidence': 0.8,  # Уверенность BUY
+    #   'sell_confidence': 0.2,  # Уверенность SELL
+    #   'final_confidence': 0.75,  # Итоговая уверенность
+    #   'ml_prediction': {'direction': 'BUY', 'confidence': 0.7}  # ML prediction (если есть)
+    # }
 
 
 @dataclass
