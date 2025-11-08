@@ -3,6 +3,7 @@
  */
 
 import axios from 'axios';
+import type { BacktestConfig } from './backtesting.api';
 
 const apiClient = axios.create({
   baseURL: 'http://localhost:8000',
@@ -11,11 +12,17 @@ const apiClient = axios.create({
   }
 });
 
+/**
+ * Partial configuration that can be stored in a template
+ * Templates may not include all required fields (like name, dates, symbol)
+ */
+export type TemplateConfig = Partial<BacktestConfig>;
+
 export interface Template {
   id: string;
   name: string;
   description?: string;
-  config: any;
+  config: TemplateConfig;
   tags: string[];
   is_public: boolean;
   usage_count: number;
@@ -26,7 +33,7 @@ export interface Template {
 export interface CreateTemplateRequest {
   name: string;
   description?: string;
-  config: any;
+  config: TemplateConfig;
   tags?: string[];
   is_public?: boolean;
 }
@@ -34,7 +41,7 @@ export interface CreateTemplateRequest {
 export interface UpdateTemplateRequest {
   name?: string;
   description?: string;
-  config?: any;
+  config?: TemplateConfig;
   tags?: string[];
 }
 

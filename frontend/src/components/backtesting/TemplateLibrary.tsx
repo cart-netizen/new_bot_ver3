@@ -20,10 +20,11 @@ import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { cn } from '../../utils/helpers';
 import * as templatesApi from '../../api/templates.api';
+import type { Template, TemplateConfig, CreateTemplateRequest } from '../../api/templates.api';
 
 interface TemplateLibraryProps {
-  onLoadTemplate: (config: any) => void;
-  currentConfig?: any;
+  onLoadTemplate: (config: TemplateConfig) => void;
+  currentConfig?: TemplateConfig;
 }
 
 export function TemplateLibrary({ onLoadTemplate, currentConfig }: TemplateLibraryProps) {
@@ -53,14 +54,14 @@ export function TemplateLibrary({ onLoadTemplate, currentConfig }: TemplateLibra
   const templates = templatesData?.templates || [];
 
   // Filter by search term
-  const filteredTemplates = templates.filter((template: any) =>
+  const filteredTemplates = templates.filter((template: Template) =>
     template.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     template.description?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   // Get all unique tags
   const allTags = Array.from(
-    new Set(templates.flatMap((t: any) => t.tags || []))
+    new Set(templates.flatMap((t: Template) => t.tags || []))
   ) as string[];
 
   const toggleTag = (tag: string) => {
@@ -71,7 +72,7 @@ export function TemplateLibrary({ onLoadTemplate, currentConfig }: TemplateLibra
     );
   };
 
-  const handleLoadTemplate = (template: any) => {
+  const handleLoadTemplate = (template: Template) => {
     onLoadTemplate(template.config);
     toast.success(`Шаблон "${template.name}" загружен`);
   };
@@ -87,8 +88,8 @@ export function TemplateLibrary({ onLoadTemplate, currentConfig }: TemplateLibra
           </div>
           <Button
             onClick={() => setShowSaveDialog(true)}
-            size="sm"
             disabled={!currentConfig}
+            className="px-3 py-1.5 text-sm"
           >
             <Save className="h-4 w-4 mr-2" />
             Сохранить текущий
@@ -154,7 +155,7 @@ export function TemplateLibrary({ onLoadTemplate, currentConfig }: TemplateLibra
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredTemplates.map((template: any) => (
+          {filteredTemplates.map((template: Template) => (
             <TemplateCard
               key={template.id}
               template={template}
@@ -182,8 +183,8 @@ export function TemplateLibrary({ onLoadTemplate, currentConfig }: TemplateLibra
 
 // Template Card Component
 interface TemplateCardProps {
-  template: any;
-  onLoad: (template: any) => void;
+  template: Template;
+  onLoad: (template: Template) => void;
   onDelete: (id: string) => void;
 }
 
@@ -236,8 +237,7 @@ function TemplateCard({ template, onLoad, onDelete }: TemplateCardProps) {
       <div className="flex gap-2">
         <Button
           onClick={() => onLoad(template)}
-          size="sm"
-          className="flex-1"
+          className="flex-1 px-3 py-1.5 text-sm"
         >
           <Copy className="h-3 w-3 mr-1" />
           Загрузить
@@ -246,7 +246,7 @@ function TemplateCard({ template, onLoad, onDelete }: TemplateCardProps) {
           <Button
             onClick={() => setShowDeleteConfirm(true)}
             variant="outline"
-            size="sm"
+            className="px-3 py-1.5 text-sm"
           >
             <Trash2 className="h-3 w-3" />
           </Button>
@@ -257,8 +257,7 @@ function TemplateCard({ template, onLoad, onDelete }: TemplateCardProps) {
               setShowDeleteConfirm(false);
             }}
             variant="outline"
-            size="sm"
-            className="bg-red-500/20 border-red-500/50 text-red-300"
+            className="bg-red-500/20 border-red-500/50 text-red-300 px-3 py-1.5 text-sm"
           >
             Удалить?
           </Button>
@@ -270,7 +269,7 @@ function TemplateCard({ template, onLoad, onDelete }: TemplateCardProps) {
 
 // Save Template Dialog
 interface SaveTemplateDialogProps {
-  config: any;
+  config: TemplateConfig;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -282,7 +281,7 @@ function SaveTemplateDialog({ config, onClose, onSaved }: SaveTemplateDialogProp
   const [isPublic, setIsPublic] = useState(false);
 
   const saveMutation = useMutation({
-    mutationFn: (data: any) => templatesApi.createTemplate(data),
+    mutationFn: (data: CreateTemplateRequest) => templatesApi.createTemplate(data),
     onSuccess: () => {
       toast.success('Шаблон сохранен');
       onSaved();

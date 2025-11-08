@@ -30,6 +30,7 @@ import { BacktestingSettings } from '../components/backtesting/BacktestingSettin
 import { TemplateLibrary } from '../components/backtesting/TemplateLibrary';
 import { cn } from '../utils/helpers';
 import * as backtestingApi from '../api/backtesting.api';
+import type { TemplateConfig } from '../api/templates.api';
 
 export function BacktestingPage() {
   const [selectedView, setSelectedView] = useState<'list' | 'create' | 'results'>('list');
@@ -256,19 +257,19 @@ function BacktestsList({ backtests, isLoading, onViewResults, onDelete, onCancel
             </div>
             <div className="flex gap-2 ml-4">
               {backtest.status === 'completed' && (
-                <Button onClick={() => onViewResults(backtest.id)} size="sm">
+                <Button onClick={() => onViewResults(backtest.id)} className="px-3 py-1.5 text-sm">
                   <ChevronRight className="h-4 w-4 mr-1" />
                   Смотреть результаты
                 </Button>
               )}
               {backtest.status === 'running' && (
-                <Button onClick={() => onCancel(backtest.id)} variant="outline" size="sm">
+                <Button onClick={() => onCancel(backtest.id)} variant="outline" className="px-3 py-1.5 text-sm">
                   <XCircle className="h-4 w-4 mr-1" />
                   Отменить
                 </Button>
               )}
               {['completed', 'failed', 'cancelled'].includes(backtest.status) && (
-                <Button onClick={() => onDelete(backtest.id)} variant="outline" size="sm">
+                <Button onClick={() => onDelete(backtest.id)} variant="outline" className="px-3 py-1.5 text-sm">
                   <Trash2 className="h-4 w-4" />
                 </Button>
               )}
@@ -343,7 +344,7 @@ function BacktestForm({ onSubmit, isSubmitting }: BacktestFormProps) {
     onSubmit(formData as backtestingApi.BacktestConfig);
   };
 
-  const handleLoadTemplate = (config: any) => {
+  const handleLoadTemplate = (config: TemplateConfig) => {
     setFormData({ ...formData, ...config });
     setShowTemplates(false);
   };

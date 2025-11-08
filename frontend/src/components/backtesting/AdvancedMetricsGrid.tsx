@@ -1,6 +1,7 @@
 // frontend/src/components/backtesting/AdvancedMetricsGrid.tsx
 
 import { useState } from 'react';
+import type { LucideIcon } from 'lucide-react';
 import {
   TrendingUp,
   TrendingDown,
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { cn } from '../../utils/helpers';
+import type { PerformanceMetrics } from '../../api/backtesting.api';
 
 interface AdvancedMetrics {
   // Risk-Adjusted
@@ -51,7 +53,7 @@ interface AdvancedMetrics {
 }
 
 interface AdvancedMetricsGridProps {
-  metrics: any; // Full metrics object from backend
+  metrics: PerformanceMetrics;
 }
 
 export function AdvancedMetricsGrid({ metrics }: AdvancedMetricsGridProps) {
@@ -284,7 +286,7 @@ interface MetricCardProps {
   label: string;
   value: string | number;
   description: string;
-  icon: any;
+  icon: LucideIcon;
   color: 'green' | 'red' | 'blue' | 'yellow' | 'purple';
   tooltip?: string;
 }
