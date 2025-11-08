@@ -616,7 +616,7 @@ export function BacktestingSettings({ config, onChange, onSave }: BacktestingSet
           <SelectField
             label="Модель проскальзывания"
             value={config.slippage_model || 'fixed'}
-            onChange={(v) => updateConfig({ slippage_model: v as any })}
+            onChange={(v) => updateConfig({ slippage_model: v as 'fixed' | 'volume_based' | 'percentage' })}
             options={[
               { value: 'fixed', label: 'Фиксированное' },
               { value: 'volume_based', label: 'На основе объема' },

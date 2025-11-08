@@ -32,6 +32,14 @@ import { cn } from '../utils/helpers';
 import * as backtestingApi from '../api/backtesting.api';
 import type { TemplateConfig } from '../api/templates.api';
 
+interface ApiError {
+  response?: {
+    data?: {
+      detail?: string;
+    };
+  };
+}
+
 export function BacktestingPage() {
   const [selectedView, setSelectedView] = useState<'list' | 'create' | 'results'>('list');
   const [selectedBacktestId, setSelectedBacktestId] = useState<string | null>(null);
@@ -59,7 +67,7 @@ export function BacktestingPage() {
       queryClient.invalidateQueries({ queryKey: ['backtests'] });
       setSelectedView('list');
     },
-    onError: (error: any) => {
+    onError: (error: ApiError) => {
       toast.error(error.response?.data?.detail || 'Failed to create backtest');
     }
   });
@@ -71,7 +79,7 @@ export function BacktestingPage() {
       toast.success('Backtest deleted');
       queryClient.invalidateQueries({ queryKey: ['backtests'] });
     },
-    onError: (error: any) => {
+    onError: (error: ApiError) => {
       toast.error(error.response?.data?.detail || 'Failed to delete backtest');
     }
   });
@@ -83,7 +91,7 @@ export function BacktestingPage() {
       toast.success('Backtest cancelled');
       queryClient.invalidateQueries({ queryKey: ['backtests'] });
     },
-    onError: (error: any) => {
+    onError: (error: ApiError) => {
       toast.error(error.response?.data?.detail || 'Failed to cancel backtest');
     }
   });

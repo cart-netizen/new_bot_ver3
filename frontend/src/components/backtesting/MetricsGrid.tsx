@@ -1,5 +1,6 @@
 // frontend/src/components/backtesting/MetricsGrid.tsx
 
+import type { LucideIcon } from 'lucide-react';
 import { TrendingUp, TrendingDown, Activity, Target, AlertTriangle, BarChart3, DollarSign, Percent } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { cn } from '../../utils/helpers';
@@ -15,7 +16,7 @@ interface MetricCardData {
   label: string;
   value: string | number;
   change?: number;
-  icon: any;
+  icon: LucideIcon;
   color: 'green' | 'red' | 'blue' | 'yellow' | 'purple';
   description?: string;
 }
