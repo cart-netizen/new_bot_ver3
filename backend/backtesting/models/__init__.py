@@ -209,7 +209,9 @@ class PerformanceMetrics:
     max_drawdown: float = 0.0
     max_drawdown_pct: float = 0.0
     max_drawdown_duration_days: float = 0.0
+    avg_drawdown: float = 0.0
     avg_drawdown_pct: float = 0.0
+    avg_drawdown_duration_days: float = 0.0
 
     # Trade Statistics
     total_trades: int = 0
@@ -232,6 +234,26 @@ class PerformanceMetrics:
     # Quality Metrics
     stability: float = 0.0  # R² линейной регрессии equity curve
 
+    # Extended Consistency Metrics
+    expectancy: float = 0.0  # Expected value per trade
+    kelly_criterion: float = 0.0  # Optimal position size
+    monthly_win_rate: float = 0.0  # % profitable months
+    win_loss_ratio: float = 0.0  # Avg win / Avg loss
+    consecutive_wins_max: int = 0
+    consecutive_losses_max: int = 0
+
+    # Extended Drawdown Metrics
+    recovery_factor: float = 0.0  # Net profit / Max DD
+    ulcer_index: float = 0.0  # Severity of drawdowns
+
+    # Market Exposure
+    market_exposure_pct: float = 0.0  # % of time in market
+    avg_trade_duration_hours: float = 0.0
+
+    # Distribution Metrics
+    returns_skewness: float = 0.0  # Asymmetry
+    returns_kurtosis: float = 0.0  # Tail thickness
+
     def to_dict(self) -> Dict[str, Any]:
         """Конвертация в словарь для сохранения в БД."""
         return {
@@ -248,9 +270,14 @@ class PerformanceMetrics:
                 'volatility_annual': self.volatility_annual_pct
             },
             'drawdown': {
+                'max_drawdown': self.max_drawdown,
                 'max_drawdown_pct': self.max_drawdown_pct,
                 'max_drawdown_duration_days': self.max_drawdown_duration_days,
-                'avg_drawdown_pct': self.avg_drawdown_pct
+                'avg_drawdown': self.avg_drawdown,
+                'avg_drawdown_pct': self.avg_drawdown_pct,
+                'avg_drawdown_duration_days': self.avg_drawdown_duration_days,
+                'recovery_factor': self.recovery_factor,
+                'ulcer_index': self.ulcer_index
             },
             'trade_stats': {
                 'total_trades': self.total_trades,
@@ -262,14 +289,24 @@ class PerformanceMetrics:
                 'avg_loss': self.avg_loss,
                 'largest_win': self.largest_win,
                 'largest_loss': self.largest_loss,
-                'avg_trade_duration_minutes': self.avg_trade_duration_minutes
+                'avg_trade_duration_minutes': self.avg_trade_duration_minutes,
+                'win_loss_ratio': self.win_loss_ratio,
+                'consecutive_wins_max': self.consecutive_wins_max,
+                'consecutive_losses_max': self.consecutive_losses_max,
+                'expectancy': self.expectancy
             },
             'advanced': {
                 'omega_ratio': self.omega_ratio,
                 'tail_ratio': self.tail_ratio,
                 'var_95': self.var_95,
                 'cvar_95': self.cvar_95,
-                'stability': self.stability
+                'stability': self.stability,
+                'kelly_criterion': self.kelly_criterion,
+                'monthly_win_rate': self.monthly_win_rate,
+                'market_exposure_pct': self.market_exposure_pct,
+                'avg_trade_duration_hours': self.avg_trade_duration_hours,
+                'returns_skewness': self.returns_skewness,
+                'returns_kurtosis': self.returns_kurtosis
             }
         }
 
