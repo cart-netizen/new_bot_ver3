@@ -1,7 +1,7 @@
 // frontend/src/components/screener/ScreenerTable.tsx
 
 import React, { useCallback } from 'react';
-import { ArrowUp, ArrowDown, ArrowUpDown, X } from 'lucide-react';
+import { ArrowUp, ArrowDown, ArrowUpDown, X, Plus, Check } from 'lucide-react';
 import type { ScreenerPair, SortField, SortOrder } from '../../types/screener.types';
 
 interface ScreenerTableProps {
@@ -11,6 +11,7 @@ interface ScreenerTableProps {
   sortOrder: SortOrder;
   onSort: (field: SortField) => void;
   onDismissAlert: (symbol: string) => void;
+  onToggleSelection?: (symbol: string) => void;
 }
 
 /**
@@ -54,15 +55,24 @@ const TableRow = React.memo(({
   pair,
   isAlerted,
   onDismissAlert,
+  onToggleSelection,
 }: {
   pair: ScreenerPair;
   isAlerted: boolean;
   onDismissAlert: (symbol: string) => void;
+  onToggleSelection?: (symbol: string) => void;
 }) => {
   const handleDismiss = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     onDismissAlert(pair.symbol);
   }, [pair.symbol, onDismissAlert]);
+
+  const handleToggle = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onToggleSelection) {
+      onToggleSelection(pair.symbol);
+    }
+  }, [pair.symbol, onToggleSelection]);
 
   return (
     <tr
@@ -149,6 +159,27 @@ const TableRow = React.memo(({
       <td className={`px-3 py-2 text-right font-mono ${formatPercent(pair.price_change_24h).color}`}>
         {formatPercent(pair.price_change_24h).text}
       </td>
+
+      {/* Кнопка выбора */}
+      {onToggleSelection && (
+        <td className="px-3 py-2 text-center sticky right-0 bg-surface">
+          <button
+            onClick={handleToggle}
+            className={`p-1 rounded transition ${
+              pair.is_selected
+                ? 'bg-primary text-white'
+                : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+            }`}
+            title={pair.is_selected ? 'Убрать из графиков' : 'Добавить в графики'}
+          >
+            {pair.is_selected ? (
+              <Check className="h-3 w-3" />
+            ) : (
+              <Plus className="h-3 w-3" />
+            )}
+          </button>
+        </td>
+      )}
     </tr>
   );
 });
@@ -254,6 +285,13 @@ export const ScreenerTable = React.memo(({
             <SortableHeader field="change_8h" label="8 часов" align="right" currentSortField={sortField} sortOrder={sortOrder} onSort={onSort} />
             <SortableHeader field="change_12h" label="12 часов" align="right" currentSortField={sortField} sortOrder={sortOrder} onSort={onSort} />
             <SortableHeader field="change_24h_interval" label="24 часа" align="right" currentSortField={sortField} sortOrder={sortOrder} onSort={onSort} />
+
+            {/* Колонка выбора */}
+            {onToggleSelection && (
+              <th className="px-3 py-3 text-center font-medium sticky right-0 bg-surface">
+                <span className="text-xs">Графики</span>
+              </th>
+            )}
           </tr>
         </thead>
 
@@ -264,6 +302,7 @@ export const ScreenerTable = React.memo(({
               pair={pair}
               isAlerted={alertedSymbols.has(pair.symbol)}
               onDismissAlert={onDismissAlert}
+              onToggleSelection={onToggleSelection}
             />
           ))}
         </tbody>
