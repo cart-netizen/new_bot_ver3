@@ -46,6 +46,7 @@ from backend.backtesting.core.data_handler import HistoricalDataHandler
 from backend.backtesting.core.simulated_exchange import SimulatedExchange, SimulatedOrder
 from backend.backtesting.core.orderbook_data_handler import OrderBookDataHandler, OrderBookSimulationConfig
 from backend.backtesting.core.trade_data_handler import TradeDataHandler, TradeSimulationConfig
+from backend.backtesting.metrics.advanced_metrics import AdvancedMetricsCalculator, TradeData, EquityData
 from backend.models.market_data import MarketTrade
 
 # ML Engine интеграция (НОВОЕ в Фазе 2)
@@ -1010,7 +1011,7 @@ class BacktestingEngine:
         self.portfolio.equity_history.append(point)
 
     def _calculate_performance_metrics(self) -> PerformanceMetrics:
-        """Расчет финальных метрик производительности (ОБНОВЛЕНО в Фазе 1)."""
+        """Расчет финальных метрик производительности с использованием AdvancedMetricsCalculator."""
         import numpy as np
         from scipy import stats
 
@@ -1042,18 +1043,18 @@ class BacktestingEngine:
         else:
             avg_duration = 0.0
 
-        # Drawdown metrics (НОВОЕ)
+        # Drawdown metrics from equity curve
+        max_dd = 0.0
         max_dd_pct = 0.0
         max_dd_duration_days = 0.0
-        avg_dd_pct = 0.0
 
         if self.portfolio.equity_history:
-            equities = [ep.equity for ep in self.portfolio.equity_history]
-            drawdowns = [ep.drawdown_pct for ep in self.portfolio.equity_history]
+            drawdowns = [ep.drawdown for ep in self.portfolio.equity_history]
+            drawdowns_pct = [ep.drawdown_pct for ep in self.portfolio.equity_history]
 
             if drawdowns:
-                max_dd_pct = max(drawdowns)
-                avg_dd_pct = np.mean([dd for dd in drawdowns if dd > 0])
+                max_dd = max(drawdowns)
+                max_dd_pct = max(drawdowns_pct)
 
                 # Drawdown duration
                 in_drawdown = False
@@ -1073,10 +1074,8 @@ class BacktestingEngine:
                 if dd_durations:
                     max_dd_duration_days = max(dd_durations)
 
-        # Risk-adjusted returns (НОВОЕ)
+        # Calculate basic risk-adjusted metrics
         sharpe_ratio = 0.0
-        sortino_ratio = 0.0
-        calmar_ratio = 0.0
         volatility_annual_pct = 0.0
         stability = 0.0
 
@@ -1100,18 +1099,6 @@ class BacktestingEngine:
                     mean_return = np.mean(returns) * 252  # Annualized
                     sharpe_ratio = mean_return / (volatility_annual_pct / 100)
 
-                # Sortino Ratio (only downside volatility)
-                negative_returns = returns_array[returns_array < 0]
-                if len(negative_returns) > 0:
-                    downside_std = np.std(negative_returns) * np.sqrt(252)
-                    if downside_std > 0:
-                        sortino_ratio = (np.mean(returns) * 252) / downside_std
-
-                # Calmar Ratio
-                if max_dd_pct > 0:
-                    annual_return_pct = self.portfolio.total_return_pct * (365 / max(1, (self.config.end_date - self.config.start_date).days))
-                    calmar_ratio = annual_return_pct / max_dd_pct
-
                 # Stability (R-squared of equity curve)
                 x = np.arange(len(self.portfolio.equity_history))
                 y = np.array([ep.equity for ep in self.portfolio.equity_history])
@@ -1119,28 +1106,129 @@ class BacktestingEngine:
                     slope, intercept, r_value, p_value, std_err = stats.linregress(x, y)
                     stability = r_value ** 2  # R-squared
 
+        # Prepare data for Advanced Metrics Calculator
+        trade_data = [
+            TradeData(
+                entry_time=t.entry_time,
+                exit_time=t.exit_time,
+                pnl=t.pnl,
+                pnl_pct=t.pnl_pct,
+                duration_seconds=t.duration_seconds
+            )
+            for t in self.closed_trades
+        ]
+
+        equity_data = [
+            EquityData(
+                timestamp=ep.timestamp,
+                equity=ep.equity,
+                drawdown=ep.drawdown,
+                drawdown_pct=ep.drawdown_pct,
+                total_return_pct=ep.total_return_pct
+            )
+            for ep in self.portfolio.equity_history
+        ]
+
+        # Calculate advanced metrics
+        advanced_calc = AdvancedMetricsCalculator(risk_free_rate=0.0)
+
+        if trade_data and equity_data:
+            advanced_metrics = advanced_calc.calculate(
+                trades=trade_data,
+                equity_curve=equity_data,
+                initial_capital=self.config.initial_capital,
+                final_capital=self.portfolio.equity,
+                total_pnl=self.portfolio.total_return,
+                max_drawdown=max_dd,
+                start_date=self.config.start_date,
+                end_date=self.config.end_date
+            )
+        else:
+            # Default values if no trades
+            from backend.backtesting.metrics.advanced_metrics import AdvancedMetrics
+            advanced_metrics = AdvancedMetrics(
+                sortino_ratio=0.0, calmar_ratio=0.0, omega_ratio=0.0,
+                profit_factor=0.0, expectancy=0.0, kelly_criterion=0.0, monthly_win_rate=0.0,
+                avg_drawdown=0.0, avg_drawdown_pct=0.0, avg_drawdown_duration_days=0.0,
+                max_drawdown_duration_days=0.0, recovery_factor=0.0, ulcer_index=0.0,
+                win_loss_ratio=0.0, avg_win=0.0, avg_loss=0.0, largest_win=0.0, largest_loss=0.0,
+                consecutive_wins_max=0, consecutive_losses_max=0,
+                market_exposure_pct=0.0, avg_trade_duration_hours=0.0,
+                returns_skewness=0.0, returns_kurtosis=0.0, tail_ratio=1.0
+            )
+
+        # Monthly returns
+        monthly_pnl = {}
+        for trade in self.closed_trades:
+            month_key = trade.exit_time.strftime("%Y-%m")
+            if month_key not in monthly_pnl:
+                monthly_pnl[month_key] = 0
+            monthly_pnl[month_key] += trade.pnl
+
+        monthly_returns = list(monthly_pnl.values())
+
+        # Combine all metrics
         return PerformanceMetrics(
+            # Returns
             total_return=self.portfolio.total_return,
             total_return_pct=self.portfolio.total_return_pct,
             annual_return_pct=self.portfolio.total_return_pct * (365 / max(1, (self.config.end_date - self.config.start_date).days)),
+            monthly_returns=monthly_returns,
+
+            # Risk-Adjusted
+            sharpe_ratio=sharpe_ratio,
+            sortino_ratio=advanced_metrics.sortino_ratio,
+            calmar_ratio=advanced_metrics.calmar_ratio,
+            volatility_annual_pct=volatility_annual_pct,
+
+            # Drawdown
+            max_drawdown=max_dd,
+            max_drawdown_pct=max_dd_pct,
+            max_drawdown_duration_days=max_dd_duration_days,
+            avg_drawdown=advanced_metrics.avg_drawdown,
+            avg_drawdown_pct=advanced_metrics.avg_drawdown_pct,
+            avg_drawdown_duration_days=advanced_metrics.avg_drawdown_duration_days,
+
+            # Trade Statistics
             total_trades=total_trades,
             winning_trades=winning_trades,
             losing_trades=losing_trades,
             win_rate_pct=win_rate,
-            profit_factor=profit_factor,
-            avg_win=avg_win,
-            avg_loss=avg_loss,
-            largest_win=largest_win,
-            largest_loss=largest_loss,
+            profit_factor=advanced_metrics.profit_factor,
+            avg_win=advanced_metrics.avg_win,
+            avg_loss=advanced_metrics.avg_loss,
+            largest_win=advanced_metrics.largest_win,
+            largest_loss=advanced_metrics.largest_loss,
             avg_trade_duration_minutes=avg_duration,
-            max_drawdown_pct=max_dd_pct,
-            max_drawdown_duration_days=max_dd_duration_days,
-            avg_drawdown_pct=avg_dd_pct,
-            sharpe_ratio=sharpe_ratio,
-            sortino_ratio=sortino_ratio,
-            calmar_ratio=calmar_ratio,
-            volatility_annual_pct=volatility_annual_pct,
-            stability=stability
+
+            # Advanced Metrics
+            omega_ratio=advanced_metrics.omega_ratio,
+            tail_ratio=advanced_metrics.tail_ratio,
+            var_95=0.0,  # TODO: Implement VaR
+            cvar_95=0.0,  # TODO: Implement CVaR
+
+            # Quality
+            stability=stability,
+
+            # Extended Consistency
+            expectancy=advanced_metrics.expectancy,
+            kelly_criterion=advanced_metrics.kelly_criterion,
+            monthly_win_rate=advanced_metrics.monthly_win_rate,
+            win_loss_ratio=advanced_metrics.win_loss_ratio,
+            consecutive_wins_max=advanced_metrics.consecutive_wins_max,
+            consecutive_losses_max=advanced_metrics.consecutive_losses_max,
+
+            # Extended Drawdown
+            recovery_factor=advanced_metrics.recovery_factor,
+            ulcer_index=advanced_metrics.ulcer_index,
+
+            # Market Exposure
+            market_exposure_pct=advanced_metrics.market_exposure_pct,
+            avg_trade_duration_hours=advanced_metrics.avg_trade_duration_hours,
+
+            # Distribution
+            returns_skewness=advanced_metrics.returns_skewness,
+            returns_kurtosis=advanced_metrics.returns_kurtosis
         )
 
     def _parse_interval(self, interval: str) -> int:
