@@ -1,6 +1,6 @@
 // frontend/src/components/screener/ScreenerTable.tsx
 
-import React, { useMemo, useCallback } from 'react';
+import React, { useCallback } from 'react';
 import { ArrowUp, ArrowDown, ArrowUpDown, X } from 'lucide-react';
 import type { ScreenerPair, SortField, SortOrder } from '../../types/screener.types';
 
@@ -156,6 +156,63 @@ const TableRow = React.memo(({
 TableRow.displayName = 'TableRow';
 
 /**
+ * Компонент иконки сортировки.
+ */
+const SortIcon = React.memo(({
+  field,
+  currentSortField,
+  sortOrder
+}: {
+  field: SortField;
+  currentSortField: SortField;
+  sortOrder: SortOrder;
+}) => {
+  if (currentSortField !== field) {
+    return <ArrowUpDown className="h-3 w-3 opacity-30" />;
+  }
+  return sortOrder === 'asc'
+    ? <ArrowUp className="h-3 w-3" />
+    : <ArrowDown className="h-3 w-3" />;
+});
+
+SortIcon.displayName = 'SortIcon';
+
+/**
+ * Заголовок столбца с сортировкой.
+ */
+const SortableHeader = React.memo(({
+  field,
+  label,
+  align = 'left',
+  currentSortField,
+  sortOrder,
+  onSort,
+}: {
+  field: SortField;
+  label: string;
+  align?: 'left' | 'right';
+  currentSortField: SortField;
+  sortOrder: SortOrder;
+  onSort: (field: SortField) => void;
+}) => {
+  return (
+    <th
+      className={`px-3 py-3 text-xs font-medium cursor-pointer hover:bg-gray-800/50 transition ${
+        align === 'right' ? 'text-right' : 'text-left'
+      }`}
+      onClick={() => onSort(field)}
+    >
+      <div className={`flex items-center gap-1 ${align === 'right' ? 'justify-end' : ''}`}>
+        <span>{label}</span>
+        <SortIcon field={field} currentSortField={currentSortField} sortOrder={sortOrder} />
+      </div>
+    </th>
+  );
+});
+
+SortableHeader.displayName = 'SortableHeader';
+
+/**
  * Компонент таблицы скринера с оптимизацией.
  */
 export const ScreenerTable = React.memo(({
@@ -175,45 +232,6 @@ export const ScreenerTable = React.memo(({
     );
   }
 
-  /**
-   * Компонент иконки сортировки.
-   */
-  const SortIcon = useCallback(({ field }: { field: SortField }) => {
-    if (sortField !== field) {
-      return <ArrowUpDown className="h-3 w-3 opacity-30" />;
-    }
-    return sortOrder === 'asc'
-      ? <ArrowUp className="h-3 w-3" />
-      : <ArrowDown className="h-3 w-3" />;
-  }, [sortField, sortOrder]);
-
-  /**
-   * Заголовок столбца с сортировкой.
-   */
-  const SortableHeader = useCallback(({
-    field,
-    label,
-    align = 'left'
-  }: {
-    field: SortField;
-    label: string;
-    align?: 'left' | 'right';
-  }) => {
-    return (
-      <th
-        className={`px-3 py-3 text-xs font-medium cursor-pointer hover:bg-gray-800/50 transition ${
-          align === 'right' ? 'text-right' : 'text-left'
-        }`}
-        onClick={() => onSort(field)}
-      >
-        <div className={`flex items-center gap-1 ${align === 'right' ? 'justify-end' : ''}`}>
-          <span>{label}</span>
-          <SortIcon field={field} />
-        </div>
-      </th>
-    );
-  }, [onSort, SortIcon]);
-
   return (
     <div className="overflow-x-auto">
       <table className="w-full border-collapse">
@@ -224,18 +242,18 @@ export const ScreenerTable = React.memo(({
                 <span>Пара</span>
               </div>
             </th>
-            <SortableHeader field="price" label="Цена" align="right" />
-            <SortableHeader field="volume" label="Объем 24ч" align="right" />
-            <SortableHeader field="change_1m" label="1 мин" align="right" />
-            <SortableHeader field="change_2m" label="2 мин" align="right" />
-            <SortableHeader field="change_5m" label="5 мин" align="right" />
-            <SortableHeader field="change_15m" label="15 мин" align="right" />
-            <SortableHeader field="change_30m" label="30 мин" align="right" />
-            <SortableHeader field="change_1h" label="1 час" align="right" />
-            <SortableHeader field="change_4h" label="4 часа" align="right" />
-            <SortableHeader field="change_8h" label="8 часов" align="right" />
-            <SortableHeader field="change_12h" label="12 часов" align="right" />
-            <SortableHeader field="change_24h_interval" label="24 часа" align="right" />
+            <SortableHeader field="price" label="Цена" align="right" currentSortField={sortField} sortOrder={sortOrder} onSort={onSort} />
+            <SortableHeader field="volume" label="Объем 24ч" align="right" currentSortField={sortField} sortOrder={sortOrder} onSort={onSort} />
+            <SortableHeader field="change_1m" label="1 мин" align="right" currentSortField={sortField} sortOrder={sortOrder} onSort={onSort} />
+            <SortableHeader field="change_2m" label="2 мин" align="right" currentSortField={sortField} sortOrder={sortOrder} onSort={onSort} />
+            <SortableHeader field="change_5m" label="5 мин" align="right" currentSortField={sortField} sortOrder={sortOrder} onSort={onSort} />
+            <SortableHeader field="change_15m" label="15 мин" align="right" currentSortField={sortField} sortOrder={sortOrder} onSort={onSort} />
+            <SortableHeader field="change_30m" label="30 мин" align="right" currentSortField={sortField} sortOrder={sortOrder} onSort={onSort} />
+            <SortableHeader field="change_1h" label="1 час" align="right" currentSortField={sortField} sortOrder={sortOrder} onSort={onSort} />
+            <SortableHeader field="change_4h" label="4 часа" align="right" currentSortField={sortField} sortOrder={sortOrder} onSort={onSort} />
+            <SortableHeader field="change_8h" label="8 часов" align="right" currentSortField={sortField} sortOrder={sortOrder} onSort={onSort} />
+            <SortableHeader field="change_12h" label="12 часов" align="right" currentSortField={sortField} sortOrder={sortOrder} onSort={onSort} />
+            <SortableHeader field="change_24h_interval" label="24 часа" align="right" currentSortField={sortField} sortOrder={sortOrder} onSort={onSort} />
           </tr>
         </thead>
 
