@@ -20,6 +20,11 @@ from backend.models.candle import Candle
 logger = get_logger(__name__)
 
 
+def timestamp_to_datetime(timestamp: int) -> datetime:
+    """Конвертация Unix timestamp (миллисекунды) в datetime"""
+    return datetime.fromtimestamp(timestamp / 1000)
+
+
 @dataclass
 class QualityIssue:
     """Проблема качества данных"""
@@ -198,7 +203,10 @@ class DataQualityChecker:
 
         return DataQualityReport(
             total_candles=len(sorted_candles),
-            time_range=(sorted_candles[0].timestamp, sorted_candles[-1].timestamp),
+            time_range=(
+                timestamp_to_datetime(sorted_candles[0].timestamp),
+                timestamp_to_datetime(sorted_candles[-1].timestamp)
+            ),
             interval_minutes=expected_interval_minutes,
             errors_count=errors_count,
             warnings_count=warnings_count,
@@ -224,7 +232,7 @@ class DataQualityChecker:
                     severity="ERROR",
                     category="duplicates",
                     description="Duplicate candle detected",
-                    timestamp=candle.timestamp,
+                    timestamp=timestamp_to_datetime(candle.timestamp),
                     details={"price": candle.close}
                 ))
             seen_timestamps.add(candle.timestamp)
@@ -244,7 +252,11 @@ class DataQualityChecker:
             prev_candle = candles[i - 1]
             curr_candle = candles[i]
 
-            actual_delta = curr_candle.timestamp - prev_candle.timestamp
+            # Конвертируем timestamps в datetime для вычислений
+            prev_dt = timestamp_to_datetime(prev_candle.timestamp)
+            curr_dt = timestamp_to_datetime(curr_candle.timestamp)
+
+            actual_delta = curr_dt - prev_dt
 
             # Разница больше ожидаемой (с небольшим допуском)
             if actual_delta > expected_delta * 1.5:
@@ -256,10 +268,10 @@ class DataQualityChecker:
                     severity=severity,
                     category="gaps",
                     description=f"Gap detected: {missing_candles} candles missing",
-                    timestamp=prev_candle.timestamp,
+                    timestamp=prev_dt,
                     details={
-                        "gap_start": prev_candle.timestamp.isoformat(),
-                        "gap_end": curr_candle.timestamp.isoformat(),
+                        "gap_start": prev_dt.isoformat(),
+                        "gap_end": curr_dt.isoformat(),
                         "missing_candles": missing_candles,
                         "gap_duration_minutes": int(actual_delta.total_seconds() / 60)
                     }
@@ -277,7 +289,7 @@ class DataQualityChecker:
                     severity="WARNING",
                     category="volume",
                     description="Zero volume detected",
-                    timestamp=candle.timestamp,
+                    timestamp=timestamp_to_datetime(candle.timestamp),
                     details={"price": candle.close}
                 ))
 
@@ -288,13 +300,15 @@ class DataQualityChecker:
         issues = []
 
         for candle in candles:
+            candle_dt = timestamp_to_datetime(candle.timestamp)
+
             # High должен быть >= max(Open, Close)
             if candle.high < max(candle.open, candle.close):
                 issues.append(QualityIssue(
                     severity="ERROR",
                     category="ohlc",
                     description="High is less than Open/Close",
-                    timestamp=candle.timestamp,
+                    timestamp=candle_dt,
                     details={
                         "open": candle.open,
                         "high": candle.high,
@@ -309,7 +323,7 @@ class DataQualityChecker:
                     severity="ERROR",
                     category="ohlc",
                     description="Low is greater than Open/Close",
-                    timestamp=candle.timestamp,
+                    timestamp=candle_dt,
                     details={
                         "open": candle.open,
                         "high": candle.high,
@@ -324,7 +338,7 @@ class DataQualityChecker:
                     severity="ERROR",
                     category="ohlc",
                     description="High is less than Low",
-                    timestamp=candle.timestamp,
+                    timestamp=candle_dt,
                     details={
                         "high": candle.high,
                         "low": candle.low
@@ -337,7 +351,7 @@ class DataQualityChecker:
                     severity="ERROR",
                     category="ohlc",
                     description="Negative or zero price detected",
-                    timestamp=candle.timestamp,
+                    timestamp=candle_dt,
                     details={
                         "open": candle.open,
                         "high": candle.high,
@@ -388,7 +402,7 @@ class DataQualityChecker:
                     severity="WARNING",
                     category="spikes",
                     description=f"Abnormal price spike detected: {pct_change:.2f}%",
-                    timestamp=candle.timestamp,
+                    timestamp=timestamp_to_datetime(candle.timestamp),
                     details={
                         "prev_price": prev_candle.close,
                         "curr_price": candle.close,
