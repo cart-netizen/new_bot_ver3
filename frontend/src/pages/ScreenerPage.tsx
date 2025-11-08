@@ -26,17 +26,13 @@ export function ScreenerPage() {
     setSorting,
     updateSettings,
     dismissAlert,
-    getSortedPairs,
-    getAlertedPairs,
   } = useScreenerStore();
 
   /**
    * Загрузка пар при монтировании компонента.
    */
   useEffect(() => {
-    console.log('[ScreenerPage] Component mounted');
     if (pairs.length === 0 && !isLoading) {
-      console.log('[ScreenerPage] Fetching pairs...');
       fetchPairs();
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -47,15 +43,11 @@ export function ScreenerPage() {
   useEffect(() => {
     const intervalMs = settings.refreshInterval * 1000;
 
-    console.log(`[ScreenerPage] Setting up auto-refresh every ${settings.refreshInterval}s`);
-
     const intervalId = setInterval(() => {
-      console.log('[ScreenerPage] Auto-refreshing pairs...');
       fetchPairs();
     }, intervalMs);
 
     return () => {
-      console.log('[ScreenerPage] Clearing auto-refresh');
       clearInterval(intervalId);
     };
   }, [settings.refreshInterval, fetchPairs]);
@@ -77,15 +69,103 @@ export function ScreenerPage() {
    * Получаем отсортированные пары с алертами сверху.
    */
   const displayPairs = useMemo(() => {
-    const alertedPairs = getAlertedPairs();
-    const alertedSymbols = new Set(alertedPairs.map(p => p.symbol));
+    if (pairs.length === 0) return [];
 
-    // Остальные пары (без алертов)
-    const normalPairs = getSortedPairs().filter(p => !alertedSymbols.has(p.symbol));
+    // Разделяем пары на алертные и обычные
+    const alertedSymbols = new Set(alerts.keys());
+    const alertedPairs = pairs.filter(p => alertedSymbols.has(p.symbol));
+    const normalPairs = pairs.filter(p => !alertedSymbols.has(p.symbol));
+
+    // Сортируем обычные пары
+    const sortedNormalPairs = [...normalPairs].sort((a, b) => {
+      let aValue: number | string | null;
+      let bValue: number | string | null;
+
+      // Маппинг полей для сортировки
+      switch (sortField) {
+        case 'symbol':
+          aValue = a.symbol;
+          bValue = b.symbol;
+          break;
+        case 'price':
+          aValue = a.last_price;
+          bValue = b.last_price;
+          break;
+        case 'volume':
+          aValue = a.volume_24h;
+          bValue = b.volume_24h;
+          break;
+        case 'change_24h':
+          aValue = a.price_change_24h_percent;
+          bValue = b.price_change_24h_percent;
+          break;
+        case 'change_1m':
+          aValue = a.price_change_1m;
+          bValue = b.price_change_1m;
+          break;
+        case 'change_2m':
+          aValue = a.price_change_2m;
+          bValue = b.price_change_2m;
+          break;
+        case 'change_5m':
+          aValue = a.price_change_5m;
+          bValue = b.price_change_5m;
+          break;
+        case 'change_15m':
+          aValue = a.price_change_15m;
+          bValue = b.price_change_15m;
+          break;
+        case 'change_30m':
+          aValue = a.price_change_30m;
+          bValue = b.price_change_30m;
+          break;
+        case 'change_1h':
+          aValue = a.price_change_1h;
+          bValue = b.price_change_1h;
+          break;
+        case 'change_4h':
+          aValue = a.price_change_4h;
+          bValue = b.price_change_4h;
+          break;
+        case 'change_8h':
+          aValue = a.price_change_8h;
+          bValue = b.price_change_8h;
+          break;
+        case 'change_12h':
+          aValue = a.price_change_12h;
+          bValue = b.price_change_12h;
+          break;
+        case 'change_24h_interval':
+          aValue = a.price_change_24h;
+          bValue = b.price_change_24h;
+          break;
+        default:
+          return 0;
+      }
+
+      // Обработка null значений
+      if (aValue === null && bValue === null) return 0;
+      if (aValue === null) return sortOrder === 'asc' ? 1 : -1;
+      if (bValue === null) return sortOrder === 'asc' ? -1 : 1;
+
+      // Сортировка строк
+      if (typeof aValue === 'string' && typeof bValue === 'string') {
+        return sortOrder === 'asc'
+          ? aValue.localeCompare(bValue)
+          : bValue.localeCompare(aValue);
+      }
+
+      // Сортировка чисел
+      if (typeof aValue === 'number' && typeof bValue === 'number') {
+        return sortOrder === 'asc' ? aValue - bValue : bValue - aValue;
+      }
+
+      return 0;
+    });
 
     // Алерты всегда сверху (не подчиняются сортировке)
-    return [...alertedPairs, ...normalPairs];
-  }, [pairs, sortField, sortOrder, alerts]); // eslint-disable-line react-hooks/exhaustive-deps
+    return [...alertedPairs, ...sortedNormalPairs];
+  }, [pairs, sortField, sortOrder, alerts]);
 
   /**
    * Set для быстрой проверки алертов.
