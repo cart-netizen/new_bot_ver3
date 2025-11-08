@@ -558,18 +558,23 @@ class BacktestingEngine:
 
         # 6. Run strategies (only if we can open new positions)
         if len(self.portfolio.positions) < self.config.risk_config.max_open_positions:
-            signal = await self._run_strategies()
+            consensus_result = await self._run_strategies()
 
-            # 7. Process signal
-            if signal:
-                await self._process_signal(signal)
+            # 7. Process signal (передаем полный consensus)
+            if consensus_result:
+                await self._process_signal(consensus_result)
 
         # 8. Record equity (periodically)
         if self.processed_candles % 60 == 0:  # Every 60 candles
             self._record_equity_point()
 
-    async def _run_strategies(self) -> Optional[TradingSignal]:
-        """Запустить стратегии и получить сигнал."""
+    async def _run_strategies(self):
+        """
+        Запустить стратегии и получить консенсус.
+
+        Returns:
+            ConsensusSignal или None
+        """
         candles = self.candle_manager.get_candles()
 
         if len(candles) < 20:
@@ -588,7 +593,7 @@ class BacktestingEngine:
                 candles, self.current_orderbook, orderbook_metrics
             )
 
-        # Run strategy manager
+        # Run strategy manager - возвращаем полный ConsensusSignal (ОБНОВЛЕНО в Фазе 3)
         consensus = await asyncio.to_thread(
             self.strategy_manager.analyze_with_consensus,
             symbol=self.config.symbol,
@@ -602,10 +607,8 @@ class BacktestingEngine:
             market_trades=self.current_market_trades  # Передаем market trades
         )
 
-        if consensus:
-            return consensus.final_signal
-
-        return None
+        # Возвращаем полный consensus объект, а не только final_signal
+        return consensus
 
     async def _get_ml_prediction(
         self,
@@ -752,8 +755,15 @@ class BacktestingEngine:
             largest_ask_cluster_volume=largest_ask_cluster_volume
         )
 
-    async def _process_signal(self, signal: TradingSignal):
-        """Обработать торговый сигнал."""
+    async def _process_signal(self, consensus):
+        """
+        Обработать консенсус-сигнал (ОБНОВЛЕНО в Фазе 3).
+
+        Args:
+            consensus: ConsensusSignal объект с полной информацией о консенсусе
+        """
+        signal = consensus.final_signal
+
         # Check if we already have a position for this symbol
         if signal.symbol in self.portfolio.positions:
             logger.debug(f"Позиция по {signal.symbol} уже открыта, пропуск сигнала")
@@ -776,12 +786,19 @@ class BacktestingEngine:
             orderbook=self.current_orderbook
         )
 
-        # If filled, create position
+        # If filled, create position (передаем полный consensus)
         if order.status.value == "filled":
-            await self._open_position(order, signal)
+            await self._open_position(order, signal, consensus)
 
-    async def _open_position(self, order: SimulatedOrder, signal: TradingSignal):
-        """Открыть позицию после исполнения ордера."""
+    async def _open_position(self, order: SimulatedOrder, signal: TradingSignal, consensus=None):
+        """
+        Открыть позицию после исполнения ордера (ОБНОВЛЕНО в Фазе 3).
+
+        Args:
+            order: Исполненный ордер
+            signal: Trading signal
+            consensus: ConsensusSignal с полной информацией о консенсусе
+        """
         # Calculate stop loss and take profit
         entry_price = order.average_fill_price
 
@@ -791,6 +808,33 @@ class BacktestingEngine:
         else:
             stop_loss = entry_price * (1 + self.config.risk_config.stop_loss_pct / 100)
             take_profit = entry_price * (1 - self.config.risk_config.take_profit_pct / 100)
+
+        # Извлечь информацию о консенсусе (НОВОЕ)
+        consensus_info = None
+        if consensus:
+            # Разделяем стратегии по направлениям
+            strategies_buy = []
+            strategies_sell = []
+
+            for result in consensus.strategy_results:
+                if result.signal and result.signal.signal_type == SignalType.BUY:
+                    strategies_buy.append(result.strategy_name)
+                elif result.signal and result.signal.signal_type == SignalType.SELL:
+                    strategies_sell.append(result.strategy_name)
+
+            consensus_info = {
+                'mode': self.config.strategy_config.consensus_mode,
+                'strategies_voted': consensus.contributing_strategies,
+                'strategies_buy': strategies_buy,
+                'strategies_sell': strategies_sell,
+                'agreement_count': consensus.agreement_count,
+                'disagreement_count': consensus.disagreement_count,
+                'consensus_confidence': consensus.consensus_confidence,
+                'final_confidence': signal.confidence,
+                'candle_strategies': consensus.candle_strategies_count,
+                'orderbook_strategies': consensus.orderbook_strategies_count,
+                'hybrid_strategies': consensus.hybrid_strategies_count
+            }
 
         # Create position
         position = Position(
@@ -806,7 +850,8 @@ class BacktestingEngine:
                 'signal_type': signal.signal_type.value,
                 'source': signal.source.value,
                 'confidence': signal.confidence,
-                'reason': signal.reason
+                'reason': signal.reason,
+                'consensus_info': consensus_info  # НОВОЕ: Добавляем consensus info
             }
         )
 
@@ -900,8 +945,13 @@ class BacktestingEngine:
             pnl -= order.commission  # Subtract commission
             pnl_pct = (pnl / (position.entry_price * position.quantity)) * 100
 
-            # Create trade result
+            # Create trade result (ОБНОВЛЕНО в Фазе 3 - добавлен consensus_info)
             duration = (self.current_time - position.entry_time).total_seconds()
+
+            # Извлекаем consensus_info из entry_signal
+            consensus_info = None
+            if position.entry_signal and 'consensus_info' in position.entry_signal:
+                consensus_info = position.entry_signal['consensus_info']
 
             trade = TradeResult(
                 symbol=symbol,
@@ -919,7 +969,8 @@ class BacktestingEngine:
                 max_favorable_excursion=position.max_favorable_excursion,
                 max_adverse_excursion=position.max_adverse_excursion,
                 entry_signal=position.entry_signal,
-                exit_signal=None
+                exit_signal=None,
+                consensus_info=consensus_info  # НОВОЕ: Сохраняем consensus info
             )
 
             self.closed_trades.append(trade)
