@@ -30,15 +30,28 @@ export const ScreenerTable = React.memo(({
   /**
    * Форматирование объема (в миллионах).
    */
-  const formatVolume = useCallback((value: number): string => {
+  const formatVolume = useCallback((value: number | null | undefined): string => {
+    if (value === null || value === undefined || isNaN(value)) {
+      return '-';
+    }
     return `${(value / 1_000_000).toFixed(2)}M`;
+  }, []);
+
+  /**
+   * Форматирование цены.
+   */
+  const formatPrice = useCallback((value: number | null | undefined): string => {
+    if (value === null || value === undefined || isNaN(value)) {
+      return '-';
+    }
+    return `$${value.toFixed(value >= 1 ? 2 : 4)}`;
   }, []);
 
   /**
    * Форматирование процентов с цветом.
    */
-  const formatPercent = useCallback((value: number | null): {text: string, color: string} => {
-    if (value === null) {
+  const formatPercent = useCallback((value: number | null | undefined): {text: string, color: string} => {
+    if (value === null || value === undefined || isNaN(value)) {
       return { text: '-', color: 'text-gray-500' };
     }
 
@@ -122,15 +135,15 @@ export const ScreenerTable = React.memo(({
                 <X className="h-3 w-3 text-destructive" />
               </button>
             )}
-            <span className="truncate max-w-[100px]" title={pair.symbol}>
-              {pair.symbol.replace('USDT', '')}
+            <span className="truncate max-w-[100px]" title={pair.symbol || 'N/A'}>
+              {pair.symbol ? pair.symbol.replace('USDT', '') : 'N/A'}
             </span>
           </div>
         </td>
 
         {/* Price */}
         <td className="px-3 py-2 text-right font-mono">
-          ${pair.last_price.toFixed(pair.last_price >= 1 ? 2 : 4)}
+          {formatPrice(pair.last_price)}
         </td>
 
         {/* Volume */}
