@@ -1,6 +1,6 @@
 // frontend/src/components/backtesting/MetricsGrid.tsx
 
-import { TrendingUp, TrendingDown, Activity, Target, AlertTriangle, BarChart3, DollarSign } from 'lucide-react';
+import { TrendingUp, TrendingDown, Activity, Target, AlertTriangle, BarChart3, DollarSign, Percent } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { cn } from '../../utils/helpers';
 import type { PerformanceMetrics } from '../../api/backtesting.api';
