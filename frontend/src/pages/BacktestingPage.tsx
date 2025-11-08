@@ -23,9 +23,11 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Tooltip } from '../components/ui/Tooltip';
 import { MetricsGrid } from '../components/backtesting/MetricsGrid';
+import { AdvancedMetricsGrid } from '../components/backtesting/AdvancedMetricsGrid';
 import { TradesList } from '../components/backtesting/TradesList';
 import { EquityCurveChart } from '../components/backtesting/EquityCurveChart';
 import { BacktestingSettings } from '../components/backtesting/BacktestingSettings';
+import { TemplateLibrary } from '../components/backtesting/TemplateLibrary';
 import { cn } from '../utils/helpers';
 import * as backtestingApi from '../api/backtesting.api';
 
@@ -288,6 +290,7 @@ interface BacktestFormProps {
 }
 
 function BacktestForm({ onSubmit, isSubmitting }: BacktestFormProps) {
+  const [showTemplates, setShowTemplates] = useState(false);
   const [formData, setFormData] = useState<Partial<backtestingApi.BacktestConfig>>({
     name: '',
     description: '',
@@ -340,8 +343,33 @@ function BacktestForm({ onSubmit, isSubmitting }: BacktestFormProps) {
     onSubmit(formData as backtestingApi.BacktestConfig);
   };
 
+  const handleLoadTemplate = (config: any) => {
+    setFormData({ ...formData, ...config });
+    setShowTemplates(false);
+  };
+
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {/* Template Library Toggle */}
+      <Card className="p-4">
+        <button
+          type="button"
+          onClick={() => setShowTemplates(!showTemplates)}
+          className="flex items-center gap-2 text-blue-400 hover:text-blue-300 transition-colors"
+        >
+          <Settings className="h-4 w-4" />
+          {showTemplates ? 'Скрыть библиотеку шаблонов' : 'Показать библиотеку шаблонов'}
+        </button>
+      </Card>
+
+      {/* Template Library */}
+      {showTemplates && (
+        <TemplateLibrary
+          onLoadTemplate={handleLoadTemplate}
+          currentConfig={formData}
+        />
+      )}
+
       {/* Use the comprehensive BacktestingSettings component */}
       <BacktestingSettings
         config={formData}
@@ -386,7 +414,7 @@ interface BacktestResultsProps {
 }
 
 function BacktestResults({ backtest, isLoading }: BacktestResultsProps) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'trades' | 'equity'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'advanced' | 'trades' | 'equity'>('overview');
 
   if (isLoading) {
     return (
@@ -399,6 +427,7 @@ function BacktestResults({ backtest, isLoading }: BacktestResultsProps) {
 
   const tabNames = {
     overview: 'Обзор',
+    advanced: 'Расширенные метрики',
     trades: 'Сделки',
     equity: 'Кривая доходности'
   };
@@ -445,13 +474,13 @@ function BacktestResults({ backtest, isLoading }: BacktestResultsProps) {
       </Card>
 
       {/* Вкладки */}
-      <div className="flex gap-2 border-b border-gray-800">
-        {(['overview', 'trades', 'equity'] as const).map((tab) => (
+      <div className="flex gap-2 border-b border-gray-800 overflow-x-auto">
+        {(['overview', 'advanced', 'trades', 'equity'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
             className={cn(
-              "px-4 py-2 font-medium transition-colors",
+              "px-4 py-2 font-medium transition-colors whitespace-nowrap",
               activeTab === tab
                 ? "text-white border-b-2 border-primary"
                 : "text-gray-400 hover:text-white"
@@ -469,6 +498,10 @@ function BacktestResults({ backtest, isLoading }: BacktestResultsProps) {
           initialCapital={backtest.initial_capital}
           finalCapital={backtest.final_capital}
         />
+      )}
+
+      {activeTab === 'advanced' && backtest.metrics && (
+        <AdvancedMetricsGrid metrics={backtest.metrics} />
       )}
 
       {activeTab === 'trades' && backtest.trades && (
