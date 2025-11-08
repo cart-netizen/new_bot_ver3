@@ -24,7 +24,7 @@ import asyncio
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
-from typing import Dict, List, Any, Optional, Callable, Tuple
+from typing import Dict, List, Any, Optional, Callable, Tuple, Union
 from dataclasses import dataclass, field
 import itertools
 import random
@@ -131,7 +131,7 @@ class ParameterOptimizer:
         logger.info(f"Всего комбинаций: {total_iterations}")
 
         # Запускаем бэктесты
-        results = []
+        results: List[OptimizationResult] = []
         failed_count = 0
 
         if parallel and total_iterations > 1:
@@ -260,7 +260,7 @@ class ParameterOptimizer:
         metric: str
     ) -> Tuple[List[OptimizationResult], int]:
         """Запуск бэктестов последовательно."""
-        results = []
+        results: List[OptimizationResult] = []
         failed_count = 0
 
         for i, combination in enumerate(all_combinations, 1):
@@ -303,7 +303,7 @@ class ParameterOptimizer:
         metric: str
     ) -> Tuple[List[OptimizationResult], int]:
         """Запуск бэктестов параллельно."""
-        results = []
+        results: List[OptimizationResult] = []
         failed_count = 0
 
         # Запускаем батчами по max_workers
@@ -326,9 +326,12 @@ class ParameterOptimizer:
                 batch_tasks.append(task)
 
             # Ждем завершения batch
-            batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+            # Type: List[Union[OptimizationResult, BaseException]]
+            batch_results: List[Union[Optional[OptimizationResult], BaseException]] = await asyncio.gather(
+                *batch_tasks, return_exceptions=True
+            )
 
-            # Собираем результаты
+            # Собираем результаты (фильтруем только успешные OptimizationResult)
             for result in batch_results:
                 if isinstance(result, Exception):
                     logger.error(f"Ошибка в бэктесте: {result}")
