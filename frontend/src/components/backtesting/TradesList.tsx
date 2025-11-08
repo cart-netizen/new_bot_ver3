@@ -314,7 +314,9 @@ export function TradesList({ trades }: TradesListProps) {
                               </>
                             )}
                             {hasConsensus && (
-                              <Users className="h-3 w-3 text-blue-400" title="Консенсус доступен" />
+                              <span title="Консенсус доступен">
+                                <Users className="h-3 w-3 text-blue-400" />
+                              </span>
                             )}
                           </div>
                         </td>
