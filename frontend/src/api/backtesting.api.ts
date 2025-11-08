@@ -104,7 +104,10 @@ export interface PerformanceMetrics {
   drawdown: {
     max_drawdown_pct: number;
     max_drawdown_duration_days: number;
+    avg_drawdown: number;
     avg_drawdown_pct: number;
+    avg_drawdown_duration_days: number;
+    recovery_factor: number;
   };
   trade_stats: {
     total_trades: number;
@@ -117,10 +120,34 @@ export interface PerformanceMetrics {
     largest_win: number;
     largest_loss: number;
     avg_trade_duration_minutes: number;
+    win_loss_ratio: number;
+    consecutive_wins_max: number;
+    consecutive_losses_max: number;
   };
   advanced: {
+    // Risk-Adjusted (Tier 1)
+    sortino_ratio: number;
+    calmar_ratio: number;
     omega_ratio: number;
+
+    // Distribution Analysis (Tier 1)
     tail_ratio: number;
+    returns_skewness: number;
+    returns_kurtosis: number;
+
+    // Consistency Metrics (Tier 1)
+    expectancy: number;
+    kelly_criterion: number;
+    monthly_win_rate: number;
+
+    // Drawdown Metrics (Tier 1)
+    ulcer_index: number;
+
+    // Market Exposure (Tier 1)
+    market_exposure_pct: number;
+    avg_trade_duration_hours: number;
+
+    // Legacy metrics
     var_95: number;
     cvar_95: number;
     stability: number;
