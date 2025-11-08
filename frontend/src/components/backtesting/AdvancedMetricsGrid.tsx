@@ -20,38 +20,6 @@ import { Card } from '../ui/Card';
 import { cn } from '../../utils/helpers';
 import type { PerformanceMetrics } from '../../api/backtesting.api';
 
-interface AdvancedMetrics {
-  // Risk-Adjusted
-  sortino_ratio: number;
-  calmar_ratio: number;
-  omega_ratio: number;
-
-  // Consistency
-  profit_factor: number;
-  expectancy: number;
-  kelly_criterion: number;
-  monthly_win_rate: number;
-  win_loss_ratio: number;
-  consecutive_wins_max: number;
-  consecutive_losses_max: number;
-
-  // Drawdown Extended
-  avg_drawdown: number;
-  avg_drawdown_pct: number;
-  avg_drawdown_duration_days: number;
-  recovery_factor: number;
-  ulcer_index: number;
-
-  // Market Exposure
-  market_exposure_pct: number;
-  avg_trade_duration_hours: number;
-
-  // Distribution
-  returns_skewness: number;
-  returns_kurtosis: number;
-  tail_ratio: number;
-}
-
 interface AdvancedMetricsGridProps {
   metrics: PerformanceMetrics;
 }

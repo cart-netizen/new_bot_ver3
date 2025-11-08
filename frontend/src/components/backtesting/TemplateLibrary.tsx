@@ -22,6 +22,14 @@ import { cn } from '../../utils/helpers';
 import * as templatesApi from '../../api/templates.api';
 import type { Template, TemplateConfig, CreateTemplateRequest } from '../../api/templates.api';
 
+interface ApiError {
+  response?: {
+    data?: {
+      detail?: string;
+    };
+  };
+}
+
 interface TemplateLibraryProps {
   onLoadTemplate: (config: TemplateConfig) => void;
   currentConfig?: TemplateConfig;
@@ -46,7 +54,7 @@ export function TemplateLibrary({ onLoadTemplate, currentConfig }: TemplateLibra
       toast.success('Шаблон удален');
       queryClient.invalidateQueries({ queryKey: ['templates'] });
     },
-    onError: (error: any) => {
+    onError: (error: ApiError) => {
       toast.error(error.response?.data?.detail || 'Ошибка удаления шаблона');
     }
   });
@@ -286,7 +294,7 @@ function SaveTemplateDialog({ config, onClose, onSaved }: SaveTemplateDialogProp
       toast.success('Шаблон сохранен');
       onSaved();
     },
-    onError: (error: any) => {
+    onError: (error: ApiError) => {
       toast.error(error.response?.data?.detail || 'Ошибка сохранения шаблона');
     }
   });
