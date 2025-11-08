@@ -11,8 +11,8 @@ import {
   ChevronDown,
   ChevronRight,
   Users,
-  Target,
-  Brain
+  // Target,
+  // Brain
 } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { cn } from '../../utils/helpers';

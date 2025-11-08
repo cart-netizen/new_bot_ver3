@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import {
   Settings,
-  TrendingUp,
+  // TrendingUp,
   Database,
   Brain,
   Zap,
@@ -15,11 +15,11 @@ import {
   Users,
   Activity,
   Save,
-  Upload,
+  // Upload,
   RotateCcw
 } from 'lucide-react';
 import { Card } from '../ui/Card';
-import { cn } from '../../utils/helpers';
+// import { cn } from '../../utils/helpers';
 import type { BacktestConfig } from '../../api/backtesting.api';
 
 interface BacktestingSettingsProps {

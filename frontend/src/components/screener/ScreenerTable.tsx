@@ -1,6 +1,6 @@
 // frontend/src/components/screener/ScreenerTable.tsx
 
-import React, { useMemo, useCallback } from 'react';
+import React, {  useCallback } from 'react';
 import { ArrowUp, ArrowDown, ArrowUpDown, X } from 'lucide-react';
 import type { ScreenerPair, SortField, SortOrder } from '../../types/screener.types';
 
