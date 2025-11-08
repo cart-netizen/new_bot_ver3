@@ -52,6 +52,9 @@ from backend.models.market_data import MarketTrade
 from backend.ml_engine.features.feature_pipeline import FeaturePipeline, FeatureVector
 from backend.ml_engine.inference.model_client import ModelClient
 
+# Оптимизация (НОВОЕ в Фазе 3)
+from backend.backtesting.core.data_cache import DataCache
+
 logger = get_logger(__name__)
 
 
@@ -213,6 +216,11 @@ class BacktestingEngine:
         else:
             logger.info("ℹ️ ML Model интеграция отключена")
 
+        # Data Cache (НОВОЕ в Фазе 3)
+        self.data_cache = DataCache() if config.use_cache else None
+        if self.data_cache:
+            logger.info("✅ Data Cache включен для ускорения повторных запусков")
+
         # Strategy Manager
         if strategy_manager is None:
             # Создать из конфигурации
@@ -315,20 +323,75 @@ class BacktestingEngine:
 
             logger.info(f"✅ Загружено {len(candles)} свечей")
 
-            # 1.5. Генерация OrderBook и Market Trades (НОВОЕ в Фазе 1)
+            # 1.5. Генерация OrderBook и Market Trades (ОБНОВЛЕНО в Фазе 3 - с кэшированием)
             if self.config.use_orderbook_data and self.orderbook_handler:
-                logger.info("📚 Генерация orderbook snapshots из свечей...")
-                self.historical_orderbooks = self.orderbook_handler.generate_orderbook_sequence(
-                    candles, self.config.symbol
-                )
-                logger.info(f"✅ Сгенерировано {len(self.historical_orderbooks)} orderbook snapshots")
+                # Попытка загрузить из кэша
+                orderbook_config_params = {
+                    "num_levels": self.config.orderbook_num_levels,
+                    "base_spread_bps": self.config.orderbook_base_spread_bps
+                }
+
+                if self.data_cache:
+                    self.historical_orderbooks = self.data_cache.load_orderbooks(
+                        symbol=self.config.symbol,
+                        start_date=self.config.start_date,
+                        end_date=self.config.end_date,
+                        interval=self.config.candle_interval,
+                        config_params=orderbook_config_params
+                    )
+
+                if not self.historical_orderbooks:
+                    # Генерируем если не нашли в кэше
+                    logger.info("📚 Генерация orderbook snapshots из свечей...")
+                    self.historical_orderbooks = self.orderbook_handler.generate_orderbook_sequence(
+                        candles, self.config.symbol
+                    )
+                    logger.info(f"✅ Сгенерировано {len(self.historical_orderbooks)} orderbook snapshots")
+
+                    # Сохраняем в кэш для следующих запусков
+                    if self.data_cache:
+                        self.data_cache.save_orderbooks(
+                            self.historical_orderbooks,
+                            symbol=self.config.symbol,
+                            start_date=self.config.start_date,
+                            end_date=self.config.end_date,
+                            interval=self.config.candle_interval,
+                            config_params=orderbook_config_params
+                        )
 
             if self.config.use_market_trades and self.trade_handler:
-                logger.info("💱 Генерация market trades из свечей...")
-                self.historical_trades = self.trade_handler.generate_trades_from_candles(
-                    candles, self.config.symbol
-                )
-                logger.info(f"✅ Сгенерировано {len(self.historical_trades)} market trades")
+                # Попытка загрузить из кэша
+                trades_config_params = {
+                    "trades_per_volume_unit": self.config.trades_per_volume_unit
+                }
+
+                if self.data_cache:
+                    self.historical_trades = self.data_cache.load_market_trades(
+                        symbol=self.config.symbol,
+                        start_date=self.config.start_date,
+                        end_date=self.config.end_date,
+                        interval=self.config.candle_interval,
+                        config_params=trades_config_params
+                    )
+
+                if not self.historical_trades:
+                    # Генерируем если не нашли в кэше
+                    logger.info("💱 Генерация market trades из свечей...")
+                    self.historical_trades = self.trade_handler.generate_trades_from_candles(
+                        candles, self.config.symbol
+                    )
+                    logger.info(f"✅ Сгенерировано {len(self.historical_trades)} market trades")
+
+                    # Сохраняем в кэш для следующих запусков
+                    if self.data_cache:
+                        self.data_cache.save_market_trades(
+                            self.historical_trades,
+                            symbol=self.config.symbol,
+                            start_date=self.config.start_date,
+                            end_date=self.config.end_date,
+                            interval=self.config.candle_interval,
+                            config_params=trades_config_params
+                        )
 
             # 2. Валидация данных
             logger.info("🔍 Валидация качества данных...")
