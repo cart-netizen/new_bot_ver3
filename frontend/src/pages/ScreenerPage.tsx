@@ -26,6 +26,7 @@ export function ScreenerPage() {
     setSorting,
     updateSettings,
     dismissAlert,
+    togglePairSelection,
   } = useScreenerStore();
 
   /**
@@ -267,6 +268,7 @@ export function ScreenerPage() {
             sortOrder={sortOrder}
             onSort={handleSort}
             onDismissAlert={dismissAlert}
+            onToggleSelection={togglePairSelection}
           />
         </div>
       </div>
