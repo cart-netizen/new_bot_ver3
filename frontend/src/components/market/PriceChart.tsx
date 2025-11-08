@@ -25,7 +25,7 @@ interface PriceChartProps {
 /**
  * Компонент для отображения графика цены торговой пары.
  * Использует минутные свечи от биржи.
- * Автообновление: каждые 15 секунд.
+ * Автообновление: каждые 5 секунд.
  */
 export function PriceChart({ symbol, loading: externalLoading = false }: PriceChartProps) {
   const [candles, setCandles] = useState<Candle[]>([]);
@@ -100,13 +100,13 @@ export function PriceChart({ symbol, loading: externalLoading = false }: PriceCh
     // Загружаем данные для нового символа (с индикатором загрузки)
     fetchCandles(true);
 
-    // Автообновление каждые 15 секунд
-    console.log(`[PriceChart] Setting up 15s interval for ${symbol}`);
+    // Автообновление каждые 5 секунд (как в скринере)
+    console.log(`[PriceChart] Setting up 5s interval for ${symbol}`);
     intervalRef.current = window.setInterval(() => {
       console.log(`[PriceChart] Auto-refresh triggered for ${symbol}`);
       // При автообновлении не показываем loader
       fetchCandles(false);
-    }, 15000); // 15 секунд
+    }, 5000); // 5 секунд
 
     // Cleanup
     return () => {

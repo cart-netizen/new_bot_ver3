@@ -10,7 +10,7 @@ import { X, TrendingUp, Activity } from 'lucide-react';
  * Страница графиков.
  * Отображает графики выбранных торговых пар (по 3 в ряд).
  * Таймфрейм: 1 минута.
- * Обновление: каждые 15 секунд (автоматически в PriceChart).
+ * Обновление: каждые 5 секунд (автоматически в PriceChart).
  */
 export function ChartsPage() {
   const { pairs, fetchPairs, togglePairSelection, isLoading } = useScreenerStore();
