@@ -27,6 +27,15 @@ export const ScreenerTable = React.memo(({
 }: ScreenerTableProps) => {
   console.log('[ScreenerTable] Rendering with', pairs.length, 'pairs');
 
+  // Безопасная обработка пустого массива
+  if (!pairs || pairs.length === 0) {
+    return (
+      <div className="p-8 text-center text-gray-400">
+        <p>Нет данных для отображения</p>
+      </div>
+    );
+  }
+
   /**
    * Форматирование объема (в миллионах).
    */
