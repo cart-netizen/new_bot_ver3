@@ -4,7 +4,7 @@ import apiClient from './client';
 
 /**
  * ============================================================
- * TYPES & INTERFACES
+ * TYPES & INTERFACES (ОБНОВЛЕНО для Фазы 1-3)
  * ============================================================
  */
 
@@ -44,10 +44,28 @@ export interface BacktestConfig {
   trailing_stop_distance_pct: number;
   risk_per_trade_pct: number;
 
-  // Additional
+  // OrderBook & Market Trades (НОВОЕ - Фаза 1)
   use_orderbook_data: boolean;
+  orderbook_num_levels?: number;  // 10-50, default 20
+  orderbook_base_spread_bps?: number;  // Базовый спред в basis points, default 2.0
+  use_market_trades?: boolean;
+  trades_per_volume_unit?: number;  // Trades на единицу объема, default 100
+
+  // ML Model Integration (НОВОЕ - Фаза 2)
+  use_ml_model?: boolean;
+  ml_server_url?: string;  // URL ML сервера, default "http://localhost:8001"
+  ml_model_name?: string;  // Имя модели (опционально)
+  ml_model_version?: string;  // Версия модели (опционально)
+
+  // Optimization (НОВОЕ - Фаза 3)
+  use_cache?: boolean;  // Использовать кэширование данных, default true
   warmup_period_bars: number;
+  skip_orderbook_generation_every_n?: number;  // Генерировать orderbook каждые N свечей
+  skip_trades_generation_every_n?: number;  // Генерировать trades каждые N свечей
+
+  // Debug
   verbose: boolean;
+  log_trades?: boolean;
 }
 
 export interface BacktestRun {
@@ -109,6 +127,21 @@ export interface PerformanceMetrics {
   };
 }
 
+// Информация о консенсусе стратегий (НОВОЕ - Фаза 3)
+export interface ConsensusInfo {
+  mode: string;  // 'weighted', 'majority', 'unanimous'
+  strategies_voted: string[];  // Все проголосовавшие стратегии
+  strategies_buy: string[];  // Стратегии за BUY
+  strategies_sell: string[];  // Стратегии за SELL
+  agreement_count: number;  // Количество согласных
+  disagreement_count: number;  // Количество несогласных
+  consensus_confidence: number;  // Уверенность консенсуса (0-1)
+  final_confidence: number;  // Итоговая уверенность сигнала (0-1)
+  candle_strategies: number;  // Количество candle стратегий
+  orderbook_strategies: number;  // Количество orderbook стратегий
+  hybrid_strategies: number;  // Количество hybrid стратегий
+}
+
 export interface Trade {
   symbol: string;
   side: string;
@@ -124,6 +157,9 @@ export interface Trade {
   exit_reason: string;
   max_favorable_excursion?: number;
   max_adverse_excursion?: number;
+  entry_signal?: any;  // Информация о сигнале входа
+  exit_signal?: any;  // Информация о сигнале выхода
+  consensus_info?: ConsensusInfo;  // НОВОЕ: Детали консенсуса
 }
 
 export interface EquityPoint {
@@ -245,5 +281,21 @@ export async function getStatistics(): Promise<BacktestStatistics> {
  */
 export async function healthCheck(): Promise<{ status: string; service: string; timestamp: string; running_backtests: number }> {
   const response = await apiClient.get('/api/backtesting/health');
+  return response.data;
+}
+
+/**
+ * Получить дефолтные настройки для конфигурации (НОВОЕ)
+ */
+export async function getDefaultConfig(): Promise<Partial<BacktestConfig>> {
+  const response = await apiClient.get('/api/backtesting/config/defaults');
+  return response.data;
+}
+
+/**
+ * Валидировать конфигурацию бэктеста (НОВОЕ)
+ */
+export async function validateConfig(config: Partial<BacktestConfig>): Promise<{ valid: boolean; errors?: string[] }> {
+  const response = await apiClient.post('/api/backtesting/config/validate', config);
   return response.data;
 }

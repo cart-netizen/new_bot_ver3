@@ -10,6 +10,8 @@ Endpoints:
 - POST /api/backtesting/runs/{id}/cancel - Cancel running backtest
 - DELETE /api/backtesting/runs/{id} - Delete backtest
 - GET /api/backtesting/statistics - Get aggregate statistics
+- GET /api/backtesting/config/defaults - Get default configuration values
+- POST /api/backtesting/config/validate - Validate configuration
 """
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
@@ -89,6 +91,24 @@ class CreateBacktestRequest(BaseModel):
     use_orderbook_data: bool = Field(default=False, description="Использовать данные orderbook")
     warmup_period_bars: int = Field(default=100, ge=0, description="Период прогрева индикаторов (свечей)")
     verbose: bool = Field(default=False, description="Подробное логирование")
+
+    # Phase 1: OrderBook & Market Trades
+    orderbook_num_levels: Optional[int] = Field(default=20, ge=10, le=50, description="Количество уровней в orderbook (10-50)")
+    orderbook_base_spread_bps: Optional[float] = Field(default=2.0, ge=0.1, le=50, description="Базовый спред в basis points")
+    use_market_trades: Optional[bool] = Field(default=False, description="Генерировать синтетические market trades")
+    trades_per_volume_unit: Optional[int] = Field(default=100, ge=10, le=1000, description="Количество trades на единицу объема")
+
+    # Phase 2: ML Model Integration
+    use_ml_model: Optional[bool] = Field(default=False, description="Использовать ML модель для предсказаний")
+    ml_server_url: Optional[str] = Field(default="http://localhost:8001", description="URL ML сервера")
+    ml_model_name: Optional[str] = Field(default=None, description="Имя ML модели (опционально)")
+    ml_model_version: Optional[str] = Field(default=None, description="Версия ML модели (опционально)")
+
+    # Phase 3: Performance Optimization
+    use_cache: Optional[bool] = Field(default=True, description="Использовать кэширование данных")
+    skip_orderbook_generation_every_n: Optional[int] = Field(default=None, ge=1, description="Генерировать orderbook каждые N свечей")
+    skip_trades_generation_every_n: Optional[int] = Field(default=None, ge=1, description="Генерировать trades каждые N свечей")
+    log_trades: Optional[bool] = Field(default=False, description="Логировать каждую сделку")
 
     @validator('start_date', 'end_date')
     def validate_dates(cls, v):
@@ -690,6 +710,196 @@ async def get_statistics() -> StatisticsResponse:
 
     except Exception as e:
         logger.error(f"Ошибка получения статистики: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# Configuration Management
+# ============================================================
+
+@router.get("/config/defaults")
+async def get_default_config() -> Dict[str, Any]:
+    """
+    Получить дефолтные настройки для конфигурации бэктеста
+
+    Returns:
+        Дефолтные значения для всех параметров конфигурации
+    """
+    try:
+        defaults = {
+            # Основные настройки
+            "symbol": "BTCUSDT",
+            "candle_interval": "1m",
+            "initial_capital": 10000.0,
+            "warmup_period_bars": 100,
+
+            # Биржа
+            "commission_rate": 0.001,  # 0.1%
+            "maker_commission": 0.0002,  # 0.02%
+            "taker_commission": 0.001,  # 0.1%
+            "slippage_model": "fixed",
+            "slippage_pct": 0.1,  # 0.1%
+            "simulate_latency": False,
+
+            # Стратегии и консенсус
+            "enabled_strategies": ["momentum", "sar_wave", "supertrend", "volume_profile"],
+            "consensus_mode": "weighted",
+            "min_strategies_for_signal": 2,
+            "min_consensus_confidence": 0.5,
+            "strategy_weights": {},
+            "strategy_params": {},
+
+            # Риск-менеджмент
+            "position_size_pct": 10.0,
+            "position_size_mode": "fixed_percent",
+            "max_open_positions": 3,
+            "stop_loss_pct": 2.0,
+            "take_profit_pct": 4.0,
+            "use_trailing_stop": False,
+            "trailing_stop_activation_pct": 2.0,
+            "trailing_stop_distance_pct": 1.0,
+            "risk_per_trade_pct": 1.0,
+
+            # OrderBook & Market Trades (Phase 1)
+            "use_orderbook_data": False,
+            "orderbook_num_levels": 20,
+            "orderbook_base_spread_bps": 2.0,
+            "use_market_trades": False,
+            "trades_per_volume_unit": 100,
+
+            # ML Model (Phase 2)
+            "use_ml_model": False,
+            "ml_server_url": "http://localhost:8001",
+            "ml_model_name": None,
+            "ml_model_version": None,
+
+            # Optimization (Phase 3)
+            "use_cache": True,
+            "skip_orderbook_generation_every_n": None,
+            "skip_trades_generation_every_n": None,
+
+            # Отладка
+            "verbose": False,
+            "log_trades": False
+        }
+
+        return defaults
+
+    except Exception as e:
+        logger.error(f"Ошибка получения дефолтных настроек: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/config/validate")
+async def validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Валидировать конфигурацию бэктеста
+
+    Args:
+        config: Конфигурация для валидации
+
+    Returns:
+        Результат валидации с ошибками (если есть)
+    """
+    try:
+        errors = []
+
+        # Валидация обязательных полей
+        if not config.get("name"):
+            errors.append("Название теста обязательно")
+
+        if not config.get("start_date"):
+            errors.append("Дата начала обязательна")
+
+        if not config.get("end_date"):
+            errors.append("Дата окончания обязательна")
+
+        # Валидация дат
+        if config.get("start_date") and config.get("end_date"):
+            try:
+                start = datetime.fromisoformat(config["start_date"].replace("Z", "+00:00"))
+                end = datetime.fromisoformat(config["end_date"].replace("Z", "+00:00"))
+
+                if start >= end:
+                    errors.append("Дата окончания должна быть позже даты начала")
+
+                if start > datetime.now():
+                    errors.append("Дата начала не может быть в будущем")
+
+                if end > datetime.now():
+                    errors.append("Дата окончания не может быть в будущем")
+
+            except (ValueError, TypeError) as e:
+                errors.append(f"Некорректный формат даты: {str(e)}")
+
+        # Валидация числовых значений
+        if config.get("initial_capital") and config["initial_capital"] <= 0:
+            errors.append("Начальный капитал должен быть больше 0")
+
+        if config.get("position_size_pct"):
+            if config["position_size_pct"] < 0.1 or config["position_size_pct"] > 100:
+                errors.append("Размер позиции должен быть от 0.1% до 100%")
+
+        if config.get("max_open_positions"):
+            if config["max_open_positions"] < 1 or config["max_open_positions"] > 20:
+                errors.append("Максимум открытых позиций должен быть от 1 до 20")
+
+        if config.get("stop_loss_pct"):
+            if config["stop_loss_pct"] < 0.1 or config["stop_loss_pct"] > 50:
+                errors.append("Stop Loss должен быть от 0.1% до 50%")
+
+        if config.get("take_profit_pct"):
+            if config["take_profit_pct"] < 0.1 or config["take_profit_pct"] > 100:
+                errors.append("Take Profit должен быть от 0.1% до 100%")
+
+        if config.get("min_consensus_confidence"):
+            if config["min_consensus_confidence"] < 0 or config["min_consensus_confidence"] > 1:
+                errors.append("Уверенность консенсуса должна быть от 0 до 1")
+
+        if config.get("min_strategies_for_signal"):
+            if config["min_strategies_for_signal"] < 1:
+                errors.append("Минимум стратегий для сигнала должен быть >= 1")
+
+        # Валидация enum полей
+        valid_slippage_models = ["fixed", "volume_based", "percentage"]
+        if config.get("slippage_model") and config["slippage_model"] not in valid_slippage_models:
+            errors.append(f"Модель проскальзывания должна быть одной из: {', '.join(valid_slippage_models)}")
+
+        valid_consensus_modes = ["weighted", "majority", "unanimous"]
+        if config.get("consensus_mode") and config["consensus_mode"] not in valid_consensus_modes:
+            errors.append(f"Режим консенсуса должен быть одним из: {', '.join(valid_consensus_modes)}")
+
+        valid_position_modes = ["fixed_percent", "risk_based", "volatility_adjusted"]
+        if config.get("position_size_mode") and config["position_size_mode"] not in valid_position_modes:
+            errors.append(f"Режим расчета позиции должен быть одним из: {', '.join(valid_position_modes)}")
+
+        # Валидация OrderBook настроек
+        if config.get("orderbook_num_levels"):
+            if config["orderbook_num_levels"] < 10 or config["orderbook_num_levels"] > 50:
+                errors.append("Количество уровней OrderBook должно быть от 10 до 50")
+
+        if config.get("orderbook_base_spread_bps"):
+            if config["orderbook_base_spread_bps"] < 0.1 or config["orderbook_base_spread_bps"] > 50:
+                errors.append("Базовый спред должен быть от 0.1 до 50 bps")
+
+        # Валидация ML настроек
+        if config.get("use_ml_model") and not config.get("ml_server_url"):
+            errors.append("При использовании ML модели необходимо указать URL сервера")
+
+        # Результат
+        if errors:
+            return {
+                "valid": False,
+                "errors": errors
+            }
+        else:
+            return {
+                "valid": True,
+                "errors": []
+            }
+
+    except Exception as e:
+        logger.error(f"Ошибка валидации конфигурации: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
