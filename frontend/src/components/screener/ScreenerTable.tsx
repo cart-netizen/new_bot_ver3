@@ -1,6 +1,6 @@
 // frontend/src/components/screener/ScreenerTable.tsx
 
-import React, {useMemo,  useCallback } from 'react';
+import React, { useMemo, useCallback } from 'react';
 import { ArrowUp, ArrowDown, ArrowUpDown, X } from 'lucide-react';
 import type { ScreenerPair, SortField, SortOrder } from '../../types/screener.types';
 
@@ -14,8 +14,149 @@ interface ScreenerTableProps {
 }
 
 /**
+ * Форматирование объема (в миллионах).
+ */
+const formatVolume = (value: number | null | undefined): string => {
+  if (value === null || value === undefined || isNaN(value)) {
+    return '-';
+  }
+  return `${(value / 1_000_000).toFixed(2)}M`;
+};
+
+/**
+ * Форматирование цены.
+ */
+const formatPrice = (value: number | null | undefined): string => {
+  if (value === null || value === undefined || isNaN(value)) {
+    return '-';
+  }
+  return `$${value.toFixed(value >= 1 ? 2 : 4)}`;
+};
+
+/**
+ * Форматирование процентов с цветом.
+ */
+const formatPercent = (value: number | null | undefined): {text: string, color: string} => {
+  if (value === null || value === undefined || isNaN(value)) {
+    return { text: '-', color: 'text-gray-500' };
+  }
+
+  const text = `${value > 0 ? '+' : ''}${value.toFixed(2)}%`;
+  const color = value > 0 ? 'text-success' : value < 0 ? 'text-destructive' : 'text-gray-400';
+
+  return { text, color };
+};
+
+/**
+ * Строка таблицы.
+ */
+const TableRow = React.memo(({
+  pair,
+  isAlerted,
+  onDismissAlert,
+}: {
+  pair: ScreenerPair;
+  isAlerted: boolean;
+  onDismissAlert: (symbol: string) => void;
+}) => {
+  const handleDismiss = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    onDismissAlert(pair.symbol);
+  }, [pair.symbol, onDismissAlert]);
+
+  return (
+    <tr
+      className={`border-b border-gray-800 transition text-xs ${
+        isAlerted
+          ? 'bg-destructive/20 hover:bg-destructive/25 border-destructive/50'
+          : 'hover:bg-gray-800/30'
+      }`}
+    >
+      {/* Symbol */}
+      <td className="px-3 py-2 font-mono font-medium sticky left-0 bg-surface">
+        <div className="flex items-center gap-2">
+          {isAlerted && (
+            <button
+              onClick={handleDismiss}
+              className="p-0.5 hover:bg-gray-700 rounded transition"
+              title="Отменить алерт"
+            >
+              <X className="h-3 w-3 text-destructive" />
+            </button>
+          )}
+          <span className="truncate max-w-[100px]" title={pair.symbol || 'N/A'}>
+            {pair.symbol ? pair.symbol.replace('USDT', '') : 'N/A'}
+          </span>
+        </div>
+      </td>
+
+      {/* Price */}
+      <td className="px-3 py-2 text-right font-mono">
+        {formatPrice(pair.last_price)}
+      </td>
+
+      {/* Volume */}
+      <td className="px-3 py-2 text-right font-mono text-gray-400">
+        {formatVolume(pair.volume_24h)}
+      </td>
+
+      {/* 1m */}
+      <td className={`px-3 py-2 text-right font-mono ${formatPercent(pair.price_change_1m).color}`}>
+        {formatPercent(pair.price_change_1m).text}
+      </td>
+
+      {/* 2m */}
+      <td className={`px-3 py-2 text-right font-mono ${formatPercent(pair.price_change_2m).color}`}>
+        {formatPercent(pair.price_change_2m).text}
+      </td>
+
+      {/* 5m */}
+      <td className={`px-3 py-2 text-right font-mono ${formatPercent(pair.price_change_5m).color}`}>
+        {formatPercent(pair.price_change_5m).text}
+      </td>
+
+      {/* 15m */}
+      <td className={`px-3 py-2 text-right font-mono ${formatPercent(pair.price_change_15m).color}`}>
+        {formatPercent(pair.price_change_15m).text}
+      </td>
+
+      {/* 30m */}
+      <td className={`px-3 py-2 text-right font-mono ${formatPercent(pair.price_change_30m).color}`}>
+        {formatPercent(pair.price_change_30m).text}
+      </td>
+
+      {/* 1h */}
+      <td className={`px-3 py-2 text-right font-mono ${formatPercent(pair.price_change_1h).color}`}>
+        {formatPercent(pair.price_change_1h).text}
+      </td>
+
+      {/* 4h */}
+      <td className={`px-3 py-2 text-right font-mono ${formatPercent(pair.price_change_4h).color}`}>
+        {formatPercent(pair.price_change_4h).text}
+      </td>
+
+      {/* 8h */}
+      <td className={`px-3 py-2 text-right font-mono ${formatPercent(pair.price_change_8h).color}`}>
+        {formatPercent(pair.price_change_8h).text}
+      </td>
+
+      {/* 12h */}
+      <td className={`px-3 py-2 text-right font-mono ${formatPercent(pair.price_change_12h).color}`}>
+        {formatPercent(pair.price_change_12h).text}
+      </td>
+
+      {/* 24h */}
+      <td className={`px-3 py-2 text-right font-mono ${formatPercent(pair.price_change_24h).color}`}>
+        {formatPercent(pair.price_change_24h).text}
+      </td>
+    </tr>
+  );
+});
+
+TableRow.displayName = 'TableRow';
+
+/**
  * Компонент таблицы скринера с оптимизацией.
- * Мемоизирован для предотвращения лишних ре-рендеров.
  */
 export const ScreenerTable = React.memo(({
   pairs,
@@ -27,26 +168,14 @@ export const ScreenerTable = React.memo(({
 }: ScreenerTableProps) => {
   console.log('[ScreenerTable] Rendering with', pairs.length, 'pairs');
 
-  /**
-   * Форматирование объема (в миллионах).
-   */
-  const formatVolume = useCallback((value: number): string => {
-    return `${(value / 1_000_000).toFixed(2)}M`;
-  }, []);
-
-  /**
-   * Форматирование процентов с цветом.
-   */
-  const formatPercent = useCallback((value: number | null): {text: string, color: string} => {
-    if (value === null) {
-      return { text: '-', color: 'text-gray-500' };
-    }
-
-    const text = `${value > 0 ? '+' : ''}${value.toFixed(2)}%`;
-    const color = value > 0 ? 'text-success' : value < 0 ? 'text-destructive' : 'text-gray-400';
-
-    return { text, color };
-  }, []);
+  // Безопасная обработка пустого массива
+  if (!pairs || pairs.length === 0) {
+    return (
+      <div className="p-8 text-center text-gray-400">
+        <p>Нет данных для отображения</p>
+      </div>
+    );
+  }
 
   /**
    * Компонент иконки сортировки.
@@ -87,112 +216,6 @@ export const ScreenerTable = React.memo(({
     );
   }, [onSort, SortIcon]);
 
-  /**
-   * Строка таблицы с мемоизацией.
-   */
-  const TableRow = React.memo(({
-    pair,
-    isAlerted
-  }: {
-    pair: ScreenerPair;
-    isAlerted: boolean;
-  }) => {
-    const handleDismiss = useCallback((e: React.MouseEvent) => {
-      e.stopPropagation();
-      onDismissAlert(pair.symbol);
-    }, [pair.symbol]);
-
-    return (
-      <tr
-        className={`border-b border-gray-800 transition text-xs ${
-          isAlerted
-            ? 'bg-destructive/20 hover:bg-destructive/25 border-destructive/50'
-            : 'hover:bg-gray-800/30'
-        }`}
-      >
-        {/* Symbol */}
-        <td className="px-3 py-2 font-mono font-medium sticky left-0 bg-surface">
-          <div className="flex items-center gap-2">
-            {isAlerted && (
-              <button
-                onClick={handleDismiss}
-                className="p-0.5 hover:bg-gray-700 rounded transition"
-                title="Отменить алерт"
-              >
-                <X className="h-3 w-3 text-destructive" />
-              </button>
-            )}
-            <span className="truncate max-w-[100px]" title={pair.symbol}>
-              {pair.symbol.replace('USDT', '')}
-            </span>
-          </div>
-        </td>
-
-        {/* Price */}
-        <td className="px-3 py-2 text-right font-mono">
-          ${pair.last_price.toFixed(pair.last_price >= 1 ? 2 : 4)}
-        </td>
-
-        {/* Volume */}
-        <td className="px-3 py-2 text-right font-mono text-gray-400">
-          {formatVolume(pair.volume_24h)}
-        </td>
-
-        {/* 1m */}
-        <td className={`px-3 py-2 text-right font-mono ${formatPercent(pair.price_change_1m).color}`}>
-          {formatPercent(pair.price_change_1m).text}
-        </td>
-
-        {/* 2m */}
-        <td className={`px-3 py-2 text-right font-mono ${formatPercent(pair.price_change_2m).color}`}>
-          {formatPercent(pair.price_change_2m).text}
-        </td>
-
-        {/* 5m */}
-        <td className={`px-3 py-2 text-right font-mono ${formatPercent(pair.price_change_5m).color}`}>
-          {formatPercent(pair.price_change_5m).text}
-        </td>
-
-        {/* 15m */}
-        <td className={`px-3 py-2 text-right font-mono ${formatPercent(pair.price_change_15m).color}`}>
-          {formatPercent(pair.price_change_15m).text}
-        </td>
-
-        {/* 30m */}
-        <td className={`px-3 py-2 text-right font-mono ${formatPercent(pair.price_change_30m).color}`}>
-          {formatPercent(pair.price_change_30m).text}
-        </td>
-
-        {/* 1h */}
-        <td className={`px-3 py-2 text-right font-mono ${formatPercent(pair.price_change_1h).color}`}>
-          {formatPercent(pair.price_change_1h).text}
-        </td>
-
-        {/* 4h */}
-        <td className={`px-3 py-2 text-right font-mono ${formatPercent(pair.price_change_4h).color}`}>
-          {formatPercent(pair.price_change_4h).text}
-        </td>
-
-        {/* 8h */}
-        <td className={`px-3 py-2 text-right font-mono ${formatPercent(pair.price_change_8h).color}`}>
-          {formatPercent(pair.price_change_8h).text}
-        </td>
-
-        {/* 12h */}
-        <td className={`px-3 py-2 text-right font-mono ${formatPercent(pair.price_change_12h).color}`}>
-          {formatPercent(pair.price_change_12h).text}
-        </td>
-
-        {/* 24h */}
-        <td className={`px-3 py-2 text-right font-mono ${formatPercent(pair.price_change_24h).color}`}>
-          {formatPercent(pair.price_change_24h).text}
-        </td>
-      </tr>
-    );
-  });
-
-  TableRow.displayName = 'TableRow';
-
   return (
     <div className="overflow-x-auto">
       <table className="w-full border-collapse">
@@ -224,6 +247,7 @@ export const ScreenerTable = React.memo(({
               key={pair.symbol}
               pair={pair}
               isAlerted={alertedSymbols.has(pair.symbol)}
+              onDismissAlert={onDismissAlert}
             />
           ))}
         </tbody>
