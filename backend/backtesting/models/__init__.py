@@ -120,9 +120,14 @@ class BacktestConfig:
     ml_model_name: Optional[str] = None  # Имя модели (если не default)
     ml_model_version: Optional[str] = None  # Версия модели
 
-    # Оптимизации
+    # Оптимизации (ОБНОВЛЕНО в Фазе 3)
+    use_cache: bool = True  # Использовать кэширование сгенерированных данных
     warmup_period_bars: int = 100  # Количество свечей для прогрева индикаторов
     save_equity_interval_minutes: int = 60  # Сохранять equity каждые 60 минут
+
+    # Performance оптимизации
+    skip_orderbook_generation_every_n: int = 1  # Генерировать orderbook каждые N свечей (1 = каждая)
+    skip_trades_generation_every_n: int = 1  # Генерировать trades каждые N свечей (1 = каждая)
 
     # Отладка
     verbose: bool = False
