@@ -80,11 +80,23 @@ export const useScreenerStore = create<ScreenerStore>()(
             }
           });
 
+          console.log('[ScreenerStore] Raw API response:', response);
+          console.log('[ScreenerStore] Response data:', response.data);
+
           if (!response.data?.pairs || !Array.isArray(response.data.pairs)) {
+            console.error('[ScreenerStore] Invalid response structure:', {
+              hasPairs: !!response.data?.pairs,
+              isArray: Array.isArray(response.data?.pairs),
+              responseData: response.data
+            });
             throw new Error('Неверная структура ответа');
           }
 
           let pairs = response.data.pairs;
+          console.log('[ScreenerStore] Received pairs count:', pairs.length);
+          if (pairs.length > 0) {
+            console.log('[ScreenerStore] First pair sample:', pairs[0]);
+          }
 
           // Применяем лимит топ N
           if (currentSettings.topN > 0 && pairs.length > currentSettings.topN) {
