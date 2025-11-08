@@ -1,11 +1,12 @@
 // frontend/src/store/screenerStore.ts
 
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import apiClient from '../api/client';
-import type { ScreenerPair, SortField, SortOrder } from '../types/screener.types';
+import type { ScreenerPair, SortField, SortOrder, ScreenerSettings, PairAlert } from '../types/screener.types';
 
 interface ScreenerStore {
-  // Состояние
+  // Состояние данных
   pairs: ScreenerPair[];
   selectedPairs: string[];
   sortField: SortField;
@@ -13,244 +14,349 @@ interface ScreenerStore {
   isLoading: boolean;
   error: string | null;
 
+  // Настройки скринера
+  settings: ScreenerSettings;
+
+  // Алерты
+  alerts: Map<string, PairAlert>;
+
   // Действия
   fetchPairs: () => Promise<void>;
   updatePairs: (pairs: ScreenerPair[]) => void;
   togglePairSelection: (symbol: string) => Promise<void>;
   setSorting: (field: SortField, order: SortOrder) => void;
   getSortedPairs: () => ScreenerPair[];
+
+  // Настройки
+  updateSettings: (settings: Partial<ScreenerSettings>) => void;
+
+  // Алерты
+  checkAlerts: () => void;
+  dismissAlert: (symbol: string) => void;
+  getAlertedPairs: () => ScreenerPair[];
 }
 
 /**
  * Store для управления скринером торговых пар.
+ * ОБНОВЛЕНО: Добавлены настройки, алерты, оптимизация.
  */
-export const useScreenerStore = create<ScreenerStore>((set, get) => ({
-  // Начальное состояние
-  pairs: [],
-  selectedPairs: [],
-  sortField: 'volume',
-  sortOrder: 'desc',
-  isLoading: false,
-  error: null,
+export const useScreenerStore = create<ScreenerStore>()(
+  persist(
+    (set, get) => ({
+      // Начальное состояние
+      pairs: [],
+      selectedPairs: [],
+      sortField: 'volume',
+      sortOrder: 'desc',
+      isLoading: false,
+      error: null,
 
-  /**
-   * Загрузка списка пар из API.
-   */
-  fetchPairs: async () => {
-    console.log('[ScreenerStore] Starting fetchPairs...');
-    console.log('[ScreenerStore] Current state before fetch:', {
-      pairsCount: get().pairs.length,
-      isLoading: get().isLoading
-    });
+      // Настройки по умолчанию
+      settings: {
+        minVolume: 4_000_000,      // 4M USDT
+        topN: 100,                  // Топ 100 пар
+        refreshInterval: 5,         // 5 секунд
+        alertThreshold: 5,          // 5% изменение
+      },
 
-    set({ isLoading: true, error: null });
+      // Алерты (используем Map для быстрого доступа)
+      alerts: new Map<string, PairAlert>(),
 
-    try {
-      console.log('[ScreenerStore] Making API request to /screener/pairs');
-      const response = await apiClient.get('/screener/pairs');
+      /**
+       * Загрузка списка пар из API.
+       */
+      fetchPairs: async () => {
+        const currentSettings = get().settings;
 
-      console.log('[ScreenerStore] Raw response:', response);
-      console.log('[ScreenerStore] Response status:', response.status);
-      console.log('[ScreenerStore] Response data type:', typeof response.data);
-      console.log('[ScreenerStore] Response data keys:', Object.keys(response.data || {}));
+        console.log('[ScreenerStore] Starting fetchPairs with settings:', currentSettings);
+        set({ isLoading: true, error: null });
 
-      // ИСПРАВЛЕНО: Проверяем структуру ответа без throw
-      if (!response.data) {
-        console.error('[ScreenerStore] ❌ Response data is undefined');
+        try {
+          const response = await apiClient.get('/screener/pairs', {
+            params: {
+              min_volume: currentSettings.minVolume,
+              sort_by: 'volume',
+              sort_order: 'desc',
+            }
+          });
+
+          if (!response.data?.pairs || !Array.isArray(response.data.pairs)) {
+            throw new Error('Неверная структура ответа');
+          }
+
+          let pairs = response.data.pairs;
+
+          // Применяем лимит топ N
+          if (currentSettings.topN > 0 && pairs.length > currentSettings.topN) {
+            pairs = pairs.slice(0, currentSettings.topN);
+          }
+
+          const selectedPairs = pairs
+            .filter((p: ScreenerPair) => p.is_selected)
+            .map((p: ScreenerPair) => p.symbol);
+
+          set({
+            pairs,
+            selectedPairs,
+            isLoading: false,
+            error: null
+          });
+
+          // Проверяем алерты после загрузки
+          get().checkAlerts();
+
+          console.log('[ScreenerStore] ✅ Loaded', pairs.length, 'pairs');
+        } catch (error) {
+          console.error('[ScreenerStore] ❌ Failed to fetch pairs:', error);
+
+          let errorMessage = 'Неизвестная ошибка';
+          if (error instanceof Error) {
+            errorMessage = error.message;
+          }
+
+          set({
+            isLoading: false,
+            error: errorMessage
+          });
+        }
+      },
+
+      /**
+       * Обновление списка пар (из WebSocket).
+       */
+      updatePairs: (pairs: ScreenerPair[]) => {
+        const currentSettings = get().settings;
+
+        // Применяем фильтрацию и лимит
+        let filteredPairs = pairs.filter(p => p.volume_24h >= currentSettings.minVolume);
+
+        // Сортируем по объему для топ N
+        filteredPairs.sort((a, b) => b.volume_24h - a.volume_24h);
+
+        if (currentSettings.topN > 0 && filteredPairs.length > currentSettings.topN) {
+          filteredPairs = filteredPairs.slice(0, currentSettings.topN);
+        }
+
         set({
-          isLoading: false,
-          error: 'Пустой ответ от сервера'
+          pairs: filteredPairs,
+          selectedPairs: filteredPairs.filter(p => p.is_selected).map(p => p.symbol),
         });
-        return;
-      }
 
-      if (!response.data.pairs) {
-        console.error('[ScreenerStore] ❌ Response.data.pairs is undefined!', response.data);
-        set({
-          isLoading: false,
-          error: 'Неверная структура ответа (отсутствует поле pairs)'
-        });
-        return;
-      }
+        // Проверяем алерты
+        get().checkAlerts();
+      },
 
-      if (!Array.isArray(response.data.pairs)) {
-        console.error('[ScreenerStore] ❌ Response.data.pairs is not an array!', typeof response.data.pairs);
-        set({
-          isLoading: false,
-          error: 'Неверный формат данных (pairs должен быть массивом)'
-        });
-        return;
-      }
+      /**
+       * Переключение выбора пары для графиков.
+       */
+      togglePairSelection: async (symbol: string) => {
+        try {
+          await apiClient.post(`/screener/pair/${symbol}/toggle`);
 
-      const pairs = response.data.pairs;
-      console.log('[ScreenerStore] Extracted pairs:', {
-        count: pairs.length,
-        isArray: Array.isArray(pairs),
-        sample: pairs.slice(0, 2)
-      });
+          // Оптимистичное обновление
+          set(state => {
+            const pairs = state.pairs.map(p =>
+              p.symbol === symbol
+                ? { ...p, is_selected: !p.is_selected }
+                : p
+            );
 
-      const selectedPairs = pairs
-        .filter((p: ScreenerPair) => p.is_selected)
-        .map((p: ScreenerPair) => p.symbol);
+            return {
+              pairs,
+              selectedPairs: pairs.filter(p => p.is_selected).map(p => p.symbol),
+            };
+          });
+        } catch (error) {
+          console.error(`[ScreenerStore] Failed to toggle ${symbol}:`, error);
+        }
+      },
 
-      console.log('[ScreenerStore] Setting new state:', {
-        pairsCount: pairs.length,
-        selectedCount: selectedPairs.length
-      });
+      /**
+       * Установка параметров сортировки.
+       */
+      setSorting: (field: SortField, order: SortOrder) => {
+        set({ sortField: field, sortOrder: order });
+      },
 
-      set({
-        pairs,
-        selectedPairs,
-        isLoading: false,
-        error: null
-      });
+      /**
+       * Получение отсортированного списка пар.
+       */
+      getSortedPairs: () => {
+        const state = get();
+        const { pairs, sortField, sortOrder } = state;
 
-      // Проверяем, что state действительно обновился
-      const newState = get();
-      console.log('[ScreenerStore] State after update:', {
-        pairsCount: newState.pairs.length,
-        isLoading: newState.isLoading,
-        error: newState.error
-      });
+        if (pairs.length === 0) {
+          return [];
+        }
 
-      console.log('[ScreenerStore] ✅ State updated successfully');
-    } catch (error) {
-      // ИСПРАВЛЕНО: Правильная типизация error
-      console.error('[ScreenerStore] ❌ Failed to fetch pairs:', error);
+        const sorted = [...pairs].sort((a, b) => {
+          let aValue: number | string | null;
+          let bValue: number | string | null;
 
-      let errorMessage = 'Неизвестная ошибка';
+          // Маппинг полей
+          switch (sortField) {
+            case 'symbol':
+              aValue = a.symbol;
+              bValue = b.symbol;
+              break;
+            case 'price':
+              aValue = a.last_price;
+              bValue = b.last_price;
+              break;
+            case 'volume':
+              aValue = a.volume_24h;
+              bValue = b.volume_24h;
+              break;
+            case 'change_24h':
+              aValue = a.price_change_24h_percent;
+              bValue = b.price_change_24h_percent;
+              break;
+            case 'change_1m':
+              aValue = a.price_change_1m;
+              bValue = b.price_change_1m;
+              break;
+            case 'change_2m':
+              aValue = a.price_change_2m;
+              bValue = b.price_change_2m;
+              break;
+            case 'change_5m':
+              aValue = a.price_change_5m;
+              bValue = b.price_change_5m;
+              break;
+            case 'change_15m':
+              aValue = a.price_change_15m;
+              bValue = b.price_change_15m;
+              break;
+            case 'change_30m':
+              aValue = a.price_change_30m;
+              bValue = b.price_change_30m;
+              break;
+            case 'change_1h':
+              aValue = a.price_change_1h;
+              bValue = b.price_change_1h;
+              break;
+            case 'change_4h':
+              aValue = a.price_change_4h;
+              bValue = b.price_change_4h;
+              break;
+            case 'change_8h':
+              aValue = a.price_change_8h;
+              bValue = b.price_change_8h;
+              break;
+            case 'change_12h':
+              aValue = a.price_change_12h;
+              bValue = b.price_change_12h;
+              break;
+            case 'change_24h_interval':
+              aValue = a.price_change_24h;
+              bValue = b.price_change_24h;
+              break;
+            default:
+              return 0;
+          }
 
-      if (error instanceof Error) {
-        errorMessage = error.message;
-        console.error('[ScreenerStore] Error message:', error.message);
-        console.error('[ScreenerStore] Error stack:', error.stack);
-      }
+          // Обработка null значений (null всегда в конце)
+          if (aValue === null && bValue === null) return 0;
+          if (aValue === null) return sortOrder === 'asc' ? 1 : -1;
+          if (bValue === null) return sortOrder === 'asc' ? -1 : 1;
 
-      // Проверяем, есть ли response в ошибке (axios error)
-      if (typeof error === 'object' && error !== null && 'response' in error) {
-        const axiosError = error as { response?: { data?: { detail?: string }; status?: number } };
-        console.error('[ScreenerStore] Axios error details:', {
-          status: axiosError.response?.status,
-          detail: axiosError.response?.data?.detail
-        });
-        errorMessage = axiosError.response?.data?.detail || errorMessage;
-      }
+          // Сортировка строк
+          if (typeof aValue === 'string' && typeof bValue === 'string') {
+            return sortOrder === 'asc'
+              ? aValue.localeCompare(bValue)
+              : bValue.localeCompare(aValue);
+          }
 
-      set({
-        isLoading: false,
-        error: errorMessage
-      });
-    }
-  },
+          // Сортировка чисел
+          if (typeof aValue === 'number' && typeof bValue === 'number') {
+            return sortOrder === 'asc' ? aValue - bValue : bValue - aValue;
+          }
 
-  /**
-   * Обновление списка пар (из WebSocket).
-   */
-  updatePairs: (pairs: ScreenerPair[]) => {
-    console.log('[ScreenerStore] Updating pairs from WebSocket:', pairs.length);
-    set({
-      pairs,
-      selectedPairs: pairs.filter(p => p.is_selected).map(p => p.symbol),
-    });
-  },
-
-  /**
-   * Переключение выбора пары для графиков.
-   */
-  togglePairSelection: async (symbol: string) => {
-    console.log('[ScreenerStore] Toggling selection for:', symbol);
-
-    try {
-      await apiClient.post(`/screener/pair/${symbol}/toggle`);
-
-      // Оптимистичное обновление
-      set(state => {
-        const pairs = state.pairs.map(p =>
-          p.symbol === symbol
-            ? { ...p, is_selected: !p.is_selected }
-            : p
-        );
-
-        return {
-          pairs,
-          selectedPairs: pairs.filter(p => p.is_selected).map(p => p.symbol),
-        };
-      });
-
-      console.log('[ScreenerStore] Toggle successful');
-    } catch (error) {
-      console.error(`[ScreenerStore] Failed to toggle ${symbol}:`, error);
-
-      if (error instanceof Error) {
-        console.error('[ScreenerStore] Toggle error:', error.message);
-      }
-    }
-  },
-
-  /**
-   * Установка параметров сортировки.
-   */
-  setSorting: (field: SortField, order: SortOrder) => {
-    console.log('[ScreenerStore] Setting sort:', { field, order });
-    set({ sortField: field, sortOrder: order });
-  },
-
-  /**
-   * Получение отсортированного списка пар.
-   */
-  getSortedPairs: () => {
-    const state = get();
-    const { pairs, sortField, sortOrder } = state;
-
-    if (pairs.length === 0) {
-      console.log('[ScreenerStore] No pairs to sort');
-      return [];
-    }
-
-    const sorted = [...pairs].sort((a, b) => {
-      let aValue: number | string;
-      let bValue: number | string;
-
-      switch (sortField) {
-        case 'symbol':
-          aValue = a.symbol;
-          bValue = b.symbol;
-          break;
-        case 'price':
-          aValue = a.last_price;
-          bValue = b.last_price;
-          break;
-        case 'change_24h':
-          aValue = a.price_change_24h_percent;
-          bValue = b.price_change_24h_percent;
-          break;
-        case 'volume':
-          aValue = a.volume_24h;
-          bValue = b.volume_24h;
-          break;
-        default:
           return 0;
-      }
+        });
 
-      if (typeof aValue === 'string' && typeof bValue === 'string') {
-        return sortOrder === 'asc'
-          ? aValue.localeCompare(bValue)
-          : bValue.localeCompare(aValue);
-      }
+        return sorted;
+      },
 
-      if (typeof aValue === 'number' && typeof bValue === 'number') {
-        return sortOrder === 'asc' ? aValue - bValue : bValue - aValue;
-      }
+      /**
+       * Обновление настроек.
+       */
+      updateSettings: (newSettings: Partial<ScreenerSettings>) => {
+        set(state => ({
+          settings: { ...state.settings, ...newSettings }
+        }));
+        // Перезагружаем данные с новыми настройками
+        get().fetchPairs();
+      },
 
-      return 0;
-    });
+      /**
+       * Проверка алертов для всех пар.
+       */
+      checkAlerts: () => {
+        const { pairs, settings, alerts } = get();
+        const threshold = settings.alertThreshold;
 
-    console.log('[ScreenerStore] Sorted pairs:', {
-      count: sorted.length,
-      sortField,
-      sortOrder
-    });
+        const newAlerts = new Map<string, PairAlert>(alerts);
 
-    return sorted;
-  },
-}));
+        pairs.forEach(pair => {
+          // Проверяем все интервалы
+          const intervals = [
+            { field: 'change_1m', value: pair.price_change_1m },
+            { field: 'change_2m', value: pair.price_change_2m },
+            { field: 'change_5m', value: pair.price_change_5m },
+            { field: 'change_15m', value: pair.price_change_15m },
+            { field: 'change_30m', value: pair.price_change_30m },
+            { field: 'change_1h', value: pair.price_change_1h },
+            { field: 'change_4h', value: pair.price_change_4h },
+            { field: 'change_8h', value: pair.price_change_8h },
+            { field: 'change_12h', value: pair.price_change_12h },
+            { field: 'change_24h', value: pair.price_change_24h },
+          ];
+
+          for (const interval of intervals) {
+            if (interval.value !== null && Math.abs(interval.value) >= threshold) {
+              // Создаем/обновляем алерт
+              if (!newAlerts.has(pair.symbol)) {
+                newAlerts.set(pair.symbol, {
+                  symbol: pair.symbol,
+                  timestamp: Date.now(),
+                  field: interval.field,
+                  value: interval.value,
+                  threshold,
+                });
+              }
+              break; // Один алерт на пару
+            }
+          }
+        });
+
+        set({ alerts: newAlerts });
+      },
+
+      /**
+       * Отклонить алерт для пары.
+       */
+      dismissAlert: (symbol: string) => {
+        set(state => {
+          const newAlerts = new Map(state.alerts);
+          newAlerts.delete(symbol);
+          return { alerts: newAlerts };
+        });
+      },
+
+      /**
+       * Получить пары с активными алертами.
+       */
+      getAlertedPairs: () => {
+        const { pairs, alerts } = get();
+        const alertedSymbols = new Set(alerts.keys());
+
+        return pairs.filter(pair => alertedSymbols.has(pair.symbol));
+      },
+    }),
+    {
+      name: 'screener-settings', // Сохраняем только настройки
+      partialize: (state) => ({ settings: state.settings }), // Храним только настройки
+    }
+  )
+);

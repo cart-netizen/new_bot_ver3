@@ -181,7 +181,7 @@ class ScreenerManager:
       logger.error(f"Traceback:\n{traceback.format_exc()}")
 
   async def _cleanup_loop(self):
-    """Цикл очистки неактивных пар."""
+    """Цикл очистки неактивных пар и старой истории."""
     logger.info("Запуск cleanup loop")
 
     while self.is_running:
@@ -197,7 +197,7 @@ class ScreenerManager:
           if (current_time - pair.last_update) > ttl_ms
         ]
 
-        # Удаляем
+        # Удаляем неактивные пары
         for symbol in inactive_symbols:
           del self.pairs[symbol]
           logger.debug(f"Удалена неактивная пара: {symbol}")
@@ -207,6 +207,12 @@ class ScreenerManager:
             f"Очищено неактивных пар: {len(inactive_symbols)}, "
             f"осталось: {len(self.pairs)}"
           )
+
+        # Очищаем старую историю цен для всех активных пар
+        for pair in self.pairs.values():
+          pair.cleanup_old_history()
+
+        logger.debug(f"Очищена старая история для {len(self.pairs)} пар")
 
       except asyncio.CancelledError:
         break
