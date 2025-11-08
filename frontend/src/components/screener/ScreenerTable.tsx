@@ -17,7 +17,7 @@ interface ScreenerTableProps {
  * Форматирование объема (в миллионах).
  */
 const formatVolume = (value: number | null | undefined): string => {
-  if (value === null || value === undefined || isNaN(value)) {
+  if (typeof value !== 'number' || isNaN(value)) {
     return '-';
   }
   return `${(value / 1_000_000).toFixed(2)}M`;
@@ -27,7 +27,7 @@ const formatVolume = (value: number | null | undefined): string => {
  * Форматирование цены.
  */
 const formatPrice = (value: number | null | undefined): string => {
-  if (value === null || value === undefined || isNaN(value)) {
+  if (typeof value !== 'number' || isNaN(value)) {
     return '-';
   }
   return `$${value.toFixed(value >= 1 ? 2 : 4)}`;
@@ -37,7 +37,7 @@ const formatPrice = (value: number | null | undefined): string => {
  * Форматирование процентов с цветом.
  */
 const formatPercent = (value: number | null | undefined): {text: string, color: string} => {
-  if (value === null || value === undefined || isNaN(value)) {
+  if (typeof value !== 'number' || isNaN(value)) {
     return { text: '-', color: 'text-gray-500' };
   }
 
