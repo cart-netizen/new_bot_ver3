@@ -253,6 +253,7 @@ export const ScreenerTable = React.memo(({
   sortOrder,
   onSort,
   onDismissAlert,
+  onToggleSelection,
 }: ScreenerTableProps) => {
   // Безопасная обработка пустого массива
   if (!pairs || pairs.length === 0) {
