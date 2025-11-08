@@ -166,8 +166,6 @@ export const ScreenerTable = React.memo(({
   onSort,
   onDismissAlert,
 }: ScreenerTableProps) => {
-  console.log('[ScreenerTable] Rendering with', pairs.length, 'pairs');
-
   // Безопасная обработка пустого массива
   if (!pairs || pairs.length === 0) {
     return (
