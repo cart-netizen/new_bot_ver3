@@ -114,6 +114,12 @@ class BacktestConfig:
     use_market_trades: bool = True  # Использовать симулированные trades
     trades_per_volume_unit: float = 100.0  # Trades на единицу объема
 
+    # ML Model интеграция (НОВОЕ в Фазе 2)
+    use_ml_model: bool = False  # Использовать ML predictions
+    ml_server_url: str = "http://localhost:8001"  # URL ML model server
+    ml_model_name: Optional[str] = None  # Имя модели (если не default)
+    ml_model_version: Optional[str] = None  # Версия модели
+
     # Оптимизации
     warmup_period_bars: int = 100  # Количество свечей для прогрева индикаторов
     save_equity_interval_minutes: int = 60  # Сохранять equity каждые 60 минут

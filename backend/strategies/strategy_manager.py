@@ -257,14 +257,15 @@ class ExtendedStrategyManager:
       metrics: Optional[OrderBookMetrics] = None,
       sr_levels: Optional[List] = None,
       volume_profile: Optional[Dict] = None,
-      ml_prediction: Optional[Dict] = None
+      ml_prediction: Optional[Dict] = None,
+      market_trades: Optional[List] = None  # НОВОЕ: Market trades для анализа
   ) -> List[StrategyResult]:
     """
     Запустить ВСЕ стратегии для анализа.
 
     Роутинг данных:
     - Candle strategies: получают только candles
-    - OrderBook strategies: получают candles + orderbook + metrics
+    - OrderBook strategies: получают candles + orderbook + metrics + market_trades
     - Hybrid strategies: получают всё
 
     Args:
@@ -276,6 +277,7 @@ class ExtendedStrategyManager:
         sr_levels: S/R уровни (опционально)
         volume_profile: Volume profile (опционально)
         ml_prediction: ML предсказание (опционально)
+        market_trades: Список публичных сделок (для анализа потока ордеров)
 
     Returns:
         Список результатов от каждой стратегии
@@ -733,7 +735,8 @@ class ExtendedStrategyManager:
       metrics: Optional[OrderBookMetrics] = None,
       sr_levels: Optional[List] = None,
       volume_profile: Optional[Dict] = None,
-      ml_prediction: Optional[Dict] = None
+      ml_prediction: Optional[Dict] = None,
+      market_trades: Optional[List] = None  # НОВОЕ: Market trades
   ) -> Optional[ConsensusSignal]:
     """
     Полный анализ с генерацией consensus сигнала.
@@ -749,7 +752,8 @@ class ExtendedStrategyManager:
       metrics=metrics,
       sr_levels=sr_levels,
       volume_profile=volume_profile,
-      ml_prediction=ml_prediction
+      ml_prediction=ml_prediction,
+      market_trades=market_trades  # Передаем market_trades
     )
 
     # Шаг 2: Строим consensus

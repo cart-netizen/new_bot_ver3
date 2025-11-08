@@ -48,6 +48,10 @@ from backend.backtesting.core.orderbook_data_handler import OrderBookDataHandler
 from backend.backtesting.core.trade_data_handler import TradeDataHandler, TradeSimulationConfig
 from backend.models.market_data import MarketTrade
 
+# ML Engine интеграция (НОВОЕ в Фазе 2)
+from backend.ml_engine.features.feature_pipeline import FeaturePipeline, FeatureVector
+from backend.ml_engine.inference.model_client import ModelClient
+
 logger = get_logger(__name__)
 
 
@@ -185,6 +189,29 @@ class BacktestingEngine:
             logger.info("✅ Market Trades симулятор включен")
         else:
             self.trade_handler = None
+
+        # ML Model интеграция (НОВОЕ в Фазе 2)
+        self.feature_pipeline: Optional[FeaturePipeline] = None
+        self.ml_client: Optional[ModelClient] = None
+
+        if config.use_ml_model:
+            # Инициализация feature pipeline
+            self.feature_pipeline = FeaturePipeline(
+                symbol=config.symbol,
+                normalize=True,  # Включить нормализацию признаков
+                cache_enabled=False,  # Не использовать Redis cache в бэктесте
+                trade_manager=None  # Не нужен в бэктесте
+            )
+
+            # Инициализация ML client (будет подключаться к серверу при первом predict)
+            self.ml_client = ModelClient(server_url=config.ml_server_url)
+
+            logger.info(
+                f"✅ ML Model интеграция включена: server={config.ml_server_url}, "
+                f"model={config.ml_model_name or 'default'}"
+            )
+        else:
+            logger.info("ℹ️ ML Model интеграция отключена")
 
         # Strategy Manager
         if strategy_manager is None:
@@ -406,6 +433,12 @@ class BacktestingEngine:
                 error_message=str(e)
             )
 
+        finally:
+            # Cleanup ML client connection
+            if self.ml_client:
+                await self.ml_client.cleanup()
+                logger.info("ML client connection closed")
+
     async def _process_candle(self, candle: Candle):
         """
         Обработать одну свечу (один тик времени).
@@ -485,6 +518,13 @@ class BacktestingEngine:
         if self.current_orderbook:
             orderbook_metrics = self._calculate_orderbook_metrics(self.current_orderbook)
 
+        # Calculate ML prediction if model available (НОВОЕ в Фазе 2)
+        ml_prediction = None
+        if self.ml_client and self.feature_pipeline:
+            ml_prediction = await self._get_ml_prediction(
+                candles, self.current_orderbook, orderbook_metrics
+            )
+
         # Run strategy manager
         consensus = await asyncio.to_thread(
             self.strategy_manager.analyze_with_consensus,
@@ -495,13 +535,74 @@ class BacktestingEngine:
             metrics=orderbook_metrics,
             sr_levels=None,
             volume_profile=None,
-            ml_prediction=None
+            ml_prediction=ml_prediction,  # Передаем ML prediction
+            market_trades=self.current_market_trades  # Передаем market trades
         )
 
         if consensus:
             return consensus.final_signal
 
         return None
+
+    async def _get_ml_prediction(
+        self,
+        candles: List[Candle],
+        orderbook: Optional[OrderBookSnapshot],
+        orderbook_metrics: Optional[OrderBookMetrics]
+    ) -> Optional[Dict]:
+        """
+        Получить ML prediction из модели (НОВОЕ в Фазе 2).
+
+        Args:
+            candles: История свечей
+            orderbook: Текущий orderbook snapshot
+            orderbook_metrics: Метрики orderbook
+
+        Returns:
+            Dict с prediction или None при ошибке/отсутствии модели
+        """
+        if not self.feature_pipeline or not self.ml_client:
+            return None
+
+        if not orderbook:
+            # ML модель требует orderbook данные
+            logger.debug("ML prediction пропущен: orderbook отсутствует")
+            return None
+
+        try:
+            # 1. Извлечь признаки через FeaturePipeline
+            prev_orderbook = None
+            prev_candle = candles[-2] if len(candles) > 1 else None
+
+            feature_vector: FeatureVector = await self.feature_pipeline.extract_features(
+                orderbook_snapshot=orderbook,
+                candles=candles,
+                prev_orderbook=prev_orderbook,
+                prev_candle=prev_candle
+            )
+
+            # 2. Преобразовать в numpy array
+            features = feature_vector.to_array()
+
+            # 3. Получить prediction от ML сервера
+            prediction = await self.ml_client.predict(
+                symbol=self.config.symbol,
+                features=features,
+                model_name=self.config.ml_model_name,
+                model_version=self.config.ml_model_version
+            )
+
+            if prediction:
+                logger.debug(
+                    f"ML prediction получен: direction={prediction.get('direction')}, "
+                    f"confidence={prediction.get('confidence', 0):.3f}"
+                )
+
+            return prediction
+
+        except Exception as e:
+            logger.warning(f"Ошибка получения ML prediction: {e}")
+            return None
 
     def _calculate_orderbook_metrics(self, orderbook: OrderBookSnapshot) -> OrderBookMetrics:
         """
