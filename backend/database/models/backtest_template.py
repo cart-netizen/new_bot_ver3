@@ -5,7 +5,10 @@ from sqlalchemy.dialects.postgresql import UUID
 import uuid
 from datetime import datetime
 
-from backend.database.database import Base
+from backend.database.connection import Base
+
+
+# from backend.database.database import Base
 
 
 class BacktestTemplate(Base):

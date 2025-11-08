@@ -9,7 +9,7 @@ import {
   AlertTriangle,
   BarChart3,
   DollarSign,
-  Percent,
+
   Award,
   Clock,
   Layers,

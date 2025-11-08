@@ -6,14 +6,14 @@ import {
   Save,
   Folder,
   Trash2,
-  Edit,
+
   Copy,
   Tag,
   Clock,
   TrendingUp,
   Search,
   X,
-  Plus
+
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card } from '../ui/Card';
