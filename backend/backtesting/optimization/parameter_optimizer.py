@@ -24,7 +24,7 @@ import asyncio
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
-from typing import Dict, List, Any, Optional, Callable
+from typing import Dict, List, Any, Optional, Callable, Tuple
 from dataclasses import dataclass, field
 import itertools
 import random
@@ -258,7 +258,7 @@ class ParameterOptimizer:
         all_combinations: List[tuple],
         param_names: List[str],
         metric: str
-    ) -> tuple[List[OptimizationResult], int]:
+    ) -> Tuple[List[OptimizationResult], int]:
         """Запуск бэктестов последовательно."""
         results = []
         failed_count = 0
@@ -301,7 +301,7 @@ class ParameterOptimizer:
         all_combinations: List[tuple],
         param_names: List[str],
         metric: str
-    ) -> tuple[List[OptimizationResult], int]:
+    ) -> Tuple[List[OptimizationResult], int]:
         """Запуск бэктестов параллельно."""
         results = []
         failed_count = 0
