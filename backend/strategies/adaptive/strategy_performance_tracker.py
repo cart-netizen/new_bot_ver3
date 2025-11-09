@@ -175,6 +175,10 @@ class StrategyPerformanceTracker:
         # Статистика
         self.total_signals_tracked = 0
         self.total_outcomes_recorded = 0
+
+        # FIX: Counter for periodic cleanup to prevent memory leak
+        self._cleanup_counter = 0
+        self._cleanup_interval = 100  # Cleanup every 100 outcomes
         
         logger.info(
             f"Инициализирован StrategyPerformanceTracker: "
@@ -277,7 +281,13 @@ class StrategyPerformanceTracker:
         del self.open_positions[signal_id]
         
         self.total_outcomes_recorded += 1
-        
+
+        # FIX: Periodic cleanup to prevent memory leak
+        self._cleanup_counter += 1
+        if self._cleanup_counter >= self._cleanup_interval:
+            self._cleanup_old_outcomes()
+            self._cleanup_counter = 0
+
         # Инвалидируем кэш метрик
         self._invalidate_cache(outcome.strategy, outcome.symbol)
         
@@ -626,6 +636,46 @@ class StrategyPerformanceTracker:
         )
         
         return min(max(performance_score, 0.0), 1.0)
+
+    def _cleanup_old_outcomes(self):
+        """
+        Clean up outcomes older than 60 days to prevent memory leak.
+        FIX: Memory leak prevention - remove stale data.
+        """
+        # Keep data for 60 days (2x long_term window for safety)
+        cutoff_days = self.config.long_term_days * 2
+        cutoff_time = datetime.now() - timedelta(days=cutoff_days)
+        cutoff_timestamp = int(cutoff_time.timestamp() * 1000)
+
+        total_removed = 0
+
+        # Clean outcomes for each strategy/symbol
+        for strategy in list(self.outcomes.keys()):
+            for symbol in list(self.outcomes[strategy].keys()):
+                original_count = len(self.outcomes[strategy][symbol])
+
+                # Keep only recent outcomes
+                self.outcomes[strategy][symbol] = [
+                    outcome for outcome in self.outcomes[strategy][symbol]
+                    if outcome.entry_timestamp >= cutoff_timestamp
+                ]
+
+                removed = original_count - len(self.outcomes[strategy][symbol])
+                total_removed += removed
+
+                # Remove empty entries
+                if not self.outcomes[strategy][symbol]:
+                    del self.outcomes[strategy][symbol]
+
+            # Remove empty strategy entries
+            if not self.outcomes[strategy]:
+                del self.outcomes[strategy]
+
+        if total_removed > 0:
+            logger.info(
+                f"🧹 Очистка старых outcomes: удалено {total_removed} записей "
+                f"(старше {cutoff_days} дней)"
+            )
 
     def _get_cutoff_timestamp(self, time_window: str) -> int:
         """Получить timestamp для фильтрации по временному окну."""

@@ -253,8 +253,16 @@ class BacktestingEngine:
         self.current_market_trades: List[MarketTrade] = []  # НОВОЕ
 
         # Исторические данные (НОВОЕ)
+        # FIX: Use indexed dictionaries for O(1) lookup and memory-efficient cleanup
         self.historical_orderbooks: List[OrderBookSnapshot] = []
         self.historical_trades: List[MarketTrade] = []
+
+        # Indexed structures for fast access
+        self.orderbook_by_timestamp: Dict[int, OrderBookSnapshot] = {}
+        self.trades_by_candle: Dict[int, List[MarketTrade]] = {}  # candle_timestamp -> trades
+
+        # Track processed timestamps for cleanup
+        self.processed_timestamps: set = set()
 
         # Progress tracking
         self.total_candles = 0
@@ -353,6 +361,10 @@ class BacktestingEngine:
                     )
                     logger.info(f"✅ Сгенерировано {len(self.historical_orderbooks)} orderbook snapshots")
 
+                # FIX: Index orderbooks by timestamp for O(1) access
+                logger.info("🔍 Индексирование orderbooks...")
+                self._index_orderbooks()
+
                     # Сохраняем в кэш для следующих запусков
                     if self.data_cache:
                         self.data_cache.save_orderbooks(
@@ -386,6 +398,10 @@ class BacktestingEngine:
                         candles, self.config.symbol
                     )
                     logger.info(f"✅ Сгенерировано {len(self.historical_trades)} market trades")
+
+                # FIX: Index trades by candle timestamp for O(1) access
+                logger.info("🔍 Индексирование market trades...")
+                self._index_trades(candles)
 
                     # Сохраняем в кэш для следующих запусков
                     if self.data_cache:
@@ -530,23 +546,17 @@ class BacktestingEngine:
         self.current_price = candle.close
 
         # 2.1. Update current orderbook (НОВОЕ в Фазе 1)
-        if self.historical_orderbooks:
-            # Найти orderbook для текущей свечи
-            matching_orderbook = next(
-                (ob for ob in self.historical_orderbooks if ob.timestamp == candle.timestamp),
-                None
-            )
-            if matching_orderbook:
-                self.current_orderbook = matching_orderbook
+        # FIX: Use indexed dictionary for O(1) lookup instead of O(n) search
+        if self.orderbook_by_timestamp:
+            self.current_orderbook = self.orderbook_by_timestamp.get(candle.timestamp)
 
         # 2.2. Update current market trades (НОВОЕ в Фазе 1)
-        if self.historical_trades:
-            # Найти trades для текущей свечи (60 секунд окно)
-            candle_end_time = candle.timestamp + 60000  # +60 секунд
-            self.current_market_trades = [
-                t for t in self.historical_trades
-                if candle.timestamp <= t.timestamp < candle_end_time
-            ]
+        # FIX: Use pre-indexed trades instead of filtering entire list
+        if self.trades_by_candle:
+            self.current_market_trades = self.trades_by_candle.get(candle.timestamp, [])
+
+        # FIX: Cleanup old historical data to prevent memory leak
+        self._cleanup_old_historical_data(candle.timestamp)
 
         # 3. Process limit orders
         await self.exchange.process_tick(
@@ -994,6 +1004,99 @@ class BacktestingEngine:
         symbols = list(self.portfolio.positions.keys())
         for symbol in symbols:
             await self._close_position(symbol, reason)
+
+    def _index_orderbooks(self):
+        """
+        Index orderbooks by timestamp for O(1) lookup.
+        FIX: Memory leak prevention - create indexed access structure.
+        """
+        self.orderbook_by_timestamp = {
+            ob.timestamp: ob
+            for ob in self.historical_orderbooks
+        }
+        logger.info(f"✅ Индексировано {len(self.orderbook_by_timestamp)} orderbook snapshots")
+
+        # FIX: Clear the list to free memory - we only need the indexed dict
+        initial_count = len(self.historical_orderbooks)
+        self.historical_orderbooks.clear()
+        logger.info(f"🧹 Освобождено памяти от {initial_count} orderbook списков")
+
+    def _index_trades(self, candles: List):
+        """
+        Index trades by candle timestamp for O(1) lookup.
+        FIX: Memory leak prevention - group trades by candle.
+
+        Args:
+            candles: List of candles to group trades by
+        """
+        # Group trades by candle timestamp (60 second windows)
+        for candle in candles:
+            candle_start = candle.timestamp
+            candle_end = candle_start + 60000  # +60 seconds
+
+            # Find all trades in this candle's time window
+            candle_trades = [
+                t for t in self.historical_trades
+                if candle_start <= t.timestamp < candle_end
+            ]
+
+            self.trades_by_candle[candle_start] = candle_trades
+
+        logger.info(f"✅ Индексировано trades для {len(self.trades_by_candle)} свечей")
+
+        # FIX: Clear the list to free memory - we only need the indexed dict
+        initial_count = len(self.historical_trades)
+        self.historical_trades.clear()
+        logger.info(f"🧹 Освобождено памяти от {initial_count} trade списков")
+
+    def _cleanup_old_historical_data(self, current_timestamp: int):
+        """
+        Clean up historical data that's no longer needed.
+        FIX: Memory leak prevention - remove processed data.
+
+        Keeps data for current candle and a small window for safety.
+
+        Args:
+            current_timestamp: Current candle timestamp
+        """
+        # Track this timestamp as processed
+        self.processed_timestamps.add(current_timestamp)
+
+        # Keep last 10 candles worth of data (10 minutes safety buffer)
+        if len(self.processed_timestamps) < 10:
+            return
+
+        # Find timestamps to cleanup (older than 10 candles ago)
+        sorted_timestamps = sorted(self.processed_timestamps)
+        cleanup_threshold = sorted_timestamps[-10]  # 10th from end
+
+        # Cleanup orderbooks
+        timestamps_to_remove = [
+            ts for ts in self.orderbook_by_timestamp.keys()
+            if ts < cleanup_threshold
+        ]
+        for ts in timestamps_to_remove:
+            del self.orderbook_by_timestamp[ts]
+
+        # Cleanup trades
+        candle_timestamps_to_remove = [
+            ts for ts in self.trades_by_candle.keys()
+            if ts < cleanup_threshold
+        ]
+        for ts in candle_timestamps_to_remove:
+            del self.trades_by_candle[ts]
+
+        # Cleanup processed timestamps set
+        self.processed_timestamps = {
+            ts for ts in self.processed_timestamps
+            if ts >= cleanup_threshold
+        }
+
+        if timestamps_to_remove:
+            logger.debug(
+                f"🧹 Очистка старых данных: удалено {len(timestamps_to_remove)} orderbooks, "
+                f"{len(candle_timestamps_to_remove)} candle trades"
+            )
 
     def _downsample_equity_history(self):
         """
