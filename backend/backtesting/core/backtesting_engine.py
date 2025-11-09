@@ -91,6 +91,10 @@ class Portfolio:
     equity_history: List[EquityPoint] = field(default_factory=list)
     peak_equity: float = 0.0
 
+    # FIX: Memory leak prevention - limit equity history size
+    max_equity_points: int = 5000  # Maximum points before downsampling
+    downsample_to: int = 2500  # Downsample to this many points
+
     def __post_init__(self):
         if self.cash == 0.0:  # Если не задан вручную
             self.cash = self.initial_capital
@@ -991,6 +995,41 @@ class BacktestingEngine:
         for symbol in symbols:
             await self._close_position(symbol, reason)
 
+    def _downsample_equity_history(self):
+        """
+        Downsample equity history to prevent memory overflow.
+        Keeps every 2nd point when limit is reached.
+        """
+        history = self.portfolio.equity_history
+        if len(history) <= self.portfolio.max_equity_points:
+            return
+
+        # Keep every 2nd point to reduce to target size
+        logger.info(
+            f"📉 Downsampling equity history: {len(history)} -> "
+            f"{self.portfolio.downsample_to} points"
+        )
+
+        # Calculate step to achieve target size
+        step = len(history) // self.portfolio.downsample_to
+
+        # Keep evenly spaced points
+        downsampled = history[::step]
+
+        # Always keep the last point (most recent)
+        if history[-1] not in downsampled:
+            downsampled.append(history[-1])
+
+        # Update sequence numbers
+        for i, point in enumerate(downsampled):
+            point.sequence = i
+
+        self.portfolio.equity_history = downsampled[:self.portfolio.downsample_to]
+
+        logger.info(
+            f"✅ Equity history downsampled to {len(self.portfolio.equity_history)} points"
+        )
+
     def _record_equity_point(self):
         """Записать точку equity curve."""
         self.portfolio.update_peak_equity()
@@ -1009,6 +1048,9 @@ class BacktestingEngine:
         )
 
         self.portfolio.equity_history.append(point)
+
+        # FIX: Downsample if history is too large to prevent memory leak
+        self._downsample_equity_history()
 
     def _calculate_performance_metrics(self) -> PerformanceMetrics:
         """Расчет финальных метрик производительности с использованием AdvancedMetricsCalculator."""

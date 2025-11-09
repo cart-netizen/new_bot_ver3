@@ -18,6 +18,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from typing import Dict, Optional, Tuple, Callable, List
+from collections import deque
 from pathlib import Path
 import time
 from dataclasses import dataclass, field
@@ -337,8 +338,8 @@ class ModelTrainer:
     self.checkpoint_dir = Path(config.checkpoint_dir)
     self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-    # Training history
-    self.history: List[TrainingMetrics] = []
+    # Training history (FIX: Use deque to limit memory usage - keep last 200 epochs)
+    self.history: deque = deque(maxlen=200)
     self.best_val_loss = np.inf
 
     logger.info(

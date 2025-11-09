@@ -436,6 +436,9 @@ class LayeringDetector:
     self.pending_validations: List[PendingValidationPattern] = []
     self.validation_tasks: List[asyncio.Task] = []  # Track running validation tasks
 
+    # FIX: Counter for periodic cleanup to prevent memory leak
+    self._update_count = 0
+
     logger.info(
       f"✅ Professional LayeringDetector initialized: "
       f"min_orders={config.min_orders_in_layer}, "
@@ -465,6 +468,11 @@ class LayeringDetector:
     """
     symbol = snapshot.symbol
     timestamp = snapshot.timestamp
+
+    # FIX: Periodic cleanup of completed validation tasks (every 100 updates)
+    self._update_count += 1
+    if self._update_count % 100 == 0:
+      self._cleanup_completed_tasks()
 
     # Initialize trackers if needed
     if symbol not in self.trackers:
@@ -1714,6 +1722,25 @@ class LayeringDetector:
       # Remove from pending list
       if pending in self.pending_validations:
         self.pending_validations.remove(pending)
+
+  def _cleanup_completed_tasks(self):
+    """
+    Clean up completed validation tasks to prevent memory leak.
+    Should be called periodically.
+    """
+    if not self.validation_tasks:
+      return
+
+    # Filter out completed tasks
+    initial_count = len(self.validation_tasks)
+    self.validation_tasks = [task for task in self.validation_tasks if not task.done()]
+    removed_count = initial_count - len(self.validation_tasks)
+
+    if removed_count > 0:
+      logger.debug(
+        f"🧹 Cleaned up {removed_count} completed validation tasks "
+        f"({len(self.validation_tasks)} active)"
+      )
 
 
 # Example usage and testing

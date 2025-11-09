@@ -8,6 +8,7 @@ OrderBook Feature Extractor для извлечения 50+ признаков �
 
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
+from collections import deque
 import numpy as np
 from numba import jit
 
@@ -170,8 +171,9 @@ class OrderBookFeatureExtractor:
     self.trade_manager = trade_manager  # Для реальных trade arrival rates
 
     # История для временных признаков
-    self.snapshot_history: List[OrderBookSnapshot] = []
-    self.max_history_size = 100  # Последние 100 снимков
+    # FIX: Use deque for O(1) append/pop operations and automatic size limiting
+    self.snapshot_history: deque = deque(maxlen=100)  # Последние 100 снимков
+    self.max_history_size = 100  # Для обратной совместимости
 
     # Level TTL tracking для spoofing detection
     # Отслеживаем время жизни каждого ценового уровня
@@ -179,8 +181,9 @@ class OrderBookFeatureExtractor:
       "bid": {},  # price -> {first_seen, last_seen, max_volume}
       "ask": {}
     }
-    self.level_ttl_history: List[float] = []  # История TTL (секунды)
-    self.max_ttl_history = 200  # Последние 200 TTL значений
+    # FIX: Use deque with maxlen to prevent memory leak
+    self.level_ttl_history: deque = deque(maxlen=200)  # История последних 200 TTL (секунды)
+    self.max_ttl_history = 200  # Для обратной совместимости
 
     logger.info(f"OrderBookFeatureExtractor инициализирован для {symbol}")
 
@@ -202,10 +205,8 @@ class OrderBookFeatureExtractor:
     logger.debug(f"{self.symbol} | Извлечение признаков из стакана")
 
     try:
-      # Добавляем в историю
+      # Добавляем в историю (deque автоматически удалит старые если превышен maxlen)
       self.snapshot_history.append(snapshot)
-      if len(self.snapshot_history) > self.max_history_size:
-        self.snapshot_history.pop(0)
 
       # Обновляем отслеживание уровней для TTL
       self._update_level_tracking(snapshot)

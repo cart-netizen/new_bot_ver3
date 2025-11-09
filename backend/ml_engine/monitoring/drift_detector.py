@@ -94,8 +94,8 @@ class DriftDetector:
     self.current_predictions = deque(maxlen=window_size)
     self.current_labels = deque(maxlen=window_size)
 
-    # История drift метрик
-    self.drift_history: List[DriftMetrics] = []
+    # История drift метрик (FIX: Use deque to limit memory - keep last 1000 checks)
+    self.drift_history: deque = deque(maxlen=1000)
     self.last_check_time: Optional[datetime] = None
 
     # Имена признаков
