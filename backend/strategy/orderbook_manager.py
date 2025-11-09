@@ -92,11 +92,12 @@ class OrderBookManager:
       if ts and ts != 0:
         self.last_update_timestamp = ts
       else:
-        self.last_update_timestamp = get_timestamp_ms()
-        if ts == 0:
-          logger.warning(
-            f"{self.symbol} | Received timestamp=0 in snapshot, using current time"
-          )
+        current_time = get_timestamp_ms()
+        self.last_update_timestamp = current_time
+        logger.warning(
+          f"{self.symbol} | [OrderBook.apply_snapshot] Invalid timestamp received: ts={ts} (type={type(ts)}), "
+          f"using current time: {current_time}"
+        )
 
       self.snapshot_received = True  # ВАЖНО: Флаг что snapshot получен
       self.snapshot_count += 1
@@ -201,11 +202,12 @@ class OrderBookManager:
       if ts and ts != 0:
         self.last_update_timestamp = ts
       else:
-        self.last_update_timestamp = get_timestamp_ms()
-        if ts == 0:
-          logger.warning(
-            f"{self.symbol} | Received timestamp=0 in delta, using current time"
-          )
+        current_time = get_timestamp_ms()
+        self.last_update_timestamp = current_time
+        logger.warning(
+          f"{self.symbol} | [OrderBook.apply_delta] Invalid timestamp received: ts={ts} (type={type(ts)}), "
+          f"using current time: {current_time}"
+        )
 
       self.delta_count += 1
 
@@ -247,9 +249,16 @@ class OrderBookManager:
     if timestamp is None or timestamp == 0:
       timestamp = get_timestamp_ms()
       logger.warning(
-        f"{self.symbol} | Invalid timestamp detected in get_snapshot() "
-        f"(timestamp={self.last_update_timestamp}), using current time: {timestamp}"
+        f"{self.symbol} | [OrderBook.get_snapshot] Invalid timestamp detected: "
+        f"last_update_timestamp={self.last_update_timestamp} (type={type(self.last_update_timestamp)}), "
+        f"using current time: {timestamp}"
       )
+    else:
+      # DEBUG: Логируем валидный timestamp (каждый 100-й раз, чтобы не спамить)
+      if self.snapshot_count % 100 == 0:
+        logger.debug(
+          f"{self.symbol} | [OrderBook.get_snapshot] Using valid timestamp: {timestamp}"
+        )
 
     return OrderBookSnapshot(
       symbol=self.symbol,

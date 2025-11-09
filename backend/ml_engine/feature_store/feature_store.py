@@ -165,13 +165,39 @@ class FeatureStore:
 
             # Create partition by date
             if len(features) > 0:
-                first_timestamp = features[timestamp_column].iloc[0]
-                if isinstance(first_timestamp, (int, float)):
-                    # CRITICAL: Validate timestamp is not zero or invalid
+                # CRITICAL FIX: Check ALL timestamps, not just the first one
+                # If any timestamp is 0, we should use current date
+                timestamp_values = features[timestamp_column]
+                zero_count = (timestamp_values == 0).sum()
+                none_count = timestamp_values.isna().sum()
+
+                if zero_count > 0 or none_count > 0:
+                    logger.error(
+                        f"[FeatureStore] Found INVALID timestamps! "
+                        f"Zero timestamps: {zero_count}/{len(features)}, "
+                        f"None/NaN timestamps: {none_count}/{len(features)}. "
+                        f"First 10 timestamps: {timestamp_values.head(10).tolist()}. "
+                        f"Using current date as fallback."
+                    )
+                    date_str = datetime.now().strftime("%Y-%m-%d")
+                # If all timestamps are valid, process normally
+                elif isinstance(timestamp_values.iloc[0], (int, float)):
+                    first_timestamp = timestamp_values.iloc[0]
+
+                    # DEBUG: Детальное логирование timestamp
+                    logger.info(
+                        f"[FeatureStore] Processing timestamp: {first_timestamp}, "
+                        f"type={type(first_timestamp)}, "
+                        f"feature_group={feature_group}, "
+                        f"rows={len(features)}"
+                    )
+
+                    # CRITICAL: Validate timestamp is not zero or invalid (double-check)
                     if first_timestamp == 0 or pd.isna(first_timestamp):
                         logger.warning(
-                            f"Invalid timestamp detected (0 or NaN): using current date. "
-                            f"This may indicate a bug in data collection."
+                            f"[FeatureStore] Invalid timestamp detected (0 or NaN): using current date. "
+                            f"This may indicate a bug in data collection. "
+                            f"First 5 timestamps: {features[timestamp_column].head().tolist()}"
                         )
                         date_str = datetime.now().strftime("%Y-%m-%d")
                     # Check if timestamp is in milliseconds (>10 digits)
@@ -179,21 +205,32 @@ class FeatureStore:
                     elif first_timestamp > 1e10:  # milliseconds (13 digits)
                         timestamp_seconds = first_timestamp / 1000.0
                         date_str = datetime.fromtimestamp(timestamp_seconds).strftime("%Y-%m-%d")
+                        logger.info(
+                            f"[FeatureStore] Timestamp in milliseconds: {first_timestamp} -> {date_str}"
+                        )
                     else:  # already in seconds (10 digits)
                         # Additional validation: timestamp should be reasonable (after 2020)
                         if first_timestamp < 1577836800:  # 2020-01-01 in seconds
                             logger.warning(
-                                f"Suspicious timestamp detected: {first_timestamp} "
-                                f"(before 2020-01-01). Using current date."
+                                f"[FeatureStore] Suspicious timestamp detected: {first_timestamp} "
+                                f"(before 2020-01-01 or too small). Using current date. "
+                                f"First 5 timestamps: {features[timestamp_column].head().tolist()}"
                             )
                             date_str = datetime.now().strftime("%Y-%m-%d")
                         else:
                             timestamp_seconds = first_timestamp
                             date_str = datetime.fromtimestamp(timestamp_seconds).strftime("%Y-%m-%d")
+                            logger.info(
+                                f"[FeatureStore] Timestamp in seconds: {first_timestamp} -> {date_str}"
+                            )
                 else:
                     date_str = pd.to_datetime(first_timestamp).strftime("%Y-%m-%d")
+                    logger.info(
+                        f"[FeatureStore] Timestamp as datetime object -> {date_str}"
+                    )
             else:
                 date_str = datetime.now().strftime("%Y-%m-%d")
+                logger.warning("[FeatureStore] Empty features DataFrame, using current date")
 
             # Save as parquet
             partition_dir = self.offline_dir / feature_group / f"date={date_str}"
