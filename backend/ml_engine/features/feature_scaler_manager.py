@@ -397,11 +397,11 @@ class FeatureScalerManager:
             # 4. Prepare data (fast, in event loop)
             feature_arrays = np.vstack(self.feature_history)
 
-            # Split into channels (assume 110 features total: 50 + 25 + 35)
+            # Split into channels (112 features total: 50 + 25 + 37)
             # NOTE: Adjust indices based on actual feature counts
             orderbook_data = feature_arrays[:, :50]      # First 50 features
             candle_data = feature_arrays[:, 50:75]       # Next 25 features
-            indicator_data = feature_arrays[:, 75:]      # Remaining features
+            indicator_data = feature_arrays[:, 75:112]   # Remaining 37 features
 
             # Clean data
             orderbook_data = np.nan_to_num(orderbook_data, nan=0.0, posinf=0.0, neginf=0.0)

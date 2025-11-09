@@ -2,7 +2,7 @@
 ML Data Collector - система сбора данных для обучения ML моделей.
 
 Собирает:
-- Feature vectors (110 признаков)
+- Feature vectors (112 признаков)
 - Market state (orderbook snapshot, метрики)
 - Labels (future price movement, signals)
 
@@ -143,7 +143,7 @@ class MLDataCollector:
 
     Args:
         symbol: Торговая пара
-        feature_vector: Вектор признаков (110 признаков)
+        feature_vector: Вектор признаков (112 признаков)
         orderbook_snapshot: Снимок стакана
         market_metrics: Рыночные метрики
         executed_signal: Исполненный сигнал (если есть)
@@ -396,9 +396,9 @@ class MLDataCollector:
       from backend.ml_engine.feature_store.feature_schema import DEFAULT_SCHEMA
       feature_column_names = DEFAULT_SCHEMA.get_all_feature_columns()
 
-      if len(feature_column_names) != 110:
+      if len(feature_column_names) != 112:
         logger.error(
-          f"Feature schema mismatch: expected 110 columns, got {len(feature_column_names)}"
+          f"Feature schema mismatch: expected 112 columns, got {len(feature_column_names)}"
         )
         return
 
@@ -412,11 +412,11 @@ class MLDataCollector:
           'timestamp': meta_dict['timestamp'],
         }
 
-        # Распаковываем 110 признаков с ПРАВИЛЬНЫМИ НАЗВАНИЯМИ
-        # feature_arr имеет shape (110,)
-        if len(feature_arr) != 110:
+        # Распаковываем 112 признаков с ПРАВИЛЬНЫМИ НАЗВАНИЯМИ
+        # feature_arr имеет shape (112,)
+        if len(feature_arr) != 112:
           logger.warning(
-            f"{symbol} | Feature array length mismatch: expected 110, got {len(feature_arr)}"
+            f"{symbol} | Feature array length mismatch: expected 112, got {len(feature_arr)}"
           )
           continue
 

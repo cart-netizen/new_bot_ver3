@@ -1,10 +1,10 @@
 """
 Feature Store Schema - определяет структуру данных Feature Store
 
-Определяет 110 фич для модели HybridCNNLSTM:
+Определяет 112 фич для модели HybridCNNLSTM:
 - OrderBook features: 50
 - Candle features: 25
-- Indicator features: 35
+- Indicator features: 37
 """
 
 from typing import List, Set
@@ -52,9 +52,9 @@ class FeatureStoreSchema:
 
         # Validate total count
         total = len(self.orderbook_features) + len(self.candle_features) + len(self.indicator_features)
-        if total != 110:
+        if total != 112:
             logger.warning(
-                f"Feature count mismatch: expected 110, got {total} "
+                f"Feature count mismatch: expected 112, got {total} "
                 f"(orderbook={len(self.orderbook_features)}, "
                 f"candle={len(self.candle_features)}, "
                 f"indicator={len(self.indicator_features)})"
@@ -65,33 +65,73 @@ class FeatureStoreSchema:
         Generate OrderBook feature names (50 features)
 
         Structure:
-        - 10 levels × 4 metrics = 40 features
-        - Aggregated metrics = 10 features
+        - Базовые микроструктурные: 15
+        - Дисбаланс и давление: 10
+        - Кластеры и уровни: 10
+        - Ликвидность: 8
+        - Временные: 7
         """
-        features = []
+        features = [
+            # Базовые микроструктурные (15)
+            'bid_ask_spread_abs',
+            'bid_ask_spread_rel',
+            'mid_price',
+            'micro_price',
+            'vwap_bid_5',
+            'vwap_ask_5',
+            'vwap_bid_10',
+            'vwap_ask_10',
+            'depth_bid_5',
+            'depth_ask_5',
+            'depth_bid_10',
+            'depth_ask_10',
+            'total_bid_volume',
+            'total_ask_volume',
+            'book_depth_ratio',
 
-        # Level-by-level features (10 levels × 4 = 40)
-        for i in range(10):
-            features.extend([
-                f'bid_price_level_{i}',
-                f'bid_volume_level_{i}',
-                f'ask_price_level_{i}',
-                f'ask_volume_level_{i}',
-            ])
+            # Дисбаланс и давление (10)
+            'imbalance_5',
+            'imbalance_10',
+            'imbalance_total',
+            'price_pressure',
+            'volume_delta_5',
+            'order_flow_imbalance',
+            'bid_intensity',
+            'ask_intensity',
+            'buy_sell_ratio',
+            'smart_money_index',
 
-        # Aggregated orderbook features (10)
-        features.extend([
-            'orderbook_imbalance',        # (bid_vol - ask_vol) / (bid_vol + ask_vol)
-            'weighted_mid_price',          # Volume-weighted mid price
-            'total_bid_volume',            # Sum of all bid volumes
-            'total_ask_volume',            # Sum of all ask volumes
-            'bid_ask_spread',              # Absolute spread
-            'spread_bps',                  # Spread in basis points
-            'vwap_distance',               # Distance from VWAP
-            'depth_imbalance_5',           # Imbalance for top 5 levels
-            'depth_imbalance_10',          # Imbalance for all 10 levels
-            'microprice',                  # Microprice indicator
-        ])
+            # Кластеры и уровни (10)
+            'largest_bid_cluster_price',
+            'largest_bid_cluster_volume',
+            'largest_ask_cluster_price',
+            'largest_ask_cluster_volume',
+            'num_bid_clusters',
+            'num_ask_clusters',
+            'support_level_1',
+            'resistance_level_1',
+            'distance_to_support',
+            'distance_to_resistance',
+
+            # Ликвидность (8)
+            'liquidity_bid_5',
+            'liquidity_ask_5',
+            'liquidity_asymmetry',
+            'effective_spread',
+            'kyle_lambda',
+            'amihud_illiquidity',
+            'roll_spread',
+            'depth_imbalance_ratio',
+
+            # Временные (7)
+            'level_ttl_avg',
+            'level_ttl_std',
+            'orderbook_volatility',
+            'update_frequency',
+            'quote_intensity',
+            'trade_arrival_rate',
+            'spread_volatility'
+        ]
 
         assert len(features) == 50, f"OrderBook features: expected 50, got {len(features)}"
         return features
@@ -101,48 +141,47 @@ class FeatureStoreSchema:
         Generate Candle feature names (25 features)
 
         Structure:
-        - OHLCV + derived = 10 features
-        - Moving averages = 6 features
-        - Returns & volatility = 6 features
-        - Other = 3 features
+        - Базовые OHLCV: 6
+        - Производные метрики: 7
+        - Волатильность: 3
+        - Volume features: 5
+        - Pattern indicators: 4
         """
         features = [
-            # Basic OHLCV (5)
+            # Базовые OHLCV (6)
             'open',
             'high',
             'low',
             'close',
             'volume',
+            'typical_price',
 
-            # Derived from OHLC (5)
-            'hl_range',           # high - low
-            'oc_range',           # open - close
-            'upper_shadow',       # high - max(open, close)
-            'lower_shadow',       # min(open, close) - low
-            'body_size',          # abs(close - open)
+            # Производные метрики (7)
+            'returns',
+            'log_returns',
+            'high_low_range',
+            'close_open_diff',
+            'upper_shadow',
+            'lower_shadow',
+            'body_size',
 
-            # Moving averages (6)
-            'close_ma_5',         # 5-period MA
-            'close_ma_20',        # 20-period MA
-            'close_ma_50',        # 50-period MA
-            'volume_ma_5',
-            'volume_ma_20',
-            'volume_ma_50',
+            # Волатильность (3)
+            'realized_volatility',
+            'parkinson_volatility',
+            'garman_klass_volatility',
 
-            # Returns (3)
-            'return_1m',          # 1-minute return
-            'return_5m',          # 5-minute return
-            'return_15m',         # 15-minute return
+            # Volume features (5)
+            'volume_ma_ratio',
+            'volume_change_rate',
+            'price_volume_trend',
+            'volume_weighted_price',
+            'money_flow',
 
-            # Volatility (3)
-            'volatility_1h',      # 1-hour rolling std
-            'volatility_4h',      # 4-hour rolling std
-            'volatility_24h',     # 24-hour rolling std
-
-            # Other (3)
-            'vwap',               # Volume-weighted average price
-            'typical_price',      # (high + low + close) / 3
-            'money_flow',         # typical_price * volume
+            # Pattern indicators (4)
+            'doji_strength',
+            'hammer_strength',
+            'engulfing_strength',
+            'gap_size'
         ]
 
         assert len(features) == 25, f"Candle features: expected 25, got {len(features)}"
@@ -150,74 +189,70 @@ class FeatureStoreSchema:
 
     def _generate_indicator_features(self) -> List[str]:
         """
-        Generate Indicator feature names (35 features)
+        Generate Indicator feature names (37 features)
 
         Structure:
-        - RSI variants = 3
-        - MACD variants = 3
-        - Bollinger Bands = 4
-        - Volume indicators = 5
-        - Momentum indicators = 8
-        - Trend indicators = 7
-        - Other = 5
+        - Trend indicators: 12
+        - Momentum indicators: 9
+        - Volatility indicators: 8
+        - Volume indicators: 6
+        - Aroon indicators: 2
         """
         features = [
-            # RSI variants (3)
-            'rsi_14',             # Standard RSI(14)
-            'rsi_7',              # Fast RSI(7)
-            'rsi_28',             # Slow RSI(28)
+            # Trend indicators (12)
+            'sma_10',
+            'sma_20',
+            'sma_50',
+            'ema_10',
+            'ema_20',
+            'ema_50',
+            'macd',
+            'macd_signal',
+            'macd_histogram',
+            'adx',
+            'plus_di',
+            'minus_di',
 
-            # MACD (3)
-            'macd',               # MACD line
-            'macd_signal',        # Signal line
-            'macd_histogram',     # Histogram
+            # Momentum indicators (9)
+            'rsi_14',
+            'rsi_28',
+            'stochastic_k',
+            'stochastic_d',
+            'williams_r',
+            'cci',
+            'momentum_10',
+            'roc',
+            'mfi',
 
-            # Bollinger Bands (4)
-            'bb_upper',           # Upper band
-            'bb_middle',          # Middle band (SMA)
-            'bb_lower',           # Lower band
-            'bb_width',           # Band width
+            # Volatility indicators (8)
+            'bollinger_upper',
+            'bollinger_middle',
+            'bollinger_lower',
+            'bollinger_width',
+            'bollinger_pct',
+            'atr_14',
+            'keltner_upper',
+            'keltner_lower',
 
-            # Volume indicators (5)
-            'obv',                # On-Balance Volume
-            'volume_roc',         # Volume Rate of Change
-            'vpt',                # Volume Price Trend
-            'mfi',                # Money Flow Index
-            'adl',                # Accumulation/Distribution Line
+            # Volume indicators (6)
+            'obv',
+            'vwap',
+            'ad_line',
+            'cmf',
+            'vpt',
+            'nvi',
 
-            # Momentum indicators (8)
-            'momentum',           # Momentum
-            'roc',                # Rate of Change
-            'stoch_k',            # Stochastic %K
-            'stoch_d',            # Stochastic %D
-            'williams_r',         # Williams %R
-            'cci',                # Commodity Channel Index
-            'ultimate_oscillator', # Ultimate Oscillator
-            'awesome_oscillator', # Awesome Oscillator
-
-            # Trend indicators (7)
-            'adx',                # Average Directional Index
-            'aroon_up',           # Aroon Up
-            'aroon_down',         # Aroon Down
-            'ema_12',             # EMA(12)
-            'ema_26',             # EMA(26)
-            'sma_50',             # SMA(50)
-            'sma_200',            # SMA(200)
-
-            # Other indicators (5)
-            'atr',                # Average True Range
-            'keltner_upper',      # Keltner Channel Upper
-            'keltner_lower',      # Keltner Channel Lower
-            'sar',                # Parabolic SAR
-            'supertrend',         # SuperTrend
+            # Aroon indicators (2)
+            'aroon_up',
+            'aroon_down'
         ]
 
-        assert len(features) == 35, f"Indicator features: expected 35, got {len(features)}"
+        assert len(features) == 37, f"Indicator features: expected 37, got {len(features)}"
         return features
 
     def get_all_feature_columns(self) -> List[str]:
         """
-        Get list of all 110 feature columns
+        Get list of all 112 feature columns
 
         Returns:
             List of all feature column names in order
@@ -353,5 +388,5 @@ class FeatureStoreSchema:
 
 DEFAULT_SCHEMA = FeatureStoreSchema()
 
-logger.info("✓ FeatureStoreSchema initialized with 110 features")
+logger.info("✓ FeatureStoreSchema initialized with 112 features")
 logger.debug(DEFAULT_SCHEMA.summary())
