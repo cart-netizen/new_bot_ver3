@@ -303,13 +303,19 @@ export const useScreenerStore = create<ScreenerStore>()(
 
       /**
        * Проверка алертов для всех пар.
+       * FIX: Auto-cleanup old alerts to prevent memory leak
        */
       checkAlerts: () => {
         const { pairs, settings, alerts } = get();
         const threshold = settings.alertThreshold;
+        const now = Date.now();
+        const ALERT_TTL = 5 * 60 * 1000; // 5 минут TTL для алертов
 
-        const newAlerts = new Map<string, PairAlert>(alerts);
+        // FIX: Start with empty Map and only keep valid alerts
+        const newAlerts = new Map<string, PairAlert>();
+        const currentSymbols = new Set(pairs.map(p => p.symbol));
 
+        // Check current pairs for new alerts
         pairs.forEach(pair => {
           // Проверяем все интервалы
           const intervals = [
@@ -325,13 +331,21 @@ export const useScreenerStore = create<ScreenerStore>()(
             { field: 'change_24h', value: pair.price_change_24h },
           ];
 
+          let hasActiveAlert = false;
           for (const interval of intervals) {
             if (interval.value !== null && Math.abs(interval.value) >= threshold) {
-              // Создаем/обновляем алерт
-              if (!newAlerts.has(pair.symbol)) {
+              hasActiveAlert = true;
+
+              // Preserve existing alert or create new one
+              const existingAlert = alerts.get(pair.symbol);
+              if (existingAlert && (now - existingAlert.timestamp) < ALERT_TTL) {
+                // Keep existing alert if it's still fresh
+                newAlerts.set(pair.symbol, existingAlert);
+              } else {
+                // Create new alert
                 newAlerts.set(pair.symbol, {
                   symbol: pair.symbol,
-                  timestamp: Date.now(),
+                  timestamp: now,
                   field: interval.field,
                   value: interval.value,
                   threshold,
@@ -340,7 +354,19 @@ export const useScreenerStore = create<ScreenerStore>()(
               break; // Один алерт на пару
             }
           }
+
+          // FIX: If pair no longer meets threshold, preserve alert for TTL
+          if (!hasActiveAlert) {
+            const existingAlert = alerts.get(pair.symbol);
+            if (existingAlert && (now - existingAlert.timestamp) < ALERT_TTL) {
+              // Keep recently dismissed alerts visible for a short time
+              newAlerts.set(pair.symbol, existingAlert);
+            }
+          }
         });
+
+        // FIX: Don't keep alerts for pairs that are no longer in the list
+        // (automatically cleaned up by not adding them to newAlerts)
 
         set({ alerts: newAlerts });
       },
