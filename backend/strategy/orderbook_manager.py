@@ -219,11 +219,21 @@ class OrderBookManager:
     if not self.snapshot_received:
       return None
 
+    # CRITICAL: Ensure timestamp is never None or 0
+    # If last_update_timestamp is None/0, use current time
+    timestamp = self.last_update_timestamp
+    if timestamp is None or timestamp == 0:
+      timestamp = get_timestamp_ms()
+      logger.warning(
+        f"{self.symbol} | Invalid timestamp detected in get_snapshot() "
+        f"(timestamp={self.last_update_timestamp}), using current time: {timestamp}"
+      )
+
     return OrderBookSnapshot(
       symbol=self.symbol,
       bids=list(self.bids.items()),
       asks=list(self.asks.items()),
-      timestamp=self.last_update_timestamp,
+      timestamp=timestamp,
       update_id=self.last_update_id,
       sequence_id=self.last_sequence_id
     )
