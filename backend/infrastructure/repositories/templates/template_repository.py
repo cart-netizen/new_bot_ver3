@@ -7,7 +7,7 @@ from sqlalchemy import select, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database.connection import db_manager
-from backend.database.models.backtest_template import BacktestTemplate
+from backend.database.model_templates.backtest_template import BacktestTemplate
 from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
