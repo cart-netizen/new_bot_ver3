@@ -86,7 +86,18 @@ class OrderBookManager:
       # Обновляем метаданные
       self.last_update_id = data.get("u")
       self.last_sequence_id = data.get("seq")
-      self.last_update_timestamp = data.get("ts") or get_timestamp_ms()
+
+      # CRITICAL: Ensure timestamp is valid (not None, not 0, not empty string)
+      ts = data.get("ts")
+      if ts and ts != 0:
+        self.last_update_timestamp = ts
+      else:
+        self.last_update_timestamp = get_timestamp_ms()
+        if ts == 0:
+          logger.warning(
+            f"{self.symbol} | Received timestamp=0 in snapshot, using current time"
+          )
+
       self.snapshot_received = True  # ВАЖНО: Флаг что snapshot получен
       self.snapshot_count += 1
 
@@ -184,7 +195,18 @@ class OrderBookManager:
       # Обновляем метаданные
       self.last_update_id = data.get("u")
       self.last_sequence_id = data.get("seq")
-      self.last_update_timestamp = data.get("ts") or get_timestamp_ms()
+
+      # CRITICAL: Ensure timestamp is valid (not None, not 0)
+      ts = data.get("ts")
+      if ts and ts != 0:
+        self.last_update_timestamp = ts
+      else:
+        self.last_update_timestamp = get_timestamp_ms()
+        if ts == 0:
+          logger.warning(
+            f"{self.symbol} | Received timestamp=0 in delta, using current time"
+          )
+
       self.delta_count += 1
 
       logger.debug(
