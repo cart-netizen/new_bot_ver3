@@ -546,8 +546,10 @@ class Settings(BaseSettings):
   )
 
   # Интервал broadcast данных скринера (секунды)
+  # FIX: Increased from 2.0 to 5.0 to reduce WebSocket traffic and CPU usage
+  # 5s is still responsive for screener while saving ~4GB/day bandwidth
   SCREENER_BROADCAST_INTERVAL: float = Field(
-    default=2.0,
+    default=5.0,
     description="Интервал отправки данных скринера через WebSocket"
   )
 
