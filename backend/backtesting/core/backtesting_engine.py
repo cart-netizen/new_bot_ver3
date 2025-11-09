@@ -1099,12 +1099,33 @@ class BacktestingEngine:
                     mean_return = np.mean(returns) * 252  # Annualized
                     sharpe_ratio = mean_return / (volatility_annual_pct / 100)
 
-                # Stability (R-squared of equity curve)
-                x = np.arange(len(self.portfolio.equity_history))
-                y = np.array([ep.equity for ep in self.portfolio.equity_history])
-                if len(x) > 1:
-                    slope, intercept, r_value, p_value, std_err = stats.linregress(x, y)
-                    stability = r_value ** 2  # R-squared
+                # VaR and CVaR calculation (95% confidence level)
+                # VaR_95: Value at Risk - maximum expected loss in worst 5% of cases
+                # CVaR_95: Conditional VaR - average loss in worst 5% of cases (Expected Shortfall)
+                var_95 = np.percentile(returns_array, 5)  # 5th percentile (worst 5%)
+
+                # CVaR: mean of all returns that are less than or equal to VaR
+                tail_losses = returns_array[returns_array <= var_95]
+                cvar_95 = np.mean(tail_losses) if len(tail_losses) > 0 else var_95
+
+                # Convert to percentage and make positive for easier interpretation
+                # (e.g., VaR=2.5% means max loss is 2.5% with 95% confidence)
+                var_95_pct = abs(var_95 * 100)
+                cvar_95_pct = abs(cvar_95 * 100)
+            else:
+                var_95_pct = 0.0
+                cvar_95_pct = 0.0
+        else:
+            var_95_pct = 0.0
+            cvar_95_pct = 0.0
+
+        # Calculate stability (R-squared of equity curve) only if we have equity history
+        if len(self.portfolio.equity_history) > 1:
+            x = np.arange(len(self.portfolio.equity_history))
+            y = np.array([ep.equity for ep in self.portfolio.equity_history])
+            if len(x) > 1:
+                slope, intercept, r_value, p_value, std_err = stats.linregress(x, y)
+                stability = r_value ** 2  # R-squared
 
         # Prepare data for Advanced Metrics Calculator
         trade_data = [
@@ -1204,8 +1225,8 @@ class BacktestingEngine:
             # Advanced Metrics
             omega_ratio=advanced_metrics.omega_ratio,
             tail_ratio=advanced_metrics.tail_ratio,
-            var_95=0.0,  # TODO: Implement VaR
-            cvar_95=0.0,  # TODO: Implement CVaR
+            var_95=var_95_pct,  # Value at Risk (95% confidence) - max expected loss in worst 5%
+            cvar_95=cvar_95_pct,  # Conditional VaR (95%) - average loss in worst 5%
 
             # Quality
             stability=stability,
