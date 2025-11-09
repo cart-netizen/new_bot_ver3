@@ -193,7 +193,8 @@ class FeatureStore:
                     )
 
                     # Process based on timestamp type
-                    if isinstance(first_timestamp, (int, float)):
+                    # CRITICAL: Include numpy types (numpy.int64, numpy.float64, etc.)
+                    if isinstance(first_timestamp, (int, float, np.integer, np.floating)):
                         # CRITICAL: Validate timestamp is not zero or invalid (double-check)
                         if first_timestamp == 0 or pd.isna(first_timestamp):
                             logger.warning(
@@ -227,9 +228,14 @@ class FeatureStore:
                                 )
                     else:
                         # Timestamp is datetime object or other type
+                        # This should rarely happen - log warning if we see unexpected types
+                        logger.warning(
+                            f"[FeatureStore] Unexpected timestamp type: {type(first_timestamp)}, "
+                            f"value={first_timestamp}. Attempting pd.to_datetime conversion."
+                        )
                         date_str = pd.to_datetime(first_timestamp).strftime("%Y-%m-%d")
                         logger.info(
-                            f"[FeatureStore] Timestamp as datetime object -> {date_str}"
+                            f"[FeatureStore] Converted to date: {date_str}"
                         )
             else:
                 date_str = datetime.now().strftime("%Y-%m-%d")
