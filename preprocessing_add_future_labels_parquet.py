@@ -98,6 +98,40 @@ class ParquetFutureLabelProcessor:
         # Объединяем результаты
         final_df = pd.concat(all_processed, ignore_index=True)
 
+        # КРИТИЧНО: Фильтруем невалидные timestamps перед сохранением
+        print(f"\n{'=' * 70}")
+        print("Валидация timestamps...")
+        print(f"{'=' * 70}")
+
+        initial_count = len(final_df)
+
+        # Фильтруем timestamp = 0 или NaN
+        invalid_mask = (final_df['timestamp'] == 0) | (final_df['timestamp'].isna())
+        invalid_count = invalid_mask.sum()
+
+        if invalid_count > 0:
+            print(f"⚠️  Найдено {invalid_count} семплов с невалидными timestamps (0 или NaN)")
+            print(f"   Эти семплы будут УДАЛЕНЫ, чтобы избежать date=1970-01-01")
+            final_df = final_df[~invalid_mask].reset_index(drop=True)
+            print(f"✓ Осталось {len(final_df)} валидных семплов (удалено {invalid_count})")
+
+        # Дополнительная проверка: timestamps должны быть > 2020-01-01
+        min_valid_timestamp = 1577836800000  # 2020-01-01 в миллисекундах
+        too_old_mask = final_df['timestamp'] < min_valid_timestamp
+        too_old_count = too_old_mask.sum()
+
+        if too_old_count > 0:
+            print(f"⚠️  Найдено {too_old_count} семплов с timestamps до 2020-01-01")
+            print(f"   Эти семплы будут УДАЛЕНЫ как подозрительные")
+            final_df = final_df[~too_old_mask].reset_index(drop=True)
+            print(f"✓ Осталось {len(final_df)} валидных семплов (удалено {too_old_count})")
+
+        total_removed = initial_count - len(final_df)
+        if total_removed > 0:
+            print(f"\n📊 Итого удалено невалидных семплов: {total_removed} ({100*total_removed/initial_count:.1f}%)")
+        else:
+            print(f"\n✓ Все timestamps валидны")
+
         # Сохраняем обратно в Feature Store
         print(f"\n{'=' * 70}")
         print("Сохранение обновленных данных...")

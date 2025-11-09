@@ -163,20 +163,34 @@ class FeatureStore:
                 logger.error(f"Timestamp column not found: {timestamp_column}")
                 return False
 
-            # Create partition by date
+            # КРИТИЧНО: Проверяем ВСЕ timestamps на валидность перед сохранением
             if len(features) > 0:
+                # Проверяем на NaN и 0
+                invalid_mask = (features[timestamp_column] == 0) | (features[timestamp_column].isna())
+                invalid_count = invalid_mask.sum()
+
+                if invalid_count > 0:
+                    logger.error(
+                        f"CRITICAL: Found {invalid_count} rows with invalid timestamps (0 or NaN). "
+                        f"These rows will NOT be saved to avoid date=1970-01-01 issue. "
+                        f"Total rows: {len(features)}, invalid: {invalid_count}"
+                    )
+                    # Фильтруем невалидные timestamps
+                    features = features[~invalid_mask].reset_index(drop=True)
+
+                    if len(features) == 0:
+                        logger.error("All timestamps are invalid! Nothing to save.")
+                        return False
+
+                    logger.warning(f"Saving only {len(features)} valid rows (filtered out {invalid_count} invalid)")
+
+                # Берем первый ВАЛИДНЫЙ timestamp для определения даты партиции
                 first_timestamp = features[timestamp_column].iloc[0]
+
                 if isinstance(first_timestamp, (int, float)):
-                    # CRITICAL: Validate timestamp is not zero or invalid
-                    if first_timestamp == 0 or pd.isna(first_timestamp):
-                        logger.warning(
-                            f"Invalid timestamp detected (0 or NaN): using current date. "
-                            f"This may indicate a bug in data collection."
-                        )
-                        date_str = datetime.now().strftime("%Y-%m-%d")
                     # Check if timestamp is in milliseconds (>10 digits)
                     # Crypto exchanges (Bybit, Binance) use milliseconds
-                    elif first_timestamp > 1e10:  # milliseconds (13 digits)
+                    if first_timestamp > 1e10:  # milliseconds (13 digits)
                         timestamp_seconds = first_timestamp / 1000.0
                         date_str = datetime.fromtimestamp(timestamp_seconds).strftime("%Y-%m-%d")
                     else:  # already in seconds (10 digits)

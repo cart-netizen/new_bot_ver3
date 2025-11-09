@@ -89,13 +89,26 @@ class OrderBookManager:
 
       # CRITICAL: Ensure timestamp is valid (not None, not 0, not empty string)
       ts = data.get("ts")
-      if ts and ts != 0:
-        self.last_update_timestamp = ts
+
+      # Convert to int if string (защита от строковых timestamps)
+      if isinstance(ts, str):
+        try:
+          ts = int(ts) if ts else 0
+        except ValueError:
+          ts = 0
+
+      # Validate timestamp value
+      if ts and ts != 0 and isinstance(ts, (int, float)):
+        self.last_update_timestamp = int(ts)
       else:
         self.last_update_timestamp = get_timestamp_ms()
         if ts == 0:
           logger.warning(
             f"{self.symbol} | Received timestamp=0 in snapshot, using current time"
+          )
+        elif isinstance(ts, str):
+          logger.warning(
+            f"{self.symbol} | Received string timestamp '{ts}' in snapshot, using current time"
           )
 
       self.snapshot_received = True  # ВАЖНО: Флаг что snapshot получен
@@ -198,13 +211,26 @@ class OrderBookManager:
 
       # CRITICAL: Ensure timestamp is valid (not None, not 0)
       ts = data.get("ts")
-      if ts and ts != 0:
-        self.last_update_timestamp = ts
+
+      # Convert to int if string (защита от строковых timestamps)
+      if isinstance(ts, str):
+        try:
+          ts = int(ts) if ts else 0
+        except ValueError:
+          ts = 0
+
+      # Validate timestamp value
+      if ts and ts != 0 and isinstance(ts, (int, float)):
+        self.last_update_timestamp = int(ts)
       else:
         self.last_update_timestamp = get_timestamp_ms()
         if ts == 0:
           logger.warning(
             f"{self.symbol} | Received timestamp=0 in delta, using current time"
+          )
+        elif isinstance(ts, str):
+          logger.warning(
+            f"{self.symbol} | Received string timestamp '{ts}' in delta, using current time"
           )
 
       self.delta_count += 1
