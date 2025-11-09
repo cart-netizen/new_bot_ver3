@@ -167,14 +167,29 @@ class FeatureStore:
             if len(features) > 0:
                 first_timestamp = features[timestamp_column].iloc[0]
                 if isinstance(first_timestamp, (int, float)):
-                    # FIXED: Check if timestamp is in milliseconds (>10 digits)
+                    # CRITICAL: Validate timestamp is not zero or invalid
+                    if first_timestamp == 0 or pd.isna(first_timestamp):
+                        logger.warning(
+                            f"Invalid timestamp detected (0 or NaN): using current date. "
+                            f"This may indicate a bug in data collection."
+                        )
+                        date_str = datetime.now().strftime("%Y-%m-%d")
+                    # Check if timestamp is in milliseconds (>10 digits)
                     # Crypto exchanges (Bybit, Binance) use milliseconds
-                    if first_timestamp > 1e10:  # milliseconds (13 digits)
+                    elif first_timestamp > 1e10:  # milliseconds (13 digits)
                         timestamp_seconds = first_timestamp / 1000.0
+                        date_str = datetime.fromtimestamp(timestamp_seconds).strftime("%Y-%m-%d")
                     else:  # already in seconds (10 digits)
-                        timestamp_seconds = first_timestamp
-
-                    date_str = datetime.fromtimestamp(timestamp_seconds).strftime("%Y-%m-%d")
+                        # Additional validation: timestamp should be reasonable (after 2020)
+                        if first_timestamp < 1577836800:  # 2020-01-01 in seconds
+                            logger.warning(
+                                f"Suspicious timestamp detected: {first_timestamp} "
+                                f"(before 2020-01-01). Using current date."
+                            )
+                            date_str = datetime.now().strftime("%Y-%m-%d")
+                        else:
+                            timestamp_seconds = first_timestamp
+                            date_str = datetime.fromtimestamp(timestamp_seconds).strftime("%Y-%m-%d")
                 else:
                     date_str = pd.to_datetime(first_timestamp).strftime("%Y-%m-%d")
             else:
