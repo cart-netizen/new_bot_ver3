@@ -392,6 +392,16 @@ class MLDataCollector:
       labels_list = self.label_buffers[symbol]
       metadata_list = self.metadata_buffers[symbol]
 
+      # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем правильные названия колонок из FeatureStoreSchema
+      from backend.ml_engine.feature_store.feature_schema import DEFAULT_SCHEMA
+      feature_column_names = DEFAULT_SCHEMA.get_all_feature_columns()
+
+      if len(feature_column_names) != 110:
+        logger.error(
+          f"Feature schema mismatch: expected 110 columns, got {len(feature_column_names)}"
+        )
+        return
+
       # Конвертируем в DataFrame
       rows = []
 
@@ -400,13 +410,19 @@ class MLDataCollector:
         row = {
           'symbol': symbol,
           'timestamp': meta_dict['timestamp'],
-          'mid_price': meta_dict['mid_price'],
         }
 
-        # Распаковываем 110 признаков
+        # Распаковываем 110 признаков с ПРАВИЛЬНЫМИ НАЗВАНИЯМИ
         # feature_arr имеет shape (110,)
-        for i in range(len(feature_arr)):
-          row[f'feature_{i:03d}'] = feature_arr[i]
+        if len(feature_arr) != 110:
+          logger.warning(
+            f"{symbol} | Feature array length mismatch: expected 110, got {len(feature_arr)}"
+          )
+          continue
+
+        # Используем правильные названия колонок из схемы
+        for i, feature_name in enumerate(feature_column_names):
+          row[feature_name] = feature_arr[i]
 
         # Добавляем метки (labels)
         # Метки могут быть None (будут заполнены позже через preprocessing)
@@ -427,11 +443,21 @@ class MLDataCollector:
 
         rows.append(row)
 
+      if not rows:
+        logger.warning(f"{symbol} | No valid rows to save")
+        return
+
       # Создаем DataFrame
       df = pd.DataFrame(rows)
 
       # Сортируем по timestamp
       df = df.sort_values('timestamp').reset_index(drop=True)
+
+      # Логируем информацию о колонках для отладки
+      logger.info(
+        f"{symbol} | DataFrame columns: {len(df.columns)}, "
+        f"feature columns: {len([c for c in df.columns if c in feature_column_names])}"
+      )
 
       # Записываем в Feature Store
       feature_store = self._get_feature_store()
@@ -443,7 +469,7 @@ class MLDataCollector:
 
       if success:
         logger.info(
-          f"✓ {symbol} | Feature Store: сохранено {len(df)} семплов в parquet"
+          f"✓ {symbol} | Feature Store: сохранено {len(df)} семплов в parquet с правильными названиями колонок"
         )
       else:
         logger.error(f"{symbol} | Ошибка записи в Feature Store")
