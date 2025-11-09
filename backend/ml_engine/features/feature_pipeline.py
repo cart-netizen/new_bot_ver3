@@ -250,7 +250,7 @@ class FeaturePipeline:
         orderbook_features=orderbook_features,
         candle_features=candle_features,
         indicator_features=indicator_features,
-        feature_count=50 + 25 + 35,  # 110 признаков
+        feature_count=50 + 25 + 37,  # 112 признаков
         metadata={}
       )
 
@@ -578,7 +578,7 @@ class MultiSymbolFeaturePipeline:
       """
       Расширенная версия извлечения признаков с дополнительными метриками.
 
-      Извлекает базовые 110 признаков + добавляет enriched metadata:
+      Извлекает базовые 112 признаков + добавляет enriched metadata:
       - OrderBook метрики (imbalance, spread, vwap)
       - S/R уровни (поддержка/сопротивление)
       - Расстояния до ключевых уровней
@@ -593,7 +593,7 @@ class MultiSymbolFeaturePipeline:
           prev_candle: Предыдущая свеча для momentum признаков
 
       Returns:
-          FeatureVector с 110 признаками + enriched metadata или None
+          FeatureVector с 112 признаками + enriched metadata или None
 
       Example:
           feature_vector = await pipeline.extract_features_enhanced(
@@ -615,7 +615,7 @@ class MultiSymbolFeaturePipeline:
 
       try:
         # ============================================================
-        # ШАГ 1: БАЗОВОЕ ИЗВЛЕЧЕНИЕ ПРИЗНАКОВ (110 features)
+        # ШАГ 1: БАЗОВОЕ ИЗВЛЕЧЕНИЕ ПРИЗНАКОВ (112 features)
         # ============================================================
 
         pipeline = self.pipelines[symbol]
