@@ -649,7 +649,7 @@ class OrderBookFeatureExtractor:
 
     # Volatility = std изменений mid_price
     mid_prices = [
-      s.mid_price for s in self.snapshot_history[-20:]
+      s.mid_price for s in list(self.snapshot_history)[-20:]
       if s.mid_price is not None
     ]
 
@@ -666,7 +666,7 @@ class OrderBookFeatureExtractor:
       return 0.0
 
     # Берем последние 10 снимков
-    recent = self.snapshot_history[-10:]
+    recent = list(self.snapshot_history)[-10:]
 
     if len(recent) < 2:
       return 0.0
@@ -687,7 +687,7 @@ class OrderBookFeatureExtractor:
       return 0.0
 
     spreads = [
-      s.spread for s in self.snapshot_history[-20:]
+      s.spread for s in list(self.snapshot_history)[-20:]
       if s.spread is not None
     ]
 
@@ -825,7 +825,8 @@ class OrderBookFeatureExtractor:
       return 0.0, 0.0
 
     # Берем последние 100 значений для статистики
-    recent_ttls = self.level_ttl_history[-100:]
+    # Конвертируем в список для безопасного слайсинга
+    recent_ttls = list(self.level_ttl_history)[-100:]
 
     avg_ttl = float(np.mean(recent_ttls))
     std_ttl = float(np.std(recent_ttls))
@@ -914,7 +915,7 @@ class OrderBookFeatureExtractor:
       return spread / total_vol if total_vol > 0 else 0.0
 
     # Берем последние 10 snapshots для расчета
-    recent_snapshots = self.snapshot_history[-10:]
+    recent_snapshots = list(self.snapshot_history)[-10:]
 
     price_changes = []
     volume_changes = []
@@ -994,7 +995,7 @@ class OrderBookFeatureExtractor:
       return spread / float(max(total_vol, 1))
 
     # Берем последние 20 snapshots для расчета
-    recent_snapshots = self.snapshot_history[-20:]
+    recent_snapshots = list(self.snapshot_history)[-20:]
 
     illiquidity_values = []
 
@@ -1071,7 +1072,7 @@ class OrderBookFeatureExtractor:
       return 2.0 * (spread / mid_price) if mid_price > 0 else 0.0
 
     # Берем последние 50 snapshots для расчета
-    recent_snapshots = self.snapshot_history[-50:]
+    recent_snapshots = list(self.snapshot_history)[-50:]
 
     # Извлекаем mid prices
     mid_prices = []
