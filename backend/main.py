@@ -405,7 +405,7 @@ class BotController:
         max_buffer_memory_mb=200,  # НОВОЕ: Максимум 100 МБ буфера на символ перед принудительным сохранением
         # Feature Store integration
         enable_feature_store=True,  # ✅ Записывать в Feature Store (parquet)
-        use_legacy_format=False,     # ✅ Записывать в legacy формат (.npy/.json) для совместимости
+        use_legacy_format=True,     # ✅ Записывать в legacy формат (.npy/.json) для совместимости
         feature_store_group="training_features"
       )
       await self.ml_data_collector.initialize()
