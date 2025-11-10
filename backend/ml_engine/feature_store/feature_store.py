@@ -131,7 +131,9 @@ class FeatureStore:
             # Persist to disk
             metadata_path = self.metadata_dir / f"{feature_key}.json"
             with open(metadata_path, 'w') as f:
-                json.dump(asdict(metadata), f, indent=2)
+                # Convert dataclass to dict for JSON serialization
+                metadata_dict = asdict(metadata)  # type: ignore[arg-type]
+                json.dump(metadata_dict, f, indent=2)
 
             logger.info(f"Registered feature: {feature_key}")
             return True
@@ -168,7 +170,7 @@ class FeatureStore:
                 # CRITICAL FIX: Check ALL timestamps, not just the first one
                 # If any timestamp is 0, we should use current date
                 timestamp_values = features[timestamp_column]
-                zero_count = int((timestamp_values == 0).sum())
+                zero_count = int(timestamp_values.eq(0).sum())
                 none_count = int(timestamp_values.isna().sum())
 
                 if zero_count > 0 or none_count > 0:
@@ -526,7 +528,9 @@ class FeatureStore:
         # Persist
         metadata_path = self.metadata_dir / f"{feature_key}.json"
         with open(metadata_path, 'w') as f:
-            json.dump(asdict(metadata), f, indent=2)
+            # Convert dataclass to dict for JSON serialization
+            metadata_dict = asdict(metadata)  # type: ignore[arg-type]
+            json.dump(metadata_dict, f, indent=2)
 
         logger.info(f"Updated feature stats: {feature_key}")
         return True
