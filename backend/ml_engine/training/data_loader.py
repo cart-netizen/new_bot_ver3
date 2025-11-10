@@ -717,12 +717,29 @@ class HistoricalDataLoader:
         nan_labels = np.isnan(y).sum()
         if nan_features > 0 or nan_labels > 0:
             logger.warning(f"Found NaN values: features={nan_features}, labels={nan_labels}")
-            # Удалить строки с NaN
-            valid_mask = ~(np.isnan(X).any(axis=1) | np.isnan(y))
-            X = X[valid_mask]
-            y = y[valid_mask]
-            timestamps = timestamps[valid_mask]
-            logger.warning(f"After removing NaN: {len(X):,} samples")
+
+            # Анализируем, где именно NaN
+            nan_per_column = np.isnan(X).sum(axis=0)
+            columns_with_nan = np.where(nan_per_column > 0)[0]
+            if len(columns_with_nan) > 0:
+                logger.warning(f"Columns with NaN: {len(columns_with_nan)}/{X.shape[1]}")
+                logger.warning(f"Top 5 columns by NaN count: {sorted(nan_per_column, reverse=True)[:5]}")
+
+            # СТРАТЕГИЯ 1: Заполняем NaN в features нулями (безопаснее чем удалять)
+            if nan_features > 0:
+                logger.info("Filling NaN values in features with 0.0")
+                X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+
+            # СТРАТЕГИЯ 2: Удаляем строки только если NaN в labels (критично!)
+            if nan_labels > 0:
+                logger.warning(f"Removing {nan_labels} rows with NaN labels")
+                valid_mask = ~np.isnan(y)
+                X = X[valid_mask]
+                y = y[valid_mask]
+                timestamps = timestamps[valid_mask]
+
+            logger.info(f"After NaN handling: {len(X):,} samples")
+
 
         # 5. Resampling (если включен)
         if apply_resampling and self.balancing_strategy:

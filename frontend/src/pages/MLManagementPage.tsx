@@ -37,6 +37,8 @@ interface TrainingParams {
   export_onnx: boolean;
   auto_promote: boolean;
   min_accuracy: number;
+  data_source: 'feature_store' | 'legacy';
+  data_path?: string;
 }
 
 interface TrainingStatus {
@@ -166,7 +168,9 @@ export function MLManagementPage() {
     learning_rate: 0.001,
     export_onnx: true,
     auto_promote: true,
-    min_accuracy: 0.80
+    min_accuracy: 0.80,
+    data_source: 'feature_store',
+    data_path: undefined
   });
 
   const [trainingStatus, setTrainingStatus] = useState<TrainingStatus>({
@@ -514,6 +518,111 @@ export function MLManagementPage() {
             </div>
           </div>
         )}
+      </div>
+
+      {/* Data Source Configuration */}
+      <div className="bg-surface border border-gray-800 rounded-lg p-6">
+        <div className="flex items-center gap-3 mb-6">
+          <Database className="h-6 w-6 text-primary" />
+          <h2 className="text-xl font-semibold">Data Source</h2>
+        </div>
+
+        <div className="space-y-4">
+          {/* Source Type Selector */}
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-3">
+              Select Data Source
+            </label>
+            <div className="grid grid-cols-2 gap-4">
+              <button
+                onClick={() => setTrainingParams({ ...trainingParams, data_source: 'feature_store', data_path: undefined })}
+                disabled={trainingStatus.is_training}
+                className={cn(
+                  'p-4 rounded-lg border-2 transition-all',
+                  trainingParams.data_source === 'feature_store'
+                    ? 'border-primary bg-primary/10 text-white'
+                    : 'border-gray-700 bg-gray-800 text-gray-400 hover:border-gray-600',
+                  trainingStatus.is_training && 'opacity-50 cursor-not-allowed'
+                )}
+              >
+                <div className="flex items-center gap-3 mb-2">
+                  <Database className="h-5 w-5" />
+                  <span className="font-semibold">Feature Store</span>
+                </div>
+                <p className="text-xs text-gray-400">
+                  Modern parquet format with named features
+                </p>
+                <p className="text-xs text-gray-500 mt-1 font-mono">
+                  data/feature_store/offline/
+                </p>
+              </button>
+
+              <button
+                onClick={() => setTrainingParams({ ...trainingParams, data_source: 'legacy', data_path: undefined })}
+                disabled={trainingStatus.is_training}
+                className={cn(
+                  'p-4 rounded-lg border-2 transition-all',
+                  trainingParams.data_source === 'legacy'
+                    ? 'border-primary bg-primary/10 text-white'
+                    : 'border-gray-700 bg-gray-800 text-gray-400 hover:border-gray-600',
+                  trainingStatus.is_training && 'opacity-50 cursor-not-allowed'
+                )}
+              >
+                <div className="flex items-center gap-3 mb-2">
+                  <Database className="h-5 w-5" />
+                  <span className="font-semibold">Legacy Files</span>
+                </div>
+                <p className="text-xs text-gray-400">
+                  NumPy .npy files (backward compatibility)
+                </p>
+                <p className="text-xs text-gray-500 mt-1 font-mono">
+                  data/ml_training/
+                </p>
+              </button>
+            </div>
+          </div>
+
+          {/* Custom Path Input */}
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">
+              Custom Data Path (Optional)
+              <Info className="inline-block ml-1 h-3 w-3 text-gray-500" />
+            </label>
+            <input
+              type="text"
+              placeholder={
+                trainingParams.data_source === 'feature_store'
+                  ? 'e.g., C:\\Users\\1q\\PycharmProjects\\Bot_ver3_stakan_new\\data\\feature_store'
+                  : 'e.g., C:\\Users\\1q\\PycharmProjects\\Bot_ver3_stakan_new\\data\\ml_training'
+              }
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white font-mono text-sm focus:outline-none focus:border-primary"
+              value={trainingParams.data_path || ''}
+              onChange={e =>
+                setTrainingParams({ ...trainingParams, data_path: e.target.value || undefined })
+              }
+              disabled={trainingStatus.is_training}
+            />
+            <p className="text-xs text-gray-500 mt-2">
+              Leave empty to use default location. Provide absolute path for custom location.
+            </p>
+          </div>
+
+          {/* Current Path Display */}
+          <div className="p-4 bg-gray-800 rounded-lg border border-gray-700">
+            <div className="flex items-start gap-3">
+              <Info className="h-4 w-4 text-blue-400 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-sm text-gray-400 mb-1">Active Data Path:</p>
+                <p className="text-xs font-mono text-white break-all">
+                  {trainingParams.data_path ||
+                    (trainingParams.data_source === 'feature_store'
+                      ? 'data/feature_store/offline/'
+                      : 'data/ml_training/')}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Training Configuration */}
