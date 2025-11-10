@@ -187,7 +187,8 @@ class LabelPreprocessor:
 
             else:
                 # Берем ближайшую к целевому времени
-                time_diffs = np.abs(timestamps[future_indices] - future_time)
+                future_times_subset = timestamps[future_indices]
+                time_diffs = np.abs((future_times_subset - future_time).astype('timedelta64[s]').astype(float))
                 closest_idx = future_indices[np.argmin(time_diffs)]
                 future_idx = closest_idx
 
