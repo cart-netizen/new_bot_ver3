@@ -4026,9 +4026,56 @@ class BotController:
       if cleaned_count > 0:
         logger.info(f"  ✓ OrderBook кэши очищены ({cleaned_count} символов)")
 
-      # 3. Принудительная сборка мусора
-      collected = gc.collect()
-      logger.info(f"  ✓ Garbage collector: собрано {collected} объектов")
+      # 3. CRITICAL: Очистка Feature Pipeline кэшей и историй
+      if self.ml_feature_pipeline and hasattr(self.ml_feature_pipeline, 'pipelines'):
+        cache_cleared = 0
+        history_cleared = 0
+        for symbol, pipeline in self.ml_feature_pipeline.pipelines.items():
+          # Очистить _cache (может содержать тысячи FeatureVector!)
+          if hasattr(pipeline, '_cache') and pipeline._cache:
+            cache_size = len(pipeline._cache)
+            pipeline._cache.clear()
+            cache_cleared += cache_size
+
+          # Очистить FeatureScalerManager.feature_history (до 5000 семплов × 112 фич!)
+          if hasattr(pipeline, 'scaler_manager') and pipeline.scaler_manager:
+            if hasattr(pipeline.scaler_manager, 'feature_history'):
+              history_size = len(pipeline.scaler_manager.feature_history)
+              pipeline.scaler_manager.feature_history.clear()
+              history_cleared += history_size
+
+          # Урезать истории экстракторов до минимума (50% от макс)
+          if hasattr(pipeline, 'orderbook_extractor'):
+            ob_ext = pipeline.orderbook_extractor
+            if hasattr(ob_ext, 'snapshot_history') and len(ob_ext.snapshot_history) > 25:
+              ob_ext.snapshot_history = ob_ext.snapshot_history[-25:]  # Оставить 25 из 50
+            if hasattr(ob_ext, 'level_ttl_history') and len(ob_ext.level_ttl_history) > 50:
+              ob_ext.level_ttl_history = ob_ext.level_ttl_history[-50:]  # Оставить 50 из 100
+
+          if hasattr(pipeline, 'indicator_extractor'):
+            ind_ext = pipeline.indicator_extractor
+            if hasattr(ind_ext, 'candle_history') and len(ind_ext.candle_history) > 50:
+              ind_ext.candle_history = ind_ext.candle_history[-50:]  # Оставить 50 из 100
+
+        if cache_cleared > 0 or history_cleared > 0:
+          logger.info(f"  ✓ Feature Pipeline очищен: cache={cache_cleared}, history={history_cleared}")
+
+      # 4. Очистка детекторов (если есть)
+      if hasattr(self, 'layering_detector') and self.layering_detector:
+        if hasattr(self.layering_detector, 'price_history'):
+          for symbol_history in self.layering_detector.price_history.values():
+            if len(symbol_history) > 500:
+              # Урезать до 500 из 1000
+              while len(symbol_history) > 500:
+                symbol_history.popleft()
+          logger.info("  ✓ Layering detector price history урезана")
+
+      # 5. Принудительная сборка мусора (3 прохода для циклических ссылок)
+      total_collected = 0
+      for i in range(3):
+        collected = gc.collect(generation=2)  # Полный GC всех поколений
+        total_collected += collected
+      logger.info(f"  ✓ Garbage collector: собрано {total_collected} объектов (3 прохода)")
 
       # MEMORY PROFILING: Показать топ потребителей памяти
       if settings.ENABLE_MEMORY_PROFILING:

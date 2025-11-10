@@ -449,7 +449,7 @@ class Settings(BaseSettings):
 
   # Memory Profiling (опционально для диагностики)
   ENABLE_MEMORY_PROFILING: bool = Field(
-    default=False,
+    default=True,  # TEMPORARY: Enable to diagnose 22GB leak
     description="Enable memory profiling (adds overhead, use only for debugging)"
   )
 

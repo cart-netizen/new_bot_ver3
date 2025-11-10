@@ -179,7 +179,7 @@ class FeatureScalerManager:
 
         # History for periodic refitting
         self.feature_history: List[np.ndarray] = []
-        self.max_history_size = 5000  # Keep last 5000 samples
+        self.max_history_size = 1000  # MEMORY FIX: 5000 → 1000 samples (80% reduction)
 
         logger.info(
             f"Initialized FeatureScalerManager for {symbol}: "
