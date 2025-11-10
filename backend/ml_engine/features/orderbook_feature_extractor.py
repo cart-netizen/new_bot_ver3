@@ -809,7 +809,7 @@ class OrderBookFeatureExtractor:
 
         # Ограничиваем размер истории
         if len(self.level_ttl_history) > self.max_ttl_history:
-          self.level_ttl_history.pop(0)
+          self.level_ttl_history = self.level_ttl_history[1:]
 
       # Удаляем исчезнувший уровень
       del tracker_side[price]

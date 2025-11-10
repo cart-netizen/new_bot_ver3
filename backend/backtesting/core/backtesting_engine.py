@@ -365,16 +365,16 @@ class BacktestingEngine:
                 logger.info("🔍 Индексирование orderbooks...")
                 self._index_orderbooks()
 
-                    # Сохраняем в кэш для следующих запусков
-                    if self.data_cache:
-                        self.data_cache.save_orderbooks(
-                            self.historical_orderbooks,
-                            symbol=self.config.symbol,
-                            start_date=self.config.start_date,
-                            end_date=self.config.end_date,
-                            interval=self.config.candle_interval,
-                            config_params=orderbook_config_params
-                        )
+                # Сохраняем в кэш для следующих запусков
+                if self.data_cache:
+                    self.data_cache.save_orderbooks(
+                        self.historical_orderbooks,
+                        symbol=self.config.symbol,
+                        start_date=self.config.start_date,
+                        end_date=self.config.end_date,
+                        interval=self.config.candle_interval,
+                        config_params=orderbook_config_params
+                    )
 
             if self.config.use_market_trades and self.trade_handler:
                 # Попытка загрузить из кэша
@@ -403,16 +403,16 @@ class BacktestingEngine:
                 logger.info("🔍 Индексирование market trades...")
                 self._index_trades(candles)
 
-                    # Сохраняем в кэш для следующих запусков
-                    if self.data_cache:
-                        self.data_cache.save_market_trades(
-                            self.historical_trades,
-                            symbol=self.config.symbol,
-                            start_date=self.config.start_date,
-                            end_date=self.config.end_date,
-                            interval=self.config.candle_interval,
-                            config_params=trades_config_params
-                        )
+                # Сохраняем в кэш для следующих запусков
+                if self.data_cache:
+                    self.data_cache.save_market_trades(
+                        self.historical_trades,
+                        symbol=self.config.symbol,
+                        start_date=self.config.start_date,
+                        end_date=self.config.end_date,
+                        interval=self.config.candle_interval,
+                        config_params=trades_config_params
+                    )
 
             # 2. Валидация данных
             logger.info("🔍 Валидация качества данных...")

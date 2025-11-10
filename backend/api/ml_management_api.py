@@ -30,6 +30,18 @@ from backend.ml_engine.auto_retraining.retraining_pipeline import (
     RetrainingConfig,
     RetrainingTrigger
 )
+def _to_dict(obj: Any) -> Dict[str, Any]:
+    """
+    Безопасно конвертирует объект в словарь.
+    Работает с dict, Pydantic v1/v2 моделями и dataclasses.
+    """
+    if isinstance(obj, dict):
+        return obj
+    if hasattr(obj, 'model_dump'):  # Pydantic v2
+        return obj.model_dump()
+    if hasattr(obj, 'dict'):        # Pydantic v1
+        return obj.dict()
+    return vars(obj)                # dataclass или обычный объект
 
 logger = get_logger(__name__)
 
@@ -201,7 +213,7 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
         )
         if request.trainer_config:
             # Override with custom trainer config
-            for k, v in dict(request.trainer_config).items():
+            for k, v in _to_dict(request.trainer_config).items():
                 setattr(trainer_config, k, v)
 
         # Configure data source path
@@ -221,7 +233,7 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
         )
         if request.data_config:
             # Override with custom data config
-            for k, v in dict(request.data_config).items():
+            for k, v in _to_dict(request.data_config).items():
                 setattr(data_config, k, v)
 
         # Create orchestrator
