@@ -399,17 +399,17 @@ class BotController:
       # ===== ML DATA COLLECTOR =====
       self.ml_data_collector = MLDataCollector(
         storage_path="../data/ml_training",
-        max_samples_per_file=2000,  # Увеличено для накопления большего количества данных перед сохранением
+        max_samples_per_file=500,  # MEMORY FIX: 2000 → 500 (save more frequently)
         collection_interval=10,  # Собирать каждые 10 итераций (все символы за раз)
         # auto_save_interval_seconds = 300  # Автосохранение каждые 5 минут для защиты от переполнения памяти
-        max_buffer_memory_mb=200,  # НОВОЕ: Максимум 100 МБ буфера на символ перед принудительным сохранением
+        max_buffer_memory_mb=50,  # MEMORY FIX: 200 → 50 (reduce buffer size)
         # Feature Store integration
         enable_feature_store=True,  # ✅ Записывать в Feature Store (parquet)
-        use_legacy_format=True,     # ✅ Записывать в legacy формат (.npy/.json) для совместимости
+        use_legacy_format=False,     # MEMORY FIX: False to save CPU/memory
         feature_store_group="training_features"
       )
       await self.ml_data_collector.initialize()
-      logger.info("✓ ML Data Collector инициализирован (Feature Store + Legacy)")
+      logger.info("✓ ML Data Collector инициализирован (Feature Store only, reduced buffers)")
 
       # ========== ЭТАП 5: STRATEGY MANAGER (ФАЗА 1) ==========
       logger.info("🎯 [5/10] Инициализация ExtendedStrategyManager (Фаза 1)...")
@@ -1955,9 +1955,9 @@ class BotController:
 
       cleanup_counter += 1
 
-      # НОВОЕ: Периодическая очистка памяти (каждые 1000 циклов)
-      if cleanup_counter >= 1000:
-        logger.info("🧹 Запуск периодической очистки памяти (каждые 1000 циклов)")
+      # MEMORY FIX: Периодическая очистка памяти (каждые 100 циклов вместо 1000)
+      if cleanup_counter >= 100:
+        logger.info("🧹 Запуск периодической очистки памяти (каждые 100 циклов)")
         await self._cleanup_memory()
         cleanup_counter = 0
 
@@ -3186,6 +3186,67 @@ class BotController:
         await self.ml_data_collector.finalize()
         logger.info("✓ ML Data Collector финализирован")
 
+      # ===== MEMORY FIX: Агрессивная очистка памяти при остановке =====
+      logger.info("🧹 Агрессивная очистка памяти при остановке...")
+
+      # 1. Очистить все ML буферы явно
+      if self.ml_data_collector:
+        try:
+          for symbol in list(self.ml_data_collector.feature_buffers.keys()):
+            self.ml_data_collector.feature_buffers[symbol].clear()
+            self.ml_data_collector.label_buffers[symbol].clear()
+            self.ml_data_collector.metadata_buffers[symbol].clear()
+          logger.info("  ✓ ML буферы очищены")
+        except Exception as e:
+          logger.error(f"  ❌ Ошибка очистки ML буферов: {e}")
+
+      # 2. Очистить feature pipelines
+      if self.ml_feature_pipeline:
+        try:
+          for symbol in list(self.ml_feature_pipeline.pipelines.keys()):
+            pipeline = self.ml_feature_pipeline.pipelines[symbol]
+            # Очистить кэши
+            if hasattr(pipeline, '_cache'):
+              pipeline._cache.clear()
+            # Очистить историю в extractors
+            if hasattr(pipeline, 'orderbook_extractor'):
+              pipeline.orderbook_extractor.snapshot_history.clear()
+              pipeline.orderbook_extractor.level_ttl_history.clear()
+            if hasattr(pipeline, 'indicator_extractor'):
+              pipeline.indicator_extractor.candle_history.clear()
+          logger.info("  ✓ Feature pipeline кэши очищены")
+        except Exception as e:
+          logger.error(f"  ❌ Ошибка очистки feature pipelines: {e}")
+
+      # 3. Удалить крупные объекты
+      try:
+        if self.ml_data_collector:
+          del self.ml_data_collector
+          self.ml_data_collector = None
+        if self.ml_feature_pipeline:
+          del self.ml_feature_pipeline
+          self.ml_feature_pipeline = None
+        logger.info("  ✓ Крупные объекты удалены")
+      except Exception as e:
+        logger.error(f"  ❌ Ошибка удаления объектов: {e}")
+
+      # 4. Принудительная сборка мусора (3 прохода)
+      import gc
+      collected_total = 0
+      for i in range(3):
+        collected = gc.collect()
+        collected_total += collected
+        logger.info(f"  ✓ GC проход {i+1}/3: собрано {collected} объектов")
+
+      logger.info(f"🧹 Очистка завершена. Всего освобождено: {collected_total} объектов")
+
+      # Логируем финальное использование памяти
+      try:
+        final_memory = get_memory_usage()
+        logger.info(f"📊 Финальное использование памяти: {final_memory:.1f} MB")
+      except:
+        pass
+
       # Останавливаем остальные компоненты
       if self.websocket_manager:
         await self.websocket_manager.stop()
@@ -3880,10 +3941,10 @@ class BotController:
       try:
         await asyncio.sleep(300)  # Каждые 5 минут
 
-        # НОВОЕ: Мониторинг памяти
+        # MEMORY FIX: Мониторинг памяти с более низким порогом
         memory_mb = get_memory_usage()
 
-        if memory_mb > 8000:  # Если больше 8 ГБ
+        if memory_mb > 4000:  # MEMORY FIX: 8000 → 4000 (trigger cleanup earlier)
           logger.warning(f"⚠️ HIGH MEMORY USAGE: {memory_mb:.1f} MB - запуск очистки памяти")
           await self._cleanup_memory()
           # Проверяем снова после очистки
