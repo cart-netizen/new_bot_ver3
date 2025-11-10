@@ -51,6 +51,10 @@ class TrainingRequest(BaseModel):
     auto_promote: bool = Field(default=True, description="Auto-promote to production")
     min_accuracy: float = Field(default=0.80, ge=0, le=1, description="Min accuracy for promotion")
 
+    # Data source configuration
+    data_source: str = Field(default="feature_store", description="Data source: 'feature_store' or 'legacy'")
+    data_path: Optional[str] = Field(default=None, description="Custom data path (optional)")
+
     # Optional advanced configs
     ml_model_config: Optional[Dict[str, Any]] = Field(
         default=None,
@@ -199,7 +203,21 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
             for k, v in request.trainer_config.items():
                 setattr(trainer_config, k, v)
 
-        data_config = DataConfig(batch_size=request.batch_size)
+        # Configure data source path
+        storage_path = request.data_path
+        if not storage_path:
+            # Use default paths based on data source
+            if request.data_source == "legacy":
+                storage_path = "data/ml_training"
+            else:  # feature_store
+                storage_path = "data/feature_store"
+
+        logger.info(f"Training data source: {request.data_source}, path: {storage_path}")
+
+        data_config = DataConfig(
+            batch_size=request.batch_size,
+            storage_path=storage_path
+        )
         if request.data_config:
             for k, v in request.data_config.items():
                 setattr(data_config, k, v)
