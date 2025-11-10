@@ -130,7 +130,7 @@ async def start_training(
         "job_id": job_id,
         "status": "running",
         "started_at": datetime.now().isoformat(),
-        "params": request.dict(),
+        "params": request.model_dump(),
         "progress": {
             "current_epoch": 0,
             "total_epochs": request.epochs,
@@ -200,7 +200,9 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
             learning_rate=request.learning_rate
         )
         if request.trainer_config:
-            for k, v in request.trainer_config.items():
+            # Type assertion: we know it's not None after the check
+            config_dict: Dict[str, Any] = request.trainer_config
+            for k, v in config_dict.items():
                 setattr(trainer_config, k, v)
 
         # Configure data source path
@@ -219,7 +221,9 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
             storage_path=storage_path
         )
         if request.data_config:
-            for k, v in request.data_config.items():
+            # Type assertion: we know it's not None after the check
+            config_dict: Dict[str, Any] = request.data_config
+            for k, v in config_dict.items():
                 setattr(data_config, k, v)
 
         # Create orchestrator
