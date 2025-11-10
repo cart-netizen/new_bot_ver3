@@ -200,9 +200,8 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
             learning_rate=request.learning_rate
         )
         if request.trainer_config:
-            # Type assertion: we know it's not None after the check
-            config_dict: Dict[str, Any] = request.trainer_config
-            for k, v in config_dict.items():
+            # Override with custom trainer config
+            for k, v in dict(request.trainer_config).items():
                 setattr(trainer_config, k, v)
 
         # Configure data source path
@@ -221,9 +220,8 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
             storage_path=storage_path
         )
         if request.data_config:
-            # Type assertion: we know it's not None after the check
-            config_dict: Dict[str, Any] = request.data_config
-            for k, v in config_dict.items():
+            # Override with custom data config
+            for k, v in dict(request.data_config).items():
                 setattr(data_config, k, v)
 
         # Create orchestrator
@@ -617,10 +615,11 @@ async def trigger_retraining(
 
         # Trigger retraining (in background if possible)
         if background_tasks:
-            background_tasks.add_task(
-                pipeline.trigger_retraining,
-                trigger=trigger_enum
-            )
+            # Use a wrapper to satisfy type checker
+            async def _trigger():
+                await pipeline.trigger_retraining(trigger=trigger_enum)
+
+            background_tasks.add_task(_trigger)
 
             return {
                 "success": True,
