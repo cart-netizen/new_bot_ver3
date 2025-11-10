@@ -111,10 +111,12 @@ class OrderBookUpdateTracker:
     self.symbol = symbol
 
     # Update timestamps (milliseconds)
-    self.update_timestamps: deque = deque(maxlen=1000)
+    # MEMORY FIX: 1000 → 200 timestamps (sufficient for 10-40 sec analysis)
+    self.update_timestamps: deque = deque(maxlen=200)
 
     # Update content tracking
-    self.update_snapshots: deque = deque(maxlen=100)
+    # MEMORY FIX: 100 → 20 full snapshots (80% reduction, saves ~500KB per symbol)
+    self.update_snapshots: deque = deque(maxlen=20)
 
     # Statistics
     self.total_updates = 0
