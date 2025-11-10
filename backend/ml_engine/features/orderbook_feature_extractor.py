@@ -205,7 +205,7 @@ class OrderBookFeatureExtractor:
       # Добавляем в историю
       self.snapshot_history.append(snapshot)
       if len(self.snapshot_history) > self.max_history_size:
-        self.snapshot_history.pop(0)
+        self.snapshot_history = self.snapshot_history[1:]
 
       # Обновляем отслеживание уровней для TTL
       self._update_level_tracking(snapshot)
@@ -808,7 +808,7 @@ class OrderBookFeatureExtractor:
 
         # Ограничиваем размер истории
         if len(self.level_ttl_history) > self.max_ttl_history:
-          self.level_ttl_history.pop(0)
+          self.level_ttl_history = self.level_ttl_history[1:]
 
       # Удаляем исчезнувший уровень
       del tracker_side[price]
