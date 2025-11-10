@@ -204,10 +204,10 @@ class OrderBookManager:
       else:
         current_time = get_timestamp_ms()
         self.last_update_timestamp = current_time
-        logger.warning(
-          f"{self.symbol} | [OrderBook.apply_delta] Invalid timestamp received: ts={ts} (type={type(ts)}), "
-          f"using current time: {current_time}"
-        )
+        # logger.warning(
+        #   f"{self.symbol} | [OrderBook.apply_delta] Invalid timestamp received: ts={ts} (type={type(ts)}), "
+        #   f"using current time: {current_time}"
+        # )
 
       self.delta_count += 1
 
