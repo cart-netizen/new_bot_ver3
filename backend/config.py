@@ -447,6 +447,12 @@ class Settings(BaseSettings):
     description="Default MLflow experiment name"
   )
 
+  # Memory Profiling (опционально для диагностики)
+  ENABLE_MEMORY_PROFILING: bool = Field(
+    default=False,
+    description="Enable memory profiling (adds overhead, use only for debugging)"
+  )
+
   # Redis (для будущего использования)
   REDIS_URL: Optional[str] = None
   REDIS_HOST: str = "localhost"
