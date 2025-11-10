@@ -160,7 +160,7 @@ class IndicatorFeatureExtractor:
 
     # История для индикаторов
     self.candle_history: List[Candle] = []
-    self.max_history_size = 200
+    self.max_history_size = 100  # MEMORY FIX: 200 → 100 свечей
 
     # Кумулятивные индикаторы
     self.obv_cumulative = 0.0

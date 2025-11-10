@@ -399,17 +399,17 @@ class BotController:
       # ===== ML DATA COLLECTOR =====
       self.ml_data_collector = MLDataCollector(
         storage_path="../data/ml_training",
-        max_samples_per_file=500,  # MEMORY FIX: 2000 → 500 (save more frequently)
+        max_samples_per_file=300,  # MEMORY FIX: 500 → 300 (более частое сохранение)
         collection_interval=10,  # Собирать каждые 10 итераций (все символы за раз)
         # auto_save_interval_seconds = 300  # Автосохранение каждые 5 минут для защиты от переполнения памяти
-        max_buffer_memory_mb=50,  # MEMORY FIX: 200 → 50 (reduce buffer size)
+        max_buffer_memory_mb=30,  # MEMORY FIX: 50 → 30 (меньше памяти на символ)
         # Feature Store integration
         enable_feature_store=True,  # ✅ Записывать в Feature Store (parquet)
         use_legacy_format=False,     # MEMORY FIX: False to save CPU/memory
         feature_store_group="training_features"
       )
       await self.ml_data_collector.initialize()
-      logger.info("✓ ML Data Collector инициализирован (Feature Store only, reduced buffers)")
+      logger.info("✓ ML Data Collector инициализирован (Feature Store only, optimized buffers)")
 
       # ========== ЭТАП 5: STRATEGY MANAGER (ФАЗА 1) ==========
       logger.info("🎯 [5/10] Инициализация ExtendedStrategyManager (Фаза 1)...")
@@ -4002,6 +4002,15 @@ class BotController:
     try:
       logger.info("🧹 Начало очистки памяти...")
 
+      # MEMORY PROFILING: Опциональное профилирование (если включено)
+      if settings.ENABLE_MEMORY_PROFILING:
+        import tracemalloc
+        if not tracemalloc.is_tracing():
+          tracemalloc.start()
+          logger.info("  🔬 Memory profiling started")
+
+        snapshot_before = tracemalloc.take_snapshot()
+
       # 1. 🚨 ЭКСТРЕННОЕ СОХРАНЕНИЕ ML буферов (вместо урезания!)
       if self.ml_data_collector:
         await self.ml_data_collector._emergency_save_all_buffers()
@@ -4020,6 +4029,15 @@ class BotController:
       # 3. Принудительная сборка мусора
       collected = gc.collect()
       logger.info(f"  ✓ Garbage collector: собрано {collected} объектов")
+
+      # MEMORY PROFILING: Показать топ потребителей памяти
+      if settings.ENABLE_MEMORY_PROFILING:
+        snapshot_after = tracemalloc.take_snapshot()
+        top_stats = snapshot_after.compare_to(snapshot_before, 'lineno')
+
+        logger.info("  🔬 Top 10 memory changes:")
+        for stat in top_stats[:10]:
+          logger.info(f"    {stat}")
 
       logger.info("🧹 Очистка памяти завершена")
 

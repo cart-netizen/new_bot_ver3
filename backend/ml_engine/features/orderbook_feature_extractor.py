@@ -171,7 +171,7 @@ class OrderBookFeatureExtractor:
 
     # История для временных признаков
     self.snapshot_history: List[OrderBookSnapshot] = []
-    self.max_history_size = 100  # Последние 100 снимков
+    self.max_history_size = 50  # MEMORY FIX: 100 → 50 снимков
 
     # Level TTL tracking для spoofing detection
     # Отслеживаем время жизни каждого ценового уровня
@@ -180,7 +180,7 @@ class OrderBookFeatureExtractor:
       "ask": {}
     }
     self.level_ttl_history: List[float] = []  # История TTL (секунды)
-    self.max_ttl_history = 200  # Последние 200 TTL значений
+    self.max_ttl_history = 100  # MEMORY FIX: 200 → 100 TTL значений
 
     logger.info(f"OrderBookFeatureExtractor инициализирован для {symbol}")
 
