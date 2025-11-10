@@ -4070,6 +4070,27 @@ class BotController:
                 symbol_history.popleft()
           logger.info("  ✓ Layering detector price history урезана")
 
+      # 4b. CRITICAL: Очистка QuoteStuffingDetector (держит 100 полных snapshots на символ!)
+      if hasattr(self, 'quote_stuffing_detector') and self.quote_stuffing_detector:
+        if hasattr(self.quote_stuffing_detector, 'update_trackers'):
+          total_snapshots_cleared = 0
+          for symbol, tracker in self.quote_stuffing_detector.update_trackers.items():
+            # Урезать update_snapshots со 100 до 20 (80% reduction!)
+            if hasattr(tracker, 'update_snapshots') and len(tracker.update_snapshots) > 20:
+              snapshots_count = len(tracker.update_snapshots)
+              # Очистить все кроме последних 20
+              while len(tracker.update_snapshots) > 20:
+                tracker.update_snapshots.popleft()
+              total_snapshots_cleared += (snapshots_count - 20)
+
+            # Урезать timestamps с 1000 до 200
+            if hasattr(tracker, 'update_timestamps') and len(tracker.update_timestamps) > 200:
+              while len(tracker.update_timestamps) > 200:
+                tracker.update_timestamps.popleft()
+
+          if total_snapshots_cleared > 0:
+            logger.info(f"  ✓ QuoteStuffing detector очищен: удалено {total_snapshots_cleared} snapshots")
+
       # 5. Принудительная сборка мусора (3 прохода для циклических ссылок)
       total_collected = 0
       for i in range(3):

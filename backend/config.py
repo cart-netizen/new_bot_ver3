@@ -449,7 +449,7 @@ class Settings(BaseSettings):
 
   # Memory Profiling (опционально для диагностики)
   ENABLE_MEMORY_PROFILING: bool = Field(
-    default=True,  # TEMPORARY: Enable to diagnose 22GB leak
+    default=False,  # DISABLED: Causes 60-second freeze with 10M+ objects
     description="Enable memory profiling (adds overhead, use only for debugging)"
   )
 
