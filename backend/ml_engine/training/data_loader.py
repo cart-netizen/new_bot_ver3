@@ -702,7 +702,36 @@ class HistoricalDataLoader:
 
         # Проверить диапазон labels
         unique_labels = np.unique(y)
-        logger.info(f"  • Unique labels: {unique_labels}")
+        logger.info(f"  • Unique labels BEFORE mapping: {unique_labels}")
+
+        # ===== КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ =====
+        # Преобразуем labels из {-1, 0, 1} в {0, 1, 2} для PyTorch
+        # -1 (DOWN) -> 0
+        #  0 (NEUTRAL) -> 1
+        #  1 (UP) -> 2
+        label_mapping = {-1: 0, 0: 1, 1: 2}
+
+        # Проверяем наличие неожиданных значений (исключая NaN)
+        unique_labels_no_nan = unique_labels[~np.isnan(unique_labels)] if np.any(np.isnan(unique_labels)) else unique_labels
+        unexpected_labels = set(unique_labels_no_nan) - set(label_mapping.keys())
+        if unexpected_labels:
+            logger.warning(f"Found unexpected label values: {unexpected_labels}")
+            logger.warning("These will be mapped to NEUTRAL (1)")
+            # Маппим неожиданные значения на NEUTRAL (1)
+            for unexpected_label in unexpected_labels:
+                label_mapping[int(unexpected_label)] = 1
+
+        # Применяем маппинг (NaN values останутся NaN)
+        y_mapped = []
+        for label in y:
+            if np.isnan(label):
+                y_mapped.append(np.nan)
+            else:
+                y_mapped.append(label_mapping[int(label)])
+        y = np.array(y_mapped, dtype=np.float64)  # float64 чтобы сохранить NaN
+
+        unique_labels_after = np.unique(y)
+        logger.info(f"  • Unique labels AFTER mapping: {unique_labels_after}")
 
         # 4. Проверка распределения классов
         from collections import Counter
@@ -740,6 +769,8 @@ class HistoricalDataLoader:
 
             logger.info(f"After NaN handling: {len(X):,} samples")
 
+        # После удаления NaN, конвертируем labels в int64 для PyTorch
+        y = y.astype(np.int64)
 
         # 5. Resampling (если включен)
         if apply_resampling and self.balancing_strategy:
