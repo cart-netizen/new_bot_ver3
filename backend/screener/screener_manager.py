@@ -214,6 +214,12 @@ class ScreenerManager:
 
         logger.debug(f"Очищена старая история для {len(self.pairs)} пар")
 
+        # MEMORY FIX: Принудительная сборка мусора
+        import gc
+        collected = gc.collect()
+        if collected > 0:
+          logger.debug(f"GC collected {collected} objects in screener cleanup")
+
       except asyncio.CancelledError:
         break
       except Exception as e:
