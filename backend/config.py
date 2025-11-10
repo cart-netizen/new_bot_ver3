@@ -912,6 +912,24 @@ class Settings(BaseSettings):
     description="ML определение режима рынка"
   )
 
+  # Screener Settings (MEMORY FIX)
+  SCREENER_MAX_PAIRS: int = Field(
+    default=30,
+    description="Maximum number of pairs to track in screener (memory optimization)"
+  )
+  SCREENER_MIN_VOLUME: float = Field(
+    default=5_000_000.0,
+    description="Minimum 24h volume in USDT to include pair"
+  )
+  SCREENER_CLEANUP_INTERVAL: int = Field(
+    default=60,
+    description="Cleanup interval in seconds (MEMORY FIX: 300 → 60)"
+  )
+  SCREENER_INACTIVE_TTL: int = Field(
+    default=120,
+    description="Inactive pair TTL in seconds before removal"
+  )
+
   # Notification Settings (заглушки для будущего)
   NOTIFICATION_EMAIL_ENABLED: bool = Field(
     default=os.getenv("NOTIFICATION_EMAIL_ENABLED", "false").lower() == "true",

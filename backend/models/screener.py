@@ -45,9 +45,13 @@ class ScreenerPairData:
   last_update: int = field(default_factory=lambda: int(datetime.now().timestamp() * 1000))
   is_selected: bool = False  # Выбрана ли для графиков
 
-  # История цен (хранится в памяти, ограничено 24 часами)
+  # История цен (MEMORY FIX: хранится в памяти, ограничено 2 часами вместо 24)
   # deque для эффективного добавления/удаления с обоих концов
-  price_history: deque = field(default_factory=lambda: deque(maxlen=1440))  # 24ч * 60мин = 1440 записей
+  # 2 часа * 60 мин = 120 записей (вместо 1440)
+  price_history: deque = field(default_factory=lambda: deque(maxlen=120))
+
+  # MEMORY FIX: Timestamp последнего добавленного snapshot (для throttling)
+  last_snapshot_time: int = 0
 
   def to_dict(self) -> Dict:
     """Преобразование в словарь для API."""
@@ -85,11 +89,15 @@ class ScreenerPairData:
     self.low_24h = float(ticker_data.get("lowPrice24h", self.low_24h))
     self.last_update = current_time
 
-    # Добавляем снимок цены в историю
-    self.price_history.append(PriceSnapshot(price=current_price, timestamp=current_time))
+    # MEMORY FIX: Добавляем snapshot только раз в минуту (throttling)
+    # Вместо каждые 5 секунд, сохраняем раз в 60 секунд
+    time_since_last_snapshot = current_time - self.last_snapshot_time
+    if time_since_last_snapshot >= 60_000 or self.last_snapshot_time == 0:
+      self.price_history.append(PriceSnapshot(price=current_price, timestamp=current_time))
+      self.last_snapshot_time = current_time
 
-    # Рассчитываем процентные изменения для всех интервалов
-    self._calculate_price_changes()
+      # Рассчитываем процентные изменения для всех интервалов
+      self._calculate_price_changes()
 
   def _calculate_price_changes(self):
     """
@@ -176,14 +184,14 @@ class ScreenerPairData:
 
   def cleanup_old_history(self):
     """
-    Очищает историю цен старше 24 часов.
+    Очищает историю цен старше 2 часов (MEMORY FIX: 24ч → 2ч).
     Вызывается периодически для экономии памяти.
     """
     if not self.price_history:
       return
 
     current_time = int(datetime.now().timestamp() * 1000)
-    cutoff_time = current_time - (24 * 60 * 60 * 1000)  # 24 часа назад
+    cutoff_time = current_time - (2 * 60 * 60 * 1000)  # MEMORY FIX: 2 часа назад (было 24)
 
     # Удаляем старые снимки с начала deque
     while self.price_history and self.price_history[0].timestamp < cutoff_time:
