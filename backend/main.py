@@ -805,6 +805,12 @@ class BotController:
       logger.info("ЗАПУСК ТОРГОВОГО БОТА (ML-ENHANCED)")
       logger.info("=" * 80)
 
+      # CRITICAL: Set aggressive GC thresholds for better memory management
+      # Default: (700, 10, 10) - Standard
+      # Aggressive: (500, 5, 5) - Collects more frequently
+      gc.set_threshold(500, 5, 5)
+      logger.info("🧹 Установлены агрессивные пороги GC: (500, 5, 5)")
+
       # ========== 1. ML SIGNAL VALIDATOR - ИНИЦИАЛИЗАЦИЯ ==========
       # ВАЖНО: Инициализируем HTTP сессию и health check
       if self.ml_validator:
