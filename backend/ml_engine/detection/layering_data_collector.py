@@ -310,6 +310,12 @@ class LayeringDataCollector:
     # Clear buffer
     self.data_buffer.clear()
 
+    # CRITICAL: Explicitly delete DataFrame to free memory
+    # Pandas does not release memory automatically
+    del df
+    import gc
+    gc.collect()
+
     # Update statistics
     self._save_statistics()
 
@@ -487,6 +493,16 @@ class LayeringDataCollector:
       false_positive_count = 0
       labeling_rate = 0.0
 
+    # Extract needed values before deleting DataFrames
+    total_on_disk = len(all_df) if not all_df.empty else 0
+    labeled_on_disk = len(labeled_df) if not labeled_df.empty else 0
+
+    # CRITICAL: Delete DataFrames to free memory (14798 rows can be 50-100 MB!)
+    del all_df
+    del labeled_df
+    import gc
+    gc.collect()
+
     return {
       'enabled': self.enabled,
       'total_collected': self.total_collected,
@@ -494,8 +510,8 @@ class LayeringDataCollector:
       'total_saved': self.total_saved,
       'buffer_size': len(self.data_buffer),
       'files_on_disk': len(list(self.data_dir.glob("layering_data_*.parquet"))),
-      'total_on_disk': len(all_df) if not all_df.empty else 0,
-      'labeled_on_disk': len(labeled_df) if not labeled_df.empty else 0,
+      'total_on_disk': total_on_disk,
+      'labeled_on_disk': labeled_on_disk,
       'labeling_rate': labeling_rate,
       'true_positives': true_positive_count,
       'false_positives': false_positive_count
