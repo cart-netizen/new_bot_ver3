@@ -474,6 +474,12 @@ class MLDataCollector:
       else:
         logger.error(f"{symbol} | Ошибка записи в Feature Store")
 
+      # CRITICAL: Explicitly delete DataFrame to free memory
+      # Pandas does not release memory automatically
+      del df
+      import gc
+      gc.collect()
+
     except Exception as e:
       logger.error(f"{symbol} | Ошибка сохранения в Feature Store: {e}", exc_info=True)
 
