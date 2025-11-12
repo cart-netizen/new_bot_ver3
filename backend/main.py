@@ -397,19 +397,23 @@ class BotController:
 
 
       # ===== ML DATA COLLECTOR =====
-      self.ml_data_collector = MLDataCollector(
-        storage_path="../data/ml_training",
-        max_samples_per_file=300,  # MEMORY FIX: 500 → 300 (более частое сохранение)
-        collection_interval=10,  # Собирать каждые 10 итераций (все символы за раз)
-        # auto_save_interval_seconds = 300  # Автосохранение каждые 5 минут для защиты от переполнения памяти
-        max_buffer_memory_mb=30,  # MEMORY FIX: 50 → 30 (меньше памяти на символ)
-        # Feature Store integration
-        enable_feature_store=True,  # ✅ Записывать в Feature Store (parquet)
-        use_legacy_format=False,     # MEMORY FIX: False to save CPU/memory
-        feature_store_group="training_features"
-      )
-      await self.ml_data_collector.initialize()
-      logger.info("✓ ML Data Collector инициализирован (Feature Store only, optimized buffers)")
+      if settings.ML_DATA_COLLECTION_ENABLED:
+        self.ml_data_collector = MLDataCollector(
+          storage_path="../data/ml_training",
+          max_samples_per_file=300,  # MEMORY FIX: 500 → 300 (более частое сохранение)
+          collection_interval=10,  # Собирать каждые 10 итераций (все символы за раз)
+          # auto_save_interval_seconds = 300  # Автосохранение каждые 5 минут для защиты от переполнения памяти
+          max_buffer_memory_mb=30,  # MEMORY FIX: 50 → 30 (меньше памяти на символ)
+          # Feature Store integration
+          enable_feature_store=True,  # ✅ Записывать в Feature Store (parquet)
+          use_legacy_format=False,     # MEMORY FIX: False to save CPU/memory
+          feature_store_group="training_features"
+        )
+        await self.ml_data_collector.initialize()
+        logger.info("✓ ML Data Collector инициализирован (Feature Store only, optimized buffers)")
+      else:
+        self.ml_data_collector = None
+        logger.info("⚠️  ML Data Collection ОТКЛЮЧЕН (настройка ML_DATA_COLLECTION_ENABLED=false)")
 
       # ========== ЭТАП 5: STRATEGY MANAGER (ФАЗА 1) ==========
       logger.info("🎯 [5/10] Инициализация ExtendedStrategyManager (Фаза 1)...")

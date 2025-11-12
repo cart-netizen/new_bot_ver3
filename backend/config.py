@@ -887,6 +887,13 @@ class Settings(BaseSettings):
     default=os.getenv("ML_RISK_INTEGRATION_ENABLED", "true").lower() == "true",
     description="Использовать ML для корректировки риска"
   )
+
+  # ML Data Collection
+  ML_DATA_COLLECTION_ENABLED: bool = Field(
+    default=os.getenv("ML_DATA_COLLECTION_ENABLED", "true").lower() == "true",
+    description="Включить сбор данных для обучения ML модели (может влиять на производительность)"
+  )
+
   ML_MIN_CONFIDENCE_THRESHOLD: float = Field(
     default=float(os.getenv("ML_MIN_CONFIDENCE_THRESHOLD", "0.70")),
     description="Минимальная уверенность ML для входа"
