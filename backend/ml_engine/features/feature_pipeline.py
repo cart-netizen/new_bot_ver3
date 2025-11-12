@@ -6,6 +6,7 @@ Feature Pipeline - оркестратор всех feature extractors.
 """
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+from collections import OrderedDict
 
 from backend.strategy.trade_manager import TradeManager
 
@@ -173,7 +174,9 @@ class FeaturePipeline:
 
     # Кэш последних признаков
     self._last_feature_vector: Optional[FeatureVector] = None
-    self._cache: Dict[int, FeatureVector] = {}
+    # CRITICAL: Use OrderedDict for proper LRU cache implementation
+    self._cache: OrderedDict[int, FeatureVector] = OrderedDict()
+    self.max_cache_size = 50  # MEMORY FIX: Reduced from 100 to 50 (50% reduction)
 
     logger.info(
       f"FeaturePipeline инициализирован для {symbol}, "
@@ -202,9 +205,11 @@ class FeaturePipeline:
     logger.debug(f"{self.symbol} | Извлечение признаков через pipeline")
 
     try:
-      # Проверяем кэш
+      # Проверяем кэш (LRU: move accessed item to end)
       cache_key = orderbook_snapshot.timestamp
       if self.cache_enabled and cache_key in self._cache:
+        # Move to end (mark as recently used)
+        self._cache.move_to_end(cache_key)
         logger.debug(f"{self.symbol} | Признаки взяты из кэша")
         return self._cache[cache_key]
 
@@ -258,13 +263,17 @@ class FeaturePipeline:
       if self.normalize:
         feature_vector = await self._normalize_features(feature_vector)
 
-      # 6. Сохраняем в кэш
+      # 6. Сохраняем в кэш (LRU: add to end, remove oldest if full)
       if self.cache_enabled:
         self._cache[cache_key] = feature_vector
-        # Ограничиваем размер кэша
-        if len(self._cache) > 100:
-          oldest_key = min(self._cache.keys())
-          del self._cache[oldest_key]
+        # Move to end (mark as recently used)
+        self._cache.move_to_end(cache_key)
+
+        # LRU eviction: remove least recently used (first item)
+        if len(self._cache) > self.max_cache_size:
+          # popitem(last=False) removes FIRST item (oldest, least recently used)
+          evicted_key, _ = self._cache.popitem(last=False)
+          logger.debug(f"{self.symbol} | LRU cache eviction: removed key {evicted_key}")
 
       self._last_feature_vector = feature_vector
 
