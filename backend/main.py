@@ -4028,13 +4028,23 @@ class BotController:
 
       # 2. Очистка OrderBook кэшей
       cleaned_count = 0
+      cached_snapshots_cleared = 0
       for manager in self.orderbook_managers.values():
         if hasattr(manager, 'clear_old_data'):
           manager.clear_old_data()
           cleaned_count += 1
 
+        # MEMORY OPTIMIZATION: Явно очищаем кэшированные snapshots
+        if hasattr(manager, '_cached_snapshot') and manager._cached_snapshot is not None:
+          manager._cached_snapshot = None
+          manager._snapshot_dirty = True  # Пересоздастся при следующем get_snapshot()
+          cached_snapshots_cleared += 1
+
       if cleaned_count > 0:
-        logger.info(f"  ✓ OrderBook кэши очищены ({cleaned_count} символов)")
+        logger.info(
+          f"  ✓ OrderBook кэши очищены ({cleaned_count} символов, "
+          f"{cached_snapshots_cleared} cached snapshots)"
+        )
 
       # 3. CRITICAL: Очистка Feature Pipeline кэшей и историй
       if self.ml_feature_pipeline and hasattr(self.ml_feature_pipeline, 'pipelines'):
