@@ -4097,12 +4097,31 @@ class BotController:
           if total_snapshots_cleared > 0:
             logger.info(f"  ✓ QuoteStuffing detector очищен: удалено {total_snapshots_cleared} snapshots")
 
-      # 5. Принудительная сборка мусора (3 прохода для циклических ссылок)
-      total_collected = 0
-      for i in range(3):
-        collected = gc.collect(generation=2)  # Полный GC всех поколений
-        total_collected += collected
-      logger.info(f"  ✓ Garbage collector: собрано {total_collected} объектов (3 прохода)")
+      # 5. Явная очистка дополнительных ссылок перед GC
+      if self.ml_feature_pipeline and hasattr(self.ml_feature_pipeline, 'pipelines'):
+        for symbol, pipeline in self.ml_feature_pipeline.pipelines.items():
+          # Clear last feature vector reference
+          pipeline._last_feature_vector = None
+
+          # Clear scaler manager internal state
+          if hasattr(pipeline, 'scaler_manager') and pipeline.scaler_manager:
+            # Clear feature names (list of strings)
+            if hasattr(pipeline.scaler_manager, 'feature_names'):
+              pipeline.scaler_manager.feature_names.clear()
+
+      # 6. Принудительная сборка мусора (3 прохода для циклических ссылок)
+      # Разблокируем все поколения перед сборкой
+      gc.collect(0)  # Collect generation 0
+      gc.collect(1)  # Collect generation 1
+      gc.collect(2)  # Collect generation 2 (full)
+
+      # Полная сборка с явным освобождением
+      total_collected = gc.collect()  # Final full collection
+      logger.info(f"  ✓ Garbage collector: собрано {total_collected} объектов (4 прохода)")
+
+      # Show GC stats
+      gc_stats = gc.get_stats()
+      logger.debug(f"  GC stats: {gc_stats}")
 
       # MEMORY PROFILING: Показать топ потребителей памяти
       if settings.ENABLE_MEMORY_PROFILING:
