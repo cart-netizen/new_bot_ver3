@@ -42,6 +42,10 @@ class OrderBookManager:
     self.snapshot_count: int = 0
     self.delta_count: int = 0
 
+    # MEMORY OPTIMIZATION: Кэширование snapshot для предотвращения создания миллионов объектов
+    self._cached_snapshot: Optional[OrderBookSnapshot] = None
+    self._snapshot_dirty: bool = True  # Флаг что кэш невалиден
+
     logger.info(f"Инициализирован OrderBook менеджер для {symbol}, max_depth={max_depth}")
 
   def apply_snapshot(self, data: Dict) -> OrderBookSnapshot:
@@ -102,6 +106,9 @@ class OrderBookManager:
       self.snapshot_received = True  # ВАЖНО: Флаг что snapshot получен
       self.snapshot_count += 1
 
+      # MEMORY OPTIMIZATION: Инвалидируем кэш при обновлении данных
+      self._snapshot_dirty = True
+
       logger.info(
         f"{self.symbol} | Snapshot применен: "
         f"bids={len(self.bids)}, asks={len(self.asks)}, "
@@ -136,11 +143,17 @@ class OrderBookManager:
       self.bids = OrderedDict(sorted_bids)
       logger.debug(f"{self.symbol} | Ограничена глубина bids до {self.max_depth}")
 
+      # MEMORY OPTIMIZATION: Инвалидируем кэш при изменении данных
+      self._snapshot_dirty = True
+
     if len(self.asks) > self.max_depth:
       # Оставляем только top N лучших ask (самые низкие цены)
       sorted_asks = sorted(self.asks.items())[:self.max_depth]
       self.asks = OrderedDict(sorted_asks)
       logger.debug(f"{self.symbol} | Ограничена глубина asks до {self.max_depth}")
+
+      # MEMORY OPTIMIZATION: Инвалидируем кэш при изменении данных
+      self._snapshot_dirty = True
 
   def apply_delta(self, data: Dict) -> Optional[OrderBookDelta]:
     """
@@ -211,6 +224,9 @@ class OrderBookManager:
 
       self.delta_count += 1
 
+      # MEMORY OPTIMIZATION: Инвалидируем кэш при обновлении данных
+      self._snapshot_dirty = True
+
       logger.debug(
         f"{self.symbol} | Delta применена: "
         f"bids={len(bids_update)}, asks={len(asks_update)}, "
@@ -237,14 +253,21 @@ class OrderBookManager:
     """
     Получение текущего состояния стакана.
 
+    MEMORY OPTIMIZATION: Использует кэширование для предотвращения создания
+    миллионов временных объектов. Snapshot создается только при изменении данных.
+
     Returns:
         OrderBookSnapshot: Снимок текущего состояния или None
     """
     if not self.snapshot_received:
       return None
 
+    # MEMORY OPTIMIZATION: Возвращаем кэшированный snapshot если данные не изменились
+    if not self._snapshot_dirty and self._cached_snapshot is not None:
+      return self._cached_snapshot
+
+    # Данные изменились или кэша нет - создаем новый snapshot
     # CRITICAL: Ensure timestamp is never None or 0
-    # If last_update_timestamp is None/0, use current time
     timestamp = self.last_update_timestamp
     if timestamp is None or timestamp == 0:
       timestamp = get_timestamp_ms()
@@ -260,7 +283,8 @@ class OrderBookManager:
           f"{self.symbol} | [OrderBook.get_snapshot] Using valid timestamp: {timestamp}"
         )
 
-    return OrderBookSnapshot(
+    # Создаем snapshot и кэшируем его
+    self._cached_snapshot = OrderBookSnapshot(
       symbol=self.symbol,
       bids=list(self.bids.items()),
       asks=list(self.asks.items()),
@@ -268,6 +292,11 @@ class OrderBookManager:
       update_id=self.last_update_id,
       sequence_id=self.last_sequence_id
     )
+
+    # Помечаем кэш как валидный
+    self._snapshot_dirty = False
+
+    return self._cached_snapshot
 
   def get_best_bid(self) -> Optional[Tuple[float, float]]:
     """
