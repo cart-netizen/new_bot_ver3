@@ -476,9 +476,9 @@ class MLDataCollector:
 
       # CRITICAL: Explicitly delete DataFrame to free memory
       # Pandas does not release memory automatically
+      # NOTE: gc.collect() removed - too slow (8 sec per save)
+      # GC will collect automatically during periodic cleanup
       del df
-      import gc
-      gc.collect()
 
     except Exception as e:
       logger.error(f"{symbol} | Ошибка сохранения в Feature Store: {e}", exc_info=True)
