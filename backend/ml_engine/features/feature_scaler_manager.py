@@ -16,6 +16,7 @@ Path: backend/ml_engine/features/feature_scaler_manager.py
 from typing import Dict, List, Optional, Tuple, Union, TYPE_CHECKING
 from dataclasses import dataclass, field
 from pathlib import Path
+from collections import deque
 import numpy as np
 import joblib
 import asyncio
@@ -178,7 +179,8 @@ class FeatureScalerManager:
         self.feature_importance_scores: Dict[str, float] = {}
 
         # History for periodic refitting
-        self.feature_history: List[np.ndarray] = []
+        # CRITICAL FIX: Use deque instead of list (list.pop(0) is O(n)!)
+        self.feature_history: deque = deque(maxlen=1000)  # Auto-removes old items
         self.max_history_size = 1000  # MEMORY FIX: 5000 → 1000 samples (80% reduction)
 
         logger.info(
@@ -587,10 +589,8 @@ class FeatureScalerManager:
             # STEP 6: Update history for periodic refitting
             # ========================================================================
             if update_history:
+                # deque with maxlen auto-removes oldest items, no need for manual pop(0)
                 self.feature_history.append(feature_vector.to_array())
-                if len(self.feature_history) > self.max_history_size:
-                    self.feature_history.pop(0)
-
                 self.state.samples_processed += 1
 
                 # Periodic refit check
