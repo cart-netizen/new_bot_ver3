@@ -4237,10 +4237,27 @@ class BotController:
         snapshots = type_counts.get('OrderBookSnapshot', 0)
         ndarrays = type_counts.get('ndarray', 0)
 
+        # UPDATED THRESHOLDS based on actual steady-state measurements:
+        # For 15 symbols with optimized settings:
+        # - prev_snapshots: 20
+        # - orderbook_extractor: 15 × 20 = 300
+        # - quote_stuffing: 15 × 10 = 150
+        # - active processing: ~14
+        # Expected total: ~484 snapshots (steady state)
+
         if feature_vectors > 500:
           logger.warning(f"  ⚠️ HIGH FeatureVector count: {feature_vectors} (expected < 500)")
-        if snapshots > 100:
-          logger.warning(f"  ⚠️ HIGH OrderBookSnapshot count: {snapshots} (expected < 100)")
+
+        if snapshots > 550:
+          # Warn if significantly above expected steady-state
+          logger.warning(f"  ⚠️ HIGH OrderBookSnapshot count: {snapshots} (expected < 550)")
+        elif snapshots > 500:
+          # Info if slightly elevated but not alarming
+          logger.info(f"  ℹ️ Elevated OrderBookSnapshot count: {snapshots} (normal range: 450-500)")
+        else:
+          # Healthy range
+          logger.debug(f"  ✓ Healthy OrderBookSnapshot count: {snapshots} (steady state)")
+
         if ndarrays > 5000:
           logger.warning(f"  ⚠️ HIGH ndarray count: {ndarrays} (expected < 5000)")
 
