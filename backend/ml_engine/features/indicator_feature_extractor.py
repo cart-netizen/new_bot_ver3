@@ -12,7 +12,7 @@ Professional Industry-Standard Implementation:
 """
 
 from typing import List, Dict, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict  # MEMORY FIX: Added asdict for slots support
 from collections import deque
 import numpy as np
 
@@ -135,8 +135,8 @@ class IndicatorFeatures:
     ], dtype=np.float32)
 
   def to_dict(self) -> Dict[str, float]:
-    """Преобразование в словарь"""
-    return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+    """Преобразование в словарь (MEMORY FIX: uses asdict for slots support)"""
+    return asdict(self)
 
 
 class IndicatorFeatureExtractor:

@@ -5,7 +5,7 @@ Candle Feature Extractor для извлечения 25 признаков из 
 """
 
 from typing import List, Dict, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict  # MEMORY FIX: Added asdict for slots support
 import numpy as np
 
 from backend.core.logger import get_logger
@@ -92,8 +92,8 @@ class CandleFeatures:
     ], dtype=np.float32)
 
   def to_dict(self) -> Dict[str, float]:
-    """Преобразование в словарь"""
-    return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+    """Преобразование в словарь (MEMORY FIX: uses asdict for slots support)"""
+    return asdict(self)
 
 
 class CandleFeatureExtractor:
