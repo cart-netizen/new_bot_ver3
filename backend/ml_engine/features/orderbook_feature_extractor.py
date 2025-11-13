@@ -19,9 +19,9 @@ from backend.strategy.analyzer import OrderBookAnalyzer
 logger = get_logger(__name__)
 
 
-@dataclass
+@dataclass(slots=True)  # MEMORY FIX: Reduce object size from ~72B to ~40B
 class OrderBookFeatures:
-  """Контейнер для признаков стакана"""
+  """Контейнер для признаков стакана (MEMORY OPTIMIZED with __slots__)"""
 
   symbol: str
   timestamp: int

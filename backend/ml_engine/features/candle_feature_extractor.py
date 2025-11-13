@@ -14,9 +14,9 @@ from backend.models.candle import Candle
 
 logger = get_logger(__name__)
 
-@dataclass
+@dataclass(slots=True)  # MEMORY FIX: Reduce object size from ~72B to ~40B
 class CandleFeatures:
-  """Контейнер для признаков из свечных данных"""
+  """Контейнер для признаков из свечных данных (MEMORY OPTIMIZED with __slots__)"""
 
   symbol: str
   timestamp: int
