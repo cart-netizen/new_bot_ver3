@@ -4108,13 +4108,14 @@ class BotController:
               pipeline.scaler_manager.feature_history.clear()
               history_cleared += history_size
 
-          # Урезать истории экстракторов до минимума (50% от макс)
+          # MEMORY OPTIMIZATION: Clear orderbook extractor histories
+          # Now using deque with maxlen, so just clear them completely
           if hasattr(pipeline, 'orderbook_extractor'):
             ob_ext = pipeline.orderbook_extractor
-            if hasattr(ob_ext, 'snapshot_history') and len(ob_ext.snapshot_history) > 25:
-              ob_ext.snapshot_history = ob_ext.snapshot_history[-25:]  # Оставить 25 из 50
-            if hasattr(ob_ext, 'level_ttl_history') and len(ob_ext.level_ttl_history) > 50:
-              ob_ext.level_ttl_history = ob_ext.level_ttl_history[-50:]  # Оставить 50 из 100
+            if hasattr(ob_ext, 'snapshot_history'):
+              ob_ext.snapshot_history.clear()  # deque.clear() is O(1)
+            if hasattr(ob_ext, 'level_ttl_history'):
+              ob_ext.level_ttl_history.clear()  # deque.clear() is O(1)
 
           if hasattr(pipeline, 'indicator_extractor'):
             ind_ext = pipeline.indicator_extractor
@@ -4139,13 +4140,12 @@ class BotController:
         if hasattr(self.quote_stuffing_detector, 'update_trackers'):
           total_snapshots_cleared = 0
           for symbol, tracker in self.quote_stuffing_detector.update_trackers.items():
-            # Урезать update_snapshots со 100 до 20 (80% reduction!)
-            if hasattr(tracker, 'update_snapshots') and len(tracker.update_snapshots) > 20:
+            # AGGRESSIVE: Clear update_snapshots completely during cleanup
+            # deque will auto-refill with maxlen=10
+            if hasattr(tracker, 'update_snapshots') and len(tracker.update_snapshots) > 0:
               snapshots_count = len(tracker.update_snapshots)
-              # Очистить все кроме последних 20
-              while len(tracker.update_snapshots) > 20:
-                tracker.update_snapshots.popleft()
-              total_snapshots_cleared += (snapshots_count - 20)
+              tracker.update_snapshots.clear()
+              total_snapshots_cleared += snapshots_count
 
             # Урезать timestamps с 1000 до 200
             if hasattr(tracker, 'update_timestamps') and len(tracker.update_timestamps) > 200:
