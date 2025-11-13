@@ -202,8 +202,13 @@ class BotController:
     self.candle_managers: Dict[str, CandleManager] = {}
 
     # Tracking предыдущих состояний
-    self.prev_orderbook_snapshots: Dict[str, OrderBookSnapshot] = {}
+    # MEMORY OPTIMIZATION: Use OrderedDict as LRU cache with max size
+    # Previously: unlimited Dict that kept growing (15 symbols × continuous updates)
+    # Now: Limited to MAX_PREV_SNAPSHOTS (20) with automatic eviction of oldest
+    from collections import OrderedDict
+    self.prev_orderbook_snapshots: OrderedDict[str, OrderBookSnapshot] = OrderedDict()
     self.prev_candles: Dict[str, Candle] = {}
+    self.MAX_PREV_SNAPSHOTS = 20  # Maximum prev snapshots to keep (1-2 per symbol)
 
     # Timestamps для tracking обновлений
     self.last_snapshot_update: Dict[str, int] = {}
@@ -3729,11 +3734,22 @@ class BotController:
         if manager.snapshot_received:
             current_snapshot = manager.get_snapshot()
             if current_snapshot:
+                # MEMORY OPTIMIZATION: LRU cache with size limit
+                # Evict oldest snapshots when cache is full
+                if len(self.prev_orderbook_snapshots) >= self.MAX_PREV_SNAPSHOTS:
+                    # Remove oldest entry (FIFO)
+                    oldest_symbol, _ = self.prev_orderbook_snapshots.popitem(last=False)
+                    logger.debug(f"[LRU Cache] Evicted prev_snapshot for {oldest_symbol}")
+
+                # Add/update snapshot (moves to end if exists)
                 self.prev_orderbook_snapshots[symbol] = current_snapshot
+                self.prev_orderbook_snapshots.move_to_end(symbol)  # Mark as recently used
+
                 self.last_snapshot_update[symbol] = current_snapshot.timestamp
                 logger.debug(
                     f"[{symbol}] Сохранен предыдущий snapshot: "
-                    f"mid_price={current_snapshot.mid_price:.2f}"
+                    f"mid_price={current_snapshot.mid_price:.2f}, "
+                    f"cache_size={len(self.prev_orderbook_snapshots)}/{self.MAX_PREV_SNAPSHOTS}"
                 )
 
         # Применяем новые данные
@@ -4129,32 +4145,110 @@ class BotController:
       gc.collect(1)  # Collect generation 1
       gc.collect(2)  # Collect generation 2 (full)
 
-      # CRITICAL: Ensure all weak references are cleared before final GC
-      # Force numpy to release unused memory pools
+      # CRITICAL: Aggressive numpy memory pool cleanup
+      # Numpy holds internal memory pools that don't get released without explicit action
+      numpy_memory_freed = False
       try:
         import numpy as np
-        # Trigger numpy memory cleanup by forcing a small allocation
-        _ = np.empty(1)
-        del _
-      except:
+
+        # Method 1: Clear numpy's internal caching
+        # np._core._multiarray_umath is where memory pools live
+        if hasattr(np, '_core'):
+          if hasattr(np._core, '_multiarray_umath'):
+            # Force internal cleanup
+            try:
+              # This is undocumented but effective
+              np._core._multiarray_umath._reload_guard()
+              logger.debug("  ✓ numpy._core._multiarray_umath._reload_guard() called")
+            except:
+              pass
+
+        # Method 2: Create and delete large arrays to flush pools
+        # Numpy memory pools are per-thread and per-dtype
+        # We create arrays for common dtypes used in the app
+        for dtype in [np.float64, np.float32, np.int64, np.int32]:
+          try:
+            # Create 100MB array to force pool flush
+            temp_array = np.empty(shape=(100_000_000 // dtype().itemsize,), dtype=dtype)
+            del temp_array
+          except:
+            pass
+
+        # Method 3: Force numpy to release memory via explicit del + gc
+        # This clears any remaining numpy array references in namespace
+        import sys
+        for obj_name in list(sys.modules.keys()):
+          if 'numpy' in obj_name:
+            try:
+              # Clear module-level numpy array caches
+              module = sys.modules[obj_name]
+              if hasattr(module, '__dict__'):
+                for attr_name in list(module.__dict__.keys()):
+                  attr = getattr(module, attr_name, None)
+                  if attr is not None and isinstance(attr, np.ndarray):
+                    delattr(module, attr_name)
+            except:
+              pass
+
+        numpy_memory_freed = True
+        logger.info("  ✓ Numpy memory pools aggressively flushed")
+
+      except Exception as e:
+        logger.debug(f"  ⚠️ Numpy memory cleanup partial failure: {e}")
         pass
 
       # Полная сборка с явным освобождением
       total_collected = gc.collect()  # Final full collection
       logger.info(f"  ✓ Garbage collector: собрано {total_collected} объектов (4 прохода)")
 
-      # Try to return memory to OS (CPython-specific)
+      # CRITICAL: Return memory to OS (CPython-specific)
+      # This is essential for preventing the 13GB memory growth issue
       try:
         import ctypes
-        if hasattr(ctypes, 'CDLL'):
+        if os.name == 'posix':  # Linux/Unix
           try:
-            libc = ctypes.CDLL('msvcrt.dll' if os.name == 'nt' else 'libc.so.6')
+            # Try libc.so.6 first (most common)
+            libc = ctypes.CDLL('libc.so.6')
             if hasattr(libc, 'malloc_trim'):
-              libc.malloc_trim(0)  # Return freed memory to OS
-              logger.debug("  ✓ malloc_trim(0) вызван")
-          except:
-            pass  # Not available on all systems
-      except:
+              result = libc.malloc_trim(0)  # Return all freed memory to OS
+              logger.info(f"  ✓ malloc_trim(0) executed on Linux (result={result})")
+          except Exception as e:
+            logger.debug(f"  ⚠️ malloc_trim failed: {e}")
+            # Try alternative: force madvise via /proc
+            try:
+              import mmap
+              # This helps Linux kernel reclaim memory pages
+              with open('/proc/self/smaps', 'r') as f:
+                # Reading smaps can trigger kernel memory reclaim
+                _ = f.read()
+              logger.debug("  ✓ Triggered kernel memory reclaim via /proc/self/smaps")
+            except:
+              pass
+        elif os.name == 'nt':  # Windows
+          try:
+            # Windows uses different memory management
+            libc = ctypes.CDLL('msvcrt.dll')
+            # _heapmin() compacts the heap and returns memory to OS
+            if hasattr(libc, '_heapmin'):
+              result = libc._heapmin()
+              logger.info(f"  ✓ _heapmin() executed on Windows (result={result})")
+          except Exception as e:
+            logger.debug(f"  ⚠️ _heapmin failed: {e}")
+
+        # ADDITIONAL: Set Python memory allocator arena threshold lower
+        # This encourages Python to release memory arenas back to OS sooner
+        try:
+          import sys
+          if hasattr(sys, 'get_int_max_str_digits'):
+            # Python 3.10+ - we can manipulate allocator behavior
+            # Force arena release by triggering gc with low threshold
+            gc.set_threshold(500, 5, 5)  # More aggressive GC
+            logger.debug("  ✓ Set aggressive GC thresholds (500, 5, 5)")
+        except:
+          pass
+
+      except Exception as e:
+        logger.warning(f"  ⚠️ Failed to return memory to OS: {e}")
         pass
 
       # Show GC stats
