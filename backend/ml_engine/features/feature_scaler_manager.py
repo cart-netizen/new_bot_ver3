@@ -562,6 +562,7 @@ class FeatureScalerManager:
 
             from backend.ml_engine.features.feature_pipeline import FeatureVector
 
+            # MEMORY FIX: Use minimal metadata instead of copy to reduce memory
             scaled_vector = FeatureVector(
                 symbol=feature_vector.symbol,
                 timestamp=feature_vector.timestamp,
@@ -570,17 +571,16 @@ class FeatureScalerManager:
                 indicator_features=indicator_features_scaled,
                 feature_count=feature_vector.feature_count,
                 version=feature_vector.version,
-                metadata=feature_vector.metadata.copy()
+                metadata={}  # Empty metadata - will populate only essential fields below
             )
 
             # ========================================================================
-            # STEP 5: Preserve original values in metadata
+            # STEP 5: Preserve minimal metadata (MEMORY FIX: removed original_features copy)
             # ========================================================================
-            scaled_vector.metadata['original_features'] = {
-                'orderbook': orderbook_raw.flatten().tolist(),
-                'candle': candle_raw.flatten().tolist(),
-                'indicator': indicator_raw.flatten().tolist()
-            }
+            # CRITICAL MEMORY FIX: Removed original_features from metadata
+            # This was copying 336 float values (2.7KB) per FeatureVector
+            # With 43M objects, this = ~100GB of memory waste!
+            # Original features not needed for production inference
             scaled_vector.metadata['scaled'] = True
             scaled_vector.metadata['scaler_version'] = self.state.version
             scaled_vector.metadata['scaling_timestamp'] = int(datetime.now().timestamp() * 1000)
