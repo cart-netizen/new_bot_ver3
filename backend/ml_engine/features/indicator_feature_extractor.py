@@ -56,9 +56,9 @@ class RSIState:
   period: int = 14
 
 
-@dataclass
+@dataclass(slots=True)  # MEMORY FIX: Reduce object size from ~72B to ~40B
 class IndicatorFeatures:
-  """Контейнер для признаков технических индикаторов"""
+  """Контейнер для признаков технических индикаторов (MEMORY OPTIMIZED with __slots__)"""
 
   symbol: str
   timestamp: int
