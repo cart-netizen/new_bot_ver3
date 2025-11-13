@@ -217,8 +217,15 @@ class OrderTracker:
     self.symbol = symbol
     self.side = side
 
-    # Order history: price -> [(timestamp, volume), ...]
-    self.order_history: Dict[float, List[Tuple[int, float]]] = defaultdict(list)
+    # CRITICAL MEMORY FIX: order_history was growing unbounded!
+    # Changed from defaultdict(list) to deque-based structure with automatic cleanup
+    # Previously: Dict[float, List[Tuple]] could grow to millions of entries
+    # Now: Automatically prunes old entries
+    #
+    # Order history: price -> deque[(timestamp, volume), ...]
+    # Using deque with maxlen to prevent unbounded growth
+    self.order_history: Dict[float, deque] = defaultdict(lambda: deque(maxlen=50))
+    # Note: 50 entries per price level is more than enough for layering detection
 
     # Current active orders
     self.active_orders: Dict[float, float] = {}  # price -> volume
@@ -333,17 +340,28 @@ class OrderTracker:
     return len(cancelled_prices) / len(placed_prices)
 
   def cleanup_old_history(self, cutoff_time: int):
-    """Remove old history data."""
-    for price in list(self.order_history.keys()):
-      # Filter old entries
-      self.order_history[price] = [
-        (ts, vol) for ts, vol in self.order_history[price]
-        if ts >= cutoff_time
-      ]
+    """
+    CRITICAL MEMORY FIX: Remove old history data.
 
-      # Remove empty entries
-      if not self.order_history[price]:
-        del self.order_history[price]
+    Previously: Filtered entries but created new lists, memory leak!
+    Now: Use deque comprehension and explicitly delete empty keys.
+    """
+    empty_keys = []
+    for price in list(self.order_history.keys()):
+      # Filter old entries (deque comprehension)
+      recent_items = deque(
+        ((ts, vol) for ts, vol in self.order_history[price] if ts >= cutoff_time),
+        maxlen=50
+      )
+
+      if len(recent_items) == 0:
+        empty_keys.append(price)
+      else:
+        self.order_history[price] = recent_items
+
+    # CRITICAL: Delete empty price keys
+    for price in empty_keys:
+      del self.order_history[price]
 
     # Cleanup old placement times
     for price in list(self.placement_times.keys()):
@@ -416,10 +434,11 @@ class LayeringDetector:
     self.trackers: Dict[str, Dict[str, OrderTracker]] = {}
 
     # Price history for impact analysis: symbol -> deque[(timestamp, mid_price)]
-    self.price_history: Dict[str, deque] = defaultdict(lambda: deque(maxlen=1000))
+    # MEMORY OPTIMIZATION: Reduced from 1000 to 500
+    self.price_history: Dict[str, deque] = defaultdict(lambda: deque(maxlen=500))
 
-    # Detected patterns
-    self.detected_patterns: Dict[str, List[LayeringPattern]] = defaultdict(list)
+    # Detected patterns - MEMORY FIX: limit to last 100 patterns per symbol
+    self.detected_patterns: Dict[str, deque] = defaultdict(lambda: deque(maxlen=100))
 
     # Statistics
     self.total_checks = 0
@@ -433,7 +452,8 @@ class LayeringDetector:
     self.detection_cooldown_ms = 1000 if self.data_collector else 5000
 
     # ML auto-labeling: patterns pending price validation
-    self.pending_validations: List[PendingValidationPattern] = []
+    # MEMORY FIX: Use deque with maxlen instead of unbounded list
+    self.pending_validations: deque = deque(maxlen=50)  # Was: List (unbounded!)
     self.validation_tasks: List[asyncio.Task] = []  # Track running validation tasks
 
     # FIX: Counter for periodic cleanup to prevent memory leak

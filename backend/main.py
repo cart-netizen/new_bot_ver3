@@ -1970,9 +1970,11 @@ class BotController:
 
       cleanup_counter += 1
 
-      # MEMORY FIX: Периодическая очистка памяти (каждые 50 циклов для агрессивной очистки)
-      if cleanup_counter >= 50:  # CRITICAL: 100 → 50 для более частой очистки
-        logger.info("🧹 Запуск периодической очистки памяти (каждые 50 циклов)")
+      # CRITICAL MEMORY FIX: VERY AGGRESSIVE cleanup to prevent 24/7 memory growth
+      # Reduced from 50 to 25 cycles for 2× more frequent cleanup
+      # At ~0.5s per cycle, this means cleanup every ~12.5 seconds
+      if cleanup_counter >= 25:  # Was 50, then 100 originally
+        logger.info("🧹 Запуск периодической очистки памяти (каждые 25 циклов = ~12.5 сек)")
         await self._cleanup_memory()
         cleanup_counter = 0
 
@@ -4125,15 +4127,34 @@ class BotController:
         if cache_cleared > 0 or history_cleared > 0:
           logger.info(f"  ✓ Feature Pipeline очищен: cache={cache_cleared}, history={history_cleared}")
 
-      # 4. Очистка детекторов (если есть)
+      # 4. AGGRESSIVE: Очистка детекторов (если есть)
       if hasattr(self, 'layering_detector') and self.layering_detector:
+        # CRITICAL: Clear order_history to prevent unbounded growth
+        if hasattr(self.layering_detector, 'trackers'):
+          for symbol, sides in self.layering_detector.trackers.items():
+            for side, tracker in sides.items():
+              if hasattr(tracker, 'order_history'):
+                # Cleanup old data (keeps last 5 minutes)
+                cutoff = get_timestamp_ms() - (5 * 60 * 1000)
+                tracker.cleanup_old_history(cutoff)
+
+        # Clear price history
         if hasattr(self.layering_detector, 'price_history'):
           for symbol_history in self.layering_detector.price_history.values():
-            if len(symbol_history) > 500:
-              # Урезать до 500 из 1000
-              while len(symbol_history) > 500:
+            # Deque with maxlen will auto-manage, but clear aggressively during cleanup
+            if len(symbol_history) > 250:
+              # Keep only last 250 (was 500)
+              while len(symbol_history) > 250:
                 symbol_history.popleft()
-          logger.info("  ✓ Layering detector price history урезана")
+
+        # Clear old detected patterns (keep last 50)
+        if hasattr(self.layering_detector, 'detected_patterns'):
+          for symbol, patterns in self.layering_detector.detected_patterns.items():
+            # deque with maxlen=100, but clear aggressively to 50
+            while len(patterns) > 50:
+              patterns.popleft()
+
+        logger.info("  ✓ Layering detector очищен (order_history, price_history, patterns)")
 
       # 4b. CRITICAL: Очистка QuoteStuffingDetector (держит 100 полных snapshots на символ!)
       if hasattr(self, 'quote_stuffing_detector') and self.quote_stuffing_detector:
