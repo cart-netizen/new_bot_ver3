@@ -111,12 +111,14 @@ class OrderBookUpdateTracker:
     self.symbol = symbol
 
     # Update timestamps (milliseconds)
-    # MEMORY FIX: 1000 → 200 timestamps (sufficient for 10-40 sec analysis)
+    # MEMORY OPTIMIZATION: Reduced timestamps
     self.update_timestamps: deque = deque(maxlen=200)
 
-    # Update content tracking
-    # MEMORY FIX: 100 → 20 full snapshots (80% reduction, saves ~500KB per symbol)
-    self.update_snapshots: deque = deque(maxlen=20)
+    # AGGRESSIVE MEMORY REDUCTION: 20 → 10 snapshots
+    # Why: Quote stuffing detection only needs very recent snapshots (1-5 seconds)
+    # 15 symbols × 10 = 150 total (vs 300 before, vs 1500 originally)
+    # Each snapshot ~50KB, so 150 × 50KB = 7.5MB (vs 15MB before, vs 75MB originally)
+    self.update_snapshots: deque = deque(maxlen=10)
 
     # Statistics
     self.total_updates = 0

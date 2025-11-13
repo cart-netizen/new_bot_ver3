@@ -8,6 +8,7 @@ OrderBook Feature Extractor для извлечения 50+ признаков �
 
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict  # MEMORY FIX: Added asdict for slots support
+from collections import deque  # MEMORY FIX: Use deque instead of list for auto-eviction
 import numpy as np
 from numba import jit
 
@@ -169,9 +170,14 @@ class OrderBookFeatureExtractor:
     self.analyzer = OrderBookAnalyzer(symbol)
     self.trade_manager = trade_manager  # Для реальных trade arrival rates
 
-    # История для временных признаков
-    self.snapshot_history: List[OrderBookSnapshot] = []
-    self.max_history_size = 50  # MEMORY FIX: 100 → 50 снимков
+    # MEMORY OPTIMIZATION: Use deque with maxlen for automatic LRU eviction
+    # Previously: list with manual slicing creates temporary lists on every update
+    # Now: deque automatically removes oldest when full (O(1) vs O(n))
+    #
+    # AGGRESSIVE REDUCTION: 50 → 20 snapshots per symbol
+    # Why: 15 symbols × 20 = 300 total (vs 750 before)
+    # Real-time feature extraction only needs recent 10-20 snapshots
+    self.snapshot_history: deque = deque(maxlen=20)  # Was: List[OrderBookSnapshot] with 50 max
 
     # Level TTL tracking для spoofing detection
     # Отслеживаем время жизни каждого ценового уровня
@@ -179,8 +185,8 @@ class OrderBookFeatureExtractor:
       "bid": {},  # price -> {first_seen, last_seen, max_volume}
       "ask": {}
     }
-    self.level_ttl_history: List[float] = []  # История TTL (секунды)
-    self.max_ttl_history = 100  # MEMORY FIX: 200 → 100 TTL значений
+    # MEMORY OPTIMIZATION: Reduce TTL history as well
+    self.level_ttl_history: deque = deque(maxlen=50)  # Was: List[float] with 100 max
 
     logger.info(f"OrderBookFeatureExtractor инициализирован для {symbol}")
 
@@ -202,10 +208,9 @@ class OrderBookFeatureExtractor:
     logger.debug(f"{self.symbol} | Извлечение признаков из стакана")
 
     try:
-      # Добавляем в историю
+      # MEMORY OPTIMIZATION: deque with maxlen auto-evicts oldest
+      # No need for manual slicing that creates temporary lists
       self.snapshot_history.append(snapshot)
-      if len(self.snapshot_history) > self.max_history_size:
-        self.snapshot_history = self.snapshot_history[1:]
 
       # Обновляем отслеживание уровней для TTL
       self._update_level_tracking(snapshot)
@@ -803,12 +808,9 @@ class OrderBookFeatureExtractor:
       ttl_sec = ttl_ms / 1000.0
 
       # Сохраняем в историю (только если TTL > 0)
+      # MEMORY OPTIMIZATION: deque with maxlen auto-evicts, no manual slicing needed
       if ttl_sec > 0:
         self.level_ttl_history.append(ttl_sec)
-
-        # Ограничиваем размер истории
-        if len(self.level_ttl_history) > self.max_ttl_history:
-          self.level_ttl_history = self.level_ttl_history[1:]
 
       # Удаляем исчезнувший уровень
       del tracker_side[price]
