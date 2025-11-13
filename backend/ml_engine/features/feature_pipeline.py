@@ -180,7 +180,10 @@ class FeaturePipeline:
     self._last_feature_vector: Optional[FeatureVector] = None
     # CRITICAL: Use OrderedDict for proper LRU cache implementation
     self._cache: OrderedDict[int, FeatureVector] = OrderedDict()
-    self.max_cache_size = 50  # MEMORY FIX: Reduced from 100 to 50 (50% reduction)
+    # MEMORY OPTIMIZATION: Reduced from 50 to 10 (80% reduction)
+    # Real-time trading only needs last 10 feature vectors for immediate decisions
+    # Historical features should be persisted to disk via MLDataCollector, not kept in RAM
+    self.max_cache_size = 10
 
     logger.info(
       f"FeaturePipeline инициализирован для {symbol}, "
