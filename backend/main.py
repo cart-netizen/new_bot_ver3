@@ -4092,6 +4092,14 @@ class BotController:
           f"{cached_snapshots_cleared} cached snapshots)"
         )
 
+      # 2b. Очистка prev_orderbook_snapshots (LRU cache)
+      prev_snapshots_count = len(self.prev_orderbook_snapshots)
+      if prev_snapshots_count > 10:
+        # Агрессивно урезать до 10 (макс 20)
+        while len(self.prev_orderbook_snapshots) > 10:
+          self.prev_orderbook_snapshots.popitem(last=False)
+        logger.info(f"  ✓ prev_orderbook_snapshots урезан: {prev_snapshots_count} → 10")
+
       # 3. CRITICAL: Очистка Feature Pipeline кэшей и историй
       if self.ml_feature_pipeline and hasattr(self.ml_feature_pipeline, 'pipelines'):
         cache_cleared = 0
@@ -4176,6 +4184,14 @@ class BotController:
           if total_snapshots_cleared > 0:
             logger.info(f"  ✓ QuoteStuffing detector очищен: удалено {total_snapshots_cleared} snapshots")
 
+      # 4c. CRITICAL: Принудительное сохранение и очистка LayeringDataCollector буфера
+      if hasattr(self, 'layering_data_collector') and self.layering_data_collector:
+        buffer_size = len(self.layering_data_collector.data_buffer)
+        if buffer_size > 0:
+          logger.info(f"  💾 Сохранение Layering ML buffer: {buffer_size} samples")
+          self.layering_data_collector.save_to_disk()
+          logger.info(f"  ✓ Layering ML buffer сохранен и очищен")
+
       # 5. Явная очистка дополнительных ссылок перед GC
       if self.ml_feature_pipeline and hasattr(self.ml_feature_pipeline, 'pipelines'):
         for symbol, pipeline in self.ml_feature_pipeline.pipelines.items():
@@ -4230,9 +4246,12 @@ class BotController:
         logger.debug(f"  ⚠️ Numpy memory cleanup skipped: {e}")
         pass
 
-      # Полная сборка с явным освобождением
-      total_collected = gc.collect()  # Final full collection
-      logger.info(f"  ✓ Garbage collector: собрано {total_collected} объектов (4 прохода)")
+      # AGGRESSIVE: Полная сборка с множественными проходами для циклических ссылок
+      total_collected = 0
+      for _ in range(5):  # 5 проходов для упрямых циклических ссылок
+        total_collected += gc.collect()
+
+      logger.info(f"  ✓ Garbage collector: собрано {total_collected} объектов (8 проходов всего)")
 
       # DIAGNOSTIC: Log object counts to identify memory leaks
       try:
@@ -4245,13 +4264,13 @@ class BotController:
           obj_type = type(obj).__name__
           type_counts[obj_type] = type_counts.get(obj_type, 0) + 1
 
-        # Get top 10 most common object types
-        top_types = sorted(type_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        # Get top 20 most common object types for detailed diagnostics
+        top_types = sorted(type_counts.items(), key=lambda x: x[1], reverse=True)[:20]
 
-        logger.debug(f"  📊 Total objects in memory: {total_objects:,}")
-        logger.debug("  📊 Top 10 object types:")
+        logger.info(f"  📊 Total objects in memory: {total_objects:,}")
+        logger.info("  📊 Top 20 object types:")
         for obj_type, count in top_types:
-          logger.debug(f"     {obj_type}: {count:,}")
+          logger.info(f"     {obj_type}: {count:,}")
 
         # Check for specific potential leaks
         feature_vectors = type_counts.get('FeatureVector', 0)
@@ -4281,6 +4300,16 @@ class BotController:
 
         if ndarrays > 5000:
           logger.warning(f"  ⚠️ HIGH ndarray count: {ndarrays} (expected < 5000)")
+
+        # Additional leak diagnostics
+        dicts = type_counts.get('dict', 0)
+        lists = type_counts.get('list', 0)
+        deques = type_counts.get('deque', 0)
+        tuples = type_counts.get('tuple', 0)
+        orderbook_levels = type_counts.get('OrderBookLevel', 0)
+
+        logger.info(f"  📊 Data structures: dict={dicts:,}, list={lists:,}, deque={deques:,}, tuple={tuples:,}")
+        logger.info(f"  📊 Trading objects: OrderBookLevel={orderbook_levels:,}, FeatureVector={feature_vectors:,}")
 
       except Exception as e:
         logger.debug(f"  ⚠️ Object diagnostic failed: {e}")
