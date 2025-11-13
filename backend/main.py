@@ -59,7 +59,7 @@ from backend.utils.balance_tracker import balance_tracker
 from backend.utils.constants import BotStatus
 from backend.api.websocket import manager as ws_manager, handle_websocket_messages
 from backend.tasks.cleanup_tasks import cleanup_tasks
-from backend.utils.helpers import safe_enum_value
+from backend.utils.helpers import safe_enum_value, get_timestamp_ms  # Added get_timestamp_ms
 # ML FEATURE PIPELINE - НОВОЕ
 from backend.ml_engine.features import (
   MultiSymbolFeaturePipeline,
