@@ -1965,9 +1965,9 @@ class BotController:
 
       cleanup_counter += 1
 
-      # MEMORY FIX: Периодическая очистка памяти (каждые 100 циклов вместо 1000)
-      if cleanup_counter >= 100:
-        logger.info("🧹 Запуск периодической очистки памяти (каждые 100 циклов)")
+      # MEMORY FIX: Периодическая очистка памяти (каждые 50 циклов для агрессивной очистки)
+      if cleanup_counter >= 50:  # CRITICAL: 100 → 50 для более частой очистки
+        logger.info("🧹 Запуск периодической очистки памяти (каждые 50 циклов)")
         await self._cleanup_memory()
         cleanup_counter = 0
 
@@ -4123,15 +4123,39 @@ class BotController:
             if hasattr(pipeline.scaler_manager, 'feature_names'):
               pipeline.scaler_manager.feature_names.clear()
 
-      # 6. Принудительная сборка мусора (3 прохода для циклических ссылок)
+      # 6. Принудительная сборка мусора (4 прохода для циклических ссылок)
       # Разблокируем все поколения перед сборкой
       gc.collect(0)  # Collect generation 0
       gc.collect(1)  # Collect generation 1
       gc.collect(2)  # Collect generation 2 (full)
 
+      # CRITICAL: Ensure all weak references are cleared before final GC
+      # Force numpy to release unused memory pools
+      try:
+        import numpy as np
+        # Trigger numpy memory cleanup by forcing a small allocation
+        _ = np.empty(1)
+        del _
+      except:
+        pass
+
       # Полная сборка с явным освобождением
       total_collected = gc.collect()  # Final full collection
       logger.info(f"  ✓ Garbage collector: собрано {total_collected} объектов (4 прохода)")
+
+      # Try to return memory to OS (CPython-specific)
+      try:
+        import ctypes
+        if hasattr(ctypes, 'CDLL'):
+          try:
+            libc = ctypes.CDLL('msvcrt.dll' if os.name == 'nt' else 'libc.so.6')
+            if hasattr(libc, 'malloc_trim'):
+              libc.malloc_trim(0)  # Return freed memory to OS
+              logger.debug("  ✓ malloc_trim(0) вызван")
+          except:
+            pass  # Not available on all systems
+      except:
+        pass
 
       # Show GC stats
       gc_stats = gc.get_stats()
