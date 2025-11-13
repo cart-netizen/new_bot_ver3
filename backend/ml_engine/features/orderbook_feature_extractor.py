@@ -7,7 +7,7 @@ OrderBook Feature Extractor для извлечения 50+ признаков �
 """
 
 from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict  # MEMORY FIX: Added asdict for slots support
 import numpy as np
 from numba import jit
 
@@ -147,8 +147,8 @@ class OrderBookFeatures:
     ], dtype=np.float32)
 
   def to_dict(self) -> Dict[str, float]:
-    """Преобразование в словарь"""
-    return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+    """Преобразование в словарь (MEMORY FIX: uses asdict for slots support)"""
+    return asdict(self)
 
 
 class OrderBookFeatureExtractor:
