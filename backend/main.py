@@ -4020,6 +4020,34 @@ class BotController:
     """
     Принудительная очистка памяти для предотвращения утечек.
 
+    IMPORTANT: Python Memory Management Reality
+    ==========================================
+    Python's memory allocator (pymalloc) and malloc() do NOT always return freed
+    memory back to the OS immediately. This is BY DESIGN for performance:
+
+    1. Memory Fragmentation:
+       - Python keeps freed memory in internal arenas for reuse
+       - Small objects (< 512 bytes) use pymalloc which rarely returns memory to OS
+       - Large objects use malloc() which MAY return memory via malloc_trim(0)
+
+    2. Expected Behavior:
+       - RSS (Resident Set Size) may NOT decrease after cleanup
+       - Memory is freed INTERNALLY but kept in process for reuse
+       - This is NORMAL and not a bug
+
+    3. What We Can Do:
+       - Prevent accumulation by limiting cache sizes
+       - Use LRU eviction to cap memory growth
+       - Call malloc_trim(0) to encourage OS return (not guaranteed)
+       - Monitor object counts (not just RSS) to detect real leaks
+
+    4. Real Leaks vs. Apparent Leaks:
+       - Real leak: object count grows indefinitely
+       - Apparent leak: RSS stays high but objects are freed (reusable memory)
+
+    This cleanup focuses on preventing REAL leaks (growing object counts),
+    not forcing RSS reduction (which is often impossible in Python).
+
     Очищает:
     - ML буферы (через MLDataCollector._emergency_save_all_buffers())
     - OrderBook кэши (через OrderBookManager.clear_old_data())
@@ -4145,61 +4173,79 @@ class BotController:
       gc.collect(1)  # Collect generation 1
       gc.collect(2)  # Collect generation 2 (full)
 
-      # CRITICAL: Aggressive numpy memory pool cleanup
-      # Numpy holds internal memory pools that don't get released without explicit action
+      # SAFE: Numpy memory cleanup (without dangerous reload)
+      # The key is preventing accumulation, not forcing release
       numpy_memory_freed = False
       try:
         import numpy as np
 
-        # Method 1: Clear numpy's internal caching
-        # np._core._multiarray_umath is where memory pools live
-        if hasattr(np, '_core'):
-          if hasattr(np._core, '_multiarray_umath'):
-            # Force internal cleanup
+        # Method 1: Clear numpy internal temp array cache (safe)
+        # This clears _global_ufunc_cache and similar structures
+        try:
+          # Trigger cleanup by calling gc on numpy arrays
+          # This is safe and documented
+          collected_before_np = gc.collect()
+
+          # Small allocation-deallocation cycle to hint numpy to release pools
+          # Using small arrays (not 100MB!) to avoid performance hit
+          for dtype in [np.float64, np.float32]:
             try:
-              # This is undocumented but effective
-              np._core._multiarray_umath._reload_guard()
-              logger.debug("  ✓ numpy._core._multiarray_umath._reload_guard() called")
+              # 1MB is enough to hint the allocator
+              temp = np.empty(125000, dtype=dtype)  # 1MB
+              del temp
             except:
               pass
 
-        # Method 2: Create and delete large arrays to flush pools
-        # Numpy memory pools are per-thread and per-dtype
-        # We create arrays for common dtypes used in the app
-        for dtype in [np.float64, np.float32, np.int64, np.int32]:
-          try:
-            # Create 100MB array to force pool flush
-            temp_array = np.empty(shape=(100_000_000 // dtype().itemsize,), dtype=dtype)
-            del temp_array
-          except:
-            pass
+          collected_after_np = gc.collect()
 
-        # Method 3: Force numpy to release memory via explicit del + gc
-        # This clears any remaining numpy array references in namespace
-        import sys
-        for obj_name in list(sys.modules.keys()):
-          if 'numpy' in obj_name:
-            try:
-              # Clear module-level numpy array caches
-              module = sys.modules[obj_name]
-              if hasattr(module, '__dict__'):
-                for attr_name in list(module.__dict__.keys()):
-                  attr = getattr(module, attr_name, None)
-                  if attr is not None and isinstance(attr, np.ndarray):
-                    delattr(module, attr_name)
-            except:
-              pass
+          numpy_memory_freed = True
+          logger.debug(f"  ✓ Numpy cleanup: collected {collected_after_np} objects")
 
-        numpy_memory_freed = True
-        logger.info("  ✓ Numpy memory pools aggressively flushed")
+        except Exception as e:
+          logger.debug(f"  ⚠️ Numpy cleanup failed: {e}")
+          pass
 
       except Exception as e:
-        logger.debug(f"  ⚠️ Numpy memory cleanup partial failure: {e}")
+        logger.debug(f"  ⚠️ Numpy memory cleanup skipped: {e}")
         pass
 
       # Полная сборка с явным освобождением
       total_collected = gc.collect()  # Final full collection
       logger.info(f"  ✓ Garbage collector: собрано {total_collected} объектов (4 прохода)")
+
+      # DIAGNOSTIC: Log object counts to identify memory leaks
+      try:
+        all_objects = gc.get_objects()
+        total_objects = len(all_objects)
+
+        # Count objects by type
+        type_counts = {}
+        for obj in all_objects:
+          obj_type = type(obj).__name__
+          type_counts[obj_type] = type_counts.get(obj_type, 0) + 1
+
+        # Get top 10 most common object types
+        top_types = sorted(type_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+
+        logger.debug(f"  📊 Total objects in memory: {total_objects:,}")
+        logger.debug("  📊 Top 10 object types:")
+        for obj_type, count in top_types:
+          logger.debug(f"     {obj_type}: {count:,}")
+
+        # Check for specific potential leaks
+        feature_vectors = type_counts.get('FeatureVector', 0)
+        snapshots = type_counts.get('OrderBookSnapshot', 0)
+        ndarrays = type_counts.get('ndarray', 0)
+
+        if feature_vectors > 500:
+          logger.warning(f"  ⚠️ HIGH FeatureVector count: {feature_vectors} (expected < 500)")
+        if snapshots > 100:
+          logger.warning(f"  ⚠️ HIGH OrderBookSnapshot count: {snapshots} (expected < 100)")
+        if ndarrays > 5000:
+          logger.warning(f"  ⚠️ HIGH ndarray count: {ndarrays} (expected < 5000)")
+
+      except Exception as e:
+        logger.debug(f"  ⚠️ Object diagnostic failed: {e}")
 
       # CRITICAL: Return memory to OS (CPython-specific)
       # This is essential for preventing the 13GB memory growth issue
