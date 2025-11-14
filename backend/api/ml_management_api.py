@@ -59,6 +59,7 @@ class TrainingRequest(BaseModel):
     epochs: int = Field(default=50, ge=1, le=500, description="Number of epochs")
     batch_size: int = Field(default=64, ge=8, le=512, description="Batch size")
     learning_rate: float = Field(default=0.001, gt=0, lt=1, description="Learning rate")
+    early_stopping_patience: int = Field(default=20, ge=0, le=100, description="Early stopping patience (0 to disable)")
     export_onnx: bool = Field(default=True, description="Export to ONNX")
     auto_promote: bool = Field(default=True, description="Auto-promote to production")
     min_accuracy: float = Field(default=0.80, ge=0, le=1, description="Min accuracy for promotion")
@@ -209,7 +210,8 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
         model_config = ModelConfig(**request.ml_model_config) if request.ml_model_config else ModelConfig()
         trainer_config = TrainerConfig(
             epochs=request.epochs,
-            learning_rate=request.learning_rate
+            learning_rate=request.learning_rate,
+            early_stopping_patience=request.early_stopping_patience
         )
         if request.trainer_config:
             # Override with custom trainer config
