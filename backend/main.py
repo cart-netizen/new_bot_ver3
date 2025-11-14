@@ -4276,6 +4276,43 @@ class BotController:
         logger.debug(f"  ⚠️ Numpy memory cleanup skipped: {e}")
         pass
 
+      # CRITICAL: Разрыв циклических ссылок перед GC
+      # Lambda в defaultdict держат ссылки на объекты и блокируют GC!
+      refs_cleared = 0
+
+      if hasattr(self, 'spoofing_detector') and self.spoofing_detector:
+        # Очистить defaultdict, чтобы разорвать lambda ссылки
+        for symbol in list(self.spoofing_detector.level_history.keys()):
+          for side in ["bid", "ask"]:
+            refs_cleared += len(self.spoofing_detector.level_history[symbol][side])
+            self.spoofing_detector.level_history[symbol][side].clear()
+
+      if hasattr(self, 'layering_detector') and self.layering_detector:
+        # Очистить все defaultdict structures
+        for symbol in list(self.layering_detector.trackers.keys()):
+          for side_key in list(self.layering_detector.trackers[symbol].keys()):
+            tracker = self.layering_detector.trackers[symbol][side_key]
+            if hasattr(tracker, 'order_history'):
+              refs_cleared += len(tracker.order_history)
+              tracker.order_history.clear()
+            if hasattr(tracker, 'price_history'):
+              refs_cleared += len(tracker.price_history)
+              tracker.price_history.clear()
+
+      # Очистить SR level detector
+      if hasattr(self, 'sr_level_detector') and self.sr_level_detector:
+        if hasattr(self.sr_level_detector, 'levels'):
+          for symbol in list(self.sr_level_detector.levels.keys()):
+            refs_cleared += len(self.sr_level_detector.levels[symbol])
+            self.sr_level_detector.levels[symbol].clear()
+        if hasattr(self.sr_level_detector, 'candle_history'):
+          for symbol in list(self.sr_level_detector.candle_history.keys()):
+            refs_cleared += len(self.sr_level_detector.candle_history[symbol])
+            self.sr_level_detector.candle_history[symbol].clear()
+
+      if refs_cleared > 0:
+        logger.info(f"  ✓ Разорвано {refs_cleared} циклических ссылок (defaultdict lambdas)")
+
       # AGGRESSIVE: Полная сборка с множественными проходами для циклических ссылок
       total_collected = 0
       for _ in range(5):  # 5 проходов для упрямых циклических ссылок
