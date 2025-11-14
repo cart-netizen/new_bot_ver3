@@ -202,23 +202,37 @@ class ModelRegistry:
             logger.warning(f"Model {name} not found in registry")
             return None
 
-        # Если указана стадия, ищем symlink
+        # Если указана стадия, ищем stage marker или symlink (backward compatibility)
         if stage:
+            stage_marker = model_base_dir / f".{stage.value.lower()}"
             stage_link = model_base_dir / stage.value.lower()
-            if stage_link.is_symlink():
-                version = stage_link.readlink().name
+
+            # Try new marker format first
+            if stage_marker.exists():
+                with open(stage_marker, 'r') as f:
+                    version = f.read().strip()
                 logger.debug(f"Stage {stage} points to version {version}")
+            # Fallback to old symlink format
+            elif stage_link.is_symlink():
+                version = stage_link.readlink().name
+                logger.debug(f"Stage {stage} points to version {version} (symlink)")
             else:
                 logger.warning(f"No {stage} model for {name}")
                 return None
 
         # Если версия не указана, берем production или latest
         if not version:
-            # Пытаемся взять production
+            # Пытаемся взять production (try marker first, then symlink)
+            production_marker = model_base_dir / ".production"
             production_link = model_base_dir / "production"
-            if production_link.is_symlink():
-                version = production_link.readlink().name
+
+            if production_marker.exists():
+                with open(production_marker, 'r') as f:
+                    version = f.read().strip()
                 logger.debug(f"Using production version {version}")
+            elif production_link.is_symlink():
+                version = production_link.readlink().name
+                logger.debug(f"Using production version {version} (symlink)")
             else:
                 # Берем последнюю версию
                 versions = [
@@ -300,7 +314,7 @@ class ModelRegistry:
         stage: ModelStage
     ) -> bool:
         """
-        Установить стадию для модели (создать/обновить symlink)
+        Установить стадию для модели (создать/обновить stage marker)
 
         Args:
             name: Название модели
@@ -316,15 +330,25 @@ class ModelRegistry:
             return False
 
         model_base_dir = self.registry_dir / name
-        stage_link = model_base_dir / stage.value.lower()
-
-        # Удалить старый symlink если есть
-        if stage_link.exists() or stage_link.is_symlink():
-            stage_link.unlink()
-
-        # Создать новый symlink
         version_dir = model_base_dir / version
-        stage_link.symlink_to(version_dir.name)
+        stage_marker = model_base_dir / f".{stage.value.lower()}"
+
+        # Удалить старый marker/symlink если есть
+        if stage_marker.exists():
+            stage_marker.unlink()
+
+        # Also try to remove old symlink for backward compatibility
+        old_symlink = model_base_dir / stage.value.lower()
+        if old_symlink.exists() or old_symlink.is_symlink():
+            try:
+                old_symlink.unlink()
+            except:
+                pass
+
+        # Создать новый stage marker (текстовый файл с версией)
+        # Это работает на всех ОС без прав администратора
+        with open(stage_marker, 'w') as f:
+            f.write(version)
 
         # Обновить метаданные
         model_info.metadata.stage = stage
