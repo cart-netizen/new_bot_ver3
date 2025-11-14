@@ -78,7 +78,26 @@ class ParquetFutureLabelProcessor:
 
         print(f"✓ Загружено {len(df):,} семплов")
         print(f"  Символы: {df['symbol'].unique().tolist()}")
-        print(f"  Период: {pd.to_datetime(df['timestamp'], unit='ms').min()} → {pd.to_datetime(df['timestamp'], unit='ms').max()}")
+
+        # Handle mixed timestamp formats (integers and datetime strings)
+        try:
+            # Try to convert to datetime (handles both ms timestamps and string dates)
+            timestamps = pd.to_datetime(df['timestamp'], unit='ms', errors='coerce')
+            # If that failed, try without unit (for string dates)
+            if timestamps.isna().all():
+                timestamps = pd.to_datetime(df['timestamp'], errors='coerce')
+
+            if not timestamps.isna().all():
+                print(f"  Период: {timestamps.min()} → {timestamps.max()}")
+            else:
+                print(f"  ⚠️  Не удалось определить период (невалидные timestamps)")
+        except Exception as e:
+            print(f"  ⚠️  Ошибка определения периода: {e}")
+
+        # Normalize timestamps to integers (milliseconds)
+        print("\n🔧 Нормализация timestamps...")
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', errors='coerce').astype('int64') // 10**6
+        print(f"  ✓ Timestamps нормализованы")
 
         # Обрабатываем каждый символ отдельно
         symbols = df['symbol'].unique()
