@@ -197,11 +197,11 @@ class TrainingOrchestrator:
             if training_history:
                 final_epoch = training_history[-1]
                 final_metrics = {
-                    "final_train_loss": final_epoch.get("train_loss", 0),
-                    "final_val_loss": final_epoch.get("val_loss", 0),
-                    "final_train_accuracy": final_epoch.get("train_acc", 0),
-                    "final_val_accuracy": final_epoch.get("val_acc", 0),
-                    "best_val_accuracy": max([m.get("val_acc", 0) for m in training_history]),
+                    "final_train_loss": float(final_epoch.get("train_loss", 0.0)),
+                    "final_val_loss": float(final_epoch.get("val_loss", 0.0)),
+                    "final_train_accuracy": float(final_epoch.get("train_acc", 0.0)),
+                    "final_val_accuracy": float(final_epoch.get("val_acc", 0.0)),
+                    "best_val_accuracy": float(max([m.get("val_acc", 0.0) for m in training_history])),
                     "total_epochs": len(training_history)
                 }
                 self.mlflow_tracker.log_metrics(final_metrics)
