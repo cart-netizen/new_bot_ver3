@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
+from dataclasses import asdict, is_dataclass
 import torch
 import pandas as pd
 import numpy as np
@@ -30,6 +31,36 @@ from backend.ml_engine.inference.model_registry import get_model_registry, Model
 from backend.ml_engine.optimization.onnx_optimizer import get_onnx_optimizer
 
 logger = get_logger(__name__)
+
+
+def config_to_dict(obj: Any) -> Dict:
+    """
+    Convert config object to JSON-serializable dict.
+
+    Handles dataclasses recursively and filters out private attributes.
+
+    Args:
+        obj: Config object (dataclass or regular object)
+
+    Returns:
+        JSON-serializable dictionary
+    """
+    if is_dataclass(obj):
+        # Use asdict for dataclasses
+        return asdict(obj)
+    elif isinstance(obj, dict):
+        # Already a dict, process values recursively
+        return {k: config_to_dict(v) for k, v in obj.items()}
+    elif hasattr(obj, '__dict__'):
+        # Regular object with __dict__, convert to dict
+        return {
+            k: config_to_dict(v)
+            for k, v in vars(obj).items()
+            if not k.startswith('_')
+        }
+    else:
+        # Primitive type, return as is
+        return obj
 
 
 class TrainingOrchestrator:
@@ -197,22 +228,19 @@ class TrainingOrchestrator:
             model_path = model_dir / f"{model_name}.pt"
             torch.save({
                 'model_state_dict': model.state_dict(),
-                'model_config': vars(self.model_config),
+                'model_config': config_to_dict(self.model_config),
                 'training_history': training_history,
                 'final_metrics': final_metrics,
                 'test_metrics': test_metrics,
                 'timestamp': timestamp
             }, model_path)
 
-            # Save metadata
+            # Save metadata (CRITICAL FIX: use config_to_dict for dataclass serialization)
             metadata = {
                 'model_name': model_name,
                 'version': timestamp,
-                'model_config': vars(self.model_config),
-                'trainer_config': {
-                    k: v for k, v in vars(self.trainer_config).items()
-                    if not k.startswith('_')
-                },
+                'model_config': config_to_dict(self.model_config),
+                'trainer_config': config_to_dict(self.trainer_config),
                 'training_history': training_history,
                 'final_metrics': final_metrics,
                 'test_metrics': test_metrics,
@@ -503,11 +531,17 @@ class TrainingOrchestrator:
 
                     outputs = model(sequences)
 
-                    # Handle multi-task output
-                    if isinstance(outputs, tuple):
+                    # CRITICAL FIX: Handle dict output from model
+                    if isinstance(outputs, dict):
+                        # Model returns dict with 'direction_logits' key
+                        direction_logits = outputs['direction_logits']
+                        predictions = torch.argmax(direction_logits, dim=1)
+                    elif isinstance(outputs, tuple):
+                        # Model returns tuple (direction_logits, ...)
                         direction_logits = outputs[0]
                         predictions = torch.argmax(direction_logits, dim=1)
                     else:
+                        # Model returns tensor directly
                         predictions = torch.argmax(outputs, dim=1)
 
                     all_predictions.extend(predictions.cpu().numpy())
