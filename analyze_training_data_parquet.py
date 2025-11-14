@@ -41,33 +41,95 @@ class ParquetDataAnalyzer:
         self.feature_group = feature_group
         self.feature_store = FeatureStore()
 
+    def check_data_availability(self):
+        """Проверить наличие данных и показать подсказки."""
+        print("🔍 Проверка доступности данных...")
+        print()
+
+        # Check offline store
+        feature_group_dir = self.feature_store.offline_dir / self.feature_group
+        print(f"📁 Offline Store: {feature_group_dir}")
+
+        if not feature_group_dir.exists():
+            print(f"   ❌ Директория не существует")
+        else:
+            # Count parquet files
+            parquet_count = sum(1 for _ in feature_group_dir.rglob("*.parquet"))
+            if parquet_count == 0:
+                print(f"   ⚠️  Директория существует, но нет parquet файлов")
+            else:
+                print(f"   ✅ Найдено {parquet_count} parquet файлов")
+
+        print()
+
+        # Check legacy format
+        legacy_dir = Path("data/ml_training")
+        print(f"📁 Legacy Store (старый формат): {legacy_dir}")
+        if legacy_dir.exists():
+            symbols_count = sum(1 for d in legacy_dir.iterdir() if d.is_dir())
+            print(f"   ✅ Найдено {symbols_count} символов в legacy формате")
+            print(f"   💡 Используйте preprocessing_add_future_labels_parquet.py для миграции")
+        else:
+            print(f"   ❌ Директория не существует")
+
+        print()
+        print("=" * 80)
+        print()
+
     def load_data(self) -> pd.DataFrame:
         """Загрузить данные из Feature Store."""
         print("📂 Загрузка данных из Feature Store...")
         print(f"   Feature Group: {self.feature_group}\n")
 
         try:
-            df = self.feature_store.read_features(
+            # FIXED: Use read_offline_features instead of read_features
+            df = self.feature_store.read_offline_features(
                 feature_group=self.feature_group,
-                start_time=None,  # Все данные
-                end_time=None
+                start_date=None,  # Все данные
+                end_date=None,
+                columns=None  # Все колонки
             )
 
             if df.empty:
-                print("❌ Данные не найдены!")
+                print("❌ Данные не найдены в Feature Store!")
+                print()
+                print("📁 Ожидаемое расположение данных:")
+                print(f"   {self.feature_store.offline_dir / self.feature_group}/")
+                print()
+                print("🔍 Возможные причины:")
+                print("   1. Бот ещё не запущен или не собрал данные")
+                print("   2. ML Data Collection отключен в настройках")
+                print("   3. Данные сохраняются в другую директорию")
+                print()
+                print("✅ Решение:")
+                print("   1. Убедитесь, что бот запущен и ML_DATA_COLLECTION_ENABLED=true")
+                print("   2. Подождите несколько минут для накопления данных")
+                print("   3. Проверьте логи бота на наличие сообщений о сохранении данных")
+                print("      Ищите: '💾 Saved batch' или 'Batch сохранен'")
+                print()
                 return df
 
             print(f"✅ Загружено {len(df):,} записей")
-            print(f"   Период: {df['timestamp'].min()} → {df['timestamp'].max()}\n")
+
+            # Show timestamp info if column exists
+            if 'timestamp' in df.columns:
+                print(f"   Период: {df['timestamp'].min()} → {df['timestamp'].max()}\n")
+            else:
+                print()
 
             return df
 
         except Exception as e:
             print(f"❌ Ошибка загрузки: {e}")
+            import traceback
+            traceback.print_exc()
             return pd.DataFrame()
 
     def analyze(self, show_details: bool = False) -> dict:
         """Полный анализ данных."""
+        # First check data availability
+        self.check_data_availability()
+
         df = self.load_data()
 
         if df.empty:
