@@ -103,6 +103,10 @@ class ParquetFutureLabelProcessor:
         print("Сохранение обновленных данных...")
         print(f"{'=' * 70}")
 
+        # CRITICAL FIX: Delete old parquet files before writing new ones
+        # to avoid duplication of data
+        self._cleanup_old_parquet_files(final_df)
+
         success = self.feature_store.write_offline_features(
             feature_group=self.feature_store_group,
             features=final_df,
@@ -122,6 +126,50 @@ class ParquetFutureLabelProcessor:
         print(f"✓ Помечено future labels: {self.total_samples_labeled:,}")
         print(f"  Процент меток: {100 * self.total_samples_labeled / max(self.total_samples_processed, 1):.1f}%")
         print("=" * 80 + "\n")
+
+    def _cleanup_old_parquet_files(self, df: pd.DataFrame):
+        """
+        Удаляет старые parquet файлы перед записью новых.
+        Это предотвращает дублирование данных.
+
+        Args:
+            df: DataFrame с данными для определения партиций
+        """
+        print("\n🗑️  Очистка старых parquet файлов...")
+
+        # Определяем какие партиции (даты) затронуты
+        if 'timestamp' not in df.columns:
+            print("  ⚠️  Колонка timestamp не найдена, пропускаем очистку")
+            return
+
+        # Получаем уникальные даты
+        timestamps = df['timestamp']
+        dates = pd.to_datetime(timestamps, unit='ms').dt.strftime('%Y-%m-%d').unique()
+
+        print(f"  Затронуто дат: {len(dates)}")
+
+        # Для каждой даты удаляем старые файлы
+        feature_store_dir = Path("data/feature_store/offline") / self.feature_store_group
+        deleted_count = 0
+
+        for date_str in dates:
+            partition_dir = feature_store_dir / f"date={date_str}"
+
+            if not partition_dir.exists():
+                continue
+
+            # Находим все parquet файлы в этой партиции
+            parquet_files = list(partition_dir.glob("*.parquet"))
+
+            # Удаляем их
+            for file_path in parquet_files:
+                try:
+                    file_path.unlink()
+                    deleted_count += 1
+                except Exception as e:
+                    print(f"  ⚠️  Не удалось удалить {file_path}: {e}")
+
+        print(f"  ✓ Удалено файлов: {deleted_count}")
 
     def _process_symbol_data(self, symbol: str, df: pd.DataFrame) -> pd.DataFrame:
         """
