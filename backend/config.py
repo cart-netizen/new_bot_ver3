@@ -449,7 +449,7 @@ class Settings(BaseSettings):
 
   # Memory Profiling (опционально для диагностики)
   ENABLE_MEMORY_PROFILING: bool = Field(
-    default=True,  # TEMPORARY: Enable to diagnose 10GB usage without ML collection
+    default=False,  # TEMPORARY: Enable to diagnose 10GB usage without ML collection
     description="Enable memory profiling (adds overhead, use only for debugging)"
   )
 
