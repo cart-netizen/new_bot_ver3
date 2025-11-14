@@ -43,6 +43,35 @@ def _to_dict(obj: Any) -> Dict[str, Any]:
         return obj.dict()
     return vars(obj)                # dataclass или обычный объект
 
+
+def _convert_numpy_types(obj: Any) -> Any:
+    """
+    Recursively convert numpy/pandas types to Python native types for JSON serialization.
+
+    This fixes TypeError: 'float' object cannot be interpreted as an integer
+    when FastAPI tries to serialize MLflow runs that contain numpy types.
+    """
+    import numpy as np
+    import pandas as pd
+
+    if isinstance(obj, dict):
+        return {k: _convert_numpy_types(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_convert_numpy_types(item) for item in obj]
+    elif isinstance(obj, (np.integer, np.int64, np.int32, np.int16, np.int8)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64, np.float32, np.float16)):
+        return float(obj)
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif pd.isna(obj):
+        return None
+    else:
+        return obj
+
+
 logger = get_logger(__name__)
 
 # Create router
@@ -461,8 +490,9 @@ async def get_mlflow_runs(
             max_results=limit
         )
 
+        # Convert numpy types to Python types for JSON serialization
         return {
-            "runs": runs,
+            "runs": _convert_numpy_types(runs),
             "total": len(runs)
         }
 
@@ -492,7 +522,8 @@ async def get_best_run(
         if not best_run:
             raise HTTPException(status_code=404, detail="No runs found")
 
-        return best_run
+        # Convert numpy types to Python types for JSON serialization
+        return _convert_numpy_types(best_run)
 
     except HTTPException:
         raise
