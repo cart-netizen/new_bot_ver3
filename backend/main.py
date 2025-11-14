@@ -4204,9 +4204,9 @@ class BotController:
         total_level_history_cleared = 0
         total_events_cleared = 0
 
-        # BALANCED: Keep 2 minutes of history (instead of 1 minute)
+        # BALANCED: Keep 90 seconds of history (reduced from 120s due to OrderEvent growth)
         # Spoofing patterns typically appear in 10-60 second windows
-        cutoff_time = get_timestamp_ms() - (120 * 1000)  # Старше 2 минут (was 60)
+        cutoff_time = get_timestamp_ms() - (90 * 1000)  # Старше 90 сек (was 120)
 
         for symbol in list(self.spoofing_detector.level_history.keys()):
           for side in ["bid", "ask"]:
@@ -4226,7 +4226,7 @@ class BotController:
 
         if total_level_history_cleared > 0:
           logger.info(
-            f"  ✓ Spoofing detector очищен: {total_level_history_cleared} old levels (>2 min), "
+            f"  ✓ Spoofing detector очищен: {total_level_history_cleared} old levels (>90 sec), "
             f"{total_events_cleared} OrderEvent released"
           )
 
