@@ -4192,6 +4192,36 @@ class BotController:
           self.layering_data_collector.save_to_disk()
           logger.info(f"  ✓ Layering ML buffer сохранен и очищен")
 
+      # 4d. CRITICAL: Очистка SpoofingDetector (19.6M OrderEvent утечка!)
+      if hasattr(self, 'spoofing_detector') and self.spoofing_detector:
+        total_level_history_cleared = 0
+        total_events_cleared = 0
+
+        # Агрессивная очистка старых level_history
+        cutoff_time = get_timestamp_ms() - (60 * 1000)  # Старше 60 секунд
+
+        for symbol in list(self.spoofing_detector.level_history.keys()):
+          for side in ["bid", "ask"]:
+            history_side = self.spoofing_detector.level_history[symbol][side]
+
+            # Удаляем старые уровни
+            old_prices = [
+              price for price, level in history_side.items()
+              if level.last_seen and level.last_seen < cutoff_time
+            ]
+
+            for price in old_prices:
+              level = history_side[price]
+              total_events_cleared += len(level.events)
+              del history_side[price]
+              total_level_history_cleared += 1
+
+        if total_level_history_cleared > 0:
+          logger.info(
+            f"  ✓ Spoofing detector очищен: {total_level_history_cleared} old levels, "
+            f"{total_events_cleared} OrderEvent released"
+          )
+
       # 5. Явная очистка дополнительных ссылок перед GC
       if self.ml_feature_pipeline and hasattr(self.ml_feature_pipeline, 'pipelines'):
         for symbol, pipeline in self.ml_feature_pipeline.pipelines.items():
