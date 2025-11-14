@@ -97,7 +97,8 @@ class LevelHistory:
     self.last_seen: Optional[int] = None
     self.max_volume: float = 0.0
     self.volume_history: Deque[Tuple[int, float]] = deque(maxlen=100)
-    self.events: List[OrderEvent] = []
+    # MEMORY FIX: List → deque to prevent 19M+ OrderEvent accumulation
+    self.events: Deque[OrderEvent] = deque(maxlen=50)
 
   def update(self, timestamp: int, volume: float, mid_price: float):
     """Обновить историю уровня."""
@@ -196,7 +197,10 @@ class SpoofingDetector:
     )
 
     # Обнаруженные паттерны
-    self.detected_patterns: Dict[str, List[SpoofingPattern]] = defaultdict(list)
+    # MEMORY FIX: List → deque to prevent unbounded accumulation
+    self.detected_patterns: Dict[str, Deque[SpoofingPattern]] = defaultdict(
+      lambda: deque(maxlen=100)
+    )
 
     # Статистика
     self.total_checks = 0
