@@ -23,6 +23,7 @@ from pathlib import Path
 import time
 from dataclasses import dataclass, field
 import numpy as np
+from tqdm import tqdm  # Progress bar
 from sklearn.metrics import (
   accuracy_score, precision_recall_fscore_support,
   roc_auc_score, confusion_matrix
@@ -608,14 +609,20 @@ class ModelTrainer:
       logger.info(f"Val batches: {len(val_loader)}")
       logger.info(f"{'=' * 80}\n")
 
-      for epoch in range(self.config.epochs):
+      # Progress bar for epochs
+      epoch_pbar = tqdm(range(self.config.epochs), desc="Training", unit="epoch")
+
+      for epoch in epoch_pbar:
+        # Update progress bar description
+        epoch_pbar.set_description(f"Epoch {epoch + 1}/{self.config.epochs}")
+
         logger.info(f"Эпоха {epoch + 1}/{self.config.epochs}")
 
         # Training
-        train_loss, train_acc = self._train_epoch(train_loader)
+        train_loss, train_acc = self._train_epoch(train_loader, epoch_num=epoch+1)
 
         # Validation
-        val_loss, val_metrics = self._validate_epoch(val_loader)
+        val_loss, val_metrics = self._validate_epoch(val_loader, epoch_num=epoch+1)
 
         # Learning rate scheduling
         self.scheduler.step(val_loss)
@@ -634,6 +641,14 @@ class ModelTrainer:
           'learning_rate': current_lr
         }
         history.append(metrics)
+
+        # Update progress bar with metrics
+        epoch_pbar.set_postfix({
+            'train_loss': f'{train_loss:.4f}',
+            'val_loss': f'{val_loss:.4f}',
+            'val_acc': f'{val_metrics["accuracy"]:.4f}',
+            'val_f1': f'{val_metrics["f1"]:.4f}'
+        })
 
         # Логирование
         logger.info(
@@ -672,7 +687,7 @@ class ModelTrainer:
 
       return history
 
-  def _train_epoch(self, train_loader: DataLoader) -> Tuple[float, float]:
+  def _train_epoch(self, train_loader: DataLoader, epoch_num: int = 0) -> Tuple[float, float]:
     """Обучение одной эпохи."""
     self.model.train()
 
@@ -680,7 +695,10 @@ class ModelTrainer:
     all_predictions = []
     all_labels = []
 
-    for batch in train_loader:
+    # Progress bar for training batches
+    train_pbar = tqdm(train_loader, desc=f"  Training Epoch {epoch_num}", leave=False, unit="batch")
+
+    for batch in train_pbar:
       sequences = batch['sequence'].to(self.device)
       labels = batch['label'].to(self.device)
 
@@ -712,12 +730,15 @@ class ModelTrainer:
       all_predictions.extend(predictions)
       all_labels.extend(labels.cpu().numpy())
 
+      # Update batch progress bar
+      train_pbar.set_postfix({'loss': f'{loss.item():.4f}'})
+
     avg_loss = total_loss / len(train_loader)
     accuracy = accuracy_score(all_labels, all_predictions)
 
     return avg_loss, accuracy
 
-  def _validate_epoch(self, val_loader: DataLoader) -> Tuple[float, Dict]:
+  def _validate_epoch(self, val_loader: DataLoader, epoch_num: int = 0) -> Tuple[float, Dict]:
     """Валидация одной эпохи."""
     self.model.eval()
 
@@ -725,8 +746,11 @@ class ModelTrainer:
     all_predictions = []
     all_labels = []
 
+    # Progress bar for validation batches
+    val_pbar = tqdm(val_loader, desc=f"  Validation Epoch {epoch_num}", leave=False, unit="batch")
+
     with torch.no_grad():
-      for batch in val_loader:
+      for batch in val_pbar:
         sequences = batch['sequence'].to(self.device)
         labels = batch['label'].to(self.device)
 
@@ -744,6 +768,9 @@ class ModelTrainer:
         ).cpu().numpy()
         all_predictions.extend(predictions)
         all_labels.extend(labels.cpu().numpy())
+
+        # Update validation progress bar
+        val_pbar.set_postfix({'loss': f'{loss.item():.4f}'})
 
     avg_loss = total_loss / len(val_loader)
 
