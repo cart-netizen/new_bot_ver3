@@ -1972,9 +1972,10 @@ class BotController:
 
       # CRITICAL MEMORY FIX: VERY AGGRESSIVE cleanup to prevent 24/7 memory growth
       # Reduced from 50 to 25 cycles for 2× more frequent cleanup
-      # At ~0.5s per cycle, this means cleanup every ~12.5 seconds
-      if cleanup_counter >= 25:  # Was 50, then 100 originally
-        logger.info("🧹 Запуск периодической очистки памяти (каждые 25 циклов = ~12.5 сек)")
+      # At ~0.5s per cycle, this means cleanup every ~60 seconds
+      # BALANCED: Reduced cleanup frequency from 12.5s to 60s for better signal quality
+      if cleanup_counter >= 120:  # 120 cycles × 0.5s = ~60 seconds
+        logger.info("🧹 Запуск периодической очистки памяти (каждые 120 циклов = ~60 сек)")
         await self._cleanup_memory()
         cleanup_counter = 0
 
@@ -4118,14 +4119,19 @@ class BotController:
               pipeline.scaler_manager.feature_history.clear()
               history_cleared += history_size
 
-          # MEMORY OPTIMIZATION: Clear orderbook extractor histories
-          # Now using deque with maxlen, so just clear them completely
+          # BALANCED: Partial cleanup to preserve analysis quality
+          # Keep minimum data for feature extraction (volatility, frequency, etc.)
           if hasattr(pipeline, 'orderbook_extractor'):
             ob_ext = pipeline.orderbook_extractor
             if hasattr(ob_ext, 'snapshot_history'):
-              ob_ext.snapshot_history.clear()  # deque.clear() is O(1)
+              # Keep last 5 snapshots (instead of clearing all 20)
+              # Needed for: volatility calculation, update frequency, net volume change
+              while len(ob_ext.snapshot_history) > 5:
+                ob_ext.snapshot_history.popleft()
             if hasattr(ob_ext, 'level_ttl_history'):
-              ob_ext.level_ttl_history.clear()  # deque.clear() is O(1)
+              # Keep last 10 TTL records (instead of clearing all 50)
+              while len(ob_ext.level_ttl_history) > 10:
+                ob_ext.level_ttl_history.popleft()
 
           if hasattr(pipeline, 'indicator_extractor'):
             ind_ext = pipeline.indicator_extractor
@@ -4164,25 +4170,26 @@ class BotController:
 
         logger.info("  ✓ Layering detector очищен (order_history, price_history, patterns)")
 
-      # 4b. CRITICAL: Очистка QuoteStuffingDetector (держит 100 полных snapshots на символ!)
+      # 4b. BALANCED: QuoteStuffing detector partial cleanup
       if hasattr(self, 'quote_stuffing_detector') and self.quote_stuffing_detector:
         if hasattr(self.quote_stuffing_detector, 'update_trackers'):
-          total_snapshots_cleared = 0
+          total_snapshots_trimmed = 0
           for symbol, tracker in self.quote_stuffing_detector.update_trackers.items():
-            # AGGRESSIVE: Clear update_snapshots completely during cleanup
-            # deque will auto-refill with maxlen=10
-            if hasattr(tracker, 'update_snapshots') and len(tracker.update_snapshots) > 0:
-              snapshots_count = len(tracker.update_snapshots)
-              tracker.update_snapshots.clear()
-              total_snapshots_cleared += snapshots_count
+            # BALANCED: Keep last 3 snapshots (instead of clearing all)
+            # Needed to detect update frequency patterns
+            if hasattr(tracker, 'update_snapshots') and len(tracker.update_snapshots) > 3:
+              snapshots_before = len(tracker.update_snapshots)
+              while len(tracker.update_snapshots) > 3:
+                tracker.update_snapshots.popleft()
+              total_snapshots_trimmed += (snapshots_before - 3)
 
             # Урезать timestamps с 1000 до 200
             if hasattr(tracker, 'update_timestamps') and len(tracker.update_timestamps) > 200:
               while len(tracker.update_timestamps) > 200:
                 tracker.update_timestamps.popleft()
 
-          if total_snapshots_cleared > 0:
-            logger.info(f"  ✓ QuoteStuffing detector очищен: удалено {total_snapshots_cleared} snapshots")
+          if total_snapshots_trimmed > 0:
+            logger.info(f"  ✓ QuoteStuffing detector очищен: урезано {total_snapshots_trimmed} snapshots (оставлено по 3)")
 
       # 4c. CRITICAL: Принудительное сохранение и очистка LayeringDataCollector буфера
       if hasattr(self, 'layering_data_collector') and self.layering_data_collector:
@@ -4192,19 +4199,20 @@ class BotController:
           self.layering_data_collector.save_to_disk()
           logger.info(f"  ✓ Layering ML buffer сохранен и очищен")
 
-      # 4d. CRITICAL: Очистка SpoofingDetector (19.6M OrderEvent утечка!)
+      # 4d. BALANCED: Spoofing detector cleanup with extended window
       if hasattr(self, 'spoofing_detector') and self.spoofing_detector:
         total_level_history_cleared = 0
         total_events_cleared = 0
 
-        # Агрессивная очистка старых level_history
-        cutoff_time = get_timestamp_ms() - (60 * 1000)  # Старше 60 секунд
+        # BALANCED: Keep 2 minutes of history (instead of 1 minute)
+        # Spoofing patterns typically appear in 10-60 second windows
+        cutoff_time = get_timestamp_ms() - (120 * 1000)  # Старше 2 минут (was 60)
 
         for symbol in list(self.spoofing_detector.level_history.keys()):
           for side in ["bid", "ask"]:
             history_side = self.spoofing_detector.level_history[symbol][side]
 
-            # Удаляем старые уровни
+            # Удаляем только очень старые уровни
             old_prices = [
               price for price, level in history_side.items()
               if level.last_seen and level.last_seen < cutoff_time
@@ -4218,7 +4226,7 @@ class BotController:
 
         if total_level_history_cleared > 0:
           logger.info(
-            f"  ✓ Spoofing detector очищен: {total_level_history_cleared} old levels, "
+            f"  ✓ Spoofing detector очищен: {total_level_history_cleared} old levels (>2 min), "
             f"{total_events_cleared} OrderEvent released"
           )
 
@@ -4276,42 +4284,27 @@ class BotController:
         logger.debug(f"  ⚠️ Numpy memory cleanup skipped: {e}")
         pass
 
-      # CRITICAL: Разрыв циклических ссылок перед GC
-      # Lambda в defaultdict держат ссылки на объекты и блокируют GC!
+      # BALANCED: Partial cleanup of cyclic references
+      # NOTE: SpoofingDetector level_history already cleaned above (>2 min old)
+      # Here we only clean structures not already handled
       refs_cleared = 0
 
-      if hasattr(self, 'spoofing_detector') and self.spoofing_detector:
-        # Очистить defaultdict, чтобы разорвать lambda ссылки
-        for symbol in list(self.spoofing_detector.level_history.keys()):
-          for side in ["bid", "ask"]:
-            refs_cleared += len(self.spoofing_detector.level_history[symbol][side])
-            self.spoofing_detector.level_history[symbol][side].clear()
+      # LayeringDetector: already cleaned by cleanup_old_history in block 4a
+      # No need for additional clearing here - data already bounded by deque maxlen
 
-      if hasattr(self, 'layering_detector') and self.layering_detector:
-        # Очистить все defaultdict structures
-        for symbol in list(self.layering_detector.trackers.keys()):
-          for side_key in list(self.layering_detector.trackers[symbol].keys()):
-            tracker = self.layering_detector.trackers[symbol][side_key]
-            if hasattr(tracker, 'order_history'):
-              refs_cleared += len(tracker.order_history)
-              tracker.order_history.clear()
-            if hasattr(tracker, 'price_history'):
-              refs_cleared += len(tracker.price_history)
-              tracker.price_history.clear()
-
-      # Очистить SR level detector
+      # SR level detector: keep recent levels, clear only very old
       if hasattr(self, 'sr_level_detector') and self.sr_level_detector:
-        if hasattr(self.sr_level_detector, 'levels'):
-          for symbol in list(self.sr_level_detector.levels.keys()):
-            refs_cleared += len(self.sr_level_detector.levels[symbol])
-            self.sr_level_detector.levels[symbol].clear()
         if hasattr(self.sr_level_detector, 'candle_history'):
           for symbol in list(self.sr_level_detector.candle_history.keys()):
-            refs_cleared += len(self.sr_level_detector.candle_history[symbol])
-            self.sr_level_detector.candle_history[symbol].clear()
+            # Keep last 100 candles (instead of clearing all)
+            candle_list = self.sr_level_detector.candle_history[symbol]
+            if len(candle_list) > 100:
+              removed = len(candle_list) - 100
+              self.sr_level_detector.candle_history[symbol] = candle_list[-100:]
+              refs_cleared += removed
 
       if refs_cleared > 0:
-        logger.info(f"  ✓ Разорвано {refs_cleared} циклических ссылок (defaultdict lambdas)")
+        logger.info(f"  ✓ Частичная очистка старых данных: {refs_cleared} устаревших записей удалено")
 
       # AGGRESSIVE: Полная сборка с множественными проходами для циклических ссылок
       total_collected = 0
