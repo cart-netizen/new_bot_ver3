@@ -82,11 +82,14 @@ class ONNXOptimizer:
                     model.load_state_dict(checkpoint)
                 logger.info(f"Loaded model weights from {model_path}")
 
+            # CRITICAL FIX: Переместить модель на CPU перед экспортом
+            model = model.cpu()
+
             # Перевести в eval mode
             model.eval()
 
-            # Создать dummy input
-            dummy_input = torch.randn(*input_shape)
+            # Создать dummy input на CPU
+            dummy_input = torch.randn(*input_shape).cpu()
 
             # Dynamic axes для batch size
             if dynamic_axes is None:
