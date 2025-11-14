@@ -705,11 +705,32 @@ class HistoricalDataLoader:
         logger.info(f"  • Unique labels BEFORE mapping: {unique_labels}")
 
         # ===== КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ =====
-        # Преобразуем labels из {-1, 0, 1} в {0, 1, 2} для PyTorch
+        # Поддерживаем два формата меток:
+        # Старый формат: {-1, 0, 1} -> {0, 1, 2} для PyTorch
+        # Новый формат (после preprocessing): {0, 1, 2} -> {0, 1, 2} (identity)
         # -1 (DOWN) -> 0
-        #  0 (NEUTRAL) -> 1
-        #  1 (UP) -> 2
-        label_mapping = {-1: 0, 0: 1, 1: 2}
+        #  0 (NEUTRAL/DOWN) -> 0 or 1 (depends on format)
+        #  1 (NEUTRAL/UP) -> 1 or 2 (depends on format)
+        #  2 (UP) -> 2
+
+        # CRITICAL FIX: Detect which format we have
+        # If we have -1 in data, use old mapping
+        # If we have 2 in data, use new mapping (identity)
+        has_negative = np.any(unique_labels == -1)
+        has_two = np.any(unique_labels == 2)
+
+        if has_negative and not has_two:
+            # Old format: {-1, 0, 1}
+            label_mapping = {-1: 0, 0: 1, 1: 2}
+            logger.info("Using old label format: {-1, 0, 1} -> {0, 1, 2}")
+        elif has_two and not has_negative:
+            # New format: {0, 1, 2}
+            label_mapping = {0: 0, 1: 1, 2: 2}
+            logger.info("Using new label format (identity): {0, 1, 2} -> {0, 1, 2}")
+        else:
+            # Mixed or unclear format - default to flexible mapping
+            label_mapping = {-1: 0, 0: 0, 1: 1, 2: 2}
+            logger.warning("Mixed or unclear label format detected, using flexible mapping")
 
         # Проверяем наличие неожиданных значений (исключая NaN)
         unique_labels_no_nan = unique_labels[~np.isnan(unique_labels)] if np.any(np.isnan(unique_labels)) else unique_labels
