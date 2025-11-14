@@ -267,6 +267,7 @@ class TrainingOrchestrator:
                 model_path=model_path,
                 model_type="HybridCNNLSTM",
                 description=f"Trained model - {run_name}",
+                metrics=test_metrics,  # CRITICAL FIX: Pass test_metrics to metrics parameter
                 training_params={
                     **vars(self.model_config),
                     **final_metrics,

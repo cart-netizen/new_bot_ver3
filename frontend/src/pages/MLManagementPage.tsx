@@ -34,6 +34,7 @@ interface TrainingParams {
   epochs: number;
   batch_size: number;
   learning_rate: number;
+  early_stopping_patience: number;
   export_onnx: boolean;
   auto_promote: boolean;
   min_accuracy: number;
@@ -166,6 +167,7 @@ export function MLManagementPage() {
     epochs: 50,
     batch_size: 64,
     learning_rate: 0.001,
+    early_stopping_patience: 20,
     export_onnx: true,
     auto_promote: true,
     min_accuracy: 0.80,
@@ -689,6 +691,32 @@ export function MLManagementPage() {
               }
               disabled={trainingStatus.is_training}
             />
+          </div>
+
+          {/* Early Stopping Patience */}
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">
+              Early Stopping Patience
+              <Tooltip content="Number of epochs without improvement before stopping. Set to 0 to disable early stopping.">
+                <Info className="inline-block ml-1 h-3 w-3 text-gray-500 cursor-help" />
+              </Tooltip>
+            </label>
+            <input
+              type="number"
+              min="0"
+              max="100"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
+              value={trainingParams.early_stopping_patience}
+              onChange={e =>
+                setTrainingParams({ ...trainingParams, early_stopping_patience: parseInt(e.target.value) })
+              }
+              disabled={trainingStatus.is_training}
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              {trainingParams.early_stopping_patience === 0
+                ? 'Early stopping disabled - will train for all epochs'
+                : `Will stop if no improvement for ${trainingParams.early_stopping_patience} epochs`}
+            </p>
           </div>
 
           {/* Min Accuracy for Promotion */}
