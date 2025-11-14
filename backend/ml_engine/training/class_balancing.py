@@ -62,7 +62,8 @@ class ClassWeightCalculator:
   def compute_weights(
       labels: np.ndarray,
       method: str = "balanced",
-      normalize: bool = True
+      normalize: bool = True,
+      num_classes: int = 3  # CRITICAL FIX: Always expect 3 classes (DOWN, NEUTRAL, UP)
   ) -> Dict[int, float]:
     """
     Вычислить веса классов.
@@ -71,13 +72,17 @@ class ClassWeightCalculator:
         labels: Массив меток классов
         method: Метод расчета ("balanced", "inverse_freq", "effective_samples")
         normalize: Нормализовать веса
+        num_classes: Ожидаемое количество классов (default=3 для DOWN/NEUTRAL/UP)
 
     Returns:
-        Dict с весами для каждого класса
+        Dict с весами для каждого класса (всегда все num_classes классов)
     """
     unique_classes = np.unique(labels)
     n_samples = len(labels)
-    n_classes = len(unique_classes)
+
+    # CRITICAL FIX: Ensure all expected classes are present in weights
+    # Even if some class is missing in training data
+    all_classes = np.arange(num_classes)  # [0, 1, 2] for 3 classes
 
     if method == "balanced":
       # Sklearn balanced weights: n_samples / (n_classes * n_samples_per_class)
@@ -92,7 +97,7 @@ class ClassWeightCalculator:
       # Обратная частота: 1 / freq
       counter = Counter(labels)
       class_weights = {
-        cls: n_samples / (n_classes * count)
+        cls: n_samples / (num_classes * count)
         for cls, count in counter.items()
       }
 
@@ -109,11 +114,20 @@ class ClassWeightCalculator:
     else:
       raise ValueError(f"Неизвестный метод: {method}")
 
+    # CRITICAL FIX: Add missing classes with neutral weight (1.0)
+    # This ensures weight tensor has correct shape even if some classes are missing
+    for cls in all_classes:
+      if cls not in class_weights:
+        class_weights[cls] = 1.0
+        logger.warning(
+          f"Class {cls} not found in training data, assigning neutral weight 1.0"
+        )
+
     # Нормализация весов
     if normalize:
       total_weight = sum(class_weights.values())
       class_weights = {
-        cls: weight / total_weight * n_classes
+        cls: weight / total_weight * num_classes
         for cls, weight in class_weights.items()
       }
 
