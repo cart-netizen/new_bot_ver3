@@ -1972,10 +1972,11 @@ class BotController:
 
       # CRITICAL MEMORY FIX: VERY AGGRESSIVE cleanup to prevent 24/7 memory growth
       # Reduced from 50 to 25 cycles for 2× more frequent cleanup
-      # At ~0.5s per cycle, this means cleanup every ~60 seconds
-      # BALANCED: Reduced cleanup frequency from 12.5s to 60s for better signal quality
-      if cleanup_counter >= 120:  # 120 cycles × 0.5s = ~60 seconds
-        logger.info("🧹 Запуск периодической очистки памяти (каждые 120 циклов = ~60 сек)")
+      # At ~0.5s per cycle, this means cleanup every ~90 seconds
+      # BALANCED: Increased cleanup interval to 90s (synchronized with Spoofing window)
+      # Memory is stable at 1GB, allowing longer intervals for better data quality
+      if cleanup_counter >= 180:  # 180 cycles × 0.5s = ~90 seconds
+        logger.info("🧹 Запуск периодической очистки памяти (каждые 180 циклов = ~90 сек)")
         await self._cleanup_memory()
         cleanup_counter = 0
 
