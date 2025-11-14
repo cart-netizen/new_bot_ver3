@@ -96,8 +96,26 @@ class ParquetFutureLabelProcessor:
 
         # Normalize timestamps to integers (milliseconds)
         print("\n🔧 Нормализация timestamps...")
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', errors='coerce').astype('int64') // 10**6
-        print(f"  ✓ Timestamps нормализованы")
+
+        # Handle mixed formats: some are integers (ms), some are datetime strings
+        normalized_timestamps = []
+        for ts in df['timestamp']:
+            if pd.isna(ts):
+                normalized_timestamps.append(None)
+            elif isinstance(ts, (int, np.integer, float, np.floating)):
+                # Already numeric - keep as is (assuming milliseconds)
+                normalized_timestamps.append(int(ts))
+            else:
+                # String datetime - convert to milliseconds
+                try:
+                    dt = pd.to_datetime(ts)
+                    ms = int(dt.timestamp() * 1000)
+                    normalized_timestamps.append(ms)
+                except:
+                    normalized_timestamps.append(None)
+
+        df['timestamp'] = normalized_timestamps
+        print(f"  ✓ Timestamps нормализованы в миллисекунды")
 
         # Обрабатываем каждый символ отдельно
         symbols = df['symbol'].unique()
