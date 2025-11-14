@@ -26,6 +26,7 @@ async def train(
     epochs: int = 50,
     batch_size: int = 64,
     learning_rate: float = 0.001,
+    early_stopping_patience: int = 20,
     export_onnx: bool = True,
     auto_promote: bool = True
 ):
@@ -37,6 +38,7 @@ async def train(
     print(f"Epochs: {epochs}")
     print(f"Batch Size: {batch_size}")
     print(f"Learning Rate: {learning_rate}")
+    print(f"Early Stopping Patience: {early_stopping_patience}")
     print(f"Export ONNX: {export_onnx}")
     print(f"Auto Promote: {auto_promote}")
     print("=" * 60 + "\n")
@@ -45,7 +47,8 @@ async def train(
     model_config = ModelConfig()
     trainer_config = TrainerConfig(
         epochs=epochs,
-        learning_rate=learning_rate
+        learning_rate=learning_rate,
+        early_stopping_patience=early_stopping_patience
     )
     data_config = DataConfig(
         batch_size=batch_size
@@ -107,10 +110,12 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python train_model.py                           # Quick train with defaults
-  python train_model.py --epochs 100              # Train for 100 epochs
-  python train_model.py --epochs 50 --lr 0.0001   # Custom epochs and learning rate
-  python train_model.py --no-onnx --no-promote    # Skip ONNX export and promotion
+  python train_model.py                                    # Quick train with defaults
+  python train_model.py --epochs 100                       # Train for 100 epochs
+  python train_model.py --epochs 50 --lr 0.0001            # Custom epochs and learning rate
+  python train_model.py --patience 30                      # Increase early stopping patience
+  python train_model.py --epochs 100 --patience 0          # Disable early stopping (patience=0)
+  python train_model.py --no-onnx --no-promote             # Skip ONNX export and promotion
         """
     )
 
@@ -136,6 +141,13 @@ Examples:
     )
 
     parser.add_argument(
+        "--patience",
+        type=int,
+        default=20,
+        help="Early stopping patience in epochs (default: 20)"
+    )
+
+    parser.add_argument(
         "--no-onnx",
         action="store_true",
         help="Skip ONNX export"
@@ -154,6 +166,7 @@ Examples:
         epochs=args.epochs,
         batch_size=args.batch_size,
         learning_rate=args.lr,
+        early_stopping_patience=args.patience,
         export_onnx=not args.no_onnx,
         auto_promote=not args.no_promote
     ))
