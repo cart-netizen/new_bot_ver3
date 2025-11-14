@@ -46,7 +46,7 @@ class TrainerConfig:
   grad_clip_value: float = 1.0
 
   # Early stopping
-  early_stopping_patience: int = 10
+  early_stopping_patience: int = 20
   early_stopping_delta: float = 1e-4
 
   # Loss weights для multi-task learning
@@ -75,7 +75,7 @@ class TrainerConfig:
       learning_rate: float = 0.001,
       weight_decay: float = 1e-5,
       grad_clip_value: float = 1.0,
-      early_stopping_patience: int = 10,
+      early_stopping_patience: int = 20,
       checkpoint_dir: str = "checkpoints/models",
       device: str = "cuda" if torch.cuda.is_available() else "cpu",
 
@@ -672,8 +672,8 @@ class ModelTrainer:
         else:
           self.early_stopping_counter += 1
 
-        # Early stopping
-        if self.early_stopping_counter >= self.config.early_stopping_patience:
+        # Early stopping (only if patience > 0)
+        if self.config.early_stopping_patience > 0 and self.early_stopping_counter >= self.config.early_stopping_patience:
           logger.info(
             f"Early stopping на эпохе {epoch + 1}. "
             f"Лучший val_loss: {self.best_val_loss:.4f}"
