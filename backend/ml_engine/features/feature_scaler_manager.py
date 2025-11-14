@@ -183,6 +183,9 @@ class FeatureScalerManager:
         self.feature_history: deque = deque(maxlen=1000)  # Auto-removes old items
         self.max_history_size = 1000  # MEMORY FIX: 5000 → 1000 samples (80% reduction)
 
+        # Warning spam prevention
+        self._unfitted_warning_shown = False
+
         logger.info(
             f"Initialized FeatureScalerManager for {symbol}: "
             f"orderbook={self.config.orderbook_scaler_type}, "
@@ -420,7 +423,9 @@ class FeatureScalerManager:
             )
 
             # 6. Update state (back in event loop)
+            self.state.is_fitted = True  # CRITICAL FIX: Mark as fitted after successful refit
             self.state.last_refit_timestamp = int(datetime.now().timestamp() * 1000)
+            self.state.last_fit_timestamp = int(datetime.now().timestamp() * 1000)
             self.state.refit_count += 1
 
             # 7. Auto-save
@@ -481,10 +486,16 @@ class FeatureScalerManager:
         self._cleanup_refit_task()
 
         if not self.state.is_fitted:
-            logger.warning(
-                f"{self.symbol} | Scalers not fitted, call warmup() first. "
-                "Returning original vector."
-            )
+            # Only show warning once to avoid spam
+            if not self._unfitted_warning_shown:
+                samples_remaining = max(0, self.config.min_samples_for_fitting - len(self.feature_history))
+                logger.info(
+                    f"{self.symbol} | ⏳ Scalers not fitted yet. "
+                    f"Auto-warmup will trigger after collecting {self.config.min_samples_for_fitting} samples. "
+                    f"Progress: {len(self.feature_history)}/{self.config.min_samples_for_fitting} "
+                    f"({samples_remaining} more needed). Returning unscaled vector."
+                )
+                self._unfitted_warning_shown = True
             return feature_vector
 
         try:
@@ -593,9 +604,47 @@ class FeatureScalerManager:
                 self.feature_history.append(feature_vector.to_array())
                 self.state.samples_processed += 1
 
-                # Periodic refit check
-                if (self.state.samples_processed % self.config.refit_interval_samples == 0 and
-                    len(self.feature_history) >= self.config.min_samples_for_fitting):
+                # CRITICAL FIX: Automatic initial warmup after collecting minimum samples
+                # This handles the case where scalers were never warmed up (first run, no saved state)
+                if (not self.state.is_fitted and
+                    len(self.feature_history) >= self.config.min_samples_for_fitting and
+                    not self.state.is_refitting):
+                    logger.info(
+                        f"{self.symbol} | 🎯 Auto-warmup triggered! "
+                        f"Collected {len(self.feature_history)} samples (>= {self.config.min_samples_for_fitting}). "
+                        f"Performing initial scaler fitting..."
+                    )
+
+                    # Launch async initial warmup in background (non-blocking)
+                    refit_task = asyncio.create_task(self._refit_scalers_async())
+                    self.state.refit_task = refit_task
+
+                    # Add done callback for logging
+                    def log_initial_warmup_completion(task: asyncio.Task):
+                        try:
+                            success = task.result() if not task.exception() else False
+                            if success:
+                                logger.info(
+                                    f"{self.symbol} | ✅ Initial auto-warmup completed successfully! "
+                                    f"Scalers are now fitted and ready."
+                                )
+                            else:
+                                logger.warning(
+                                    f"{self.symbol} | ⚠️  Initial auto-warmup failed. "
+                                    f"Will retry at next periodic refit."
+                                )
+                        except Exception as e:
+                            logger.error(
+                                f"{self.symbol} | Error in initial warmup callback: {e}",
+                                exc_info=True
+                            )
+
+                    refit_task.add_done_callback(log_initial_warmup_completion)
+
+                # Periodic refit check (for already-fitted scalers)
+                elif (self.state.is_fitted and
+                      self.state.samples_processed % self.config.refit_interval_samples == 0 and
+                      len(self.feature_history) >= self.config.min_samples_for_fitting):
                     logger.info(
                         f"{self.symbol} | Periodic refit triggered after "
                         f"{self.state.samples_processed} samples"
