@@ -342,6 +342,7 @@ class ModelTrainer:
     # Training history (FIX: Use deque to limit memory usage - keep last 200 epochs)
     self.history: deque = deque(maxlen=200)
     self.best_val_loss = np.inf
+    self.early_stopping_counter = 0
 
     logger.info(
       f"Инициализирован ModelTrainer: device={self.device}, "
@@ -672,7 +673,7 @@ class ModelTrainer:
           self.early_stopping_counter += 1
 
         # Early stopping
-        if self.early_stopping_counter >= TrainerConfig.early_stopping_patience:
+        if self.early_stopping_counter >= self.config.early_stopping_patience:
           logger.info(
             f"Early stopping на эпохе {epoch + 1}. "
             f"Лучший val_loss: {self.best_val_loss:.4f}"
