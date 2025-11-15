@@ -20,7 +20,10 @@ import {
   Info,
   ExternalLink,
   Database,
-  Gauge
+  Gauge,
+  Shield,
+  Target,
+  AlertTriangle
 } from 'lucide-react';
 import { cn } from '../utils/helpers';
 
@@ -117,7 +120,7 @@ interface MLflowRun {
   };
 }
 
-type TabType = 'training' | 'models' | 'retraining' | 'mlflow' | 'statistics';
+type TabType = 'training' | 'models' | 'retraining' | 'mlflow' | 'statistics' | 'layering';
 
 /**
  * ============================================================
@@ -1413,6 +1416,424 @@ export function MLManagementPage() {
 
   /**
    * ============================================================
+   * RENDER FUNCTIONS - LAYERING MODEL TAB
+   * ============================================================
+   */
+
+  const renderLayeringTab = () => {
+    // State for layering model
+    const [layeringStatus, setLayeringStatus] = useState<any>(null);
+    const [dataStatus, setDataStatus] = useState<any>(null);
+    const [metrics, setMetrics] = useState<any>(null);
+    const [isTraining, setIsTraining] = useState(false);
+    const [trainingOutput, setTrainingOutput] = useState<string>('');
+
+    // Fetch layering model status
+    const fetchLayeringStatus = async () => {
+      try {
+        const response = await fetch('/api/ml-management/layering/status');
+        const data = await response.json();
+        setLayeringStatus(data);
+      } catch (err) {
+        console.error('Failed to fetch layering status:', err);
+      }
+    };
+
+    // Fetch data status
+    const fetchDataStatus = async () => {
+      try {
+        const response = await fetch('/api/ml-management/layering/data-status');
+        const data = await response.json();
+        setDataStatus(data);
+      } catch (err) {
+        console.error('Failed to fetch data status:', err);
+      }
+    };
+
+    // Fetch metrics
+    const fetchMetrics = async () => {
+      try {
+        const response = await fetch('/api/ml-management/layering/metrics');
+        const data = await response.json();
+        setMetrics(data);
+      } catch (err) {
+        console.error('Failed to fetch metrics:', err);
+      }
+    };
+
+    // Check data
+    const handleCheckData = async () => {
+      try {
+        setLoading(true);
+        const response = await fetch('/api/ml-management/layering/check-data', {
+          method: 'POST'
+        });
+        const result = await response.json();
+
+        if (result.success) {
+          alert('Data check completed!\n\n' + result.output);
+          fetchDataStatus();
+        } else {
+          alert('Data check failed:\n' + result.error);
+        }
+      } catch (err) {
+        console.error('Data check failed:', err);
+        setError('Failed to check data');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    // Train model
+    const handleTrainModel = async () => {
+      if (!confirm('Start training Layering ML model? This will take 2-10 minutes.')) {
+        return;
+      }
+
+      try {
+        setIsTraining(true);
+        setTrainingOutput('Training started...\n');
+        setLoading(true);
+
+        const response = await fetch('/api/ml-management/layering/train', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ use_improved: true, timeout: 600 })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          setTrainingOutput(result.output || 'Training completed successfully!');
+          alert('Training completed successfully!');
+          fetchLayeringStatus();
+          fetchMetrics();
+        } else {
+          setTrainingOutput(result.output + '\n\nError: ' + result.error);
+          alert('Training failed:\n' + result.error);
+        }
+      } catch (err) {
+        console.error('Training failed:', err);
+        setError('Failed to train model');
+        setTrainingOutput('Training failed: ' + err);
+      } finally {
+        setIsTraining(false);
+        setLoading(false);
+      }
+    };
+
+    // Initial fetch
+    useEffect(() => {
+      fetchLayeringStatus();
+      fetchDataStatus();
+      fetchMetrics();
+    }, []);
+
+    return (
+      <div className="space-y-6">
+        {/* Model Status Card */}
+        <div className="bg-surface border border-gray-800 rounded-lg p-6">
+          <div className="flex items-center gap-3 mb-6">
+            <Shield className="h-6 w-6 text-primary" />
+            <h2 className="text-xl font-semibold">Layering Model Status</h2>
+          </div>
+
+          {layeringStatus ? (
+            layeringStatus.loaded ? (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="h-5 w-5 text-green-400" />
+                  <span className="text-green-400 font-semibold">Model Loaded</span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="p-4 bg-gray-800 rounded-lg">
+                    <p className="text-sm text-gray-400 mb-1">Version</p>
+                    <p className="text-white font-semibold">
+                      {layeringStatus.model_info?.version || 'N/A'}
+                    </p>
+                  </div>
+
+                  <div className="p-4 bg-gray-800 rounded-lg">
+                    <p className="text-sm text-gray-400 mb-1">Training Samples</p>
+                    <p className="text-white font-semibold">
+                      {layeringStatus.model_info?.training_samples?.toLocaleString() || 'N/A'}
+                    </p>
+                  </div>
+
+                  <div className="p-4 bg-gray-800 rounded-lg">
+                    <p className="text-sm text-gray-400 mb-1">Optimal Threshold</p>
+                    <p className="text-white font-semibold">
+                      {layeringStatus.model_info?.optimal_threshold?.toFixed(3) || 'N/A'}
+                    </p>
+                  </div>
+
+                  <div className="p-4 bg-gray-800 rounded-lg">
+                    <p className="text-sm text-gray-400 mb-1">Trained At</p>
+                    <p className="text-white text-sm font-mono">
+                      {layeringStatus.model_info?.trained_at
+                        ? new Date(layeringStatus.model_info.trained_at).toLocaleString()
+                        : 'N/A'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-4 bg-gray-800 rounded-lg">
+                  <p className="text-sm text-gray-400 mb-2">Model Path</p>
+                  <p className="text-xs font-mono text-white break-all">
+                    {layeringStatus.model_info?.file_path || 'N/A'}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <AlertTriangle className="h-16 w-16 text-yellow-400 mx-auto mb-4" />
+                <p className="text-yellow-400 mb-2">Model Not Loaded</p>
+                <p className="text-gray-400 text-sm mb-4">{layeringStatus.message}</p>
+                <button
+                  onClick={handleTrainModel}
+                  disabled={isTraining || loading}
+                  className="px-6 py-2 bg-primary hover:bg-primary/90 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Train Model
+                </button>
+              </div>
+            )
+          ) : (
+            <div className="text-center py-8">
+              <RefreshCw className="h-8 w-8 text-gray-400 mx-auto mb-2 animate-spin" />
+              <p className="text-gray-400">Loading status...</p>
+            </div>
+          )}
+        </div>
+
+        {/* Data Status Card */}
+        <div className="bg-surface border border-gray-800 rounded-lg p-6">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <Database className="h-6 w-6 text-primary" />
+              <h2 className="text-xl font-semibold">Training Data Status</h2>
+            </div>
+            <button
+              onClick={handleCheckData}
+              disabled={loading}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Check Data
+            </button>
+          </div>
+
+          {dataStatus ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="p-4 bg-gray-800 rounded-lg">
+                  <p className="text-sm text-gray-400 mb-1">Total Collected</p>
+                  <p className="text-2xl font-bold text-white">
+                    {dataStatus.total_collected?.toLocaleString() || '0'}
+                  </p>
+                </div>
+
+                <div className="p-4 bg-gray-800 rounded-lg">
+                  <p className="text-sm text-gray-400 mb-1">Labeled Samples</p>
+                  <p className="text-2xl font-bold text-green-400">
+                    {dataStatus.total_labeled?.toLocaleString() || '0'}
+                  </p>
+                </div>
+
+                <div className="p-4 bg-gray-800 rounded-lg">
+                  <p className="text-sm text-gray-400 mb-1">Files Count</p>
+                  <p className="text-2xl font-bold text-white">
+                    {dataStatus.files_count || '0'}
+                  </p>
+                </div>
+              </div>
+
+              <div className={cn(
+                'p-4 rounded-lg border-2',
+                dataStatus.ready_for_training
+                  ? 'bg-green-500/10 border-green-500/30'
+                  : 'bg-yellow-500/10 border-yellow-500/30'
+              )}>
+                <div className="flex items-center gap-3">
+                  {dataStatus.ready_for_training ? (
+                    <CheckCircle className="h-5 w-5 text-green-400" />
+                  ) : (
+                    <AlertTriangle className="h-5 w-5 text-yellow-400" />
+                  )}
+                  <div>
+                    <p className={cn(
+                      'font-semibold',
+                      dataStatus.ready_for_training ? 'text-green-400' : 'text-yellow-400'
+                    )}>
+                      {dataStatus.ready_for_training ? 'Ready for Training' : 'Collecting Data'}
+                    </p>
+                    <p className="text-sm text-gray-400">
+                      {dataStatus.ready_for_training
+                        ? `${dataStatus.total_labeled} labeled samples available`
+                        : `Need ${dataStatus.minimum_required - (dataStatus.total_labeled || 0)} more labeled samples`}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <RefreshCw className="h-8 w-8 text-gray-400 mx-auto mb-2 animate-spin" />
+              <p className="text-gray-400">Loading data status...</p>
+            </div>
+          )}
+        </div>
+
+        {/* Model Metrics Card */}
+        {metrics && metrics.available && (
+          <div className="bg-surface border border-gray-800 rounded-lg p-6">
+            <div className="flex items-center gap-3 mb-6">
+              <Target className="h-6 w-6 text-primary" />
+              <h2 className="text-xl font-semibold">Model Metrics</h2>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="p-4 bg-gray-800 rounded-lg">
+                <p className="text-sm text-gray-400 mb-2">Accuracy</p>
+                <div className="flex items-baseline gap-2">
+                  <p className="text-2xl font-bold text-white">
+                    {(metrics.metrics.accuracy * 100).toFixed(1)}%
+                  </p>
+                </div>
+                <div className="mt-2 w-full bg-gray-700 rounded-full h-2">
+                  <div
+                    className="bg-green-400 rounded-full h-2"
+                    style={{ width: `${metrics.metrics.accuracy * 100}%` }}
+                  />
+                </div>
+              </div>
+
+              <div className="p-4 bg-gray-800 rounded-lg">
+                <p className="text-sm text-gray-400 mb-2">Precision</p>
+                <div className="flex items-baseline gap-2">
+                  <p className="text-2xl font-bold text-white">
+                    {(metrics.metrics.precision * 100).toFixed(1)}%
+                  </p>
+                </div>
+                <div className="mt-2 w-full bg-gray-700 rounded-full h-2">
+                  <div
+                    className="bg-blue-400 rounded-full h-2"
+                    style={{ width: `${metrics.metrics.precision * 100}%` }}
+                  />
+                </div>
+              </div>
+
+              <div className="p-4 bg-gray-800 rounded-lg">
+                <p className="text-sm text-gray-400 mb-2">Recall</p>
+                <div className="flex items-baseline gap-2">
+                  <p className="text-2xl font-bold text-white">
+                    {(metrics.metrics.recall * 100).toFixed(1)}%
+                  </p>
+                </div>
+                <div className="mt-2 w-full bg-gray-700 rounded-full h-2">
+                  <div
+                    className="bg-yellow-400 rounded-full h-2"
+                    style={{ width: `${metrics.metrics.recall * 100}%` }}
+                  />
+                </div>
+              </div>
+
+              <div className="p-4 bg-gray-800 rounded-lg">
+                <p className="text-sm text-gray-400 mb-2">F1 Score</p>
+                <div className="flex items-baseline gap-2">
+                  <p className="text-2xl font-bold text-white">
+                    {(metrics.metrics.f1_score * 100).toFixed(1)}%
+                  </p>
+                </div>
+                <div className="mt-2 w-full bg-gray-700 rounded-full h-2">
+                  <div
+                    className="bg-purple-400 rounded-full h-2"
+                    style={{ width: `${metrics.metrics.f1_score * 100}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {metrics.top_features && metrics.top_features.length > 0 && (
+              <div className="mt-6 p-4 bg-gray-800 rounded-lg">
+                <p className="text-sm font-medium text-gray-400 mb-3">Top 5 Important Features</p>
+                <div className="space-y-2">
+                  {metrics.top_features.slice(0, 5).map((feature: string, index: number) => (
+                    <div key={index} className="flex items-center gap-3">
+                      <span className="text-xs font-mono text-gray-500 w-6">{index + 1}.</span>
+                      <span className="text-sm text-white font-mono flex-1">{feature}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Training Actions */}
+        <div className="bg-surface border border-gray-800 rounded-lg p-6">
+          <div className="flex items-center gap-3 mb-6">
+            <Rocket className="h-6 w-6 text-primary" />
+            <h2 className="text-xl font-semibold">Training Actions</h2>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex gap-4">
+              <button
+                onClick={handleTrainModel}
+                disabled={isTraining || loading || !dataStatus?.ready_for_training}
+                className="flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-primary hover:bg-primary/90 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Rocket className="h-5 w-5" />
+                {isTraining ? 'Training in Progress...' : 'Train Improved Model'}
+              </button>
+
+              <Tooltip content="Refresh all status">
+                <button
+                  onClick={() => {
+                    fetchLayeringStatus();
+                    fetchDataStatus();
+                    fetchMetrics();
+                  }}
+                  className="px-4 py-3 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"
+                >
+                  <RefreshCw className="h-5 w-5 text-gray-400" />
+                </button>
+              </Tooltip>
+            </div>
+
+            {!dataStatus?.ready_for_training && (
+              <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                <div className="flex items-start gap-3">
+                  <Info className="h-5 w-5 text-yellow-400 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm text-yellow-400 font-medium">Not enough labeled data</p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Need at least {dataStatus?.minimum_required || 100} labeled samples for training.
+                      Currently have {dataStatus?.total_labeled || 0}.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {trainingOutput && (
+              <div className="p-4 bg-gray-900 rounded-lg border border-gray-700">
+                <p className="text-sm text-gray-400 mb-2">Training Output:</p>
+                <pre className="text-xs font-mono text-white overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap">
+                  {trainingOutput}
+                </pre>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  /**
+   * ============================================================
    * MAIN RENDER
    * ============================================================
    */
@@ -1422,7 +1843,8 @@ export function MLManagementPage() {
     { id: 'models', label: 'Models', icon: Database },
     { id: 'retraining', label: 'Auto-Retraining', icon: Zap },
     { id: 'mlflow', label: 'MLflow', icon: BarChart3 },
-    { id: 'statistics', label: 'Statistics', icon: Gauge }
+    { id: 'statistics', label: 'Statistics', icon: Gauge },
+    { id: 'layering', label: 'Layering Model', icon: Shield }
   ];
 
   return (
@@ -1483,6 +1905,7 @@ export function MLManagementPage() {
         {activeTab === 'retraining' && renderRetrainingTab()}
         {activeTab === 'mlflow' && renderMLflowTab()}
         {activeTab === 'statistics' && renderStatisticsTab()}
+        {activeTab === 'layering' && renderLayeringTab()}
       </div>
     </div>
   );
