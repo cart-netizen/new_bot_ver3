@@ -88,7 +88,7 @@ def find_optimal_threshold(y_true, y_pred_proba):
     return best_threshold, best_f1, precisions[best_idx], recalls[best_idx]
 
 
-def calculate_metrics(y_true, y_pred, y_pred_proba):
+def calculate_metrics(y_true, y_pred, y_pred_proba, optimal_threshold=0.5):
     """Calculate comprehensive metrics."""
     accuracy = accuracy_score(y_true, y_pred)
     precision = precision_score(y_true, y_pred, zero_division=0)
@@ -105,10 +105,12 @@ def calculate_metrics(y_true, y_pred, y_pred_proba):
         'recall': recall,
         'f1_score': f1,
         'roc_auc': roc_auc,
+        'confusion_matrix': cm.tolist(),  # Add confusion matrix
         'true_negatives': int(tn),
         'false_positives': int(fp),
         'false_negatives': int(fn),
-        'true_positives': int(tp)
+        'true_positives': int(tp),
+        'optimal_threshold': float(optimal_threshold)  # Add optimal threshold
     }
 
 
@@ -300,7 +302,7 @@ def main():
 
     # Apply optimal threshold
     y_pred_optimized = (y_pred_proba_improved >= optimal_threshold).astype(int)
-    optimized_metrics = calculate_metrics(y_test, y_pred_optimized, y_pred_proba_improved)
+    optimized_metrics = calculate_metrics(y_test, y_pred_optimized, y_pred_proba_improved, optimal_threshold)
 
     print(f"Optimized Metrics (threshold={optimal_threshold:.3f}):")
     print(f"  Accuracy:  {optimized_metrics['accuracy']:.3f}")

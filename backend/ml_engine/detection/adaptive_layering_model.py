@@ -497,6 +497,19 @@ class AdaptiveLayeringModel:
 
       metrics_dict = model_package.get('metrics')
       if metrics_dict:
+        # Add missing fields for backward compatibility
+        if 'confusion_matrix' not in metrics_dict:
+          # Construct confusion matrix from individual values if available
+          tn = metrics_dict.get('true_negatives', 0)
+          fp = metrics_dict.get('false_positives', 0)
+          fn = metrics_dict.get('false_negatives', 0)
+          tp = metrics_dict.get('true_positives', 0)
+          metrics_dict['confusion_matrix'] = [[tn, fp], [fn, tp]]
+
+        if 'optimal_threshold' not in metrics_dict:
+          # Get from top-level model_package (where training script saves it)
+          metrics_dict['optimal_threshold'] = model_package.get('optimal_threshold', 0.5)
+
         self.metrics = ModelMetrics(**metrics_dict)
 
       self.classifier = model_package.get('classifier')
