@@ -221,8 +221,17 @@ async def get_data_status() -> Dict[str, Any]:
         return stats
 
     except Exception as e:
-        logger.error(f"Failed to get data status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.debug(f"Failed to get data status: {e}")
+        # Return empty stats instead of error
+        return {
+            "total_collected": 0,
+            "total_labeled": 0,
+            "files_count": 0,
+            "data_dir_exists": False,
+            "ready_for_training": False,
+            "minimum_required": 100,
+            "recommended": 500
+        }
 
 
 @router.post("/check-data")
@@ -426,8 +435,12 @@ async def get_layering_metrics() -> Dict[str, Any]:
         }
 
     except Exception as e:
-        logger.error(f"Failed to get layering metrics: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.debug(f"Failed to get layering metrics: {e}")
+        # Return unavailable instead of error
+        return {
+            "available": False,
+            "message": "Failed to load metrics"
+        }
 
 
 @router.post("/analyze-data")

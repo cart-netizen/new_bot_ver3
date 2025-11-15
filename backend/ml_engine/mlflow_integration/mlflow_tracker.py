@@ -472,7 +472,7 @@ class MLflowTracker:
             return runs.to_dict('records')
 
         except Exception as e:
-            logger.error(f"Failed to search runs: {e}")
+            logger.debug(f"Failed to search runs (MLflow may not be configured): {e}")
             return []
 
     def get_best_run(
