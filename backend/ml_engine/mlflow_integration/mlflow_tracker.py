@@ -354,33 +354,25 @@ class MLflowTracker:
         """
         Изменить stage модели в registry
 
+        DEPRECATED: MLflow model registry stages are deprecated.
+        This method is kept for backward compatibility but does nothing.
+        Use our internal ModelRegistry instead.
+
         Args:
             model_name: Название модели
             version: Версия модели
             stage: Новый stage ("Staging", "Production", "Archived")
 
         Returns:
-            True если успешно
+            True (always, for backward compatibility)
         """
-        valid_stages = ["Staging", "Production", "Archived", "None"]
-
-        if stage not in valid_stages:
-            logger.error(f"Invalid stage: {stage}. Must be one of {valid_stages}")
-            return False
-
-        try:
-            self.client.transition_model_version_stage(
-                name=model_name,
-                version=version,
-                stage=stage
-            )
-
-            logger.info(f"Transitioned {model_name} v{version} to {stage}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to transition model stage: {e}")
-            return False
+        # MLflow model registry stages are deprecated since 2.9.0
+        # We use our own ModelRegistry instead
+        logger.debug(
+            f"Skipping MLflow registry stage transition for {model_name} v{version} "
+            f"(deprecated feature, using internal ModelRegistry)"
+        )
+        return True
 
     def get_model_versions(
         self,
