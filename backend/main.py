@@ -7,6 +7,7 @@ import asyncio
 import signal
 import time
 import traceback
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, Any, List
@@ -154,6 +155,11 @@ TradingSignal.__post_init__ = patched_post_init
 # Настройка логирования
 setup_logging()
 logger = get_logger(__name__)
+
+# Подавление verbose логов сторонних библиотек
+logging.getLogger('mlflow').setLevel(logging.WARNING)
+logging.getLogger('alembic').setLevel(logging.WARNING)
+logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
 
 # ============================================================
 # УТИЛИТЫ ДЛЯ МОНИТОРИНГА ПАМЯТИ
