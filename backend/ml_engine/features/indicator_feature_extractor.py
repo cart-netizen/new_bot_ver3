@@ -443,7 +443,11 @@ class IndicatorFeatureExtractor:
     # VWAP (Volume Weighted Average Price)
     if len(volumes) >= 20:
       typical_prices = (highs[-20:] + lows[-20:] + closes[-20:]) / 3
-      vwap = float(np.sum(typical_prices * volumes[-20:]) / np.sum(volumes[-20:]))
+      volume_sum = np.sum(volumes[-20:])
+      if volume_sum > 0:
+        vwap = float(np.sum(typical_prices * volumes[-20:]) / volume_sum)
+      else:
+        vwap = closes[-1]
     else:
       vwap = closes[-1]
 

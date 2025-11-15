@@ -335,8 +335,9 @@ class LayeringDataCollector:
     for filepath in parquet_files:
       try:
         df = pd.read_parquet(filepath)
-        # Only add non-empty DataFrames to avoid FutureWarning
-        if not df.empty:
+        # Only add non-empty DataFrames with actual data to avoid FutureWarning
+        # Filter out both empty DataFrames and those with all-NA columns
+        if not df.empty and not df.isna().all().all():
           dfs.append(df)
       except Exception as e:
         logger.error(f"Error loading {filepath}: {e}")
@@ -344,7 +345,11 @@ class LayeringDataCollector:
     if not dfs:
       return pd.DataFrame()
 
-    combined_df = pd.concat(dfs, ignore_index=True)
+    # Suppress FutureWarning for concat operation
+    import warnings
+    with warnings.catch_warnings():
+      warnings.filterwarnings('ignore', category=FutureWarning, module='pandas')
+      combined_df = pd.concat(dfs, ignore_index=True)
 
     logger.info(
       f"📚 Loaded {len(combined_df)} samples from {len(dfs)} files"
