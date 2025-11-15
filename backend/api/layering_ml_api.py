@@ -86,36 +86,44 @@ async def run_script_async(script_path: str, timeout: int = 300) -> Dict[str, An
 def load_layering_model_info() -> Optional[Dict[str, Any]]:
     """
     Загрузить информацию о Layering модели из файла.
+    Легковесная версия - читает только метаданные без полной загрузки модели.
 
     Returns:
         Dict с информацией о модели или None
     """
     try:
-        from backend.ml_engine.detection.adaptive_layering_model import AdaptiveLayeringModel
+        import pickle
 
         model_path = "data/models/layering_adaptive_v1.pkl"
-
-        if not Path(model_path).exists():
-            return None
-
-        # Load model
-        model = AdaptiveLayeringModel(model_path=model_path, enabled=True)
-
-        if not model.enabled:
-            return None
-
-        info = model.get_info()
-
-        # Add file info
         model_file = Path(model_path)
-        info['file_path'] = str(model_file.absolute())
-        info['file_size_kb'] = model_file.stat().st_size / 1024
-        info['file_modified'] = datetime.fromtimestamp(model_file.stat().st_mtime).isoformat()
+
+        if not model_file.exists():
+            return None
+
+        # Read model metadata without fully loading the model
+        # This avoids triggering ERROR logs on every page load
+        with open(model_path, 'rb') as f:
+            model_package = pickle.load(f)
+
+        # Extract metadata
+        info = {
+            'version': model_package.get('version', '1.0.0'),
+            'trained_at': model_package.get('trained_at'),
+            'training_samples': model_package.get('training_samples', 0),
+            'optimal_threshold': model_package.get('optimal_threshold', 0.5),
+            'feature_names': model_package.get('feature_names', []),
+            'feature_importance': model_package.get('feature_importance', {}),
+            'metrics': model_package.get('metrics', {}),
+            'file_path': str(model_file.absolute()),
+            'file_size_kb': model_file.stat().st_size / 1024,
+            'file_modified': datetime.fromtimestamp(model_file.stat().st_mtime).isoformat()
+        }
 
         return info
 
     except Exception as e:
-        logger.error(f"Failed to load layering model info: {e}")
+        # Use debug instead of error - model info not loading is not critical
+        logger.debug(f"Could not load layering model info: {e}")
         return None
 
 
