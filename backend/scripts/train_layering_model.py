@@ -2,8 +2,8 @@
 """
 Training Pipeline for Adaptive Layering Model.
 
-Usage:
-  python scripts/train_layering_model.py
+Usage (from project root):
+  python backend/scripts/train_layering_model.py
 
 Требования:
   - Collected training data в data/ml_training/layering/
@@ -16,8 +16,11 @@ Path: backend/scripts/train_layering_model.py
 import sys
 from pathlib import Path
 
-# Add backend to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add project root to path
+# Script is in: backend/scripts/train_layering_model.py
+# We need to add the directory that contains 'backend' folder
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
 
 from backend.ml_engine.detection.layering_data_collector import LayeringDataCollector
 from backend.ml_engine.detection.adaptive_layering_model import AdaptiveLayeringModel
