@@ -98,7 +98,7 @@ class ModelRegistry:
     def __init__(self, registry_dir: str = "models"):
         self.registry_dir = Path(registry_dir)
         self.registry_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Model Registry initialized at {self.registry_dir}")
+        logger.debug(f"Model Registry initialized at {self.registry_dir}")
 
     async def register_model(
         self,
