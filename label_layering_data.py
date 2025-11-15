@@ -16,8 +16,25 @@ Run: python label_layering_data.py
 
 import sys
 from pathlib import Path
-import pandas as pd
 import warnings
+
+# Check dependencies before importing
+try:
+    import pandas as pd
+except ImportError:
+    print("=" * 80)
+    print("❌ ERROR: Required dependencies not installed")
+    print("=" * 80)
+    print()
+    print("The following packages are required:")
+    print("  - pandas")
+    print("  - pyarrow")
+    print()
+    print("Install with:")
+    print("  pip install pandas pyarrow")
+    print()
+    print("=" * 80)
+    sys.exit(1)
 
 # Suppress warnings
 warnings.filterwarnings('ignore')

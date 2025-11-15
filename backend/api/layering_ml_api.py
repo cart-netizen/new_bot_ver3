@@ -304,8 +304,24 @@ async def train_layering_model(
                     logger.info("Auto-labeling completed successfully")
                 else:
                     output_lines.append("⚠ Auto-labeling failed, proceeding with existing labeled data")
-                    output_lines.append(label_result['error'] or "Unknown error")
-                    logger.warning(f"Auto-labeling failed: {label_result['error']}")
+                    output_lines.append("")
+
+                    # Check if it's a dependency error
+                    error_msg = label_result['output'] if label_result['output'] else str(label_result.get('error', ''))
+                    if 'pandas' in error_msg or 'pyarrow' in error_msg or 'ModuleNotFoundError' in error_msg:
+                        output_lines.append("ERROR: Missing required packages (pandas, pyarrow)")
+                        output_lines.append("")
+                        output_lines.append("To enable automatic labeling, install dependencies:")
+                        output_lines.append("  pip install pandas pyarrow")
+                        output_lines.append("")
+                        output_lines.append("Or run labeling manually before training:")
+                        output_lines.append("  python label_layering_data.py")
+                        output_lines.append("")
+                        output_lines.append("Note: Training will use existing labeled data if available.")
+                    else:
+                        output_lines.append(error_msg or "Unknown error")
+
+                    logger.warning(f"Auto-labeling failed: {label_result.get('error', 'Unknown')}")
             else:
                 output_lines.append("⚠ Labeling script not found, using existing labeled data")
                 logger.warning(f"Labeling script not found: {label_script}")
