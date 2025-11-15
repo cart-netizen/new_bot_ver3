@@ -135,6 +135,21 @@ class ParquetFutureLabelProcessor:
         # Объединяем результаты
         final_df = pd.concat(all_processed, ignore_index=True)
 
+        # CRITICAL: Удаляем дубликаты перед сохранением
+        print(f"\n{'=' * 70}")
+        print("Проверка на дубликаты...")
+        print(f"{'=' * 70}")
+
+        initial_count = len(final_df)
+        # Удаляем дубликаты по (symbol, timestamp)
+        final_df = final_df.drop_duplicates(subset=['symbol', 'timestamp'], keep='last')
+        duplicates_removed = initial_count - len(final_df)
+
+        if duplicates_removed > 0:
+            print(f"⚠️  Удалено {duplicates_removed:,} дубликатов ({100*duplicates_removed/initial_count:.1f}%)")
+        else:
+            print(f"✓ Дубликатов не найдено")
+
         # Сохраняем обратно в Feature Store
         print(f"\n{'=' * 70}")
         print("Сохранение обновленных данных...")

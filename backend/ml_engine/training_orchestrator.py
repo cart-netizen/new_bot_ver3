@@ -374,6 +374,22 @@ class TrainingOrchestrator:
             # Step 2: Try Feature Store
             logger.info("Attempting to load from Feature Store...")
 
+            # 2.0: CRITICAL - Run preprocessing to add future labels
+            logger.info("🔧 Running preprocessing to add future labels...")
+            try:
+                from preprocessing_add_future_labels_parquet import ParquetFutureLabelProcessor
+
+                processor = ParquetFutureLabelProcessor(
+                    feature_store_group=self.data_config.feature_store_group,
+                    start_date=None,  # Process all data
+                    end_date=None
+                )
+                processor.process_all_data()
+                logger.info("✅ Preprocessing completed - future labels added")
+            except Exception as e:
+                logger.warning(f"⚠️  Preprocessing failed: {e}. Continuing without preprocessing...")
+                logger.warning("   This may result in NaN labels being dropped during training!")
+
             # 2.1: Define date range
             end_date = datetime.now()
             start_date = end_date - timedelta(
