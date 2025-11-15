@@ -700,16 +700,7 @@ class BotController:
 
           # Доступ к analyzer через mtf_manager
           self.mtf_manager.analyzer.ml_validator = self.ml_validator
-
-          # Доступ к feature_pipeline (если есть)
-          if hasattr(self, 'feature_pipeline') and self.ml_feature_pipeline is not None:
-            self.mtf_manager.analyzer.feature_pipeline = self.feature_pipeline
-            logger.info("✅ ML Validator и Feature Pipeline привязаны к TimeframeAnalyzer")
-          else:
-            logger.warning(
-              "⚠️ Feature Pipeline недоступен - "
-              "ML predictions будут ограничены"
-            )
+          logger.info("✅ ML Validator привязан к TimeframeAnalyzer (Feature Pipeline будет привязан позже)")
         else:
           logger.info(
             "ℹ️ ML Validator недоступен - "
@@ -1081,6 +1072,12 @@ class BotController:
         trade_managers=self.trade_managers  # ← Передаем TradeManagers для реальных trades
       )
       logger.info(f"✓ ML Feature Pipeline создан для {len(self.symbols)} символов с real trades support")
+
+      # Привязываем Feature Pipeline к TimeframeAnalyzer (если есть)
+      if hasattr(self, 'mtf_manager') and self.mtf_manager is not None:
+        if hasattr(self.mtf_manager, 'analyzer') and self.mtf_manager.analyzer is not None:
+          self.mtf_manager.analyzer.feature_pipeline = self.ml_feature_pipeline
+          logger.info("✅ Feature Pipeline привязан к TimeframeAnalyzer")
 
       # ===== Создаем менеджеры свечей для ФИНАЛЬНЫХ пар =====
       logger.info(f"Создание менеджеров свечей для {len(self.symbols)} пар...")
