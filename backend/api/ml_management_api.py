@@ -548,8 +548,9 @@ async def get_mlflow_runs(
         }
 
     except Exception as e:
-        logger.error(f"Failed to get MLflow runs: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.debug(f"Failed to get MLflow runs (MLflow may not be configured): {e}")
+        # Return empty list instead of error when MLflow is not available
+        return {"runs": [], "total": 0}
 
 
 @router.get("/mlflow/best-run")
@@ -571,7 +572,8 @@ async def get_best_run(
         best_run = mlflow_tracker.get_best_run(metric=metric, order="DESC")
 
         if not best_run:
-            raise HTTPException(status_code=404, detail="No runs found")
+            # Return None instead of 404 error when no runs exist
+            return {"run": None, "message": "No runs found"}
 
         # Convert numpy types to Python types for JSON serialization
         return _convert_numpy_types(best_run)
@@ -579,8 +581,9 @@ async def get_best_run(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get best run: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.debug(f"Failed to get best run (MLflow may not be configured): {e}")
+        # Return None instead of error when MLflow is not available
+        return {"run": None, "message": "MLflow not available"}
 
 
 # ============================================================
@@ -677,8 +680,15 @@ async def get_retraining_status() -> RetrainingStatusResponse:
         )
 
     except Exception as e:
-        logger.error(f"Failed to get retraining status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.debug(f"Failed to get retraining status (pipeline may not be initialized): {e}")
+        # Return default status instead of error when pipeline is not available
+        return RetrainingStatusResponse(
+            is_running=False,
+            config={},
+            last_training_time=None,
+            last_drift_check_time=None,
+            last_performance_check_time=None
+        )
 
 
 @router.post("/retraining/trigger")
