@@ -131,6 +131,7 @@ class AdaptiveLayeringModel:
     self.version = "1.0.0"
     self.trained_at: Optional[str] = None
     self.training_samples: int = 0
+    self.optimal_threshold: float = 0.5  # Default threshold, can be optimized
 
     # Load model if path provided
     if model_path and Path(model_path).exists():
@@ -303,9 +304,11 @@ class AdaptiveLayeringModel:
     X = self._prepare_single_sample(features)
     X_scaled = self.scaler.transform(X)
 
-    # Predict
-    prediction = self.classifier.predict(X_scaled)[0]
+    # Get probability score
     confidence = self.classifier.predict_proba(X_scaled)[0][1]
+
+    # Use optimal threshold instead of default 0.5
+    prediction = confidence >= self.optimal_threshold
 
     return (bool(prediction), float(confidence))
 
@@ -490,6 +493,7 @@ class AdaptiveLayeringModel:
       self.training_samples = model_package.get('training_samples', 0)
       self.feature_names = model_package.get('feature_names', [])
       self.feature_importance = model_package.get('feature_importance', {})
+      self.optimal_threshold = model_package.get('optimal_threshold', 0.5)
 
       metrics_dict = model_package.get('metrics')
       if metrics_dict:
@@ -502,6 +506,7 @@ class AdaptiveLayeringModel:
       logger.info(
         f"✅ Model loaded: {filepath}, "
         f"samples={self.training_samples}, "
+        f"threshold={self.optimal_threshold:.3f}, "
         f"trained_at={self.trained_at}"
       )
 
@@ -518,6 +523,7 @@ class AdaptiveLayeringModel:
       'version': self.version,
       'trained_at': self.trained_at,
       'training_samples': self.training_samples,
+      'optimal_threshold': self.optimal_threshold,
       'feature_count': len(self.feature_names),
       'metrics': self.metrics.__dict__ if self.metrics else None,
       'top_features': list(self.feature_importance.keys())[:10] if self.feature_importance else []
