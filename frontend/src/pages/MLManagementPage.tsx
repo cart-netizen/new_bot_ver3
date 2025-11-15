@@ -1684,7 +1684,7 @@ export function MLManagementPage() {
         </div>
 
         {/* Model Metrics Card */}
-        {layeringMetrics && layeringMetrics.available && (
+        {layeringMetrics && layeringMetrics.available && layeringMetrics.metrics && (
           <div className="bg-surface border border-gray-800 rounded-lg p-6">
             <div className="flex items-center gap-3 mb-6">
               <Target className="h-6 w-6 text-primary" />
