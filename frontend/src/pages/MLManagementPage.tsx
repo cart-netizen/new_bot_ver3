@@ -299,6 +299,32 @@ export function MLManagementPage() {
     }
   };
 
+  const handleDownloadModel = async (name: string, version: string) => {
+    try {
+      const response = await fetch(
+        `/api/ml-management/models/${name}/${version}/download`
+      );
+
+      if (!response.ok) {
+        throw new Error('Download failed');
+      }
+
+      // Create blob and download
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${name}_${version}.h5`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error('Download failed:', err);
+      setError('Failed to download model');
+    }
+  };
+
   // Fetch retraining status
   const fetchRetrainingStatus = async () => {
     try {
@@ -1061,7 +1087,10 @@ export function MLManagementPage() {
                         )}
 
                         <Tooltip content="Download model">
-                          <button className="p-2 hover:bg-gray-700 rounded-lg transition-colors group">
+                          <button
+                            onClick={() => handleDownloadModel(model.name, model.version)}
+                            className="p-2 hover:bg-gray-700 rounded-lg transition-colors group"
+                          >
                             <Download className="h-4 w-4 text-blue-400 group-hover:text-blue-300" />
                           </button>
                         </Tooltip>
