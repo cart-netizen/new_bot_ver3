@@ -101,7 +101,7 @@ class DriftDetector:
     # Имена признаков
     self.feature_names: Optional[List[str]] = None
 
-    logger.info(
+    logger.debug(
       f"Инициализирован DriftDetector: "
       f"window={window_size}, baseline={baseline_window_size}, "
       f"threshold={drift_threshold}"
@@ -506,6 +506,6 @@ def get_drift_detector(
         accuracy_drop_threshold=accuracy_drop_threshold,
         check_interval_hours=check_interval_hours
     )
-    logger.info("✓ Created DriftDetector singleton instance")
+    logger.debug("✓ Created DriftDetector singleton instance")
 
   return _drift_detector_instance
