@@ -405,10 +405,10 @@ class BotController:
       if settings.ML_DATA_COLLECTION_ENABLED:
         self.ml_data_collector = MLDataCollector(
           storage_path="../data/ml_training",
-          max_samples_per_file=100,  # OPTIMIZED: 300 → 100 (сохранение каждые ~8 минут вместо 25)
-          collection_interval=10,  # Собирать каждые 10 итераций (~12 семплов/мин/символ)
+          max_samples_per_file=60,   # OPTIMIZED: 100 → 60 для реального цикла ~3 сек (сохранение каждые ~15 мин)
+          collection_interval=5,     # OPTIMIZED: 10 → 5 для более частого сбора (4 семпла/мин)
           # auto_save_interval_seconds = 300  # Автосохранение каждые 5 минут для защиты от переполнения памяти
-          max_buffer_memory_mb=20,  # OPTIMIZED: 30 → 20 (достаточно, используется ~1%)
+          max_buffer_memory_mb=20,   # OPTIMIZED: 30 → 20 (достаточно, используется ~1%)
           # Feature Store integration
           enable_feature_store=True,  # ✅ Записывать в Feature Store (parquet)
           use_legacy_format=False,     # MEMORY FIX: False to save CPU/memory
@@ -1971,12 +1971,12 @@ class BotController:
       cleanup_counter += 1
 
       # CRITICAL MEMORY FIX: Balanced cleanup to prevent memory growth while allowing ML data accumulation
-      # Increased from 180 to 1440 cycles for proper ML data collection
-      # At ~0.5s per cycle, this means cleanup every ~12 minutes (720s)
-      # This allows ML buffers to accumulate ~100 samples before emergency save
-      # while still preventing long-term memory leaks
-      if cleanup_counter >= 1440:  # 1440 cycles × 0.5s = ~720 seconds = 12 min
-        logger.info("🧹 Запуск периодической очистки памяти (каждые 1440 циклов = ~12 мин)")
+      # Optimized for REAL cycle time (~3 sec, not 0.5 sec from config)
+      # 360 cycles × 3 sec = 1080 sec = ~18 minutes
+      # This allows ML buffers to accumulate ~60 samples (~15 min) before cleanup
+      # Cleanup runs shortly after auto-save, providing additional safety
+      if cleanup_counter >= 360:  # 360 cycles × ~3 sec = ~18 min
+        logger.info("🧹 Запуск периодической очистки памяти (каждые 360 циклов = ~18 мин)")
         await self._cleanup_memory()
         cleanup_counter = 0
 
