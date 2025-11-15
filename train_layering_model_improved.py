@@ -105,10 +105,10 @@ def calculate_metrics(y_true, y_pred, y_pred_proba):
         'recall': recall,
         'f1_score': f1,
         'roc_auc': roc_auc,
-        'tn': int(tn),
-        'fp': int(fp),
-        'fn': int(fn),
-        'tp': int(tp)
+        'true_negatives': int(tn),
+        'false_positives': int(fp),
+        'false_negatives': int(fn),
+        'true_positives': int(tp)
     }
 
 
@@ -332,10 +332,10 @@ def main():
     print()
     print(f"{'':>15} {'Baseline':>20} {'Optimized':>20}")
     print("-" * 56)
-    print(f"{'True Negative':<15} {baseline_metrics['tn']:>20,} {optimized_metrics['tn']:>20,}")
-    print(f"{'False Positive':<15} {baseline_metrics['fp']:>20,} {optimized_metrics['fp']:>20,}")
-    print(f"{'False Negative':<15} {baseline_metrics['fn']:>20,} {optimized_metrics['fn']:>20,}")
-    print(f"{'True Positive':<15} {baseline_metrics['tp']:>20,} {optimized_metrics['tp']:>20,}")
+    print(f"{'True Negative':<15} {baseline_metrics['true_negatives']:>20,} {optimized_metrics['true_negatives']:>20,}")
+    print(f"{'False Positive':<15} {baseline_metrics['false_positives']:>20,} {optimized_metrics['false_positives']:>20,}")
+    print(f"{'False Negative':<15} {baseline_metrics['false_negatives']:>20,} {optimized_metrics['false_negatives']:>20,}")
+    print(f"{'True Positive':<15} {baseline_metrics['true_positives']:>20,} {optimized_metrics['true_positives']:>20,}")
     print()
 
     # Calculate improvements
@@ -345,8 +345,8 @@ def main():
     print("🎯 Key Improvements:")
     print(f"  • Recall improved by {recall_improvement:+.1f} percentage points")
     print(f"  • F1 Score improved by {f1_improvement:+.1f} percentage points")
-    print(f"  • Now detects {optimized_metrics['tp']:,} true layering patterns (was {baseline_metrics['tp']:,})")
-    print(f"  • Reduces false negatives from {baseline_metrics['fn']:,} to {optimized_metrics['fn']:,}")
+    print(f"  • Now detects {optimized_metrics['true_positives']:,} true layering patterns (was {baseline_metrics['true_positives']:,})")
+    print(f"  • Reduces false negatives from {baseline_metrics['false_negatives']:,} to {optimized_metrics['false_negatives']:,}")
     print()
 
     print("=" * 80)
