@@ -48,6 +48,9 @@ adaptive_router = APIRouter(prefix="/adaptive", tags=["adaptive"])
 # ML Management Router - для управления обучением и моделями через фронтенд
 from backend.api.ml_management_api import router as ml_management_router
 
+# Layering ML Router - для управления Layering ML моделью
+from backend.api.layering_ml_api import router as layering_ml_router
+
 # ===== МОДЕЛИ ОТВЕТОВ =====
 
 class StatusResponse(BaseModel):
