@@ -17,6 +17,7 @@ from pathlib import Path
 import subprocess
 import json
 import asyncio
+import sys
 
 from backend.core.logger import get_logger
 
@@ -34,6 +35,9 @@ def run_script_sync(script_path: str, timeout: int = 300) -> Dict[str, Any]:
     """
     Запустить Python скрипт синхронно и вернуть результат.
 
+    Uses sys.executable to run script with the same Python interpreter
+    that's running the backend (includes virtual environment if active).
+
     Args:
         script_path: Путь к скрипту
         timeout: Таймаут в секундах
@@ -42,8 +46,9 @@ def run_script_sync(script_path: str, timeout: int = 300) -> Dict[str, Any]:
         Dict с output, error, return_code
     """
     try:
+        # Use sys.executable to ensure we use the same Python (with venv)
         result = subprocess.run(
-            ["python", script_path],
+            [sys.executable, script_path],
             capture_output=True,
             text=True,
             timeout=timeout,
