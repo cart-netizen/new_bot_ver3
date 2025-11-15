@@ -213,6 +213,28 @@ def label_data_automatic():
     print(f"  - Class balance: {final_true / final_labeled * 100:.1f}% / {final_false / final_labeled * 100:.1f}%")
     print(f"Unlabeled: {len(combined_df) - final_labeled}")
     print(f"{'=' * 80}")
+
+    # Update statistics.json for frontend
+    try:
+        import json
+        from datetime import datetime
+
+        stats_file = data_dir / "statistics.json"
+        stats = {
+            "total_collected": len(combined_df),
+            "total_labeled": int(final_labeled),
+            "total_saved": len(combined_df),
+            "last_updated": datetime.now().isoformat(),
+            "exists": True
+        }
+
+        with open(stats_file, 'w') as f:
+            json.dump(stats, f, indent=2)
+
+        print(f"\n✓ Updated statistics.json ({final_labeled} labeled samples)")
+    except Exception as e:
+        print(f"\n⚠️  Warning: Could not update statistics.json: {e}")
+
     print(f"\n📚 Ready for training!")
     print(f"   Run: python train_layering_model_improved.py")
 
