@@ -368,10 +368,14 @@ async def list_models(
 
                 for model_info in model_infos:
                     metadata = model_info.metadata
+                    # Convert stage to lowercase for frontend
+                    stage_value = metadata.stage.value if hasattr(metadata.stage, "value") else str(metadata.stage)
+                    stage_lower = stage_value.lower()
+
                     model_data = {
                         "name": metadata.name,
                         "version": metadata.version,
-                        "stage": metadata.stage.value if hasattr(metadata.stage, "value") else str(metadata.stage),
+                        "stage": stage_lower,
                         "created_at": metadata.created_at.isoformat() if hasattr(metadata.created_at, "isoformat") else str(metadata.created_at),
                         "description": metadata.description or "",
                         "metrics": metadata.metrics or {}
@@ -490,7 +494,7 @@ async def download_model(name: str, version: str):
             )
 
         # Path to model file
-        model_file = Path(model_info.path)
+        model_file = Path(model_info.model_path)
 
         if not model_file.exists():
             raise HTTPException(
