@@ -14,7 +14,12 @@ Path: backend/scripts/train_layering_model.py
 """
 
 import sys
+import warnings
 from pathlib import Path
+
+# Suppress known warnings for cleaner output
+warnings.filterwarnings('ignore', category=UserWarning, module='pydantic')
+warnings.filterwarnings('ignore', category=FutureWarning, module='pandas')
 
 # Add project root to path
 # Script is in: backend/scripts/train_layering_model.py

@@ -335,7 +335,9 @@ class LayeringDataCollector:
     for filepath in parquet_files:
       try:
         df = pd.read_parquet(filepath)
-        dfs.append(df)
+        # Only add non-empty DataFrames to avoid FutureWarning
+        if not df.empty:
+          dfs.append(df)
       except Exception as e:
         logger.error(f"Error loading {filepath}: {e}")
 
