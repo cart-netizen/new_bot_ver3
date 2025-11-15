@@ -16,7 +16,12 @@ Requirements:
 """
 
 import sys
+import warnings
 from pathlib import Path
+
+# Suppress known warnings for cleaner output
+warnings.filterwarnings('ignore', category=UserWarning, module='pydantic')
+warnings.filterwarnings('ignore', category=FutureWarning, module='pandas')
 
 # Add project root to sys.path
 project_root = Path(__file__).parent
