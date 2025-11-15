@@ -405,10 +405,10 @@ class BotController:
       if settings.ML_DATA_COLLECTION_ENABLED:
         self.ml_data_collector = MLDataCollector(
           storage_path="../data/ml_training",
-          max_samples_per_file=300,  # MEMORY FIX: 500 → 300 (более частое сохранение)
-          collection_interval=10,  # Собирать каждые 10 итераций (все символы за раз)
+          max_samples_per_file=100,  # OPTIMIZED: 300 → 100 (сохранение каждые ~8 минут вместо 25)
+          collection_interval=10,  # Собирать каждые 10 итераций (~12 семплов/мин/символ)
           # auto_save_interval_seconds = 300  # Автосохранение каждые 5 минут для защиты от переполнения памяти
-          max_buffer_memory_mb=30,  # MEMORY FIX: 50 → 30 (меньше памяти на символ)
+          max_buffer_memory_mb=20,  # OPTIMIZED: 30 → 20 (достаточно, используется ~1%)
           # Feature Store integration
           enable_feature_store=True,  # ✅ Записывать в Feature Store (parquet)
           use_legacy_format=False,     # MEMORY FIX: False to save CPU/memory
