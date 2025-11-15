@@ -266,6 +266,8 @@ async def train_layering_model(
     """
     Запустить обучение Layering ML модели.
 
+    Автоматически запускает labeling для unlabeled данных перед обучением.
+
     Args:
         request: Параметры обучения
         background_tasks: FastAPI background tasks
@@ -274,6 +276,51 @@ async def train_layering_model(
         Результат обучения
     """
     try:
+        output_lines = []
+
+        # ===== STEP 1: Auto-labeling unlabeled data =====
+        logger.info("Step 1: Checking for unlabeled data...")
+        output_lines.append("=" * 80)
+        output_lines.append("STEP 1: AUTO-LABELING UNLABELED DATA")
+        output_lines.append("=" * 80)
+
+        # Check data status
+        data_status = load_data_statistics()
+        unlabeled_count = data_status.get('total_collected', 0) - data_status.get('total_labeled', 0)
+
+        if unlabeled_count > 0:
+            logger.info(f"Found {unlabeled_count} unlabeled samples, running auto-labeling...")
+            output_lines.append(f"Found {unlabeled_count} unlabeled samples")
+            output_lines.append("Running automatic labeling...")
+
+            # Run labeling script
+            label_script = "label_layering_data.py"
+            if Path(label_script).exists():
+                label_result = await run_script_async(label_script, timeout=120)
+
+                if label_result['success']:
+                    output_lines.append("✓ Auto-labeling completed successfully")
+                    output_lines.append(label_result['output'])
+                    logger.info("Auto-labeling completed successfully")
+                else:
+                    output_lines.append("⚠ Auto-labeling failed, proceeding with existing labeled data")
+                    output_lines.append(label_result['error'] or "Unknown error")
+                    logger.warning(f"Auto-labeling failed: {label_result['error']}")
+            else:
+                output_lines.append("⚠ Labeling script not found, using existing labeled data")
+                logger.warning(f"Labeling script not found: {label_script}")
+        else:
+            output_lines.append("✓ All data is already labeled")
+            logger.info("All data is already labeled")
+
+        output_lines.append("")
+
+        # ===== STEP 2: Training =====
+        logger.info("Step 2: Starting model training...")
+        output_lines.append("=" * 80)
+        output_lines.append("STEP 2: MODEL TRAINING")
+        output_lines.append("=" * 80)
+
         # Choose training script
         if request.use_improved:
             script_path = "train_layering_model_improved.py"
@@ -291,6 +338,10 @@ async def train_layering_model(
         # Run training (this will take 2-10 minutes)
         result = await run_script_async(script_path, timeout=request.timeout)
 
+        # Combine outputs from labeling and training
+        output_lines.append(result['output'])
+        combined_output = "\n".join(output_lines)
+
         if result['success']:
             # Reload model info after training
             model_info = load_layering_model_info()
@@ -298,7 +349,7 @@ async def train_layering_model(
             return {
                 "success": True,
                 "message": "Layering model training completed successfully",
-                "output": result['output'],
+                "output": combined_output,
                 "model_info": model_info,
                 "timestamp": datetime.now().isoformat()
             }
@@ -307,7 +358,7 @@ async def train_layering_model(
                 "success": False,
                 "message": "Training failed",
                 "error": result['error'],
-                "output": result['output'],
+                "output": combined_output,
                 "timestamp": datetime.now().isoformat()
             }
 
