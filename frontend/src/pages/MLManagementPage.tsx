@@ -488,6 +488,7 @@ export function MLManagementPage() {
    */
 
   // Initial fetch
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     fetchTrainingStatus();
     fetchModels();
@@ -495,6 +496,7 @@ export function MLManagementPage() {
   }, []);
 
   // Fetch data when tab changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (activeTab === 'models') {
       fetchModels(modelsFilter);
