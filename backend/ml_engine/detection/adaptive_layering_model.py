@@ -524,7 +524,7 @@ class AdaptiveLayeringModel:
       )
 
     except Exception as e:
-      logger.error(f"Error loading model: {e}")
+      logger.warning(f"Could not load model from {filepath}: {e}")
       self._init_models()
 
   def get_info(self) -> Dict:
