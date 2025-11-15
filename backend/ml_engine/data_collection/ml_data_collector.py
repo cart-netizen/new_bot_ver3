@@ -487,10 +487,8 @@ class MLDataCollector:
     """Финализация - сохранение всех оставшихся буферов."""
     logger.info("Финализация MLDataCollector...")
 
-    for symbol in self.feature_buffers.keys():
-      if self.feature_buffers[symbol]:
-        await self._save_batch(symbol)
-        logger.info(f"{symbol} | Финальный batch сохранен")
+    # ВАЖНО: При финализации сохраняем ВСЕ буферы, даже маленькие (min_buffer_size=0)
+    await self._emergency_save_all_buffers(min_buffer_size=0)
 
     logger.info(
       f"MLDataCollector финализирован: "
@@ -587,38 +585,52 @@ class MLDataCollector:
         f"(память: {total_memory_mb:.1f}MB/{total_memory_limit_mb:.1f}MB, {memory_usage_percent:.1f}%)"
       )
 
-  async def _emergency_save_all_buffers(self):
+  async def _emergency_save_all_buffers(self, min_buffer_size: int = 50):
     """
     🚨 ЭКСТРЕННОЕ СОХРАНЕНИЕ ВСЕХ БУФЕРОВ.
 
-    Вызывается при критическом превышении памяти.
+    Вызывается при критическом превышении памяти или периодической очистке.
     В отличие от старого _cleanup_old_buffers(), СОХРАНЯЕТ ВСЕ данные,
     вместо их урезания.
+
+    Args:
+        min_buffer_size: Минимальный размер буфера для сохранения (по умолчанию 50)
+                        Буферы меньше этого размера не сохраняются (кроме финализации)
 
     КРИТИЧНО: Ноль потери данных!
     """
     import gc
 
-    logger.warning("🚨 ЭКСТРЕННОЕ СОХРАНЕНИЕ ВСЕХ БУФЕРОВ")
+    logger.info(f"🧹 Проверка буферов ML Data Collector (минимум для сохранения: {min_buffer_size})")
 
     saved_symbols = []
+    skipped_symbols = []
     total_saved_samples = 0
 
-    # Сохраняем ВСЕ буферы для ВСЕХ символов
+    # Сохраняем только достаточно большие буферы
     for symbol in list(self.feature_buffers.keys()):
       if self.feature_buffers[symbol]:
         buffer_size = len(self.feature_buffers[symbol])
         buffer_memory = self._calculate_buffer_memory(symbol)
 
-        # Сохраняем batch
-        await self._save_batch(symbol)
+        # Проверяем минимальный размер буфера
+        if buffer_size >= min_buffer_size:
+          # Сохраняем batch
+          await self._save_batch(symbol)
 
-        saved_symbols.append(f"{symbol}({buffer_size} семплов, {buffer_memory:.2f}MB)")
-        total_saved_samples += buffer_size
+          saved_symbols.append(f"{symbol}({buffer_size} семплов, {buffer_memory:.2f}MB)")
+          total_saved_samples += buffer_size
+        else:
+          skipped_symbols.append(f"{symbol}({buffer_size})")
 
     if saved_symbols:
       logger.warning(
         f"💾 Экстренно сохранено {total_saved_samples} семплов: {', '.join(saved_symbols)}"
+      )
+
+    if skipped_symbols:
+      logger.info(
+        f"⏭️  Пропущены маленькие буферы (< {min_buffer_size}): {', '.join(skipped_symbols)}"
       )
 
     # Принудительная сборка мусора
