@@ -24,10 +24,14 @@ from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from pathlib import Path
 import json
+import warnings
 
 from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Suppress pandas FutureWarnings about concat behavior
+warnings.filterwarnings('ignore', category=FutureWarning, message='.*DataFrame concatenation.*')
 
 
 @dataclass
@@ -345,11 +349,8 @@ class LayeringDataCollector:
     if not dfs:
       return pd.DataFrame()
 
-    # Suppress FutureWarning for concat operation
-    import warnings
-    with warnings.catch_warnings():
-      warnings.filterwarnings('ignore', category=FutureWarning, module='pandas')
-      combined_df = pd.concat(dfs, ignore_index=True)
+    # Concat DataFrames (FutureWarning suppressed globally at module level)
+    combined_df = pd.concat(dfs, ignore_index=True)
 
     logger.info(
       f"📚 Loaded {len(combined_df)} samples from {len(dfs)} files"
