@@ -13,9 +13,11 @@ Endpoints:
 """
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional, List
 from datetime import datetime
+from pathlib import Path
 import asyncio
 
 from backend.core.logger import get_logger
@@ -462,6 +464,51 @@ async def promote_model(
         raise
     except Exception as e:
         logger.error(f"Failed to promote model: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/models/{name}/{version}/download")
+async def download_model(name: str, version: str):
+    """
+    Скачать файл модели (.h5)
+
+    Args:
+        name: Название модели
+        version: Версия модели
+
+    Returns:
+        FileResponse с файлом модели
+    """
+    try:
+        registry = get_model_registry()
+        model_info = await registry.get_model(name, version)
+
+        if not model_info:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model not found: {name} v{version}"
+            )
+
+        # Path to model file
+        model_file = Path(model_info.path)
+
+        if not model_file.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model file not found: {model_file}"
+            )
+
+        # Return file for download
+        return FileResponse(
+            path=str(model_file),
+            filename=f"{name}_{version}.h5",
+            media_type="application/octet-stream"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to download model: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

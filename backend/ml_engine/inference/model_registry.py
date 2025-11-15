@@ -333,6 +333,20 @@ class ModelRegistry:
         version_dir = model_base_dir / version
         stage_marker = model_base_dir / f".{stage.value.lower()}"
 
+        # If promoting to PRODUCTION, demote all other versions from PRODUCTION
+        if stage == ModelStage.PRODUCTION:
+            all_versions = await self.list_models(name)
+            for other_model in all_versions:
+                if other_model.version != version and other_model.metadata.stage == ModelStage.PRODUCTION:
+                    # Demote to STAGING
+                    other_version_dir = model_base_dir / other_model.version
+                    other_metadata_path = other_version_dir / "metadata.json"
+                    other_model.metadata.stage = ModelStage.STAGING
+                    other_model.metadata.updated_at = datetime.now()
+                    with open(other_metadata_path, 'w') as f:
+                        json.dump(other_model.metadata.model_dump(), f, indent=2, default=str)
+                    logger.info(f"Demoted {name} v{other_model.version} from PRODUCTION to STAGING")
+
         # Удалить старый marker/symlink если есть
         if stage_marker.exists():
             stage_marker.unlink()
