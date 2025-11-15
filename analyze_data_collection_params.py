@@ -17,9 +17,13 @@ def analyze_data_collection_settings():
     print("-" * 80)
 
     # Из backend/main.py:406-416
-    max_samples_per_file = 300
+    max_samples_per_file = 100  # OPTIMIZED: 300 → 100
     collection_interval = 10  # каждые N итераций
-    max_buffer_memory_mb = 30  # МБ на символ
+    max_buffer_memory_mb = 20  # OPTIMIZED: 30 → 20 МБ на символ
+
+    # Из backend/main.py:1978 - периодическая очистка памяти
+    cleanup_interval_cycles = 1440  # OPTIMIZED: 180 → 1440 (90 сек → 12 мин)
+    cleanup_interval_seconds = cleanup_interval_cycles * 0.5  # в секундах
 
     # Из backend/config.py и .env
     analysis_interval = 0.5  # секунды (из backend/.env ANALYSIS_INTERVAL=0.5)
@@ -31,6 +35,7 @@ def analyze_data_collection_settings():
     print(f"  • Collection Interval:      каждые {collection_interval} итераций")
     print(f"  • Max Samples per File:     {max_samples_per_file} семплов")
     print(f"  • Max Buffer Memory:        {max_buffer_memory_mb} МБ на символ")
+    print(f"  • Cleanup Interval:         каждые {cleanup_interval_seconds:.0f} сек ({cleanup_interval_seconds/60:.1f} мин)")
     print(f"  • Торговых пар:             {symbols_count}")
     print()
 
@@ -194,6 +199,26 @@ def analyze_data_collection_settings():
     print(f"   └─ Сохранение каждые ~{minutes_to_save:.1f} минут")
     print(f"   └─ Риск потери данных: {'⚠️  СРЕДНИЙ' if minutes_to_save > 15 else '✅ приемлемый'}")
     print(f"   └─ Частота сохранений: ~{60/minutes_to_save:.1f} раз в час на символ")
+
+    print()
+
+    # === ПРОВЕРКА CLEANUP ИНТЕРФЕРЕНЦИИ ===
+    print("⚙️  ПРОВЕРКА CLEANUP ИНТЕРФЕРЕНЦИИ:")
+    print("-" * 80)
+
+    samples_at_cleanup = (cleanup_interval_seconds / analysis_interval) / collection_interval
+
+    print(f"  • Семплов накопится за cleanup интервал: {samples_at_cleanup:.0f}")
+    print(f"  • Целевой порог (max_samples_per_file):  {max_samples_per_file}")
+
+    if samples_at_cleanup < max_samples_per_file * 0.8:
+        print(f"  ⚠️  ВНИМАНИЕ: Cleanup происходит ДО достижения целевого порога!")
+        print(f"     Буферы будут сохраняться принудительно с {samples_at_cleanup:.0f} семплами")
+        print(f"     Рекомендуется: увеличить cleanup_interval до {(max_samples_per_file * collection_interval * analysis_interval * 1.2):.0f} сек")
+    elif samples_at_cleanup > max_samples_per_file * 1.2:
+        print(f"  ℹ️  Cleanup происходит ПОСЛЕ достижения порога - буферы сохранятся раньше (норма)")
+    else:
+        print(f"  ✅ Cleanup синхронизирован с порогом сохранения - оптимально!")
 
     print()
 
