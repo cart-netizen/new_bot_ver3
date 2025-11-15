@@ -15,6 +15,7 @@ import gc  # НОВОЕ: Для принудительной сборки мус
 import os
 import psutil
 import uvicorn
+import subprocess
 from fastapi import WebSocket, WebSocketDisconnect
 
 # from analysis_loop_ml_data_collection import ml_data_collection_loop
@@ -5087,6 +5088,69 @@ class BotController:
 # Глобальный контроллер бота
 bot_controller: Optional[BotController] = None
 
+# Глобальный процесс MLflow UI
+mlflow_ui_process: Optional[subprocess.Popen] = None
+
+
+def start_mlflow_ui() -> Optional[subprocess.Popen]:
+  """
+  Запускает MLflow UI server в фоновом процессе.
+
+  Returns:
+      subprocess.Popen: Процесс MLflow UI или None при ошибке
+  """
+  try:
+    # Создаем директорию для artifacts если её нет
+    artifact_path = Path(settings.MLFLOW_ARTIFACT_LOCATION)
+    artifact_path.mkdir(parents=True, exist_ok=True)
+
+    # Команда для запуска MLflow UI
+    cmd = [
+      "mlflow", "ui",
+      "--backend-store-uri", settings.MLFLOW_TRACKING_URI,
+      "--default-artifact-root", settings.MLFLOW_ARTIFACT_LOCATION,
+      "--host", "0.0.0.0",
+      "--port", "5000"
+    ]
+
+    # Запускаем в фоновом процессе (без вывода в консоль)
+    process = subprocess.Popen(
+      cmd,
+      stdout=subprocess.DEVNULL,
+      stderr=subprocess.DEVNULL,
+      start_new_session=True  # Отделяем от родительского процесса
+    )
+
+    logger.info(f"🚀 MLflow UI запущен (PID: {process.pid}) на http://localhost:5000")
+    return process
+
+  except FileNotFoundError:
+    logger.warning("⚠ MLflow не установлен. Установите: pip install mlflow")
+    return None
+  except Exception as e:
+    logger.error(f"❌ Ошибка запуска MLflow UI: {e}")
+    return None
+
+
+def stop_mlflow_ui(process: Optional[subprocess.Popen]) -> None:
+  """
+  Останавливает MLflow UI server.
+
+  Args:
+      process: Процесс MLflow UI для остановки
+  """
+  if process and process.poll() is None:  # Проверяем что процесс еще жив
+    try:
+      process.terminate()  # Graceful shutdown
+      try:
+        process.wait(timeout=5)  # Ждем до 5 секунд
+        logger.info("✓ MLflow UI остановлен")
+      except subprocess.TimeoutExpired:
+        process.kill()  # Force kill если не остановился
+        logger.warning("⚠ MLflow UI принудительно остановлен")
+    except Exception as e:
+      logger.error(f"Ошибка остановки MLflow UI: {e}")
+
 
 @asynccontextmanager
 async def lifespan(app):
@@ -5096,7 +5160,7 @@ async def lifespan(app):
   Args:
       app: FastAPI приложение
   """
-  global bot_controller
+  global bot_controller, mlflow_ui_process
 
   # Startup
   logger.info("Запуск приложения")
@@ -5108,7 +5172,11 @@ async def lifespan(app):
       await db_manager.initialize()
       logger.info("✓ База данных подключена")
 
-      # 2. Recovery & Reconciliation (если включено)
+      # 2. Запуск MLflow UI Server
+      logger.info("→ Запуск MLflow UI Server...")
+      mlflow_ui_process = start_mlflow_ui()
+
+      # 3. Recovery & Reconciliation (если включено)
       if settings.ENABLE_AUTO_RECOVERY:
         logger.info("Запуск автоматического восстановления...")
 
@@ -5166,6 +5234,10 @@ async def lifespan(app):
     with trace_operation("app_shutdown"):
       if bot_controller:
         await bot_controller.stop()
+
+      # Останавливаем MLflow UI
+      logger.info("→ Остановка MLflow UI Server...")
+      stop_mlflow_ui(mlflow_ui_process)
 
       await rest_client.close()
       await db_manager.close()
