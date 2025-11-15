@@ -198,6 +198,13 @@ export function MLManagementPage() {
   const [error, setError] = useState<string | null>(null);
   const [pollingInterval, setPollingInterval] = useState<number | null>(null);
 
+  // Layering model state
+  const [layeringStatus, setLayeringStatus] = useState<any>(null);
+  const [dataStatus, setDataStatus] = useState<any>(null);
+  const [layeringMetrics, setLayeringMetrics] = useState<any>(null);
+  const [isLayeringTraining, setIsLayeringTraining] = useState(false);
+  const [layeringTrainingOutput, setLayeringTrainingOutput] = useState<string>('');
+
   /**
    * ============================================================
    * API FUNCTIONS
@@ -380,6 +387,100 @@ export function MLManagementPage() {
     }
   };
 
+  // Fetch layering model status
+  const fetchLayeringStatus = async () => {
+    try {
+      const response = await fetch('/api/ml-management/layering/status');
+      const data = await response.json();
+      setLayeringStatus(data);
+    } catch (err) {
+      console.error('Failed to fetch layering status:', err);
+    }
+  };
+
+  // Fetch layering data status
+  const fetchDataStatus = async () => {
+    try {
+      const response = await fetch('/api/ml-management/layering/data-status');
+      const data = await response.json();
+      setDataStatus(data);
+    } catch (err) {
+      console.error('Failed to fetch data status:', err);
+    }
+  };
+
+  // Fetch layering metrics
+  const fetchLayeringMetrics = async () => {
+    try {
+      const response = await fetch('/api/ml-management/layering/metrics');
+      const data = await response.json();
+      setLayeringMetrics(data);
+    } catch (err) {
+      console.error('Failed to fetch metrics:', err);
+    }
+  };
+
+  // Check layering data
+  const handleCheckData = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch('/api/ml-management/layering/check-data', {
+        method: 'POST'
+      });
+      const result = await response.json();
+
+      if (result.success) {
+        alert('Data check completed!\n\n' + result.output);
+        fetchDataStatus();
+      } else {
+        alert('Data check failed:\n' + result.error);
+      }
+    } catch (err) {
+      console.error('Data check failed:', err);
+      setError('Failed to check data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Train layering model
+  const handleTrainLayeringModel = async () => {
+    if (!confirm('Start training Layering ML model? This will take 2-10 minutes.')) {
+      return;
+    }
+
+    try {
+      setIsLayeringTraining(true);
+      setLayeringTrainingOutput('Training started...\n');
+      setLoading(true);
+
+      const response = await fetch('/api/ml-management/layering/train', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ use_improved: true, timeout: 600 })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setLayeringTrainingOutput(result.output || 'Training completed successfully!');
+        alert('Training completed successfully!');
+        fetchLayeringStatus();
+        fetchLayeringMetrics();
+      } else {
+        setLayeringTrainingOutput(result.output + '\n\nError: ' + result.error);
+        alert('Training failed:\n' + result.error);
+      }
+    } catch (err) {
+      console.error('Training failed:', err);
+      setError('Failed to train model');
+      setLayeringTrainingOutput('Training failed: ' + err);
+    } finally {
+      setIsLayeringTraining(false);
+      setLoading(false);
+    }
+  };
+
   /**
    * ============================================================
    * EFFECTS
@@ -402,6 +503,10 @@ export function MLManagementPage() {
     } else if (activeTab === 'mlflow') {
       fetchMLflowRuns();
       fetchBestRun();
+    } else if (activeTab === 'layering') {
+      fetchLayeringStatus();
+      fetchDataStatus();
+      fetchLayeringMetrics();
     }
   }, [activeTab, modelsFilter]);
 
@@ -1420,116 +1525,7 @@ export function MLManagementPage() {
    * ============================================================
    */
 
-  const renderLayeringTab = () => {
-    // State for layering model
-    const [layeringStatus, setLayeringStatus] = useState<any>(null);
-    const [dataStatus, setDataStatus] = useState<any>(null);
-    const [metrics, setMetrics] = useState<any>(null);
-    const [isTraining, setIsTraining] = useState(false);
-    const [trainingOutput, setTrainingOutput] = useState<string>('');
-
-    // Fetch layering model status
-    const fetchLayeringStatus = async () => {
-      try {
-        const response = await fetch('/api/ml-management/layering/status');
-        const data = await response.json();
-        setLayeringStatus(data);
-      } catch (err) {
-        console.error('Failed to fetch layering status:', err);
-      }
-    };
-
-    // Fetch data status
-    const fetchDataStatus = async () => {
-      try {
-        const response = await fetch('/api/ml-management/layering/data-status');
-        const data = await response.json();
-        setDataStatus(data);
-      } catch (err) {
-        console.error('Failed to fetch data status:', err);
-      }
-    };
-
-    // Fetch metrics
-    const fetchMetrics = async () => {
-      try {
-        const response = await fetch('/api/ml-management/layering/metrics');
-        const data = await response.json();
-        setMetrics(data);
-      } catch (err) {
-        console.error('Failed to fetch metrics:', err);
-      }
-    };
-
-    // Check data
-    const handleCheckData = async () => {
-      try {
-        setLoading(true);
-        const response = await fetch('/api/ml-management/layering/check-data', {
-          method: 'POST'
-        });
-        const result = await response.json();
-
-        if (result.success) {
-          alert('Data check completed!\n\n' + result.output);
-          fetchDataStatus();
-        } else {
-          alert('Data check failed:\n' + result.error);
-        }
-      } catch (err) {
-        console.error('Data check failed:', err);
-        setError('Failed to check data');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    // Train model
-    const handleTrainModel = async () => {
-      if (!confirm('Start training Layering ML model? This will take 2-10 minutes.')) {
-        return;
-      }
-
-      try {
-        setIsTraining(true);
-        setTrainingOutput('Training started...\n');
-        setLoading(true);
-
-        const response = await fetch('/api/ml-management/layering/train', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ use_improved: true, timeout: 600 })
-        });
-
-        const result = await response.json();
-
-        if (result.success) {
-          setTrainingOutput(result.output || 'Training completed successfully!');
-          alert('Training completed successfully!');
-          fetchLayeringStatus();
-          fetchMetrics();
-        } else {
-          setTrainingOutput(result.output + '\n\nError: ' + result.error);
-          alert('Training failed:\n' + result.error);
-        }
-      } catch (err) {
-        console.error('Training failed:', err);
-        setError('Failed to train model');
-        setTrainingOutput('Training failed: ' + err);
-      } finally {
-        setIsTraining(false);
-        setLoading(false);
-      }
-    };
-
-    // Initial fetch
-    useEffect(() => {
-      fetchLayeringStatus();
-      fetchDataStatus();
-      fetchMetrics();
-    }, []);
-
-    return (
+  const renderLayeringTab = () => (
       <div className="space-y-6">
         {/* Model Status Card */}
         <div className="bg-surface border border-gray-800 rounded-lg p-6">
@@ -1591,8 +1587,8 @@ export function MLManagementPage() {
                 <p className="text-yellow-400 mb-2">Model Not Loaded</p>
                 <p className="text-gray-400 text-sm mb-4">{layeringStatus.message}</p>
                 <button
-                  onClick={handleTrainModel}
-                  disabled={isTraining || loading}
+                  onClick={handleTrainLayeringModel}
+                  disabled={isLayeringTraining || loading}
                   className="px-6 py-2 bg-primary hover:bg-primary/90 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Train Model
@@ -1686,7 +1682,7 @@ export function MLManagementPage() {
         </div>
 
         {/* Model Metrics Card */}
-        {metrics && metrics.available && (
+        {layeringMetrics && layeringMetrics.available && (
           <div className="bg-surface border border-gray-800 rounded-lg p-6">
             <div className="flex items-center gap-3 mb-6">
               <Target className="h-6 w-6 text-primary" />
@@ -1698,13 +1694,13 @@ export function MLManagementPage() {
                 <p className="text-sm text-gray-400 mb-2">Accuracy</p>
                 <div className="flex items-baseline gap-2">
                   <p className="text-2xl font-bold text-white">
-                    {(metrics.metrics.accuracy * 100).toFixed(1)}%
+                    {(layeringMetrics.metrics.accuracy * 100).toFixed(1)}%
                   </p>
                 </div>
                 <div className="mt-2 w-full bg-gray-700 rounded-full h-2">
                   <div
                     className="bg-green-400 rounded-full h-2"
-                    style={{ width: `${metrics.metrics.accuracy * 100}%` }}
+                    style={{ width: `${layeringMetrics.metrics.accuracy * 100}%` }}
                   />
                 </div>
               </div>
@@ -1713,13 +1709,13 @@ export function MLManagementPage() {
                 <p className="text-sm text-gray-400 mb-2">Precision</p>
                 <div className="flex items-baseline gap-2">
                   <p className="text-2xl font-bold text-white">
-                    {(metrics.metrics.precision * 100).toFixed(1)}%
+                    {(layeringMetrics.metrics.precision * 100).toFixed(1)}%
                   </p>
                 </div>
                 <div className="mt-2 w-full bg-gray-700 rounded-full h-2">
                   <div
                     className="bg-blue-400 rounded-full h-2"
-                    style={{ width: `${metrics.metrics.precision * 100}%` }}
+                    style={{ width: `${layeringMetrics.metrics.precision * 100}%` }}
                   />
                 </div>
               </div>
@@ -1728,13 +1724,13 @@ export function MLManagementPage() {
                 <p className="text-sm text-gray-400 mb-2">Recall</p>
                 <div className="flex items-baseline gap-2">
                   <p className="text-2xl font-bold text-white">
-                    {(metrics.metrics.recall * 100).toFixed(1)}%
+                    {(layeringMetrics.metrics.recall * 100).toFixed(1)}%
                   </p>
                 </div>
                 <div className="mt-2 w-full bg-gray-700 rounded-full h-2">
                   <div
                     className="bg-yellow-400 rounded-full h-2"
-                    style={{ width: `${metrics.metrics.recall * 100}%` }}
+                    style={{ width: `${layeringMetrics.metrics.recall * 100}%` }}
                   />
                 </div>
               </div>
@@ -1743,23 +1739,23 @@ export function MLManagementPage() {
                 <p className="text-sm text-gray-400 mb-2">F1 Score</p>
                 <div className="flex items-baseline gap-2">
                   <p className="text-2xl font-bold text-white">
-                    {(metrics.metrics.f1_score * 100).toFixed(1)}%
+                    {(layeringMetrics.metrics.f1_score * 100).toFixed(1)}%
                   </p>
                 </div>
                 <div className="mt-2 w-full bg-gray-700 rounded-full h-2">
                   <div
                     className="bg-purple-400 rounded-full h-2"
-                    style={{ width: `${metrics.metrics.f1_score * 100}%` }}
+                    style={{ width: `${layeringMetrics.metrics.f1_score * 100}%` }}
                   />
                 </div>
               </div>
             </div>
 
-            {metrics.top_features && metrics.top_features.length > 0 && (
+            {layeringMetrics.top_features && layeringMetrics.top_features.length > 0 && (
               <div className="mt-6 p-4 bg-gray-800 rounded-lg">
                 <p className="text-sm font-medium text-gray-400 mb-3">Top 5 Important Features</p>
                 <div className="space-y-2">
-                  {metrics.top_features.slice(0, 5).map((feature: string, index: number) => (
+                  {layeringMetrics.top_features.slice(0, 5).map((feature: string, index: number) => (
                     <div key={index} className="flex items-center gap-3">
                       <span className="text-xs font-mono text-gray-500 w-6">{index + 1}.</span>
                       <span className="text-sm text-white font-mono flex-1">{feature}</span>
@@ -1781,12 +1777,12 @@ export function MLManagementPage() {
           <div className="space-y-4">
             <div className="flex gap-4">
               <button
-                onClick={handleTrainModel}
-                disabled={isTraining || loading || !dataStatus?.ready_for_training}
+                onClick={handleTrainLayeringModel}
+                disabled={isLayeringTraining || loading || !dataStatus?.ready_for_training}
                 className="flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-primary hover:bg-primary/90 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Rocket className="h-5 w-5" />
-                {isTraining ? 'Training in Progress...' : 'Train Improved Model'}
+                {isLayeringTraining ? 'Training in Progress...' : 'Train Improved Model'}
               </button>
 
               <Tooltip content="Refresh all status">
@@ -1794,7 +1790,7 @@ export function MLManagementPage() {
                   onClick={() => {
                     fetchLayeringStatus();
                     fetchDataStatus();
-                    fetchMetrics();
+                    fetchLayeringMetrics();
                   }}
                   className="px-4 py-3 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"
                 >
@@ -1818,11 +1814,11 @@ export function MLManagementPage() {
               </div>
             )}
 
-            {trainingOutput && (
+            {layeringTrainingOutput && (
               <div className="p-4 bg-gray-900 rounded-lg border border-gray-700">
                 <p className="text-sm text-gray-400 mb-2">Training Output:</p>
                 <pre className="text-xs font-mono text-white overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap">
-                  {trainingOutput}
+                  {layeringTrainingOutput}
                 </pre>
               </div>
             )}
