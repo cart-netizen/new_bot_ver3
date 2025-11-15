@@ -2928,12 +2928,21 @@ class BotController:
                   }
 
                 # Сохранение sample
+                # ИСПРАВЛЕНИЕ: Передаем информацию о сигнале если он был сгенерирован
+                signal_info = None
+                if integrated_signal:
+                  signal_info = {
+                    'type': integrated_signal.final_signal.signal_type.value,
+                    'confidence': integrated_signal.combined_confidence,
+                    'strength': integrated_signal.final_signal.strength.value if hasattr(integrated_signal.final_signal.strength, 'value') else str(integrated_signal.final_signal.strength)
+                  }
+
                 await self.ml_data_collector.collect_sample(
                   symbol=symbol,
                   feature_vector=feature_vector,
                   orderbook_snapshot=orderbook_snapshot,
                   market_metrics=market_metrics,
-                  executed_signal=None
+                  executed_signal=signal_info
                 )
 
                 self.stats['ml_data_collected'] += 1
