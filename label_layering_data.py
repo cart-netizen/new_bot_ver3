@@ -58,7 +58,8 @@ def label_data_automatic():
     """
 
     # Load data
-    data_dir = Path(settings.BASE_DIR) / "data" / "ml_training" / "layering"
+    # Use relative path from project root
+    data_dir = Path(__file__).parent / "data" / "ml_training" / "layering"
 
     if not data_dir.exists():
         print(f"❌ Data directory not found: {data_dir}")
