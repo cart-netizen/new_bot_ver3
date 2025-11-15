@@ -22,10 +22,14 @@ import numpy as np
 import pandas as pd
 import pickle
 import json
+import warnings
 from typing import Dict, List, Optional, Tuple, Any, TYPE_CHECKING
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+
+# Suppress sklearn feature names warning (we use numpy arrays for performance)
+warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
 
 try:
   from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier

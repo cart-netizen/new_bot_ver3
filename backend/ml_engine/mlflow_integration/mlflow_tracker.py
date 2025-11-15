@@ -17,11 +17,17 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 import torch
 import json
+import logging
 
 from backend.core.logger import get_logger
 from backend.config import settings
 
 logger = get_logger(__name__)
+
+# Suppress verbose MLflow, Alembic, and SQLAlchemy logs
+logging.getLogger('mlflow').setLevel(logging.WARNING)
+logging.getLogger('alembic').setLevel(logging.WARNING)
+logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
 
 
 class MLflowTracker:
