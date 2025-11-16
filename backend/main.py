@@ -8,6 +8,7 @@ import signal
 import time
 import traceback
 import logging
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, Any, List
@@ -5091,8 +5092,9 @@ class BotController:
 # Глобальный контроллер бота
 bot_controller: Optional[BotController] = None
 
-# Глобальный процесс MLflow UI
+# Глобальные процессы для сервисов
 mlflow_ui_process: Optional[subprocess.Popen] = None
+ml_server_process: Optional[subprocess.Popen] = None
 
 
 def start_mlflow_ui() -> Optional[subprocess.Popen]:
@@ -5155,6 +5157,64 @@ def stop_mlflow_ui(process: Optional[subprocess.Popen]) -> None:
       logger.error(f"Ошибка остановки MLflow UI: {e}")
 
 
+def start_ml_server() -> Optional[subprocess.Popen]:
+  """
+  Запускает ML Model Server в фоновом процессе на порту 8001.
+
+  Returns:
+      subprocess.Popen: Процесс ML сервера или None при ошибке
+  """
+  try:
+    # Команда для запуска ML сервера
+    cmd = [
+      sys.executable,  # Используем текущий Python (из venv)
+      "-m", "uvicorn",
+      "backend.ml_engine.inference.model_server_v2:app",
+      "--host", "0.0.0.0",
+      "--port", "8001",
+      "--log-level", "warning"  # Только warnings и errors
+    ]
+
+    # Запускаем в фоновом процессе (без вывода в консоль)
+    process = subprocess.Popen(
+      cmd,
+      stdout=subprocess.DEVNULL,
+      stderr=subprocess.DEVNULL,
+      start_new_session=True  # Отделяем от родительского процесса
+    )
+
+    logger.info(f"🚀 ML Model Server запущен (PID: {process.pid}) на http://localhost:8001")
+    logger.info("   API Docs: http://localhost:8001/docs")
+    return process
+
+  except FileNotFoundError:
+    logger.warning("⚠ uvicorn не установлен - ML Model Server недоступен")
+    return None
+  except Exception as e:
+    logger.error(f"Ошибка запуска ML Model Server: {e}")
+    return None
+
+
+def stop_ml_server(process: Optional[subprocess.Popen]) -> None:
+  """
+  Останавливает ML Model Server.
+
+  Args:
+      process: Процесс ML сервера для остановки
+  """
+  if process and process.poll() is None:  # Проверяем что процесс еще жив
+    try:
+      process.terminate()  # Graceful shutdown
+      try:
+        process.wait(timeout=5)  # Ждем до 5 секунд
+        logger.info("✓ ML Model Server остановлен")
+      except subprocess.TimeoutExpired:
+        process.kill()  # Force kill если не остановился
+        logger.warning("⚠ ML Model Server принудительно остановлен")
+    except Exception as e:
+      logger.error(f"Ошибка остановки ML Model Server: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app):
   """
@@ -5163,7 +5223,7 @@ async def lifespan(app):
   Args:
       app: FastAPI приложение
   """
-  global bot_controller, mlflow_ui_process
+  global bot_controller, mlflow_ui_process, ml_server_process
 
   # Startup
   logger.info("Запуск приложения")
@@ -5179,7 +5239,11 @@ async def lifespan(app):
       logger.info("→ Запуск MLflow UI Server...")
       mlflow_ui_process = start_mlflow_ui()
 
-      # 3. Recovery & Reconciliation (если включено)
+      # 3. Запуск ML Model Server
+      logger.info("→ Запуск ML Model Server...")
+      ml_server_process = start_ml_server()
+
+      # 4. Recovery & Reconciliation (если включено)
       if settings.ENABLE_AUTO_RECOVERY:
         logger.info("Запуск автоматического восстановления...")
 
@@ -5241,6 +5305,10 @@ async def lifespan(app):
       # Останавливаем MLflow UI
       logger.info("→ Остановка MLflow UI Server...")
       stop_mlflow_ui(mlflow_ui_process)
+
+      # Останавливаем ML Model Server
+      logger.info("→ Остановка ML Model Server...")
+      stop_ml_server(ml_server_process)
 
       await rest_client.close()
       await db_manager.close()
