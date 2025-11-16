@@ -83,6 +83,10 @@ class ConnectionManager:
     """
     try:
       await websocket.send_json(message)
+    except asyncio.CancelledError:
+      # При shutdown просто тихо отключаем
+      self.disconnect(websocket)
+      raise  # Re-raise для корректной обработки asyncio
     except Exception as e:
       logger.error(f"Ошибка отправки сообщения: {e}")
       self.disconnect(websocket)
@@ -111,6 +115,10 @@ class ConnectionManager:
     for connection in connections:
       try:
         await connection.send_json(message)
+      except asyncio.CancelledError:
+        # При shutdown прерываем broadcast
+        logger.debug("Broadcast прерван из-за CancelledError (shutdown)")
+        raise  # Re-raise для корректной обработки
       except Exception as e:
         logger.error(f"Ошибка рассылки сообщения: {e}")
         disconnected.append(connection)
@@ -213,10 +221,24 @@ async def handle_websocket_messages(websocket: WebSocket):
       else:
         logger.warning(f"Неизвестный тип сообщения: {message_type}")
 
+  except asyncio.CancelledError:
+    # Graceful shutdown при отмене задачи
+    logger.info("WebSocket задача получила CancelledError, завершаем gracefully...")
+    # Закрываем соединение
+    try:
+      await websocket.close(code=1000, reason="Server shutdown")
+    except Exception:
+      pass  # Игнорируем ошибки при закрытии
+    # Удаляем из менеджера
+    manager.disconnect(websocket)
+    # Важно: re-raise CancelledError для корректной обработки asyncio
+    raise
   except WebSocketDisconnect:
     logger.info("WebSocket клиент отключился")
+    manager.disconnect(websocket)
   except Exception as e:
     logger.error(f"Ошибка обработки WebSocket сообщения: {e}")
+    manager.disconnect(websocket)
 
 
 async def broadcast_bot_status(status: str, details: dict = None):
