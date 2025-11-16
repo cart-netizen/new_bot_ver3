@@ -249,47 +249,63 @@ class ParquetFutureLabelProcessor:
             current_timestamp = row['timestamp']
             current_price = row['current_mid_price']
 
-            # Пропускаем если уже есть метки
-            if pd.notna(row.get('future_direction_60s')):
+            # FIXED: Проверяем каждое поле отдельно, а не пропускаем всю запись
+            # Старая логика пропускала запись если был future_direction_60s,
+            # но могли отсутствовать future_direction_10s и future_direction_30s
+
+            has_label = False  # Флаг для подсчета labeled_count
+
+            # Обрабатываем future_direction_10s
+            if pd.isna(row.get('future_direction_10s')):
+                future_10s = self._find_future_price(
+                    df, timestamp_to_price, idx, current_timestamp, 10
+                )
+                if future_10s is not None:
+                    df.at[idx, 'future_movement_10s'] = self._calculate_movement(
+                        current_price, future_10s
+                    )
+                    df.at[idx, 'future_direction_10s'] = self._calculate_direction(
+                        current_price, future_10s
+                    )
+                    has_label = True
+            else:
+                has_label = True  # Уже была метка
+
+            # Обрабатываем future_direction_30s
+            if pd.isna(row.get('future_direction_30s')):
+                future_30s = self._find_future_price(
+                    df, timestamp_to_price, idx, current_timestamp, 30
+                )
+                if future_30s is not None:
+                    df.at[idx, 'future_movement_30s'] = self._calculate_movement(
+                        current_price, future_30s
+                    )
+                    df.at[idx, 'future_direction_30s'] = self._calculate_direction(
+                        current_price, future_30s
+                    )
+                    has_label = True
+            else:
+                has_label = True
+
+            # Обрабатываем future_direction_60s
+            if pd.isna(row.get('future_direction_60s')):
+                future_60s = self._find_future_price(
+                    df, timestamp_to_price, idx, current_timestamp, 60
+                )
+                if future_60s is not None:
+                    df.at[idx, 'future_movement_60s'] = self._calculate_movement(
+                        current_price, future_60s
+                    )
+                    df.at[idx, 'future_direction_60s'] = self._calculate_direction(
+                        current_price, future_60s
+                    )
+                    has_label = True
+            else:
+                has_label = True
+
+            # Подсчитываем только если хотя бы одна метка была добавлена/существует
+            if has_label:
                 labeled_count += 1
-                continue
-
-            # Находим будущие цены
-            future_10s = self._find_future_price(
-                df, timestamp_to_price, idx, current_timestamp, 10
-            )
-            future_30s = self._find_future_price(
-                df, timestamp_to_price, idx, current_timestamp, 30
-            )
-            future_60s = self._find_future_price(
-                df, timestamp_to_price, idx, current_timestamp, 60
-            )
-
-            # Обновляем labels
-            if future_10s is not None:
-                df.at[idx, 'future_movement_10s'] = self._calculate_movement(
-                    current_price, future_10s
-                )
-                df.at[idx, 'future_direction_10s'] = self._calculate_direction(
-                    current_price, future_10s
-                )
-                labeled_count += 1
-
-            if future_30s is not None:
-                df.at[idx, 'future_movement_30s'] = self._calculate_movement(
-                    current_price, future_30s
-                )
-                df.at[idx, 'future_direction_30s'] = self._calculate_direction(
-                    current_price, future_30s
-                )
-
-            if future_60s is not None:
-                df.at[idx, 'future_movement_60s'] = self._calculate_movement(
-                    current_price, future_60s
-                )
-                df.at[idx, 'future_direction_60s'] = self._calculate_direction(
-                    current_price, future_60s
-                )
 
         self.total_samples_processed += len(df)
         self.total_samples_labeled += labeled_count
@@ -320,7 +336,9 @@ class ParquetFutureLabelProcessor:
             float: Цена через N секунд или None
         """
         target_timestamp = current_timestamp + (delta_seconds * 1000)  # ms
-        tolerance = 2000  # ±2 секунды
+        # FIXED: Увеличен tolerance для корректной работы с 15-секундным интервалом сохранения
+        # Для интервала 15s нужен tolerance минимум ±10s для future_direction_10s
+        tolerance = 10000  # ±10 секунд (было 2 секунды)
 
         # Ищем ближайший семпл к target_timestamp
         # Оптимизация: ищем только в будущем (после current_idx)
