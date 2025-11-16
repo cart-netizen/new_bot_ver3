@@ -290,7 +290,8 @@ class ModelServer:
                     model = HybridCNNLSTM(config)
 
                     # Загрузить веса
-                    checkpoint = torch.load(model_info.model_path, map_location='cpu')
+                    # weights_only=False - безопасно для собственных моделей, которым мы доверяем
+                    checkpoint = torch.load(model_info.model_path, map_location='cpu', weights_only=False)
                     if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
                         model.load_state_dict(checkpoint['model_state_dict'])
                     else:
