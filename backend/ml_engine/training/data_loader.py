@@ -773,7 +773,17 @@ class HistoricalDataLoader:
             columns_with_nan = np.where(nan_per_column > 0)[0]
             if len(columns_with_nan) > 0:
                 logger.warning(f"Columns with NaN: {len(columns_with_nan)}/{X.shape[1]}")
-                logger.warning(f"Top 5 columns by NaN count: {sorted(nan_per_column, reverse=True)[:5]}")
+
+                # Создаем список (имя_колонки, количество_nan) и сортируем
+                column_nan_counts = [(feature_columns[i], int(nan_per_column[i])) for i in range(len(feature_columns))]
+                column_nan_counts.sort(key=lambda x: x[1], reverse=True)
+
+                # Показываем топ-5 колонок с наибольшим количеством NaN
+                top_5 = column_nan_counts[:5]
+                logger.warning(f"Top 5 columns by NaN count:")
+                for col_name, nan_count in top_5:
+                    if nan_count > 0:
+                        logger.warning(f"  • {col_name}: {nan_count} NaN values")
 
             # СТРАТЕГИЯ 1: Заполняем NaN в features нулями (безопаснее чем удалять)
             if nan_features > 0:
