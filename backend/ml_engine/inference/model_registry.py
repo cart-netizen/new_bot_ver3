@@ -204,8 +204,16 @@ class ModelRegistry:
 
         # Если указана стадия, ищем stage marker или symlink (backward compatibility)
         if stage:
-            stage_marker = model_base_dir / f".{stage.value.lower()}"
-            stage_link = model_base_dir / stage.value.lower()
+            # Нормализуем stage - может быть строкой или enum
+            if isinstance(stage, ModelStage):
+                stage_str = stage.value.lower()
+            elif isinstance(stage, str):
+                stage_str = stage.lower()
+            else:
+                stage_str = str(stage).lower()
+
+            stage_marker = model_base_dir / f".{stage_str}"
+            stage_link = model_base_dir / stage_str
 
             # Try new marker format first
             if stage_marker.exists():
@@ -331,10 +339,26 @@ class ModelRegistry:
 
         model_base_dir = self.registry_dir / name
         version_dir = model_base_dir / version
-        stage_marker = model_base_dir / f".{stage.value.lower()}"
+
+        # Нормализуем stage - может быть строкой или enum
+        if isinstance(stage, ModelStage):
+            stage_str = stage.value.lower()
+            stage_enum = stage
+        elif isinstance(stage, str):
+            stage_str = stage.lower()
+            # Пытаемся преобразовать строку в enum
+            try:
+                stage_enum = ModelStage(stage.capitalize())
+            except ValueError:
+                stage_enum = None
+        else:
+            stage_str = str(stage).lower()
+            stage_enum = None
+
+        stage_marker = model_base_dir / f".{stage_str}"
 
         # If promoting to PRODUCTION, demote all other versions from PRODUCTION
-        if stage == ModelStage.PRODUCTION:
+        if stage_enum == ModelStage.PRODUCTION or stage_str == "production":
             all_versions = await self.list_models(name)
             for other_model in all_versions:
                 if other_model.metadata.version != version and other_model.metadata.stage == ModelStage.PRODUCTION:
@@ -352,7 +376,7 @@ class ModelRegistry:
             stage_marker.unlink()
 
         # Also try to remove old symlink for backward compatibility
-        old_symlink = model_base_dir / stage.value.lower()
+        old_symlink = model_base_dir / stage_str
         if old_symlink.exists() or old_symlink.is_symlink():
             try:
                 old_symlink.unlink()
@@ -364,8 +388,19 @@ class ModelRegistry:
         with open(stage_marker, 'w') as f:
             f.write(version)
 
-        # Обновить метаданные
-        model_info.metadata.stage = stage
+        # Обновить метаданные (убедимся что это enum)
+        if stage_enum:
+            model_info.metadata.stage = stage_enum
+        elif isinstance(stage, ModelStage):
+            model_info.metadata.stage = stage
+        else:
+            # Пытаемся преобразовать строку в enum
+            try:
+                model_info.metadata.stage = ModelStage(stage_str.capitalize())
+            except ValueError:
+                # Если не получилось, используем как есть (может быть уже enum)
+                model_info.metadata.stage = stage
+
         model_info.metadata.updated_at = datetime.now()
 
         metadata_path = version_dir / "metadata.json"
