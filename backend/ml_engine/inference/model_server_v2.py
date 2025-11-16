@@ -457,8 +457,19 @@ class ModelServer:
                     output = model(features_tensor)
 
                 # Получить outputs (зависит от архитектуры модели)
-                if isinstance(output, tuple):
-                    # Multi-task output: (direction, confidence, return)
+                if isinstance(output, dict):
+                    # Dict output (HybridCNNLSTM): {'direction_logits', 'confidence', 'expected_return'}
+                    direction_logits = output['direction_logits']
+                    confidence = output['confidence']
+                    expected_return = output['expected_return']
+
+                    prediction_tensor = {
+                        "direction": torch.argmax(direction_logits, dim=1).item(),
+                        "confidence": confidence.item(),
+                        "expected_return": expected_return.item()
+                    }
+                elif isinstance(output, tuple):
+                    # Tuple output: (direction, confidence, return)
                     direction_logits, confidence, expected_return = output
                     prediction_tensor = {
                         "direction": torch.argmax(direction_logits, dim=1).item(),
@@ -466,7 +477,7 @@ class ModelServer:
                         "expected_return": expected_return.item()
                     }
                 else:
-                    # Single output
+                    # Single tensor output
                     prediction_tensor = output.cpu().numpy()
 
             # Latency
