@@ -236,6 +236,11 @@ class ModelServer:
 
             model_key = f"{model_name}:{model_info.metadata.version}"
 
+            # Проверить, не загружена ли модель уже
+            if model_key in self.loaded_models and model_key in self.model_metadata:
+                logger.info(f"Model {model_key} is already loaded, skipping reload")
+                return True
+
             # ONNX version
             if use_onnx and model_info.onnx_exists():
                 try:
@@ -357,6 +362,9 @@ class ModelServer:
         variant = None
 
         try:
+            logger.info(f"[PREDICT] {symbol} | Request: model_name={model_name}, model_version={model_version}, experiment_id={experiment_id}")
+            logger.info(f"[PREDICT] {symbol} | Currently loaded models: {list(self.loaded_models.keys())}")
+
             # Определить модель для использования
             if experiment_id:
                 # A/B testing
@@ -374,30 +382,41 @@ class ModelServer:
             if not model_name:
                 model_name = "hybrid_cnn_lstm"  # Default
 
+            logger.info(f"[PREDICT] {symbol} | Using model_name={model_name}, model_version={model_version}")
+
             # Проверить, загружена ли модель
             if model_version:
                 model_key = f"{model_name}:{model_version}"
+                logger.info(f"[PREDICT] {symbol} | Version specified, model_key={model_key}")
             else:
                 # Версия не указана - ищем любую загруженную модель с таким именем
                 loaded_keys = [k for k in self.loaded_models.keys() if k.startswith(f"{model_name}:")]
                 model_key = loaded_keys[0] if loaded_keys else None
+                logger.info(f"[PREDICT] {symbol} | No version specified, found loaded_keys={loaded_keys}, selected model_key={model_key}")
 
             # Загрузить модель если не загружена
             if not model_key or model_key not in self.loaded_models:
+                logger.info(f"[PREDICT] {symbol} | Model not loaded, attempting to load model_name={model_name}, version={model_version}")
                 # Загружаем production версию
                 success = await self.load_model(model_name, model_version)
                 if not success:
+                    logger.error(f"[PREDICT] {symbol} | Failed to load model, load_model returned False")
                     raise ValueError(f"Failed to load model {model_name}")
 
                 # Обновить model_key после загрузки
                 loaded_keys = [k for k in self.loaded_models.keys() if k.startswith(f"{model_name}:")]
                 if not loaded_keys:
+                    logger.error(f"[PREDICT] {symbol} | No loaded models found after load attempt. loaded_models={list(self.loaded_models.keys())}")
                     raise ValueError(f"No loaded model found for {model_name}")
                 model_key = loaded_keys[0]
+                logger.info(f"[PREDICT] {symbol} | Successfully loaded model, model_key={model_key}")
+            else:
+                logger.info(f"[PREDICT] {symbol} | Model already loaded, model_key={model_key}")
 
             # Inference
             use_onnx = model_key in self.onnx_sessions
             metadata = self.model_metadata[model_key]
+            logger.info(f"[PREDICT] {symbol} | Starting inference, use_onnx={use_onnx}, model_key={model_key}")
 
             if use_onnx:
                 # ONNX inference
