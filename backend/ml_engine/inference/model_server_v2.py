@@ -293,10 +293,13 @@ class ModelServer:
                     return False
 
             # Сохранить metadata
+            # Handle stage - может быть enum или строкой
+            stage_value = model_info.metadata.stage.value if hasattr(model_info.metadata.stage, 'value') else str(model_info.metadata.stage)
+
             self.model_metadata[model_key] = {
                 "name": model_name,
                 "version": model_info.metadata.version,
-                "stage": model_info.metadata.stage.value,
+                "stage": stage_value,
                 "model_type": model_info.metadata.model_type,
                 "metrics": model_info.metadata.metrics,
                 "size_mb": model_info.metadata.model_size_mb,
