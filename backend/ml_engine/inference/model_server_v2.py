@@ -600,10 +600,19 @@ async def startup():
 
     # Загрузить default production модель
     try:
-        await server.load_model("hybrid_cnn_lstm", version=None)
-        logger.info("Production model loaded successfully")
+        success = await server.load_model("hybrid_cnn_lstm", version=None)
+        if success:
+            logger.info("✓ Production model loaded successfully")
+        else:
+            logger.warning(
+                "⚠️ Production model not loaded. Server will attempt to load on first request. "
+                "This may be because no trained model exists in the registry."
+            )
     except Exception as e:
-        logger.error(f"Failed to load production model: {e}")
+        logger.error(f"❌ Failed to load production model: {e}", exc_info=True)
+        logger.warning(
+            "Server will continue running and attempt to load model on first predict request"
+        )
 
 
 @app.on_event("shutdown")
@@ -616,22 +625,43 @@ async def shutdown():
 async def predict(request: PredictRequest):
     """Single prediction"""
     try:
+        logger.info(f"Predict request for {request.symbol}, features type: {type(request.features)}")
+
         # Преобразование features в numpy array
         if isinstance(request.features, dict):
             # Dict format - используем flatten_feature_dict
             logger.debug(f"{request.symbol} | Received Dict format features, flattening...")
-            features_array = flatten_feature_dict(request.features)
+            try:
+                features_array = flatten_feature_dict(request.features)
+                logger.info(f"{request.symbol} | Flattened features: shape={features_array.shape}, dtype={features_array.dtype}, size={len(features_array)}")
+            except Exception as e:
+                logger.error(f"{request.symbol} | Error flattening features: {e}", exc_info=True)
+                raise HTTPException(status_code=400, detail=f"Failed to flatten features: {str(e)}")
+
             # Reshape для sequence (60 timesteps)
             # Если feature_count не делится на 60, используем 1 timestep
-            if len(features_array) % 60 == 0:
-                features_array = features_array.reshape(60, -1)
-            else:
-                # Fallback: 1 timestep с всеми признаками
-                features_array = features_array.reshape(1, -1)
-            logger.debug(f"{request.symbol} | Flattened features shape: {features_array.shape}")
+            try:
+                if len(features_array) % 60 == 0:
+                    features_array = features_array.reshape(60, -1)
+                    logger.info(f"{request.symbol} | Reshaped to 60 timesteps: {features_array.shape}")
+                else:
+                    # Fallback: 1 timestep с всеми признаками
+                    features_array = features_array.reshape(1, -1)
+                    logger.info(f"{request.symbol} | Reshaped to 1 timestep: {features_array.shape}")
+            except Exception as e:
+                logger.error(f"{request.symbol} | Error reshaping features: {e}", exc_info=True)
+                raise HTTPException(status_code=400, detail=f"Failed to reshape features: {str(e)}")
         else:
             # List format - стандартная обработка
-            features_array = np.array(request.features).reshape(60, -1)  # Предполагаем 60 timesteps
+            logger.debug(f"{request.symbol} | Received List format features, length={len(request.features)}")
+            try:
+                features_array = np.array(request.features).reshape(60, -1)  # Предполагаем 60 timesteps
+                logger.info(f"{request.symbol} | Reshaped list to: {features_array.shape}")
+            except Exception as e:
+                logger.error(f"{request.symbol} | Error reshaping list features: {e}", exc_info=True)
+                raise HTTPException(status_code=400, detail=f"Failed to reshape list features: {str(e)}")
+
+        logger.info(f"{request.symbol} | Calling server.predict with features shape: {features_array.shape}")
 
         result = await server.predict(
             symbol=request.symbol,
@@ -639,6 +669,8 @@ async def predict(request: PredictRequest):
             model_name=request.model_name,
             model_version=request.model_version
         )
+
+        logger.info(f"{request.symbol} | Prediction successful")
 
         return PredictResponse(
             symbol=request.symbol,
@@ -650,8 +682,12 @@ async def predict(request: PredictRequest):
             timestamp=datetime.now()
         )
 
+    except HTTPException:
+        # Re-raise HTTPExceptions as-is
+        raise
     except Exception as e:
-        logger.error(f"Prediction endpoint error: {e}", exc_info=True)
+        logger.error(f"Prediction endpoint error for {request.symbol}: {e}", exc_info=True)
+        logger.error(f"Request details - features type: {type(request.features)}, model_name: {request.model_name}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

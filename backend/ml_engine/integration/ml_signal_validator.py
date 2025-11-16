@@ -736,9 +736,17 @@ class MLSignalValidator:
           logger.debug(f"{symbol} | ML prediction received successfully")
           return result
         else:
-          logger.warning(
-            f"{symbol} | ML server returned status {response.status}"
-          )
+          # Логируем детали ошибки
+          try:
+            error_body = await response.text()
+            logger.warning(
+              f"{symbol} | ML server returned status {response.status}, "
+              f"body: {error_body[:500]}"  # Первые 500 символов
+            )
+          except Exception:
+            logger.warning(
+              f"{symbol} | ML server returned status {response.status}"
+            )
           self.ml_error_count += 1
           return None
 
