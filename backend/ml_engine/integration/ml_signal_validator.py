@@ -769,13 +769,13 @@ class MLSignalValidator:
         else:
           self.ml_server_available = False
           self.health_check_failures += 1
-          logger.warning(f"ML server health check failed: {response.status}")
+          logger.debug(f"ML server health check failed: {response.status}")
           return False
 
     except Exception as e:
       self.ml_server_available = False
       self.health_check_failures += 1
-      logger.warning(f"ML server health check error: {e}")
+      logger.debug(f"ML server health check error (server not available): {e}")
       return False
 
   async def _periodic_health_check(self):
