@@ -12,14 +12,14 @@ ML Model Server v2 - FastAPI сервер для ML inference
 import time
 import asyncio
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 from pathlib import Path
 
 import numpy as np
 import torch
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.ml_engine.inference.model_registry import (
     get_model_registry,
@@ -38,15 +38,83 @@ from backend.core.logger import get_logger
 logger = get_logger(__name__)
 
 
+# === Helper Functions ===
+
+def flatten_feature_dict(feature_dict: Dict[str, Any]) -> np.ndarray:
+    """
+    Преобразует вложенный dict признаков в плоский numpy array.
+
+    Ожидаемая структура:
+    {
+        "orderbook": {...},
+        "candle": {...},
+        "indicator": {...},
+        "timestamp": int
+    }
+
+    Returns:
+        np.ndarray: Плоский массив всех признаков
+    """
+    features_list = []
+
+    # Рекурсивная функция для извлечения всех числовых значений
+    def extract_values(data: Any):
+        if isinstance(data, dict):
+            for key in sorted(data.keys()):  # Сортируем для стабильного порядка
+                value = data[key]
+                extract_values(value)
+        elif isinstance(data, (list, tuple)):
+            for item in data:
+                extract_values(item)
+        elif isinstance(data, (int, float)):
+            if not (np.isnan(data) or np.isinf(data)):
+                features_list.append(float(data))
+            else:
+                features_list.append(0.0)  # Заменяем NaN/Inf на 0
+
+    # Извлекаем признаки в определенном порядке для стабильности
+    for channel in ['orderbook', 'candle', 'indicator']:
+        if channel in feature_dict:
+            extract_values(feature_dict[channel])
+
+    # Добавляем timestamp если есть
+    if 'timestamp' in feature_dict:
+        timestamp = feature_dict['timestamp']
+        if isinstance(timestamp, (int, float)):
+            features_list.append(float(timestamp))
+
+    if not features_list:
+        raise ValueError("No numeric features found in feature_dict")
+
+    return np.array(features_list, dtype=np.float32)
+
+
 # === Request/Response Models ===
 
 class PredictRequest(BaseModel):
     """Request для single prediction"""
     symbol: str
-    features: List[float] = Field(..., min_length=1)
+    features: Union[List[float], Dict[str, Any]] = Field(...)  # Поддержка Dict и List
     # Опционально: можно указать конкретную модель
     model_name: Optional[str] = None
     model_version: Optional[str] = None
+
+    @field_validator('features', mode='before')
+    @classmethod
+    def validate_features(cls, v):
+        """Валидация и преобразование features"""
+        if isinstance(v, dict):
+            # Dict format - оставляем как есть для дальнейшей обработки
+            return v
+        elif isinstance(v, list):
+            # List format - проверяем, что это числа
+            if not v:
+                raise ValueError("features list cannot be empty")
+            if not all(isinstance(x, (int, float)) for x in v):
+                raise ValueError("features list must contain only numbers")
+            return v
+        else:
+            raise ValueError("features must be either Dict or List[float]")
 
 
 class PredictResponse(BaseModel):
@@ -548,7 +616,22 @@ async def shutdown():
 async def predict(request: PredictRequest):
     """Single prediction"""
     try:
-        features_array = np.array(request.features).reshape(60, -1)  # Предполагаем 60 timesteps
+        # Преобразование features в numpy array
+        if isinstance(request.features, dict):
+            # Dict format - используем flatten_feature_dict
+            logger.debug(f"{request.symbol} | Received Dict format features, flattening...")
+            features_array = flatten_feature_dict(request.features)
+            # Reshape для sequence (60 timesteps)
+            # Если feature_count не делится на 60, используем 1 timestep
+            if len(features_array) % 60 == 0:
+                features_array = features_array.reshape(60, -1)
+            else:
+                # Fallback: 1 timestep с всеми признаками
+                features_array = features_array.reshape(1, -1)
+            logger.debug(f"{request.symbol} | Flattened features shape: {features_array.shape}")
+        else:
+            # List format - стандартная обработка
+            features_array = np.array(request.features).reshape(60, -1)  # Предполагаем 60 timesteps
 
         result = await server.predict(
             symbol=request.symbol,
@@ -568,7 +651,7 @@ async def predict(request: PredictRequest):
         )
 
     except Exception as e:
-        logger.error(f"Prediction endpoint error: {e}")
+        logger.error(f"Prediction endpoint error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
