@@ -197,10 +197,14 @@ class ModelRegistry:
         Returns:
             ModelInfo или None если не найдена
         """
+        logger.info(f"[GET_MODEL] Request: name={name}, version={version}, stage={stage}")
+
         model_base_dir = self.registry_dir / name
         if not model_base_dir.exists():
-            logger.warning(f"Model {name} not found in registry")
+            logger.warning(f"[GET_MODEL] Model directory {model_base_dir} does not exist")
             return None
+
+        logger.info(f"[GET_MODEL] Model directory exists: {model_base_dir}")
 
         # Если указана стадия, ищем stage marker или symlink (backward compatibility)
         if stage:
@@ -230,28 +234,38 @@ class ModelRegistry:
 
         # Если версия не указана, берем production или latest
         if not version:
+            logger.info(f"[GET_MODEL] No version specified, looking for production or latest")
+
             # Пытаемся взять production (try marker first, then symlink)
             production_marker = model_base_dir / ".production"
             production_link = model_base_dir / "production"
 
+            logger.info(f"[GET_MODEL] Checking production_marker: {production_marker}, exists={production_marker.exists()}")
+
             if production_marker.exists():
                 with open(production_marker, 'r') as f:
                     version = f.read().strip()
-                logger.debug(f"Using production version {version}")
+                logger.info(f"[GET_MODEL] Found production marker pointing to version: {version}")
             elif production_link.is_symlink():
                 version = production_link.readlink().name
-                logger.debug(f"Using production version {version} (symlink)")
+                logger.info(f"[GET_MODEL] Found production symlink pointing to version: {version}")
             else:
+                logger.info(f"[GET_MODEL] No production marker/symlink, searching for latest version")
                 # Берем последнюю версию
+                all_items = list(model_base_dir.iterdir())
+                logger.info(f"[GET_MODEL] All items in {model_base_dir}: {[item.name for item in all_items]}")
+
                 versions = [
-                    d.name for d in model_base_dir.iterdir()
+                    d.name for d in all_items
                     if d.is_dir() and not d.name.startswith('.')
                 ]
+                logger.info(f"[GET_MODEL] Found versions: {versions}")
+
                 if not versions:
-                    logger.warning(f"No versions found for {name}")
+                    logger.warning(f"[GET_MODEL] No versions found for {name} in {model_base_dir}")
                     return None
                 version = sorted(versions)[-1]
-                logger.debug(f"Using latest version {version}")
+                logger.info(f"[GET_MODEL] Using latest version: {version}")
 
         model_dir = model_base_dir / version
         if not model_dir.exists():
