@@ -29,7 +29,7 @@ class ValidationConfig:
   """Конфигурация валидатора."""
   # Model Server
   model_server_url: str = "http://localhost:8001"
-  model_version: str = "latest"
+  model_version: Optional[str] = None  # None = use production model
   request_timeout: float = 5.0  # seconds
 
   # Health Check
