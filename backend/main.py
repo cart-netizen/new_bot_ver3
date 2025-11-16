@@ -263,7 +263,7 @@ class BotController:
     try:
       ml_validator_config = ValidationConfig(
         model_server_url=settings.ML_SERVER_URL,
-        model_version="latest",
+        model_version=None,  # None = use production model
         request_timeout=5.0,
         health_check_enabled=True,
         health_check_interval=30,
