@@ -374,8 +374,15 @@ class ModelServer:
             if not model_name:
                 model_name = "hybrid_cnn_lstm"  # Default
 
+            # Проверить, загружена ли модель
+            if model_version:
+                model_key = f"{model_name}:{model_version}"
+            else:
+                # Версия не указана - ищем любую загруженную модель с таким именем
+                loaded_keys = [k for k in self.loaded_models.keys() if k.startswith(f"{model_name}:")]
+                model_key = loaded_keys[0] if loaded_keys else None
+
             # Загрузить модель если не загружена
-            model_key = f"{model_name}:{model_version}" if model_version else None
             if not model_key or model_key not in self.loaded_models:
                 # Загружаем production версию
                 success = await self.load_model(model_name, model_version)
@@ -383,7 +390,7 @@ class ModelServer:
                     raise ValueError(f"Failed to load model {model_name}")
 
                 # Обновить model_key после загрузки
-                loaded_keys = [k for k in self.loaded_models.keys() if k.startswith(model_name)]
+                loaded_keys = [k for k in self.loaded_models.keys() if k.startswith(f"{model_name}:")]
                 if not loaded_keys:
                     raise ValueError(f"No loaded model found for {model_name}")
                 model_key = loaded_keys[0]
