@@ -694,6 +694,21 @@ async def health():
     return await server.health_check()
 
 
+# ==================== COMPATIBILITY ALIASES ====================
+# Добавляем endpoints без префикса /api/ml/ для совместимости с MLSignalValidator
+
+@app.get("/health")
+async def health_alias():
+    """Health check (alias for compatibility)"""
+    return await server.health_check()
+
+
+@app.post("/predict")
+async def predict_alias(request: PredictRequest):
+    """Single prediction (alias for compatibility)"""
+    return await predict(request)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001, log_level="info")
