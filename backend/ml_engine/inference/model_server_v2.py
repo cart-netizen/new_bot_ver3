@@ -228,18 +228,24 @@ class ModelServer:
             True если успешно
         """
         try:
+            logger.info(f"[LOAD_MODEL] Loading {model_name}, version={version}, use_onnx={use_onnx}")
+
             # Получить модель из registry
             model_info = await self.registry.get_model(model_name, version)
             if not model_info:
-                logger.error(f"Model {model_name} not found in registry")
+                logger.error(f"[LOAD_MODEL] Model {model_name} not found in registry (version={version})")
                 return False
+
+            logger.info(f"[LOAD_MODEL] Found model in registry: {model_name} v{model_info.metadata.version}, stage={model_info.metadata.stage}")
 
             model_key = f"{model_name}:{model_info.metadata.version}"
 
             # Проверить, не загружена ли модель уже
             if model_key in self.loaded_models and model_key in self.model_metadata:
-                logger.info(f"Model {model_key} is already loaded, skipping reload")
+                logger.info(f"[LOAD_MODEL] Model {model_key} is already loaded, skipping reload")
                 return True
+
+            logger.info(f"[LOAD_MODEL] Model {model_key} not yet loaded, proceeding with load...")
 
             # ONNX version
             if use_onnx and model_info.onnx_exists():
