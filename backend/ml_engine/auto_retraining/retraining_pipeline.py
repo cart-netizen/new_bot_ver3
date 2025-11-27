@@ -20,8 +20,9 @@ import pandas as pd
 import numpy as np
 
 from backend.core.logger import get_logger
-from backend.ml_engine.models.hybrid_cnn_lstm import HybridCNNLSTM, ModelConfig
-from backend.ml_engine.training.model_trainer import ModelTrainer, TrainerConfig
+# UPDATED: Используем оптимизированные v2 версии
+from backend.ml_engine.models.hybrid_cnn_lstm_v2 import HybridCNNLSTMv2 as HybridCNNLSTM, ModelConfigV2 as ModelConfig
+from backend.ml_engine.training.model_trainer_v2 import ModelTrainerV2 as ModelTrainer, TrainerConfigV2 as TrainerConfig
 from backend.ml_engine.training.data_loader import HistoricalDataLoader, DataConfig
 from backend.ml_engine.monitoring.drift_detector import get_drift_detector
 from backend.ml_engine.mlflow_integration.mlflow_tracker import get_mlflow_tracker

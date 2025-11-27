@@ -17,8 +17,9 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 from backend.ml_engine.training_orchestrator import TrainingOrchestrator
-from backend.ml_engine.models.hybrid_cnn_lstm import ModelConfig
-from backend.ml_engine.training.model_trainer import TrainerConfig
+# UPDATED: Используем оптимизированные v2 версии
+from backend.ml_engine.models.hybrid_cnn_lstm_v2 import ModelConfigV2 as ModelConfig
+from backend.ml_engine.training.model_trainer_v2 import TrainerConfigV2 as TrainerConfig
 from backend.ml_engine.training.data_loader import DataConfig
 
 

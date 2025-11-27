@@ -22,8 +22,9 @@ import asyncio
 
 from backend.core.logger import get_logger
 from backend.ml_engine.training_orchestrator import get_training_orchestrator
-from backend.ml_engine.models.hybrid_cnn_lstm import ModelConfig
-from backend.ml_engine.training.model_trainer import TrainerConfig
+# UPDATED: Используем оптимизированные v2 версии
+from backend.ml_engine.models.hybrid_cnn_lstm_v2 import ModelConfigV2 as ModelConfig
+from backend.ml_engine.training.model_trainer_v2 import TrainerConfigV2 as TrainerConfig
 from backend.ml_engine.training.data_loader import DataConfig
 from backend.ml_engine.inference.model_registry import get_model_registry, ModelStage
 from backend.ml_engine.mlflow_integration.mlflow_tracker import get_mlflow_tracker
@@ -87,10 +88,37 @@ router = APIRouter(prefix="/api/ml-management", tags=["ML Management"])
 class TrainingRequest(BaseModel):
     """Request для запуска обучения"""
     model_name: str = Field(default="hybrid_cnn_lstm", description="Model name")
-    epochs: int = Field(default=50, ge=1, le=500, description="Number of epochs")
-    batch_size: int = Field(default=64, ge=8, le=512, description="Batch size")
-    learning_rate: float = Field(default=0.001, gt=0, lt=1, description="Learning rate")
+
+    # ===== ОПТИМИЗИРОВАННЫЕ ПАРАМЕТРЫ V2 =====
+    epochs: int = Field(default=150, ge=1, le=500, description="Number of epochs (v2: 150)")
+    batch_size: int = Field(default=128, ge=8, le=512, description="Batch size (v2: 128, reduced for GPU memory)")
+    learning_rate: float = Field(default=0.00005, gt=0, lt=1, description="Learning rate (v2: 5e-5)")
+    weight_decay: float = Field(default=0.01, ge=0, le=1, description="Weight decay / L2 regularization (v2: 0.01)")
     early_stopping_patience: int = Field(default=20, ge=0, le=100, description="Early stopping patience (0 to disable)")
+
+    # ===== НОВЫЕ ПАРАМЕТРЫ V2 =====
+    # Scheduler
+    lr_scheduler: str = Field(default="CosineAnnealingWarmRestarts", description="LR scheduler type")
+    scheduler_T_0: int = Field(default=10, ge=1, le=100, description="CosineAnnealing T_0 period")
+    scheduler_T_mult: int = Field(default=2, ge=1, le=10, description="CosineAnnealing T_mult multiplier")
+
+    # Regularization
+    dropout: float = Field(default=0.4, ge=0, le=0.9, description="Dropout rate (v2: 0.4)")
+    label_smoothing: float = Field(default=0.1, ge=0, le=0.5, description="Label smoothing (v2: 0.1)")
+
+    # Data Augmentation
+    use_augmentation: bool = Field(default=True, description="Enable data augmentation")
+    gaussian_noise_std: float = Field(default=0.01, ge=0, le=0.1, description="Gaussian noise std (v2: 0.01)")
+
+    # Class Balancing
+    use_focal_loss: bool = Field(default=True, description="Use Focal Loss (v2: True)")
+    focal_gamma: float = Field(default=2.5, ge=0, le=5, description="Focal Loss gamma (v2: 2.5)")
+    use_oversampling: bool = Field(default=True, description="Use oversampling (v2: True)")
+    oversample_ratio: float = Field(default=0.5, ge=0, le=1, description="Oversample ratio (v2: 0.5)")
+
+    # Model Architecture (CNN channels и LSTM hidden можно передать через ml_model_config)
+
+    # ===== СТАНДАРТНЫЕ ПАРАМЕТРЫ =====
     export_onnx: bool = Field(default=True, description="Export to ONNX")
     auto_promote: bool = Field(default=True, description="Auto-promote to production")
     min_accuracy: float = Field(default=0.80, ge=0, le=1, description="Min accuracy for promotion")
@@ -237,13 +265,43 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
     try:
         logger.info(f"Starting training job: {job_id}")
 
-        # Create configs
-        model_config = ModelConfig(**request.ml_model_config) if request.ml_model_config else ModelConfig()
+        # ===== СОЗДАЕМ MODEL CONFIG С V2 ПАРАМЕТРАМИ =====
+        # Dropout - это параметр модели, а не trainer'а
+        if request.ml_model_config:
+            model_config = ModelConfig(**request.ml_model_config)
+        else:
+            model_config = ModelConfig(dropout=request.dropout)
+
+        # ===== СОЗДАЕМ TRAINER CONFIG С V2 ПАРАМЕТРАМИ =====
         trainer_config = TrainerConfig(
+            # Базовые параметры
             epochs=request.epochs,
             learning_rate=request.learning_rate,
-            early_stopping_patience=request.early_stopping_patience
+            weight_decay=request.weight_decay,
+            early_stopping_patience=request.early_stopping_patience,
+
+            # Scheduler параметры (v2: scheduler_type вместо lr_scheduler)
+            scheduler_type=request.lr_scheduler.lower().replace("cosineannealingwarmrestarts", "cosine_warm_restarts"),
+            scheduler_T_0=request.scheduler_T_0,
+            scheduler_T_mult=request.scheduler_T_mult,
+
+            # Regularization (label_smoothing есть в v2)
+            label_smoothing=request.label_smoothing,
+
+            # Data Augmentation (v2 параметры)
+            use_augmentation=request.use_augmentation,
+            gaussian_noise_std=request.gaussian_noise_std,
+
+            # Class Balancing (v2 встроенные параметры)
+            use_focal_loss=request.use_focal_loss,
+            focal_gamma=request.focal_gamma,
+            use_class_weights=True
+
+            # ПРИМЕЧАНИЕ: use_oversampling и oversample_ratio пока не поддерживаются
+            # в TrainerConfigV2 напрямую. Для их использования нужно передавать
+            # отдельный ClassBalancingConfigV2 через TrainingOrchestrator
         )
+
         if request.trainer_config:
             # Override with custom trainer config
             for k, v in _to_dict(request.trainer_config).items():

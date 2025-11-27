@@ -22,8 +22,9 @@ import pandas as pd
 import numpy as np
 
 from backend.core.logger import get_logger
-from backend.ml_engine.models.hybrid_cnn_lstm import HybridCNNLSTM, ModelConfig
-from backend.ml_engine.training.model_trainer import ModelTrainer, TrainerConfig
+# UPDATED: Используем оптимизированные v2 версии
+from backend.ml_engine.models.hybrid_cnn_lstm_v2 import HybridCNNLSTMv2 as HybridCNNLSTM, ModelConfigV2 as ModelConfig
+from backend.ml_engine.training.model_trainer_v2 import ModelTrainerV2 as ModelTrainer, TrainerConfigV2 as TrainerConfig
 from backend.ml_engine.training.data_loader import HistoricalDataLoader, DataConfig, TradingDataset
 from backend.ml_engine.mlflow_integration.mlflow_tracker import get_mlflow_tracker
 from backend.ml_engine.feature_store.feature_store import get_feature_store, FeatureMetadata
@@ -193,15 +194,26 @@ class TrainingOrchestrator:
             )
 
             # Extract final training metrics from history
-            # training_history is a list of dicts with metrics for each epoch
+            # training_history is a list of EpochMetrics objects (v2) or dicts (v1)
             if training_history:
                 final_epoch = training_history[-1]
+
+                # Handle both v2 (EpochMetrics) and v1 (dict) formats
+                if hasattr(final_epoch, 'to_dict'):
+                    # v2 format: EpochMetrics object
+                    final_epoch_dict = final_epoch.to_dict()
+                    history_dicts = [m.to_dict() if hasattr(m, 'to_dict') else m for m in training_history]
+                else:
+                    # v1 format: dict
+                    final_epoch_dict = final_epoch
+                    history_dicts = training_history
+
                 final_metrics = {
-                    "final_train_loss": float(final_epoch.get("train_loss", 0.0)),
-                    "final_val_loss": float(final_epoch.get("val_loss", 0.0)),
-                    "final_train_accuracy": float(final_epoch.get("train_acc", 0.0)),
-                    "final_val_accuracy": float(final_epoch.get("val_acc", 0.0)),
-                    "best_val_accuracy": float(max([m.get("val_acc", 0.0) for m in training_history])),
+                    "final_train_loss": float(final_epoch_dict.get("train_loss", 0.0)),
+                    "final_val_loss": float(final_epoch_dict.get("val_loss", 0.0)),
+                    "final_train_accuracy": float(final_epoch_dict.get("train_accuracy", final_epoch_dict.get("train_acc", 0.0))),
+                    "final_val_accuracy": float(final_epoch_dict.get("val_accuracy", final_epoch_dict.get("val_acc", 0.0))),
+                    "best_val_accuracy": float(max([m.get("val_accuracy", m.get("val_acc", 0.0)) for m in history_dicts])),
                     "total_epochs": len(training_history)
                 }
                 self.mlflow_tracker.log_metrics(final_metrics)

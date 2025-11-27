@@ -25,7 +25,12 @@ from collections import defaultdict
 import numpy as np
 
 from backend.core.logger import get_logger
-from backend.ml_engine.models.hybrid_cnn_lstm import HybridCNNLSTM, ModelConfig, create_model
+# UPDATED: Используем оптимизированные v2 версии
+from backend.ml_engine.models.hybrid_cnn_lstm_v2 import (
+    HybridCNNLSTMv2 as HybridCNNLSTM,
+    ModelConfigV2 as ModelConfig,
+    create_model_v2 as create_model
+)
 
 logger = get_logger(__name__)
 
