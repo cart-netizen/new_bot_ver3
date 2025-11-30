@@ -55,3 +55,7 @@ logs/
 # Temporary files
 *.tmp
 .cache/
+/checkpoints/
+/data/
+/models/
+/mlruns/
