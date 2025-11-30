@@ -175,7 +175,7 @@ class OptimizedTrainerConfig:
     
     # КРИТИЧНО: Batch Size увеличен в 4 раза!
     # Больший batch = более стабильные градиенты
-    batch_size: int = 256  # Было: 64
+    batch_size: int = 128  # Было: 64
     
     # КРИТИЧНО: Weight Decay добавлен!
     # L2 регуляризация предотвращает overfitting
@@ -344,9 +344,9 @@ class OptimizedDataConfig:
     test_ratio: float = 0.15
     
     # === DataLoader параметры (СИНХРОНИЗИРОВАНЫ) ===
-    batch_size: int = 256  # Синхронизировано с TrainerConfig
+    batch_size: int = 128  # Синхронизировано с TrainerConfig (было 256)
     shuffle: bool = True
-    num_workers: int = 4
+    num_workers: int = 4  # Оптимально для 12GB GPU
     pin_memory: bool = True
     drop_last: bool = True  # Для стабильности BatchNorm
     

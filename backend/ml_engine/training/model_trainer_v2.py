@@ -21,9 +21,9 @@ import random
 import time
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Optional, Tuple, List, Any
+from typing import Dict, Optional, Tuple, List, Any, Union
 from collections import deque
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, is_dataclass
 
 import numpy as np
 import torch
@@ -79,12 +79,12 @@ class TrainerConfigV2:
     epochs: int = 150
     learning_rate: float = 5e-5  # КРИТИЧНО: В 20 раз меньше стандартного!
     min_learning_rate: float = 1e-7
-    batch_size: int = 256  # КРИТИЧНО: В 4 раза больше!
+    batch_size: int = 64  # Уменьшено для oversampled dataset (было 128)
     weight_decay: float = 0.01  # L2 регуляризация
-    
+
     # === Gradient ===
     grad_clip_value: float = 1.0
-    gradient_accumulation_steps: int = 1
+    gradient_accumulation_steps: int = 4  # Эффективный batch = 64*4 = 256
     
     # === Early Stopping ===
     early_stopping_patience: int = 20
@@ -100,12 +100,12 @@ class TrainerConfigV2:
     scheduler_factor: float = 0.5
     
     # === Label Smoothing ===
-    label_smoothing: float = 0.1
+    label_smoothing: float = 0.0  # ВРЕМЕННО ОТКЛЮЧЕНО для диагностики
     
     # === Data Augmentation ===
-    use_augmentation: bool = True
-    mixup_alpha: float = 0.2
-    mixup_prob: float = 0.5
+    use_augmentation: bool = False  # ВРЕМЕННО ОТКЛЮЧЕНО для диагностики
+    mixup_alpha: float = 0.0  # Было 0.2
+    mixup_prob: float = 0.0  # Было 0.5
     gaussian_noise_std: float = 0.01
     time_mask_ratio: float = 0.1
     
@@ -116,17 +116,17 @@ class TrainerConfigV2:
     
     # === Class Balancing ===
     use_class_weights: bool = True
-    use_focal_loss: bool = True
-    focal_gamma: float = 2.5
+    use_focal_loss: bool = False  # ВРЕМЕННО ОТКЛЮЧЕНО: слишком агрессивный
+    focal_gamma: float = 2.0  # Уменьшено с 2.5
     
     # === Mixed Precision ===
-    use_mixed_precision: bool = False  # Для GPU
-    
+    use_mixed_precision: bool = False  # ВРЕМЕННО ОТКЛЮЧЕНО из-за NaN loss (RTX 3060 поддерживает!)
+
     # === Checkpoint ===
     checkpoint_dir: str = "checkpoints/models"
     save_best_only: bool = True
     save_every_n_epochs: int = 10
-    
+
     # === Device ===
     device: str = "auto"  # auto, cuda, cpu
     
@@ -137,7 +137,7 @@ class TrainerConfigV2:
     
     # === Reproducibility ===
     seed: int = 42
-    deterministic: bool = True
+    deterministic: bool = False  # False для скорости, True для воспроизводимости
     
     def get_device(self) -> torch.device:
         """Получить device."""
@@ -264,7 +264,11 @@ class ModelTrainerV2:
         
         # Перемещаем модель на device
         self.model.to(self.device)
-        
+
+        # Очищаем GPU память перед началом
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
+
         # Устанавливаем seed для воспроизводимости
         if config.deterministic:
             self._set_seed(config.seed)
@@ -292,8 +296,14 @@ class ModelTrainerV2:
             mode=mode
         )
         
-        # Mixed Precision
-        self.scaler = GradScaler() if config.use_mixed_precision else None
+        # Mixed Precision with safer settings
+        if config.use_mixed_precision:
+            self.scaler = GradScaler(
+                init_scale=2.**10,  # Меньший начальный scale (было 2^16)
+                growth_interval=1000  # Реже увеличиваем scale
+            )
+        else:
+            self.scaler = None
         
         # Checkpoint directory
         self.checkpoint_dir = Path(config.checkpoint_dir)
@@ -473,7 +483,8 @@ class ModelTrainerV2:
             # Scheduler step
             current_lr = self.optimizer.param_groups[0]['lr']
             if self.config.scheduler_type == "reduce_on_plateau":
-                self.scheduler.step(val_loss)
+                # ReduceLROnPlateau принимает метрику (float)
+                self.scheduler.step(val_loss)  # type: ignore[arg-type]
             else:
                 self.scheduler.step()
             
@@ -560,31 +571,37 @@ class ModelTrainerV2:
         all_predictions = []
         all_labels = []
         
-        # Progress bar
+        # Progress bar с mininterval для предотвращения задвоения строк
         train_pbar = tqdm(
             train_loader,
             desc=f"  Train Epoch {epoch_num}",
             leave=False,
             unit="batch",
-            disable=not self.config.use_tqdm
+            disable=not self.config.use_tqdm,
+            mininterval=0.5  # Обновлять не чаще чем раз в 0.5 сек
         )
         
         for batch_idx, batch in enumerate(train_pbar):
-            # Получаем данные
-            sequences = batch['sequence'].to(self.device)
-            labels = batch['label'].to(self.device)
-            
+            # Получаем данные (batch - это Dict[str, Tensor])
+            sequences: torch.Tensor = batch['sequence'].to(self.device)
+            labels: torch.Tensor = batch['label'].to(self.device)
+
+            # Инициализируем переменные для MixUp
+            labels_a: torch.Tensor = labels
+            labels_b: torch.Tensor = labels
+            lam: float = 1.0
+
             # Data Augmentation: Gaussian noise
             if self.config.use_augmentation and self.training:
                 sequences = sequences + torch.randn_like(sequences) * self.config.gaussian_noise_std
-            
+
             # MixUp
             use_mixup = (
                 self.mixup is not None and
                 self.training and
                 np.random.random() < self.config.mixup_prob
             )
-            
+
             if use_mixup:
                 sequences, labels_a, labels_b, lam = self.mixup(sequences, labels)
             
@@ -612,52 +629,78 @@ class ModelTrainerV2:
                 else:
                     targets = {'label': labels}
                     loss, _ = self.criterion(outputs, targets)
-            
+
+            # Save original loss for display
+            original_loss = loss.item()
+
+            # Check for NaN loss
+            if torch.isnan(loss) or torch.isinf(loss):
+                logger.warning(f"NaN/Inf loss detected at batch {batch_idx}! Skipping batch.")
+                continue
+
             # Gradient accumulation
             loss = loss / self.config.gradient_accumulation_steps
-            
+
             # Backward pass
             if self.scaler is not None:
                 self.scaler.scale(loss).backward()
             else:
                 loss.backward()
-            
+
             # Optimizer step
             if (batch_idx + 1) % self.config.gradient_accumulation_steps == 0:
                 if self.scaler is not None:
                     self.scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(
+
+                    # Check for NaN gradients
+                    grad_norm = torch.nn.utils.clip_grad_norm_(
                         self.model.parameters(),
                         self.config.grad_clip_value
                     )
+
+                    if torch.isnan(grad_norm) or torch.isinf(grad_norm):
+                        logger.warning(f"NaN/Inf gradient detected! Skipping optimizer step.")
+                        self.optimizer.zero_grad()
+                        continue
+
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
                 else:
                     if self.config.grad_clip_value > 0:
-                        torch.nn.utils.clip_grad_norm_(
+                        grad_norm = torch.nn.utils.clip_grad_norm_(
                             self.model.parameters(),
                             self.config.grad_clip_value
                         )
+
+                        if torch.isnan(grad_norm) or torch.isinf(grad_norm):
+                            logger.warning(f"NaN/Inf gradient detected! Skipping optimizer step.")
+                            self.optimizer.zero_grad()
+                            continue
+
                     self.optimizer.step()
-                
+
                 self.optimizer.zero_grad()
-            
+
+                # Очистка GPU кеша каждые N шагов для предотвращения фрагментации
+                if self.device.type == "cuda" and (batch_idx + 1) % 50 == 0:
+                    torch.cuda.empty_cache()
+
             # Metrics
-            total_loss += loss.item() * self.config.gradient_accumulation_steps
-            
+            total_loss += original_loss
+
             predictions = torch.argmax(
                 outputs['direction_logits'], dim=-1
             ).cpu().numpy()
-            
+
             if use_mixup:
                 # Для MixUp используем original labels для metrics
                 all_labels.extend(labels_a.cpu().numpy())
             else:
                 all_labels.extend(labels.cpu().numpy())
             all_predictions.extend(predictions)
-            
+
             # Update progress bar
-            train_pbar.set_postfix({'loss': f'{loss.item():.4f}'})
+            train_pbar.set_postfix({'loss': f'{original_loss:.4f}'})
         
         avg_loss = total_loss / len(train_loader)
         accuracy = accuracy_score(all_labels, all_predictions)
@@ -676,13 +719,14 @@ class ModelTrainerV2:
         all_predictions = []
         all_labels = []
         
-        # Progress bar
+        # Progress bar с mininterval для предотвращения задвоения строк
         val_pbar = tqdm(
             val_loader,
             desc=f"  Val Epoch {epoch_num}",
             leave=False,
             unit="batch",
-            disable=not self.config.use_tqdm
+            disable=not self.config.use_tqdm,
+            mininterval=0.5  # Обновлять не чаще чем раз в 0.5 сек
         )
         
         with torch.no_grad():
@@ -808,7 +852,7 @@ class ModelTrainerV2:
             'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
             'val_loss': val_loss,
             'metrics': metrics,
-            'config': asdict(self.config),
+            'config': asdict(self.config),  # type: ignore[arg-type]
             'best_val_loss': self.best_val_loss,
             'best_val_f1': self.best_val_f1,
             'history': [m.to_dict() for m in self.history]

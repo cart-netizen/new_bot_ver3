@@ -13,6 +13,7 @@ Provides простой интерфейс: одна команда → обуч
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
@@ -21,11 +22,15 @@ import torch
 import pandas as pd
 import numpy as np
 
+# Оптимизация CUDA памяти
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+
 from backend.core.logger import get_logger
 # UPDATED: Используем оптимизированные v2 версии
 from backend.ml_engine.models.hybrid_cnn_lstm_v2 import HybridCNNLSTMv2 as HybridCNNLSTM, ModelConfigV2 as ModelConfig
 from backend.ml_engine.training.model_trainer_v2 import ModelTrainerV2 as ModelTrainer, TrainerConfigV2 as TrainerConfig
 from backend.ml_engine.training.data_loader import HistoricalDataLoader, DataConfig, TradingDataset
+from backend.ml_engine.training.class_balancing import ClassBalancingConfig, ClassBalancingStrategy
 from backend.ml_engine.mlflow_integration.mlflow_tracker import get_mlflow_tracker
 from backend.ml_engine.feature_store.feature_store import get_feature_store, FeatureMetadata
 from backend.ml_engine.inference.model_registry import get_model_registry, ModelStage
@@ -82,7 +87,8 @@ class TrainingOrchestrator:
         self,
         model_config: Optional[ModelConfig] = None,
         trainer_config: Optional[TrainerConfig] = None,
-        data_config: Optional[DataConfig] = None
+        data_config: Optional[DataConfig] = None,
+        balancing_config: Optional[ClassBalancingConfig] = None
     ):
         """
         Инициализация orchestrator
@@ -91,10 +97,22 @@ class TrainingOrchestrator:
             model_config: Конфигурация модели
             trainer_config: Конфигурация training
             data_config: Конфигурация данных
+            balancing_config: Конфигурация балансировки классов
         """
         self.model_config = model_config or ModelConfig()
         self.trainer_config = trainer_config or TrainerConfig()
         self.data_config = data_config or DataConfig()
+
+        # Class balancing configuration
+        self.balancing_config = balancing_config or ClassBalancingConfig(
+            use_class_weights=True,  # Уже используется в TrainerConfig
+            use_oversampling=False,  # ОТКЛЮЧЕНО: увеличивает размер → OOM
+            use_undersampling=True,  # Уменьшаем majority класс для экономии памяти
+            use_focal_loss=False,    # Focal loss уже в trainer
+            undersample_strategy="auto",  # Допустимые: "auto", "majority", "not minority"
+            undersample_ratio=0.7,   # Целевое соотношение minority/majority
+            verbose=True
+        )
 
         # Components
         self.mlflow_tracker = get_mlflow_tracker(experiment_name="model_training")
@@ -103,6 +121,7 @@ class TrainingOrchestrator:
         self.onnx_optimizer = get_onnx_optimizer()
 
         logger.info("Training Orchestrator initialized")
+        logger.info(f"  • Class balancing: enabled (undersampling={self.balancing_config.use_undersampling})")
 
     async def train_model(
         self,
@@ -237,11 +256,17 @@ class TrainingOrchestrator:
             model_dir = Path(self.trainer_config.checkpoint_dir) / timestamp
             model_dir.mkdir(parents=True, exist_ok=True)
 
+            # Convert EpochMetrics objects to dicts for serialization
+            training_history_dicts = [
+                m.to_dict() if hasattr(m, 'to_dict') else m
+                for m in training_history
+            ]
+
             model_path = model_dir / f"{model_name}.pt"
             torch.save({
                 'model_state_dict': model.state_dict(),
                 'model_config': config_to_dict(self.model_config),
-                'training_history': training_history,
+                'training_history': training_history_dicts,
                 'final_metrics': final_metrics,
                 'test_metrics': test_metrics,
                 'timestamp': timestamp
@@ -253,7 +278,7 @@ class TrainingOrchestrator:
                 'version': timestamp,
                 'model_config': config_to_dict(self.model_config),
                 'trainer_config': config_to_dict(self.trainer_config),
-                'training_history': training_history,
+                'training_history': training_history_dicts,
                 'final_metrics': final_metrics,
                 'test_metrics': test_metrics,
                 'created_at': datetime.now().isoformat()
@@ -454,7 +479,10 @@ class TrainingOrchestrator:
             # 2.5: Convert to DataLoaders
             logger.info("Converting Feature Store data to DataLoaders...")
 
-            data_loader = HistoricalDataLoader(self.data_config)
+            data_loader = HistoricalDataLoader(
+                self.data_config,
+                balancing_config=self.balancing_config
+            )
 
             train_loader, val_loader, test_loader = data_loader.load_from_dataframe(
                 features_df=features_df,
@@ -520,7 +548,10 @@ class TrainingOrchestrator:
         """
         logger.info("Loading data from legacy .npy files...")
 
-        data_loader = HistoricalDataLoader(self.data_config)
+        data_loader = HistoricalDataLoader(
+            self.data_config,
+            balancing_config=self.balancing_config
+        )
         train_data, val_data, test_data = data_loader.load_and_split()
 
         if train_data is None:

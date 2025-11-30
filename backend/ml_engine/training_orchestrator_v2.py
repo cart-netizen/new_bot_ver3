@@ -275,21 +275,31 @@ class TrainingOrchestratorV2:
                 
                 if features_df is not None and len(features_df) > 0:
                     logger.info(f"✓ Загружено {len(features_df)} записей из Feature Store")
-                    
+
+                    # Создаём balancing config для передачи в DataLoader
+                    from backend.ml_engine.training.class_balancing import ClassBalancingConfig
+
+                    balancing_config = ClassBalancingConfig(
+                        use_oversampling=False,
+                        use_undersampling=True,
+                        undersample_strategy='auto'
+                    )
+
                     # Конвертируем в DataLoaders
                     data_config = DataConfig(
                         batch_size=256,  # Оптимизированный batch size
                         sequence_length=60
                     )
-                    
-                    data_loader = HistoricalDataLoader(data_config)
-                    
+
+                    # КРИТИЧНО: передаём balancing_config!
+                    data_loader = HistoricalDataLoader(data_config, balancing_config=balancing_config)
+
                     train_loader, val_loader, test_loader = data_loader.load_from_dataframe(
                         features_df=features_df,
                         feature_columns=DEFAULT_SCHEMA.get_all_feature_columns(),
                         label_column=DEFAULT_SCHEMA.label_column,
                         timestamp_column=DEFAULT_SCHEMA.timestamp_column,
-                        apply_resampling=True
+                        apply_resampling=True  # Теперь сработает благодаря balancing_config
                     )
                     
                     data_stats['source'] = 'feature_store'
@@ -303,19 +313,28 @@ class TrainingOrchestratorV2:
         # Fallback к legacy
         if self.config.fallback_to_legacy:
             logger.info("Загрузка из legacy storage...")
-            
+
             try:
                 from backend.ml_engine.training.data_loader import HistoricalDataLoader, DataConfig
-                
+                from backend.ml_engine.training.class_balancing import ClassBalancingConfig
+
+                balancing_config = ClassBalancingConfig(
+                    use_oversampling=False,
+                    use_undersampling=True,
+                    undersample_strategy='auto'
+                )
+
                 data_config = DataConfig(
                     storage_path=self.config.legacy_storage_path,
                     batch_size=256,
                     sequence_length=60
                 )
-                
-                data_loader = HistoricalDataLoader(data_config)
+
+                # КРИТИЧНО: передаём balancing_config!
+                data_loader = HistoricalDataLoader(data_config, balancing_config=balancing_config)
                 train_loader, val_loader, test_loader = data_loader.load_and_split(
-                    symbols=symbols
+                    symbols=symbols,
+                    apply_resampling=True
                 )
                 
                 if train_loader is not None:
@@ -520,44 +539,128 @@ class TrainingOrchestratorV2:
         return results
     
     def _save_model(self, training_results: Dict[str, Any]) -> Dict[str, Any]:
-        """Сохранение модели и метаданных."""
-        
+        """Сохранение модели, регистрация в Model Registry и MLflow."""
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        model_name = f"hybrid_cnn_lstm_v2_{timestamp}"
-        model_path = self.output_dir / f"{model_name}.pt"
-        
+        model_name = "hybrid_cnn_lstm"  # Используем стандартное имя для Model Registry
+        model_path = self.output_dir / f"{model_name}_{timestamp}.pt"
+
+        # Извлекаем финальные метрики из истории обучения
+        final_metrics = training_results.get('final_metrics', {})
+        best_val_loss = training_results.get('best_val_loss', 0.0)
+        best_val_f1 = training_results.get('best_val_f1', 0.0)
+
+        # Формируем metrics для Model Registry
+        # КРИТИЧНО: эти метрики отображаются во фронтенде!
+        metrics = {
+            'accuracy': final_metrics.get('val_accuracy', 0.0),
+            'precision': final_metrics.get('val_precision', 0.0),
+            'recall': final_metrics.get('val_recall', 0.0),
+            'f1': final_metrics.get('val_f1', best_val_f1),
+            'val_loss': best_val_loss,
+            'train_loss': final_metrics.get('train_loss', 0.0)
+        }
+
         # Сохраняем модель
         torch.save({
             'model_state_dict': self.model.state_dict(),
             'config': asdict(self.config),
             'training_results': training_results,
-            'timestamp': timestamp
+            'timestamp': timestamp,
+            'metrics': metrics
         }, model_path)
-        
+
         # Сохраняем метаданные
-        metadata_path = self.output_dir / f"{model_name}_metadata.json"
-        
+        metadata_path = self.output_dir / f"{model_name}_{timestamp}_metadata.json"
+
         metadata = {
             'model_name': model_name,
+            'version': timestamp,
             'timestamp': timestamp,
             'config': asdict(self.config),
+            'metrics': metrics,
             'training_results': {
                 'epochs_trained': training_results['epochs_trained'],
-                'best_val_loss': training_results['best_val_loss'],
-                'best_val_f1': training_results['best_val_f1']
+                'best_val_loss': best_val_loss,
+                'best_val_f1': best_val_f1
             }
         }
-        
+
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2, default=str)
-        
+
         logger.info(f"✓ Model saved: {model_path}")
         logger.info(f"✓ Metadata saved: {metadata_path}")
-        
+
+        # ========== РЕГИСТРАЦИЯ В MODEL REGISTRY ==========
+        try:
+            import asyncio
+            from backend.ml_engine.inference.model_registry import get_model_registry
+
+            registry = get_model_registry()
+
+            # Регистрируем модель с метриками
+            asyncio.get_event_loop().run_until_complete(
+                registry.register_model(
+                    name=model_name,
+                    version=timestamp,
+                    model_path=model_path,
+                    model_type="HybridCNNLSTM_v2",
+                    description=f"Trained with orchestrator v2 - epochs={training_results['epochs_trained']}",
+                    metrics=metrics,  # КРИТИЧНО: передаём метрики!
+                    training_params=asdict(self.config)
+                )
+            )
+            logger.info(f"✓ Model registered in Model Registry: {model_name} v{timestamp}")
+
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to register in Model Registry: {e}")
+
+        # ========== РЕГИСТРАЦИЯ В MLFLOW ==========
+        try:
+            from backend.ml_engine.mlflow_integration.mlflow_tracker import get_mlflow_tracker
+
+            mlflow_tracker = get_mlflow_tracker()
+
+            # Начинаем run
+            run_name = f"training_v2_{timestamp}"
+            mlflow_tracker.start_run(
+                run_name=run_name,
+                tags={"model_type": "HybridCNNLSTM_v2", "training_mode": "orchestrator_v2"}
+            )
+
+            # Логируем параметры
+            mlflow_tracker.log_params(asdict(self.config))
+
+            # Логируем метрики
+            mlflow_tracker.log_metrics(metrics)
+
+            # Логируем модель
+            model_uri = mlflow_tracker.log_model(
+                model=self.model,
+                model_name=model_name
+            )
+
+            # Регистрируем в MLflow Registry
+            if model_uri:
+                mlflow_tracker.register_model(
+                    model_uri=model_uri,
+                    model_name=model_name,
+                    description=f"Trained with orchestrator v2"
+                )
+
+            mlflow_tracker.end_run(status="FINISHED")
+            logger.info(f"✓ Model logged to MLflow: {run_name}")
+
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to log to MLflow: {e}")
+
         return {
             'model_path': str(model_path),
             'metadata_path': str(metadata_path),
-            'model_name': model_name
+            'model_name': model_name,
+            'version': timestamp,
+            'metrics': metrics
         }
     
     def _log_final_results(self, results: Dict[str, Any]):

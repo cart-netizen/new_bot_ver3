@@ -49,7 +49,7 @@ class DataConfig:
     # DataLoader параметры
     batch_size: int = 64
     shuffle: bool = True
-    num_workers: int = 4
+    num_workers: int = 4  # Оптимально для 12GB GPU (8 может вызвать OOM)
 
     # Feature Store integration
     use_feature_store: bool = True  # Try Feature Store first
