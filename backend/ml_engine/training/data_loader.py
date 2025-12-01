@@ -352,18 +352,23 @@ class HistoricalDataLoader:
             test_data = None
             test_size = 0
 
-        logger.info(
-            f"Train/Val/Test split: "
-            f"train={len(X_train)}, "
-            f"val={len(X_val)}, "
-            f"test={test_size}"
-        )
+        # Используем tqdm.write для немедленного вывода в консоль
+        from tqdm import tqdm
+        tqdm.write(f"[Data] Train/Val/Test split: train={len(X_train)}, val={len(X_val)}, test={test_size}")
 
         # Логируем распределение классов
-        logger.info(f"Train class distribution: {Counter(y_train)}")
-        logger.info(f"Val class distribution: {Counter(y_val)}")
+        tqdm.write(f"[Data] Train class distribution: {dict(Counter(y_train))}")
+        tqdm.write(f"[Data] Val class distribution: {dict(Counter(y_val))}")
         if test_data:
-            logger.info(f"Test class distribution: {Counter(y_test)}")
+            test_dist = Counter(y_test)
+            tqdm.write(f"[Data] Test class distribution: {dict(test_dist)}")
+            # Предупреждение если test set несбалансирован
+            if len(test_dist) < 3:
+                tqdm.write("=" * 60)
+                tqdm.write("[WARNING] Test set содержит не все классы!")
+                tqdm.write(f"  • Классов в test: {len(test_dist)} из 3")
+                tqdm.write(f"  • Это типично для последовательного split временных рядов")
+                tqdm.write("=" * 60)
 
         return (X_train, y_train), (X_val, y_val), test_data
 
