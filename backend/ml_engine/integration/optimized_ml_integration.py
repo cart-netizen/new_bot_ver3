@@ -135,20 +135,19 @@ class OptimizedHyperparameters:
 def create_optimized_model_config():
     """
     Создать оптимизированную конфигурацию модели.
-    
+
     Returns:
-        ModelConfig с оптимизированными параметрами
+        ModelConfigV2 с оптимизированными параметрами
     """
-    from backend.ml_engine.models.hybrid_cnn_lstm import ModelConfig
-    
+    # UPDATED: Используем v2 версию
+    from backend.ml_engine.models.hybrid_cnn_lstm_v2 import ModelConfigV2 as ModelConfig
+
     return ModelConfig(
         input_features=110,
         sequence_length=60,
         cnn_channels=(32, 64, 128),  # Уменьшено для малого датасета
-        cnn_kernel_sizes=(3, 5, 7),
         lstm_hidden=128,             # Уменьшено
         lstm_layers=2,
-        lstm_dropout=0.3,
         attention_units=64,
         num_classes=3,
         dropout=0.4                  # Увеличено
@@ -158,34 +157,31 @@ def create_optimized_model_config():
 def create_optimized_trainer_config(checkpoint_dir: str = "checkpoints/models"):
     """
     Создать оптимизированную конфигурацию trainer.
-    
+
     Args:
         checkpoint_dir: Директория для checkpoints
-    
+
     Returns:
-        TrainerConfig с оптимизированными параметрами
+        TrainerConfigV2 с оптимизированными параметрами
     """
-    from backend.ml_engine.training.model_trainer import TrainerConfig
-    
+    # UPDATED: Используем v2 версию
+    from backend.ml_engine.training.model_trainer_v2 import TrainerConfigV2 as TrainerConfig
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    
+
     return TrainerConfig(
         epochs=150,
         learning_rate=5e-5,          # КРИТИЧНО!
         weight_decay=0.01,           # КРИТИЧНО!
         grad_clip_value=1.0,
         early_stopping_patience=20,
-        early_stopping_delta=1e-4,
-        direction_loss_weight=1.0,
-        confidence_loss_weight=0.5,
-        return_loss_weight=0.3,
-        lr_scheduler="CosineAnnealingWarmRestarts",
-        lr_patience=5,
-        lr_factor=0.5,
+        label_smoothing=0.1,
+        scheduler_type="cosine_warm_restarts",
+        scheduler_T_0=10,
+        scheduler_T_mult=2,
         checkpoint_dir=checkpoint_dir,
         save_best_only=True,
-        device=device,
-        log_interval=10
+        device=device
     )
 
 
@@ -480,38 +476,39 @@ def quick_start_training(
         data_path: Путь к данным
         output_dir: Директория для сохранения
     """
-    from backend.ml_engine.models.hybrid_cnn_lstm import HybridCNNLSTM
-    from backend.ml_engine.training.model_trainer import ModelTrainer
+    # UPDATED: Используем v2 версии
+    from backend.ml_engine.models.hybrid_cnn_lstm_v2 import HybridCNNLSTMv2 as HybridCNNLSTM
+    from backend.ml_engine.training.model_trainer_v2 import ModelTrainerV2 as ModelTrainer
     from backend.ml_engine.training.data_loader import HistoricalDataLoader
-    
+
     # 1. Получаем оптимизированные конфигурации
     model_config, trainer_config, data_config, balancing_config = setup_optimized_training()
-    
+
     # Обновляем пути
     data_config.storage_path = data_path
     trainer_config.checkpoint_dir = output_dir
-    
+
     # 2. Создаём модель
     model = HybridCNNLSTM(model_config)
     logger.info(f"✓ Модель создана")
-    
+
     # 3. Загружаем данные
     data_loader = HistoricalDataLoader(data_config, balancing_config)
     result = data_loader.load_and_prepare(symbols, apply_resampling=True)
     dataloaders = result['dataloaders']
     logger.info(f"✓ Данные загружены")
-    
-    # 4. Настраиваем trainer с балансировкой
-    trainer_config.class_balancing = balancing_config
-    trainer = ModelTrainer(model, trainer_config)
-    
+
+    # 4. Настраиваем trainer с балансировкой (v2 использует create_trainer_v2)
+    from backend.ml_engine.training.model_trainer_v2 import create_trainer_v2
+    trainer = create_trainer_v2(model, trainer_config)
+
     # 5. Обучаем
     history = trainer.train(dataloaders['train'], dataloaders['val'])
-    
+
     logger.info(f"✓ Обучение завершено!")
     logger.info(f"  • Эпох: {len(history)}")
     logger.info(f"  • Best val_loss: {trainer.best_val_loss:.4f}")
-    
+
     return model, history
 
 
