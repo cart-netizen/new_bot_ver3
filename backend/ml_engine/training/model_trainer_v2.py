@@ -447,15 +447,15 @@ class ModelTrainerV2:
                 all_labels.extend(labels)
             self._setup_loss_function(np.array(all_labels))
         
-        # Логируем начало обучения
-        logger.info("\n" + "=" * 80)
-        logger.info("НАЧАЛО ОБУЧЕНИЯ")
-        logger.info("=" * 80)
-        logger.info(f"Эпох: {self.config.epochs}")
-        logger.info(f"Train batches: {len(train_loader)}")
-        logger.info(f"Val batches: {len(val_loader)}")
-        logger.info(f"Device: {self.device}")
-        logger.info("=" * 80 + "\n")
+        # Логируем начало обучения через tqdm.write() для немедленного вывода
+        tqdm.write("\n" + "=" * 80)
+        tqdm.write("НАЧАЛО ОБУЧЕНИЯ")
+        tqdm.write("=" * 80)
+        tqdm.write(f"Эпох: {self.config.epochs}")
+        tqdm.write(f"Train batches: {len(train_loader)}")
+        tqdm.write(f"Val batches: {len(val_loader)}")
+        tqdm.write(f"Device: {self.device}")
+        tqdm.write("=" * 80 + "\n")
         
         # Progress bar для эпох
         # position=0 и dynamic_ncols=False для стабильного вывода в веб-консоли
@@ -518,10 +518,10 @@ class ModelTrainerV2:
                 'val_f1': f'{val_metrics["f1"]:.4f}'
             })
             
-            # Логирование
+            # Логирование через tqdm.write() для немедленного вывода
             if self.config.verbose:
-                logger.info(
-                    f"Epoch {epoch + 1}/{self.config.epochs}: "
+                tqdm.write(
+                    f"[Epoch {epoch + 1}/{self.config.epochs}] "
                     f"train_loss={train_loss:.4f}, val_loss={val_loss:.4f}, "
                     f"val_acc={val_metrics['accuracy']:.4f}, "
                     f"val_f1={val_metrics['f1']:.4f}, "
@@ -544,20 +544,20 @@ class ModelTrainerV2:
             # Early Stopping
             stop_metric = val_loss if self.config.early_stopping_metric == "val_loss" else val_metrics['f1']
             if self.early_stopping(stop_metric):
-                logger.info(
-                    f"\n⚠️ Early stopping triggered at epoch {epoch + 1}. "
+                tqdm.write(
+                    f"\n[Early Stop] Triggered at epoch {epoch + 1}. "
                     f"Best val_loss: {self.best_val_loss:.4f}"
                 )
                 break
         
-        # Финальное логирование
-        logger.info("\n" + "=" * 80)
-        logger.info("ОБУЧЕНИЕ ЗАВЕРШЕНО")
-        logger.info("=" * 80)
-        logger.info(f"Всего эпох: {len(self.history)}")
-        logger.info(f"Best val_loss: {self.best_val_loss:.4f}")
-        logger.info(f"Best val_f1: {self.best_val_f1:.4f}")
-        logger.info("=" * 80 + "\n")
+        # Финальное логирование через tqdm.write() для немедленного вывода
+        tqdm.write("\n" + "=" * 80)
+        tqdm.write("ОБУЧЕНИЕ ЗАВЕРШЕНО")
+        tqdm.write("=" * 80)
+        tqdm.write(f"Всего эпох: {len(self.history)}")
+        tqdm.write(f"Best val_loss: {self.best_val_loss:.4f}")
+        tqdm.write(f"Best val_f1: {self.best_val_f1:.4f}")
+        tqdm.write("=" * 80 + "\n")
         
         # Тестирование (если есть test_loader)
         if test_loader is not None:
@@ -700,11 +700,11 @@ class ModelTrainerV2:
                 all_labels.extend(labels.cpu().numpy())
             all_predictions.extend(predictions)
 
-            # Логирование прогресса (вместо tqdm для предотвращения дублирования строк)
+            # Логирование прогресса через tqdm.write() для немедленного вывода в консоль
             if (batch_idx + 1) % log_interval == 0 or batch_idx == total_batches - 1:
                 progress_pct = (batch_idx + 1) / total_batches * 100
-                logger.info(
-                    f"  Train Epoch {epoch_num}: {batch_idx + 1}/{total_batches} "
+                tqdm.write(
+                    f"  [Train] Epoch {epoch_num}: {batch_idx + 1}/{total_batches} "
                     f"({progress_pct:.0f}%) - loss: {original_loss:.4f}"
                 )
         
@@ -750,12 +750,12 @@ class ModelTrainerV2:
                 all_predictions.extend(predictions)
                 all_labels.extend(labels.cpu().numpy())
 
-                # Логирование прогресса (вместо tqdm для предотвращения дублирования)
+                # Логирование прогресса через tqdm.write() для немедленного вывода
                 batch_idx += 1
                 if batch_idx % log_interval == 0 or batch_idx == total_batches:
                     progress_pct = batch_idx / total_batches * 100
-                    logger.info(
-                        f"  Val Epoch {epoch_num}: {batch_idx}/{total_batches} "
+                    tqdm.write(
+                        f"  [Val] Epoch {epoch_num}: {batch_idx}/{total_batches} "
                         f"({progress_pct:.0f}%) - loss: {loss.item():.4f}"
                     )
         
@@ -780,9 +780,9 @@ class ModelTrainerV2:
     
     def _test_model(self, test_loader: DataLoader):
         """Тестирование модели."""
-        logger.info("\n" + "=" * 80)
-        logger.info("ТЕСТИРОВАНИЕ МОДЕЛИ")
-        logger.info("=" * 80)
+        tqdm.write("\n" + "=" * 80)
+        tqdm.write("ТЕСТИРОВАНИЕ МОДЕЛИ")
+        tqdm.write("=" * 80)
         
         self.model.eval()
         
@@ -813,13 +813,13 @@ class ModelTrainerV2:
             average='weighted',
             zero_division=0
         )
-        
-        logger.info(f"Test Results:")
-        logger.info(f"  • Accuracy: {accuracy:.4f}")
-        logger.info(f"  • Precision: {precision:.4f}")
-        logger.info(f"  • Recall: {recall:.4f}")
-        logger.info(f"  • F1 Score: {f1:.4f}")
-        
+
+        tqdm.write(f"Test Results:")
+        tqdm.write(f"  • Accuracy: {accuracy:.4f}")
+        tqdm.write(f"  • Precision: {precision:.4f}")
+        tqdm.write(f"  • Recall: {recall:.4f}")
+        tqdm.write(f"  • F1 Score: {f1:.4f}")
+
         # Classification report
         class_names = ['HOLD', 'BUY', 'SELL']
         report = classification_report(
@@ -827,21 +827,21 @@ class ModelTrainerV2:
             target_names=class_names,
             digits=4
         )
-        logger.info(f"\nClassification Report:\n{report}")
-        
+        tqdm.write(f"\nClassification Report:\n{report}")
+
         # Confusion matrix
         cm = confusion_matrix(all_labels, all_predictions)
-        logger.info(f"\nConfusion Matrix:\n{cm}")
-        
+        tqdm.write(f"\nConfusion Matrix:\n{cm}")
+
         # Confidence analysis
         all_confidences = np.array(all_confidences)
         correct_mask = np.array(all_predictions) == np.array(all_labels)
-        
-        logger.info(f"\nConfidence Analysis:")
-        logger.info(f"  • Mean confidence (correct): {all_confidences[correct_mask].mean():.4f}")
-        logger.info(f"  • Mean confidence (incorrect): {all_confidences[~correct_mask].mean():.4f}")
-        
-        logger.info("=" * 80 + "\n")
+
+        tqdm.write(f"\nConfidence Analysis:")
+        tqdm.write(f"  • Mean confidence (correct): {all_confidences[correct_mask].mean():.4f}")
+        tqdm.write(f"  • Mean confidence (incorrect): {all_confidences[~correct_mask].mean():.4f}")
+
+        tqdm.write("=" * 80 + "\n")
     
     def _save_checkpoint(
         self,

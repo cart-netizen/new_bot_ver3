@@ -18,10 +18,16 @@ from dataclasses import dataclass, field
 from collections import Counter
 from enum import Enum
 import warnings
+from tqdm import tqdm
 
 from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _log(msg: str):
+    """Логирование через tqdm.write() для немедленного вывода в консоль."""
+    tqdm.write(f"[Balancing] {msg}")
 
 
 # ============================================================================
@@ -160,7 +166,7 @@ class ThresholdOptimizer:
         sell_threshold = np.percentile(returns, self.config.percentile_sell * 100)
         buy_threshold = np.percentile(returns, self.config.percentile_buy * 100)
         
-        logger.info(
+        _log(
             f"Percentile thresholds: sell={sell_threshold:.6f} "
             f"({self.config.percentile_sell*100}%), "
             f"buy={buy_threshold:.6f} ({self.config.percentile_buy*100}%)"
@@ -194,10 +200,10 @@ class ThresholdOptimizer:
         labels = self._apply_thresholds(returns, sell_threshold, buy_threshold)
         dist = Counter(labels)
         
-        logger.info(
+        _log(
             f"Adaptive thresholds: sell={sell_threshold:.6f}, buy={buy_threshold:.6f}"
         )
-        logger.info(
+        _log(
             f"Resulting distribution: {dict(dist)} "
             f"(target: sell={target_sell:.0%}, hold={target_hold:.0%}, buy={target_buy:.0%})"
         )
@@ -225,7 +231,7 @@ class ThresholdOptimizer:
         sell_threshold = -k * recent_std
         buy_threshold = k * recent_std
         
-        logger.info(
+        _log(
             f"Volatility-adjusted thresholds: sell={sell_threshold:.6f}, "
             f"buy={buy_threshold:.6f} (volatility={recent_std:.6f})"
         )
@@ -267,7 +273,7 @@ class ThresholdOptimizer:
         labels = self._apply_thresholds(returns, sell_threshold, buy_threshold)
         
         dist = Counter(labels)
-        logger.info(f"Relabeling result: {dict(dist)}")
+        _log(f"Relabeling result: {dict(dist)}")
         
         return labels
 
@@ -356,7 +362,7 @@ class ClassWeightsCalculator:
             dtype=np.float32
         )
         
-        logger.info(f"Class weights ({method.value}): {weight_array}")
+        _log(f"Class weights ({method.value}): {weight_array}")
         
         return weight_array
     
@@ -382,7 +388,7 @@ class ClassWeightsCalculator:
         # Normalize
         alpha = alpha / alpha.sum() * num_classes
         
-        logger.info(f"Focal alpha: {alpha}")
+        _log(f"Focal alpha: {alpha}")
         
         return alpha
 
@@ -420,7 +426,7 @@ class ResamplingStrategy:
         majority_count = max(class_counts.values())
         target_count = int(majority_count * target_ratio)
         
-        logger.info(f"Oversampling: majority={majority_count}, target_minority={target_count}")
+        _log(f"Oversampling: majority={majority_count}, target_minority={target_count}")
         
         X_resampled = [X]
         y_resampled = [y]
@@ -446,7 +452,7 @@ class ResamplingStrategy:
                 X_resampled.append(X_new)
                 y_resampled.append(np.full(n_to_add, cls, dtype=y.dtype))
                 
-                logger.info(f"  Class {cls}: {count} → {target_count} (+{n_to_add})")
+                _log(f"  Class {cls}: {count} → {target_count} (+{n_to_add})")
         
         X_final = np.concatenate(X_resampled, axis=0)
         y_final = np.concatenate(y_resampled, axis=0)
@@ -479,7 +485,7 @@ class ResamplingStrategy:
         minority_count = min(class_counts.values())
         target_count = int(minority_count / target_ratio)
         
-        logger.info(f"Undersampling: minority={minority_count}, target_majority={target_count}")
+        _log(f"Undersampling: minority={minority_count}, target_majority={target_count}")
         
         indices_to_keep = []
         
@@ -494,7 +500,7 @@ class ResamplingStrategy:
                     replace=False
                 )
                 indices_to_keep.extend(keep_indices)
-                logger.info(f"  Class {cls}: {count} → {target_count}")
+                _log(f"  Class {cls}: {count} → {target_count}")
             else:
                 indices_to_keep.extend(cls_indices)
         
@@ -549,7 +555,7 @@ class ResamplingStrategy:
                 X_resampled.append(synthetic)
                 y_resampled.append(np.full(n_to_generate, cls, dtype=y.dtype))
                 
-                logger.info(f"  SMOTE Class {cls}: +{n_to_generate} synthetic samples")
+                _log(f"  SMOTE Class {cls}: +{n_to_generate} synthetic samples")
         
         X_final = np.concatenate(X_resampled, axis=0)
         y_final = np.concatenate(y_resampled, axis=0)
@@ -630,7 +636,7 @@ class ClassBalancingStrategyV2:
         self._class_weights: Optional[np.ndarray] = None
         self._focal_alpha: Optional[np.ndarray] = None
         
-        logger.info(
+        _log(
             f"✓ ClassBalancingStrategyV2 initialized: "
             f"method={self.config.method.value}, "
             f"focal={self.config.use_focal_loss}, "
@@ -654,17 +660,17 @@ class ClassBalancingStrategyV2:
         Returns:
             X_balanced, y_balanced
         """
-        logger.info("\n" + "=" * 60)
-        logger.info("БАЛАНСИРОВКА КЛАССОВ")
-        logger.info("=" * 60)
-        
+        tqdm.write("\n" + "=" * 60)
+        tqdm.write("[Balancing] БАЛАНСИРОВКА КЛАССОВ")
+        tqdm.write("=" * 60)
+
         # Логируем исходное распределение
         before_dist = Counter(y)
-        logger.info(f"До балансировки: {dict(before_dist)}")
-        
+        _log(f"До балансировки: {dict(before_dist)}")
+
         # Опционально: перемаркировка с адаптивными порогами
         if returns is not None and self.config.threshold_method != ThresholdMethod.FIXED:
-            logger.info("Применение адаптивных порогов...")
+            _log("Применение адаптивных порогов...")
             y = self.threshold_optimizer.relabel_data(returns)
         
         # Применяем метод балансировки
@@ -692,8 +698,8 @@ class ClassBalancingStrategyV2:
         
         # Логируем результат
         after_dist = Counter(y)
-        logger.info(f"После балансировки: {dict(after_dist)}")
-        logger.info("=" * 60 + "\n")
+        _log(f"После балансировки: {dict(after_dist)}")
+        tqdm.write("=" * 60 + "\n")
         
         return X, y
     

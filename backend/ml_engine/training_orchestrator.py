@@ -25,6 +25,8 @@ import numpy as np
 # Оптимизация CUDA памяти
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
+from tqdm import tqdm
+
 from backend.core.logger import get_logger
 # UPDATED: Используем оптимизированные v2 версии
 from backend.ml_engine.models.hybrid_cnn_lstm_v2 import HybridCNNLSTMv2 as HybridCNNLSTM, ModelConfigV2 as ModelConfig
@@ -584,9 +586,9 @@ class TrainingOrchestrator:
             all_predictions = []
             all_labels = []
 
-            logger.info("=" * 80)
-            logger.info("ОЦЕНКА МОДЕЛИ НА TEST SET")
-            logger.info("=" * 80)
+            tqdm.write("=" * 80)
+            tqdm.write("[Test] ОЦЕНКА МОДЕЛИ НА TEST SET")
+            tqdm.write("=" * 80)
 
             with torch.no_grad():
                 for batch in test_loader:
@@ -619,9 +621,9 @@ class TrainingOrchestrator:
             from collections import Counter
             label_dist = Counter(all_labels)
             pred_dist = Counter(all_predictions)
-            logger.info(f"Test set size: {len(all_labels)}")
-            logger.info(f"Labels distribution: {dict(label_dist)}")
-            logger.info(f"Predictions distribution: {dict(pred_dist)}")
+            tqdm.write(f"[Test] Test set size: {len(all_labels)}")
+            tqdm.write(f"[Test] Labels distribution: {dict(label_dist)}")
+            tqdm.write(f"[Test] Predictions distribution: {dict(pred_dist)}")
 
             # Check for edge cases
             if len(all_labels) == 0:
@@ -629,9 +631,27 @@ class TrainingOrchestrator:
                 return {'accuracy': 0.0, 'precision': 0.0, 'recall': 0.0, 'f1': 0.0}
 
             # Calculate metrics
-            from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+            from sklearn.metrics import accuracy_score, precision_recall_fscore_support, classification_report
 
             accuracy = accuracy_score(all_labels, all_predictions)
+
+            # Per-class metrics for debugging
+            precision_per_class, recall_per_class, f1_per_class, support = precision_recall_fscore_support(
+                all_labels, all_predictions,
+                average=None,
+                zero_division=0
+            )
+            class_names = ['HOLD', 'BUY', 'SELL']
+            tqdm.write("[Test] Per-class metrics:")
+            for i, name in enumerate(class_names):
+                if i < len(precision_per_class):
+                    tqdm.write(
+                        f"  {name}: precision={precision_per_class[i]:.4f}, "
+                        f"recall={recall_per_class[i]:.4f}, f1={f1_per_class[i]:.4f}, "
+                        f"support={support[i] if i < len(support) else 0}"
+                    )
+
+            # Weighted average metrics
             precision, recall, f1, _ = precision_recall_fscore_support(
                 all_labels, all_predictions,
                 average='weighted',
@@ -645,14 +665,14 @@ class TrainingOrchestrator:
                 'f1': float(f1)
             }
 
-            # КРИТИЧНО: Логируем метрики ПЕРЕД записью в Model Registry
-            logger.info("=" * 80)
-            logger.info("TEST METRICS (будут записаны в Model Registry):")
-            logger.info(f"  • Accuracy:  {accuracy:.4f}")
-            logger.info(f"  • Precision: {precision:.4f}")
-            logger.info(f"  • Recall:    {recall:.4f}")
-            logger.info(f"  • F1 Score:  {f1:.4f}")
-            logger.info("=" * 80)
+            # КРИТИЧНО: Логируем метрики через tqdm.write() для немедленного вывода
+            tqdm.write("=" * 80)
+            tqdm.write("[Test] TEST METRICS (будут записаны в Model Registry):")
+            tqdm.write(f"  • Accuracy:  {accuracy:.4f}")
+            tqdm.write(f"  • Precision: {precision:.4f}")
+            tqdm.write(f"  • Recall:    {recall:.4f}")
+            tqdm.write(f"  • F1 Score:  {f1:.4f}")
+            tqdm.write("=" * 80)
 
             return metrics
 
