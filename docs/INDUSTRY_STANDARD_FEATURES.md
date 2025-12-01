@@ -84,10 +84,18 @@ Triple Barrier Method (López de Prado, 2018) использует три бар
 2. **Stop Loss**: цена достигла stop loss (ATR * sl_multiplier)
 3. **Timeout**: истекло max_holding_period
 
-### Labels
-- **2 (BUY)**: Верхний барьер достигнут первым → long был бы профитен
-- **0 (SELL)**: Нижний барьер достигнут первым → short был бы профитен
-- **1 (HOLD)**: Timeout → нет чёткого направления
+### Labels (Стандартный маппинг проекта)
+| Значение | Название | Описание |
+|----------|----------|----------|
+| **0** | SELL/DOWN | Нижний барьер достигнут первым → short был бы профитен |
+| **1** | HOLD/NEUTRAL | Timeout → нет чёткого направления |
+| **2** | BUY/UP | Верхний барьер достигнут первым → long был бы профитен |
+
+> ⚠️ **ВАЖНО**: Этот маппинг (0=SELL, 1=HOLD, 2=BUY) используется во всём проекте:
+> - `preprocessing_add_future_labels_parquet.py`
+> - `backend/ml_engine/features/labeling.py`
+> - `backend/ml_engine/training/data_loader.py`
+> - Drift detector в `backend/main.py`
 
 ### Использование
 ```python

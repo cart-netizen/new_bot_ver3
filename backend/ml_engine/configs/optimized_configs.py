@@ -86,7 +86,7 @@ class OptimizedModelConfig:
     attention_dropout: float = 0.1
     
     # === Output параметры ===
-    num_classes: int = 3  # BUY=1, HOLD=0, SELL=2
+    num_classes: int = 3  # DOWN/SELL=0, NEUTRAL/HOLD=1, UP/BUY=2
     
     # === Regularization (УСИЛЕНА) ===
     # Было: 0.3
