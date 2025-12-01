@@ -228,13 +228,14 @@ class HistoricalDataLoader:
 
         # ===== КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ =====
         # Преобразуем labels из {-1, 0, 1} в {0, 1, 2} для PyTorch
-        # -1 (DOWN) -> 0
-        #  0 (NEUTRAL) -> 1
-        #  1 (UP) -> 2
+        # ПРАВИЛЬНЫЙ МАППИНГ:
+        # -1 (DOWN/SELL) -> 2 (SELL)
+        #  0 (NEUTRAL/HOLD) -> 0 (HOLD)
+        #  1 (UP/BUY) -> 1 (BUY)
         logger.info(f"Исходное распределение классов: {Counter(y)}")
 
-        # Маппинг
-        label_mapping = {-1: 0, 0: 1, 1: 2}
+        # Маппинг (ИСПРАВЛЕНО: было {-1: 0, 0: 1, 1: 2} - НЕПРАВИЛЬНО!)
+        label_mapping = {-1: 2, 0: 0, 1: 1}
         y_mapped = np.array([label_mapping.get(label, label) for label in y], dtype=np.int64)
 
         logger.info(f"Преобразованное распределение: {Counter(y_mapped)}")
@@ -357,8 +358,52 @@ class HistoricalDataLoader:
         tqdm.write(f"[Data] Train/Val/Test split: train={len(X_train)}, val={len(X_val)}, test={test_size}")
 
         # Логируем распределение классов
-        tqdm.write(f"[Data] Train class distribution: {dict(Counter(y_train))}")
-        tqdm.write(f"[Data] Val class distribution: {dict(Counter(y_val))}")
+        train_dist = Counter(y_train)
+        val_dist = Counter(y_val)
+        tqdm.write(f"[Data] Train class distribution: {dict(train_dist)}")
+        tqdm.write(f"[Data] Val class distribution: {dict(val_dist)}")
+
+        # ===== STRATIFIED VALIDATION =====
+        # Если validation не содержит всех классов - добавляем сэмплы из train
+        expected_classes = {0, 1, 2}  # HOLD, BUY, SELL
+        missing_classes = expected_classes - set(val_dist.keys())
+
+        if missing_classes:
+            tqdm.write(f"[Data] Val set missing classes: {missing_classes}")
+            tqdm.write("[Data] Adding samples from train to ensure all classes in validation...")
+
+            # Сколько сэмплов добавить для каждого недостающего класса
+            min_samples_per_class = max(100, len(X_val) // 20)  # Минимум 100 или 5% от val
+
+            additional_X = []
+            additional_y = []
+
+            for cls in missing_classes:
+                # Находим сэмплы этого класса в train (берём из конца, ближе к val по времени)
+                cls_indices = np.where(y_train == cls)[0]
+
+                if len(cls_indices) > 0:
+                    # Берём последние сэмплы этого класса из train
+                    n_to_add = min(min_samples_per_class, len(cls_indices))
+                    selected_indices = cls_indices[-n_to_add:]  # Последние (ближе к val по времени)
+
+                    additional_X.append(X_train[selected_indices])
+                    additional_y.append(y_train[selected_indices])
+                    tqdm.write(f"  • Class {cls}: added {n_to_add} samples from train")
+
+            if additional_X:
+                # Добавляем в validation
+                X_val = np.concatenate([X_val] + additional_X, axis=0)
+                y_val = np.concatenate([y_val] + additional_y, axis=0)
+
+                # Перемешиваем validation (но НЕ train!)
+                shuffle_idx = np.random.permutation(len(X_val))
+                X_val = X_val[shuffle_idx]
+                y_val = y_val[shuffle_idx]
+
+                val_dist = Counter(y_val)
+                tqdm.write(f"[Data] Val class distribution (after stratification): {dict(val_dist)}")
+
         if test_data:
             test_dist = Counter(y_test)
             tqdm.write(f"[Data] Test class distribution: {dict(test_dist)}")
@@ -725,16 +770,20 @@ class HistoricalDataLoader:
         has_two = np.any(unique_labels == 2)
 
         if has_negative and not has_two:
-            # Old format: {-1, 0, 1}
-            label_mapping = {-1: 0, 0: 1, 1: 2}
-            logger.info("Using old label format: {-1, 0, 1} -> {0, 1, 2}")
+            # Old format: {-1, 0, 1} - ИСПРАВЛЕННЫЙ маппинг!
+            # -1 (DOWN/SELL) -> 2 (SELL)
+            #  0 (NEUTRAL/HOLD) -> 0 (HOLD)
+            #  1 (UP/BUY) -> 1 (BUY)
+            label_mapping = {-1: 2, 0: 0, 1: 1}
+            logger.info("Using old label format: {-1, 0, 1} -> {2, 0, 1} (SELL=2, HOLD=0, BUY=1)")
         elif has_two and not has_negative:
             # New format: {0, 1, 2}
             label_mapping = {0: 0, 1: 1, 2: 2}
             logger.info("Using new label format (identity): {0, 1, 2} -> {0, 1, 2}")
         else:
             # Mixed or unclear format - default to flexible mapping
-            label_mapping = {-1: 0, 0: 0, 1: 1, 2: 2}
+            # -1 -> SELL (2), 0 -> HOLD (0), 1 -> BUY (1), 2 -> SELL (2)
+            label_mapping = {-1: 2, 0: 0, 1: 1, 2: 2}
             logger.warning("Mixed or unclear label format detected, using flexible mapping")
 
         # Проверяем наличие неожиданных значений (исключая NaN)
@@ -742,10 +791,10 @@ class HistoricalDataLoader:
         unexpected_labels = set(unique_labels_no_nan) - set(label_mapping.keys())
         if unexpected_labels:
             logger.warning(f"Found unexpected label values: {unexpected_labels}")
-            logger.warning("These will be mapped to NEUTRAL (1)")
-            # Маппим неожиданные значения на NEUTRAL (1)
+            logger.warning("These will be mapped to HOLD (0)")
+            # Маппим неожиданные значения на HOLD (0)
             for unexpected_label in unexpected_labels:
-                label_mapping[int(unexpected_label)] = 1
+                label_mapping[int(unexpected_label)] = 0
 
         # Применяем маппинг (NaN values останутся NaN)
         y_mapped = []
