@@ -234,7 +234,13 @@ class TrainingOrchestrator:
                     "final_val_loss": float(final_epoch_dict.get("val_loss", 0.0)),
                     "final_train_accuracy": float(final_epoch_dict.get("train_accuracy", final_epoch_dict.get("train_acc", 0.0))),
                     "final_val_accuracy": float(final_epoch_dict.get("val_accuracy", final_epoch_dict.get("val_acc", 0.0))),
+                    # Добавляем val_precision, val_recall, val_f1 для fallback на validation метрики
+                    "val_accuracy": float(final_epoch_dict.get("val_accuracy", final_epoch_dict.get("val_acc", 0.0))),
+                    "val_precision": float(final_epoch_dict.get("val_precision", 0.0)),
+                    "val_recall": float(final_epoch_dict.get("val_recall", 0.0)),
+                    "val_f1": float(final_epoch_dict.get("val_f1", 0.0)),
                     "best_val_accuracy": float(max([m.get("val_accuracy", m.get("val_acc", 0.0)) for m in history_dicts])),
+                    "best_val_f1": float(max([m.get("val_f1", 0.0) for m in history_dicts])),
                     "total_epochs": len(training_history)
                 }
                 self.mlflow_tracker.log_metrics(final_metrics)
@@ -245,8 +251,19 @@ class TrainingOrchestrator:
             # Step 5: Evaluate on test set
             logger.info("Step 5/7: Evaluating model...")
             test_metrics = {}
+            use_val_metrics_for_registry = False
             if test_loader:
                 test_metrics = await self._evaluate_model(model, test_loader)
+
+                # Проверяем, сбалансирован ли test set
+                is_test_imbalanced = test_metrics.pop('_is_imbalanced', False)
+                if is_test_imbalanced:
+                    tqdm.write("\n" + "=" * 80)
+                    tqdm.write("[INFO] Используем VALIDATION метрики для Model Registry")
+                    tqdm.write("       (test set несбалансирован - только 1 класс)")
+                    tqdm.write("=" * 80 + "\n")
+                    use_val_metrics_for_registry = True
+
                 self.mlflow_tracker.log_metrics({
                     f"test_{k}": v for k, v in test_metrics.items()
                 })
@@ -300,13 +317,30 @@ class TrainingOrchestrator:
             )
 
             # Register in Model Registry
+            # Используем validation метрики если test set несбалансирован
+            if use_val_metrics_for_registry and final_metrics:
+                registry_metrics = {
+                    'accuracy': final_metrics.get('val_accuracy', 0),
+                    'precision': final_metrics.get('val_precision', 0),
+                    'recall': final_metrics.get('val_recall', 0),
+                    'f1': final_metrics.get('val_f1', 0),
+                    '_source': 'validation'  # Указываем источник метрик
+                }
+                tqdm.write(f"[Registry] Метрики для Model Registry (из validation):")
+                tqdm.write(f"  • Accuracy:  {registry_metrics['accuracy']:.4f}")
+                tqdm.write(f"  • Precision: {registry_metrics.get('precision', 'N/A')}")
+                tqdm.write(f"  • Recall:    {registry_metrics.get('recall', 'N/A')}")
+                tqdm.write(f"  • F1 Score:  {registry_metrics['f1']:.4f}")
+            else:
+                registry_metrics = test_metrics
+
             model_info = await self.model_registry.register_model(
                 name=model_name,
                 version=timestamp,
                 model_path=model_path,
                 model_type="HybridCNNLSTM",
                 description=f"Trained model - {run_name}",
-                metrics=test_metrics,  # CRITICAL FIX: Pass test_metrics to metrics parameter
+                metrics=registry_metrics,
                 training_params={
                     **vars(self.model_config),
                     **final_metrics,
@@ -332,9 +366,10 @@ class TrainingOrchestrator:
 
             # Auto-promotion to production
             promoted = False
-            test_accuracy = test_metrics.get('accuracy', 0)
+            # Используем метрики из правильного источника для auto-promote
+            promotion_accuracy = registry_metrics.get('accuracy', 0)
 
-            if auto_promote and test_accuracy >= min_accuracy_for_promotion:
+            if auto_promote and promotion_accuracy >= min_accuracy_for_promotion:
                 logger.info("Auto-promoting model to production...")
                 promoted = await self.model_registry.promote_to_production(
                     model_name, timestamp
@@ -625,10 +660,22 @@ class TrainingOrchestrator:
             tqdm.write(f"[Test] Labels distribution: {dict(label_dist)}")
             tqdm.write(f"[Test] Predictions distribution: {dict(pred_dist)}")
 
+            # КРИТИЧНО: Проверка на несбалансированный test set
+            num_classes_in_test = len(label_dist)
+            is_imbalanced = num_classes_in_test < 3
+            if is_imbalanced:
+                tqdm.write("=" * 80)
+                tqdm.write("[WARNING] TEST SET НЕСБАЛАНСИРОВАН!")
+                tqdm.write(f"  • Только {num_classes_in_test} класс(а) из 3 присутствуют в test set")
+                tqdm.write(f"  • Это происходит из-за последовательного split временных рядов")
+                tqdm.write(f"  • Метрики test set НЕ ДОСТОВЕРНЫ!")
+                tqdm.write(f"  • Рекомендуется использовать VALIDATION метрики")
+                tqdm.write("=" * 80)
+
             # Check for edge cases
             if len(all_labels) == 0:
                 logger.warning("Test set is empty! Returning zero metrics.")
-                return {'accuracy': 0.0, 'precision': 0.0, 'recall': 0.0, 'f1': 0.0}
+                return {'accuracy': 0.0, 'precision': 0.0, 'recall': 0.0, 'f1': 0.0, '_is_imbalanced': True}
 
             # Calculate metrics
             from sklearn.metrics import accuracy_score, precision_recall_fscore_support, classification_report
@@ -662,12 +709,16 @@ class TrainingOrchestrator:
                 'accuracy': float(accuracy),
                 'precision': float(precision),
                 'recall': float(recall),
-                'f1': float(f1)
+                'f1': float(f1),
+                '_is_imbalanced': is_imbalanced  # Флаг для проверки в train_model
             }
 
             # КРИТИЧНО: Логируем метрики через tqdm.write() для немедленного вывода
             tqdm.write("=" * 80)
-            tqdm.write("[Test] TEST METRICS (будут записаны в Model Registry):")
+            if is_imbalanced:
+                tqdm.write("[Test] TEST METRICS (НЕ ДОСТОВЕРНЫ - test set несбалансирован):")
+            else:
+                tqdm.write("[Test] TEST METRICS (будут записаны в Model Registry):")
             tqdm.write(f"  • Accuracy:  {accuracy:.4f}")
             tqdm.write(f"  • Precision: {precision:.4f}")
             tqdm.write(f"  • Recall:    {recall:.4f}")
