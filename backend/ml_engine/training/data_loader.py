@@ -480,6 +480,63 @@ class HistoricalDataLoader:
 
         return dataloaders
 
+    def _apply_train_resampling(
+        self,
+        train_data: Tuple[np.ndarray, np.ndarray, np.ndarray]
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Применить resampling ТОЛЬКО к train данным.
+
+        ВАЖНО: Resampling применяется ПОСЛЕ split, чтобы избежать data leakage!
+        Val/Test данные остаются с оригинальным распределением для честной оценки.
+
+        Args:
+            train_data: (X_train, y_train, timestamps_train)
+
+        Returns:
+            (X_train_resampled, y_train_resampled, timestamps_resampled)
+        """
+        from tqdm import tqdm
+
+        if not self.balancing_strategy:
+            return train_data
+
+        X_train, y_train, timestamps_train = train_data
+
+        tqdm.write("\n" + "="*60)
+        tqdm.write("[Resampling] Применяем ТОЛЬКО к TRAIN данным (после split)")
+        tqdm.write("="*60)
+
+        # Логируем распределение ДО
+        before_dist = Counter(y_train)
+        tqdm.write(f"[Resampling] ДО: {dict(before_dist)}")
+
+        # Применяем балансировку к train данным
+        X_train_new, y_train_new = self.balancing_strategy.balance_dataset(
+            X_train, y_train
+        )
+
+        # Логируем распределение ПОСЛЕ
+        after_dist = Counter(y_train_new)
+        tqdm.write(f"[Resampling] ПОСЛЕ: {dict(after_dist)}")
+        tqdm.write(f"[Resampling] Размер: {len(X_train)} → {len(X_train_new)}")
+
+        # Обновляем timestamps для новых данных
+        if len(timestamps_train) != len(X_train_new):
+            if len(timestamps_train) < len(X_train_new):
+                # Oversample: дублируем timestamps
+                indices = np.random.choice(len(timestamps_train), len(X_train_new), replace=True)
+                timestamps_new = timestamps_train[indices]
+            else:
+                # Undersample: обрезаем timestamps
+                timestamps_new = timestamps_train[:len(X_train_new)]
+        else:
+            timestamps_new = timestamps_train
+
+        tqdm.write("="*60 + "\n")
+
+        return X_train_new, y_train_new, timestamps_new
+
     def load_and_prepare(
         self,
         symbols: List[str],
@@ -524,34 +581,8 @@ class HistoricalDataLoader:
 
         logger.info(f"\nВсего данных: {len(X):,} семплов")
 
-        # ===== RESAMPLING ДО СОЗДАНИЯ SEQUENCES =====
-        if apply_resampling and self.balancing_strategy:
-            logger.info("\n" + "="*80)
-            logger.info("ПРИМЕНЕНИЕ RESAMPLING")
-            logger.info("="*80)
-
-            # Логируем распределение ДО
-            before_dist = Counter(y)
-            logger.info(f"ДО resampling: {dict(before_dist)}")
-
-            # Применяем балансировку
-            X, y = self.balancing_strategy.balance_dataset(X, y)
-
-            # Логируем распределение ПОСЛЕ
-            after_dist = Counter(y)
-            logger.info(f"ПОСЛЕ resampling: {dict(after_dist)}")
-            logger.info(f"Новый размер: {len(X):,} семплов")
-
-            # Обновляем timestamps
-            # Простая стратегия: если увеличилось - дублируем случайно,
-            # если уменьшилось - обрезаем
-            if len(timestamps) < len(X):
-                # Oversample: дублируем timestamps
-                indices = np.random.choice(len(timestamps), len(X), replace=True)
-                timestamps = timestamps[indices]
-            elif len(timestamps) > len(X):
-                # Undersample: обрезаем timestamps
-                timestamps = timestamps[:len(X)]
+        # NOTE: Resampling теперь применяется ПОСЛЕ split (см. ниже)
+        # Это предотвращает data leakage и обеспечивает честную оценку на val/test
 
         # ===== СОЗДАНИЕ SEQUENCES =====
         logger.info("\n" + "="*80)
@@ -574,6 +605,10 @@ class HistoricalDataLoader:
             sequences, seq_labels, seq_timestamps
         )
 
+        # ===== RESAMPLING ТОЛЬКО ДЛЯ TRAIN (после split!) =====
+        if apply_resampling and self.balancing_strategy:
+            train_data = self._apply_train_resampling(train_data)
+
         # Создаем DataLoaders
         dataloaders = self.create_dataloaders(
             train_data, val_data, test_data
@@ -584,7 +619,7 @@ class HistoricalDataLoader:
             'dataloaders': dataloaders,
             'statistics': {
                 'total_sequences': len(sequences),
-                'train_samples': len(train_data[0]),
+                'train_samples': len(train_data[0]),  # После resampling
                 'val_samples': len(val_data[0]),
                 'test_samples': len(test_data[0]) if test_data else 0,
                 'sequence_length': self.config.sequence_length,
@@ -847,36 +882,8 @@ class HistoricalDataLoader:
         # После удаления NaN, конвертируем labels в int64 для PyTorch
         y = y.astype(np.int64)
 
-        # 5. Resampling (если включен)
-        if apply_resampling and self.balancing_strategy:
-            logger.info("\n" + "="*80)
-            logger.info("ПРИМЕНЕНИЕ CLASS BALANCING")
-            logger.info("="*80)
-
-            # Применяем балансировку
-            X, y = self.balancing_strategy.balance_dataset(X, y)
-
-            # Логируем новое распределение
-            class_dist_after = Counter(y)
-            logger.info(f"Распределение классов ПОСЛЕ resampling:")
-            for label, count in sorted(class_dist_after.items()):
-                pct = 100 * count / len(y)
-                logger.info(f"  • Class {label}: {count:,} ({pct:.1f}%)")
-
-            logger.info(f"Новый размер данных: {len(X):,} samples")
-
-            # Обновить timestamps
-            # Простая стратегия: если размер изменился, пересэмплируем timestamps
-            if len(timestamps) != len(X):
-                if len(timestamps) < len(X):
-                    # Oversample: дублируем timestamps
-                    indices = np.random.choice(len(timestamps), len(X), replace=True)
-                    timestamps = timestamps[indices]
-                    logger.info(f"Oversampled timestamps to {len(timestamps)}")
-                else:
-                    # Undersample: обрезаем timestamps
-                    timestamps = timestamps[:len(X)]
-                    logger.info(f"Undersampled timestamps to {len(timestamps)}")
+        # NOTE: Resampling теперь применяется ПОСЛЕ split (см. ниже)
+        # Это предотвращает data leakage и обеспечивает честную оценку на val/test
 
         # Проверить минимальное количество данных
         min_samples_required = self.config.sequence_length * 10
@@ -915,6 +922,11 @@ class HistoricalDataLoader:
         logger.info(f"  • Val: {len(val_data[0]):,} sequences")
         if test_data:
             logger.info(f"  • Test: {len(test_data[0]):,} sequences")
+
+        # ===== RESAMPLING ТОЛЬКО ДЛЯ TRAIN (после split!) =====
+        if apply_resampling and self.balancing_strategy:
+            train_data = self._apply_train_resampling(train_data)
+            logger.info(f"  • Train (after resampling): {len(train_data[0]):,} sequences")
 
         # 8. Create DataLoaders (переиспользуем существующий метод)
         logger.info("\n" + "="*80)
