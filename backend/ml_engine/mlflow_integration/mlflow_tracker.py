@@ -205,7 +205,17 @@ class MLflowTracker:
             return
 
         for key, value in metrics.items():
-            mlflow.log_metric(key, value, step=step)
+            try:
+                # Handle NaN values - MLflow doesn't accept them directly
+                if isinstance(value, float) and (value != value):  # NaN check
+                    value = 0.0
+                mlflow.log_metric(key, value, step=step)
+            except Exception as e:
+                # Ignore duplicate key errors (can happen with rapid logging)
+                if "UniqueViolation" in str(e) or "UNIQUE constraint" in str(e):
+                    logger.debug(f"Metric {key} already logged, skipping duplicate")
+                else:
+                    logger.warning(f"Failed to log metric {key}: {e}")
 
         logger.debug(f"Logged {len(metrics)} metrics (step={step})")
 
@@ -234,13 +244,31 @@ class MLflowTracker:
             logger.warning("No active run, cannot log model")
             return ""
 
-        # Log model
-        model_info = mlflow.pytorch.log_model(
-            pytorch_model=model,
-            artifact_path=model_name,
-            signature=signature,
-            input_example=input_example
-        )
+        # Log model with error handling for duplicate metrics
+        model_info = None
+        try:
+            model_info = mlflow.pytorch.log_model(
+                pytorch_model=model,
+                artifact_path=model_name,
+                signature=signature,
+                input_example=input_example
+            )
+        except Exception as e:
+            error_str = str(e)
+            # Handle duplicate key errors from MLflow's internal metric logging
+            if "UniqueViolation" in error_str or "UNIQUE constraint" in error_str:
+                logger.warning(f"Duplicate metric key in MLflow, saving model without metrics: {e}")
+                # Try saving model as artifact directly
+                import tempfile
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    model_path = f"{tmpdir}/{model_name}.pt"
+                    torch.save(model.state_dict(), model_path)
+                    mlflow.log_artifact(model_path, artifact_path=model_name)
+                logger.info(f"Model saved as artifact: {model_name}")
+                return f"runs:/{self.current_run_id}/{model_name}"
+            else:
+                logger.error(f"Failed to log model: {e}")
+                raise
 
         # Log additional artifacts
         if artifacts:
