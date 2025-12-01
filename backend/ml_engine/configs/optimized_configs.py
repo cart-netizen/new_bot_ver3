@@ -176,9 +176,8 @@ class OptimizedTrainerConfig:
     min_learning_rate: float = 1e-7
     max_learning_rate: float = 1e-4  # Для OneCycleLR
     
-    # Batch Size: выбирается исходя из GPU памяти
-    # 12GB GPU (RTX 3060): 32-48, 24GB GPU: 64-128, 40GB+ GPU: 128-256
-    batch_size: int = 32  # Уменьшено для 12GB GPU (было: 128)
+    # Batch Size: без mixed precision можно использовать больший batch
+    batch_size: int = 128  # Стабильнее с use_mixed_precision=False
     
     # КРИТИЧНО: Weight Decay добавлен!
     # L2 регуляризация предотвращает overfitting
@@ -223,8 +222,8 @@ class OptimizedTrainerConfig:
 
     # === Memory Optimization ===
     gradient_accumulation_steps: int = 1  # Accumulate gradients (effective_batch = batch_size * steps)
-    use_mixed_precision: bool = True  # FP16 training
-    use_gradient_checkpointing: bool = False  # Enable only if OOM (may conflict with mixed precision)
+    use_mixed_precision: bool = False  # FP16 training (отключено - вызывает NaN)
+    use_gradient_checkpointing: bool = False  # Enable only if OOM
 
     # === Checkpoint ===
     checkpoint_dir: str = "checkpoints/models"
@@ -352,7 +351,7 @@ class OptimizedDataConfig:
     test_ratio: float = 0.15
     
     # === DataLoader параметры (СИНХРОНИЗИРОВАНЫ) ===
-    batch_size: int = 32  # Синхронизировано с TrainerConfig (уменьшено для 12GB GPU)
+    batch_size: int = 128  # Синхронизировано с TrainerConfig
     shuffle: bool = True
     num_workers: int = 4  # Оптимально для 12GB GPU
     pin_memory: bool = True
@@ -411,7 +410,7 @@ class ConfigPresets:
         trainer_config = OptimizedTrainerConfig(
             epochs=150,
             learning_rate=5e-5,
-            batch_size=32,  # Уменьшено для 12GB GPU
+            batch_size=128,
             weight_decay=0.01,
             label_smoothing=0.1,
             use_augmentation=True,
@@ -449,7 +448,7 @@ class ConfigPresets:
         trainer_config = OptimizedTrainerConfig(
             epochs=100,
             learning_rate=1e-4,
-            batch_size=48,  # Уменьшено для 12GB GPU
+            batch_size=128,
             weight_decay=0.005,
             label_smoothing=0.05,
             use_augmentation=True,
@@ -488,7 +487,7 @@ class ConfigPresets:
         trainer_config = OptimizedTrainerConfig(
             epochs=30,
             learning_rate=1e-4,
-            batch_size=64,  # Быстрый эксперимент - можно больше
+            batch_size=128,
             weight_decay=0.001,
             label_smoothing=0.0,
             use_augmentation=False,
@@ -525,7 +524,7 @@ class ConfigPresets:
         trainer_config = OptimizedTrainerConfig(
             epochs=200,
             learning_rate=3e-5,  # Ещё меньше LR
-            batch_size=32,  # Уменьшено для 12GB GPU
+            batch_size=128,
             weight_decay=0.02,  # Ещё больше регуляризации
             label_smoothing=0.15,
             use_augmentation=True,
