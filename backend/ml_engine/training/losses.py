@@ -269,8 +269,8 @@ class AsymmetricFocalLoss(nn.Module):
         p_t = probs.gather(1, targets.unsqueeze(1)).squeeze(1)
         
         # Asymmetric gamma: выше для negative
-        # Определяем "positive" как non-HOLD классы (1 и 2)
-        is_positive = (targets != 0)  # HOLD = 0
+        # Определяем "positive" как non-HOLD классы (0=SELL и 2=BUY)
+        is_positive = (targets != 1)  # HOLD = 1
         
         gamma = torch.where(
             is_positive,
@@ -489,26 +489,26 @@ class DirectionalAccuracyLoss(nn.Module):
         """
         Args:
             logits: (batch, num_classes)
-            targets: (batch,) - 0=HOLD, 1=BUY, 2=SELL
-        
+            targets: (batch,) - 0=SELL, 1=HOLD, 2=BUY
+
         Returns:
             loss: scalar
         """
         base_loss = self.base_criterion(logits, targets)
-        
+
         # Predictions
         predictions = torch.argmax(logits, dim=-1)
-        
+
         # Penalty weights
-        # BUY=1, SELL=2 → opposite означает |pred - target| = 1 и оба != 0
+        # SELL=0, BUY=2 → opposite означает pred/target из {0,2} и противоположны
         is_opposite = (
-            ((predictions == 1) & (targets == 2)) |
-            ((predictions == 2) & (targets == 1))
+            ((predictions == 0) & (targets == 2)) |  # Pred SELL, target BUY
+            ((predictions == 2) & (targets == 0))    # Pred BUY, target SELL
         )
-        
+
         is_neutral_error = (
-            ((predictions == 0) & (targets != 0)) |  # Pred HOLD, target BUY/SELL
-            ((predictions != 0) & (targets == 0))    # Pred BUY/SELL, target HOLD
+            ((predictions == 1) & (targets != 1)) |  # Pred HOLD, target SELL/BUY
+            ((predictions != 1) & (targets == 1))    # Pred SELL/BUY, target HOLD
         )
         
         # Apply penalties

@@ -399,10 +399,10 @@ class BacktestEvaluator:
         """
         Рассчитать trading метрики.
 
-        Простая симуляция:
-        - BUY (1): открываем long, закрываем через 1 период
-        - SELL (2): открываем short, закрываем через 1 период
-        - HOLD (0): не торгуем
+        Простая симуляция (СТАНДАРТНЫЙ МАППИНГ: SELL=0, HOLD=1, BUY=2):
+        - SELL (0): открываем short, закрываем через 1 период
+        - HOLD (1): не торгуем
+        - BUY (2): открываем long, закрываем через 1 период
         """
         capital = self.config.initial_capital
         position_value = capital * self.config.position_size
@@ -422,8 +422,8 @@ class BacktestEvaluator:
                 equity_curve.append(equity_curve[-1])
                 continue
 
-            # Пропускаем HOLD
-            if pred == 0:
+            # Пропускаем HOLD (1)
+            if pred == 1:
                 equity_curve.append(equity_curve[-1])
                 continue
 
@@ -431,10 +431,14 @@ class BacktestEvaluator:
             entry_price = prices[i]
             exit_price = prices[i + 1]
 
-            if pred == 1:  # BUY
+            if pred == 2:  # BUY
                 pnl_percent = (exit_price - entry_price) / entry_price
-            else:  # SELL
+            elif pred == 0:  # SELL
                 pnl_percent = (entry_price - exit_price) / entry_price
+            else:
+                # Неизвестный pred, пропускаем
+                equity_curve.append(equity_curve[-1])
+                continue
 
             # Учитываем комиссию и проскальзывание
             pnl_percent -= (commission + slippage) * 2  # вход и выход
@@ -445,7 +449,7 @@ class BacktestEvaluator:
             trades.append({
                 'entry_price': entry_price,
                 'exit_price': exit_price,
-                'direction': 'BUY' if pred == 1 else 'SELL',
+                'direction': 'BUY' if pred == 2 else 'SELL',
                 'pnl': pnl,
                 'pnl_percent': pnl_percent,
                 'correct': (pred == actual)

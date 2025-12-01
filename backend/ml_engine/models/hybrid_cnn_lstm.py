@@ -39,7 +39,7 @@ class ModelConfig:
   attention_units: int = 128
 
   # Output параметры
-  num_classes: int = 3  # BUY=1, HOLD=0, SELL=2
+  num_classes: int = 3  # SELL=0, HOLD=1, BUY=2
 
   # Regularization
   dropout: float = 0.3
