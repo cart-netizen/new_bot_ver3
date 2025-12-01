@@ -458,11 +458,17 @@ class ModelTrainerV2:
         logger.info("=" * 80 + "\n")
         
         # Progress bar для эпох
+        # position=0 и dynamic_ncols=False для стабильного вывода в веб-консоли
         epoch_pbar = tqdm(
             range(self.config.epochs),
             desc="Training",
             unit="epoch",
-            disable=not self.config.use_tqdm
+            disable=not self.config.use_tqdm,
+            position=0,
+            leave=True,
+            dynamic_ncols=False,
+            ncols=100,
+            mininterval=1.0  # Обновлять не чаще раза в секунду
         )
         
         for epoch in epoch_pbar:
@@ -571,17 +577,12 @@ class ModelTrainerV2:
         all_predictions = []
         all_labels = []
         
-        # Progress bar с mininterval для предотвращения задвоения строк
-        train_pbar = tqdm(
-            train_loader,
-            desc=f"  Train Epoch {epoch_num}",
-            leave=False,
-            unit="batch",
-            disable=not self.config.use_tqdm,
-            mininterval=0.5  # Обновлять не чаще чем раз в 0.5 сек
-        )
-        
-        for batch_idx, batch in enumerate(train_pbar):
+        # ИСПРАВЛЕНИЕ: Используем один progress bar без вложенных для веб-консоли
+        # disable=True для batch-level, используем только logging
+        total_batches = len(train_loader)
+        log_interval = max(1, total_batches // 10)  # Логируем 10 раз за эпоху
+
+        for batch_idx, batch in enumerate(train_loader):
             # Получаем данные (batch - это Dict[str, Tensor])
             sequences: torch.Tensor = batch['sequence'].to(self.device)
             labels: torch.Tensor = batch['label'].to(self.device)
@@ -699,8 +700,13 @@ class ModelTrainerV2:
                 all_labels.extend(labels.cpu().numpy())
             all_predictions.extend(predictions)
 
-            # Update progress bar
-            train_pbar.set_postfix({'loss': f'{original_loss:.4f}'})
+            # Логирование прогресса (вместо tqdm для предотвращения дублирования строк)
+            if (batch_idx + 1) % log_interval == 0 or batch_idx == total_batches - 1:
+                progress_pct = (batch_idx + 1) / total_batches * 100
+                logger.info(
+                    f"  Train Epoch {epoch_num}: {batch_idx + 1}/{total_batches} "
+                    f"({progress_pct:.0f}%) - loss: {original_loss:.4f}"
+                )
         
         avg_loss = total_loss / len(train_loader)
         accuracy = accuracy_score(all_labels, all_predictions)
@@ -719,18 +725,13 @@ class ModelTrainerV2:
         all_predictions = []
         all_labels = []
         
-        # Progress bar с mininterval для предотвращения задвоения строк
-        val_pbar = tqdm(
-            val_loader,
-            desc=f"  Val Epoch {epoch_num}",
-            leave=False,
-            unit="batch",
-            disable=not self.config.use_tqdm,
-            mininterval=0.5  # Обновлять не чаще чем раз в 0.5 сек
-        )
-        
+        # ИСПРАВЛЕНИЕ: Убираем вложенный tqdm для предотвращения дублирования строк
+        total_batches = len(val_loader)
+        log_interval = max(1, total_batches // 5)  # Логируем 5 раз за валидацию
+        batch_idx = 0
+
         with torch.no_grad():
-            for batch in val_pbar:
+            for batch in val_loader:
                 sequences = batch['sequence'].to(self.device)
                 labels = batch['label'].to(self.device)
                 
@@ -748,8 +749,15 @@ class ModelTrainerV2:
                 ).cpu().numpy()
                 all_predictions.extend(predictions)
                 all_labels.extend(labels.cpu().numpy())
-                
-                val_pbar.set_postfix({'loss': f'{loss.item():.4f}'})
+
+                # Логирование прогресса (вместо tqdm для предотвращения дублирования)
+                batch_idx += 1
+                if batch_idx % log_interval == 0 or batch_idx == total_batches:
+                    progress_pct = batch_idx / total_batches * 100
+                    logger.info(
+                        f"  Val Epoch {epoch_num}: {batch_idx}/{total_batches} "
+                        f"({progress_pct:.0f}%) - loss: {loss.item():.4f}"
+                    )
         
         avg_loss = total_loss / len(val_loader)
         

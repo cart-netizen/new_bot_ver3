@@ -584,6 +584,10 @@ class TrainingOrchestrator:
             all_predictions = []
             all_labels = []
 
+            logger.info("=" * 80)
+            logger.info("ОЦЕНКА МОДЕЛИ НА TEST SET")
+            logger.info("=" * 80)
+
             with torch.no_grad():
                 for batch in test_loader:
                     sequences = batch['sequence'].to(device)
@@ -607,12 +611,31 @@ class TrainingOrchestrator:
                     all_predictions.extend(predictions.cpu().numpy())
                     all_labels.extend(labels.cpu().numpy())
 
+            # Convert to numpy
+            all_predictions = np.array(all_predictions)
+            all_labels = np.array(all_labels)
+
+            # Log class distribution for debugging
+            from collections import Counter
+            label_dist = Counter(all_labels)
+            pred_dist = Counter(all_predictions)
+            logger.info(f"Test set size: {len(all_labels)}")
+            logger.info(f"Labels distribution: {dict(label_dist)}")
+            logger.info(f"Predictions distribution: {dict(pred_dist)}")
+
+            # Check for edge cases
+            if len(all_labels) == 0:
+                logger.warning("Test set is empty! Returning zero metrics.")
+                return {'accuracy': 0.0, 'precision': 0.0, 'recall': 0.0, 'f1': 0.0}
+
             # Calculate metrics
             from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 
             accuracy = accuracy_score(all_labels, all_predictions)
             precision, recall, f1, _ = precision_recall_fscore_support(
-                all_labels, all_predictions, average='weighted'
+                all_labels, all_predictions,
+                average='weighted',
+                zero_division=0  # Avoid warnings for classes with no predictions
             )
 
             metrics = {
@@ -622,13 +645,20 @@ class TrainingOrchestrator:
                 'f1': float(f1)
             }
 
-            logger.info(f"Test metrics: {metrics}")
+            # КРИТИЧНО: Логируем метрики ПЕРЕД записью в Model Registry
+            logger.info("=" * 80)
+            logger.info("TEST METRICS (будут записаны в Model Registry):")
+            logger.info(f"  • Accuracy:  {accuracy:.4f}")
+            logger.info(f"  • Precision: {precision:.4f}")
+            logger.info(f"  • Recall:    {recall:.4f}")
+            logger.info(f"  • F1 Score:  {f1:.4f}")
+            logger.info("=" * 80)
 
             return metrics
 
         except Exception as e:
-            logger.error(f"Evaluation failed: {e}")
-            return {}
+            logger.error(f"Evaluation failed: {e}", exc_info=True)
+            return {'accuracy': 0.0, 'precision': 0.0, 'recall': 0.0, 'f1': 0.0}
 
     async def _export_to_onnx(
         self,
@@ -702,26 +732,40 @@ _training_orchestrator_instance: Optional[TrainingOrchestrator] = None
 def get_training_orchestrator(
     model_config: Optional[ModelConfig] = None,
     trainer_config: Optional[TrainerConfig] = None,
-    data_config: Optional[DataConfig] = None
+    data_config: Optional[DataConfig] = None,
+    balancing_config: Optional[ClassBalancingConfig] = None,
+    force_new: bool = False
 ) -> TrainingOrchestrator:
     """
-    Получить singleton instance Training Orchestrator
+    Получить instance Training Orchestrator
 
     Args:
         model_config: Конфигурация модели
         trainer_config: Конфигурация training
         data_config: Конфигурация данных
+        balancing_config: Конфигурация балансировки классов
+        force_new: Если True, создаёт новый инстанс вместо singleton
 
     Returns:
         TrainingOrchestrator instance
     """
     global _training_orchestrator_instance
 
+    # Если force_new=True или переданы конфиги, создаём новый инстанс
+    if force_new or any([model_config, trainer_config, data_config, balancing_config]):
+        return TrainingOrchestrator(
+            model_config=model_config,
+            trainer_config=trainer_config,
+            data_config=data_config,
+            balancing_config=balancing_config
+        )
+
     if _training_orchestrator_instance is None:
         _training_orchestrator_instance = TrainingOrchestrator(
             model_config=model_config,
             trainer_config=trainer_config,
-            data_config=data_config
+            data_config=data_config,
+            balancing_config=balancing_config
         )
 
     return _training_orchestrator_instance

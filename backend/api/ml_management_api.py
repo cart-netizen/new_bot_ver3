@@ -26,6 +26,7 @@ from backend.ml_engine.training_orchestrator import get_training_orchestrator
 from backend.ml_engine.models.hybrid_cnn_lstm_v2 import ModelConfigV2 as ModelConfig
 from backend.ml_engine.training.model_trainer_v2 import TrainerConfigV2 as TrainerConfig
 from backend.ml_engine.training.data_loader import DataConfig
+from backend.ml_engine.training.class_balancing import ClassBalancingConfig
 from backend.ml_engine.inference.model_registry import get_model_registry, ModelStage
 from backend.ml_engine.mlflow_integration.mlflow_tracker import get_mlflow_tracker
 from backend.ml_engine.auto_retraining.retraining_pipeline import (
@@ -327,11 +328,30 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
             for k, v in _to_dict(request.data_config).items():
                 setattr(data_config, k, v)
 
-        # Create orchestrator
+        # ===== СОЗДАЕМ CLASS BALANCING CONFIG =====
+        # Передаём параметры из запроса для балансировки классов
+        balancing_config = ClassBalancingConfig(
+            use_class_weights=True,  # Всегда включено для борьбы с дисбалансом
+            use_focal_loss=request.use_focal_loss,
+            focal_gamma=request.focal_gamma,
+            use_oversampling=request.use_oversampling,
+            oversample_strategy="auto",
+            oversample_ratio=request.oversample_ratio,
+            use_undersampling=not request.use_oversampling,  # Undersampling если oversampling отключен
+            undersample_strategy="auto",
+            verbose=True  # КРИТИЧНО: включаем логи балансировки
+        )
+
+        logger.info(f"Class Balancing Config: oversampling={request.use_oversampling}, "
+                   f"ratio={request.oversample_ratio}, focal_loss={request.use_focal_loss}")
+
+        # Create orchestrator with all configs (force_new=True для нового инстанса)
         orchestrator = get_training_orchestrator(
             model_config=model_config,
             trainer_config=trainer_config,
-            data_config=data_config
+            data_config=data_config,
+            balancing_config=balancing_config,
+            force_new=True  # Всегда создаём новый инстанс для каждого обучения
         )
 
         # Train
