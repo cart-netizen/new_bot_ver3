@@ -111,11 +111,13 @@ class TrainingRequest(BaseModel):
     use_augmentation: bool = Field(default=True, description="Enable data augmentation")
     gaussian_noise_std: float = Field(default=0.01, ge=0, le=0.1, description="Gaussian noise std (v2: 0.01)")
 
-    # Class Balancing
-    use_focal_loss: bool = Field(default=True, description="Use Focal Loss (v2: True)")
-    focal_gamma: float = Field(default=2.5, ge=0, le=5, description="Focal Loss gamma (v2: 2.5)")
-    use_oversampling: bool = Field(default=True, description="Use oversampling (v2: True)")
-    oversample_ratio: float = Field(default=0.5, ge=0, le=1, description="Oversample ratio (v2: 0.5)")
+    # Class Balancing - ТОЛЬКО Focal Loss по умолчанию (избежание перекомпенсации)
+    use_focal_loss: bool = Field(default=True, description="Use Focal Loss (recommended)")
+    focal_gamma: float = Field(default=2.5, ge=0, le=5, description="Focal Loss gamma (2.5 = strong focus on hard examples)")
+    use_class_weights: bool = Field(default=False, description="Use class weights (disable if using Focal Loss)")
+    use_oversampling: bool = Field(default=False, description="Use oversampling (disable to avoid over-compensation)")
+    oversample_ratio: float = Field(default=0.5, ge=0, le=1, description="Oversample ratio")
+    use_undersampling: bool = Field(default=False, description="Use undersampling (not recommended)")
 
     # Model Architecture (CNN channels и LSTM hidden можно передать через ml_model_config)
 
@@ -329,21 +331,23 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
                 setattr(data_config, k, v)
 
         # ===== СОЗДАЕМ CLASS BALANCING CONFIG =====
-        # Передаём параметры из запроса для балансировки классов
+        # ВАЖНО: Используем значения из запроса, НЕ хардкодим!
+        # По умолчанию включён ТОЛЬКО Focal Loss для избежания перекомпенсации
         balancing_config = ClassBalancingConfig(
-            use_class_weights=True,  # Всегда включено для борьбы с дисбалансом
-            use_focal_loss=request.use_focal_loss,
+            use_class_weights=request.use_class_weights,  # По умолчанию False
+            use_focal_loss=request.use_focal_loss,  # По умолчанию True
             focal_gamma=request.focal_gamma,
-            use_oversampling=request.use_oversampling,
+            use_oversampling=request.use_oversampling,  # По умолчанию False
             oversample_strategy="auto",
             oversample_ratio=request.oversample_ratio,
-            use_undersampling=not request.use_oversampling,  # Undersampling если oversampling отключен
+            use_undersampling=request.use_undersampling,  # По умолчанию False
             undersample_strategy="auto",
             verbose=True  # КРИТИЧНО: включаем логи балансировки
         )
 
-        logger.info(f"Class Balancing Config: oversampling={request.use_oversampling}, "
-                   f"ratio={request.oversample_ratio}, focal_loss={request.use_focal_loss}")
+        logger.info(f"Class Balancing Config: class_weights={request.use_class_weights}, "
+                   f"focal_loss={request.use_focal_loss}, oversampling={request.use_oversampling}, "
+                   f"undersampling={request.use_undersampling}")
 
         # Create orchestrator with all configs (force_new=True для нового инстанса)
         orchestrator = get_training_orchestrator(
