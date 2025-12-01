@@ -402,7 +402,7 @@ class TrainingOrchestrator:
 
             logger.info(
                 f"Training completed successfully: "
-                f"version={timestamp}, accuracy={test_accuracy:.3f}, promoted={promoted}"
+                f"version={timestamp}, accuracy={promotion_accuracy:.3f}, promoted={promoted}"
             )
 
             return result
