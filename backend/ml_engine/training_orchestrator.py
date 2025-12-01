@@ -696,7 +696,7 @@ class TrainingOrchestrator:
                 average=None,
                 zero_division=0
             )
-            class_names = ['HOLD', 'BUY', 'SELL']
+            class_names = ['SELL', 'HOLD', 'BUY']  # 0=SELL, 1=HOLD, 2=BUY
             tqdm.write("[Test] Per-class metrics:")
             for i, name in enumerate(class_names):
                 if i < len(precision_per_class):

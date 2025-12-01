@@ -303,11 +303,11 @@ class MLModelServer:
     self.total_predictions = 0
     self.total_inference_time = 0.0
 
-    # Маппинг классов на направления
+    # Маппинг классов на направления (СТАНДАРТ: 0=SELL, 1=HOLD, 2=BUY)
     self.direction_map = {
-      0: "HOLD",
-      1: "BUY",
-      2: "SELL"
+      0: "SELL",
+      1: "HOLD",
+      2: "BUY"
     }
 
     logger.info("Инициализирован MLModelServer")
@@ -383,14 +383,14 @@ class MLModelServer:
       confidence = predictions['confidence'].item()
       expected_return = predictions['expected_return'].item()
 
-      # Probabilities если запрошены
+      # Probabilities если запрошены (СТАНДАРТ: probs[0]=SELL, probs[1]=HOLD, probs[2]=BUY)
       probabilities = None
       if request.return_probabilities:
         probs = predictions['direction_probs'][0].cpu().numpy()
         probabilities = {
-          "BUY": float(probs[1]),
-          "HOLD": float(probs[0]),
-          "SELL": float(probs[2])
+          "SELL": float(probs[0]),
+          "HOLD": float(probs[1]),
+          "BUY": float(probs[2])
         }
 
       inference_time = (time.time() - start_time) * 1000  # ms

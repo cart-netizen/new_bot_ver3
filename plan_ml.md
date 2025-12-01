@@ -756,7 +756,7 @@ class ModelServer:
         direction_probs = torch.softmax(direction_logits, dim=1)
         predicted_class = torch.argmax(direction_probs, dim=1).item()
         
-        direction_map = {0: "HOLD", 1: "BUY", 2: "SELL"}
+        direction_map = {0: "SELL", 1: "HOLD", 2: "BUY"}  # СТАНДАРТ
         
         inference_time_ms = (time.perf_counter() - start_time) * 1000
         

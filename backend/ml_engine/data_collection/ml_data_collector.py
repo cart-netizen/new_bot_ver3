@@ -252,7 +252,7 @@ class MLDataCollector:
         # ===== FUTURE TARGETS (заполнятся через preprocessing) =====
         # Эти поля будут рассчитаны ПОСЛЕ сбора данных,
         # когда мы будем знать, что произошло с ценой через N секунд
-        "future_direction_10s": None,  # 1=up, 0=neutral, -1=down
+        "future_direction_10s": None,  # После preprocessing: 0=DOWN, 1=NEUTRAL, 2=UP
         "future_direction_30s": None,
         "future_direction_60s": None,
         "future_movement_10s": None,  # % изменения цены
