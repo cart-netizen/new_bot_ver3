@@ -129,11 +129,23 @@ class TrainingRequest(BaseModel):
     use_rolling_normalization: bool = Field(default=False, description="Enable rolling window normalization")
     rolling_window_size: int = Field(default=500, ge=100, le=2000, description="Rolling window size")
 
-    # Labeling Method
+    # Labeling Method - Triple Barrier
     labeling_method: str = Field(
         default="fixed_threshold",
         description="Labeling method: 'fixed_threshold' or 'triple_barrier'"
     )
+    # Triple Barrier параметры (только если labeling_method='triple_barrier')
+    tb_tp_multiplier: float = Field(default=1.5, ge=0.5, le=5.0, description="Take Profit = ATR * multiplier")
+    tb_sl_multiplier: float = Field(default=1.0, ge=0.5, le=5.0, description="Stop Loss = ATR * multiplier")
+    tb_max_holding_period: int = Field(default=24, ge=6, le=100, description="Max holding period in bars")
+
+    # ===== CPCV (Combinatorial Purged Cross-Validation) =====
+    use_cpcv: bool = Field(default=False, description="Use CPCV instead of standard train/val/test split")
+    cpcv_n_splits: int = Field(default=6, ge=3, le=12, description="Number of groups for CPCV")
+    cpcv_n_test_splits: int = Field(default=2, ge=1, le=4, description="Number of test groups per combination")
+
+    # PBO (Probability of Backtest Overfitting)
+    calculate_pbo: bool = Field(default=False, description="Calculate PBO after training (requires CPCV)")
 
     # Model Architecture (CNN channels и LSTM hidden можно передать через ml_model_config)
 
@@ -370,6 +382,57 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
             for k, v in _to_dict(request.data_config).items():
                 setattr(data_config, k, v)
 
+        # ===== TRIPLE BARRIER PREPROCESSING =====
+        if request.labeling_method == "triple_barrier":
+            logger.info("Applying Triple Barrier labeling...")
+            if current_training_job:
+                current_training_job["progress"]["stage"] = "Triple Barrier preprocessing"
+
+            try:
+                from backend.ml_engine.features.labeling import TripleBarrierLabeler, TripleBarrierConfig
+                from backend.ml_engine.feature_store.feature_store import get_feature_store
+
+                tb_config = TripleBarrierConfig(
+                    tp_multiplier=request.tb_tp_multiplier,
+                    sl_multiplier=request.tb_sl_multiplier,
+                    max_holding_period=request.tb_max_holding_period
+                )
+                labeler = TripleBarrierLabeler(tb_config)
+
+                # Get Feature Store data
+                feature_store = get_feature_store()
+                df = await feature_store.get_training_data(days=90)
+
+                if df is not None and len(df) > 0:
+                    # Apply Triple Barrier
+                    result = labeler.fit_transform(df)
+                    df['future_direction_60s'] = result.labels
+
+                    # Save back to Feature Store (or temp location)
+                    logger.info(f"Triple Barrier applied: {len(result.labels)} samples relabeled")
+                    logger.info(f"Label distribution: SELL={sum(result.labels==0)}, HOLD={sum(result.labels==1)}, BUY={sum(result.labels==2)}")
+
+                    # Store relabeled data for training
+                    data_config.triple_barrier_data = df
+                else:
+                    logger.warning("No data in Feature Store for Triple Barrier, using fixed_threshold")
+
+            except Exception as e:
+                logger.error(f"Triple Barrier preprocessing failed: {e}")
+                logger.warning("Falling back to fixed_threshold labeling")
+
+        # ===== CPCV CONFIG =====
+        cpcv_config = None
+        if request.use_cpcv:
+            from backend.ml_engine.validation.cpcv import CPCVConfig
+            cpcv_config = CPCVConfig(
+                n_splits=request.cpcv_n_splits,
+                n_test_splits=request.cpcv_n_test_splits,
+                purge_length=data_config.sequence_length if hasattr(data_config, 'sequence_length') else 60,
+                embargo_length=int(60 * request.embargo_pct * 10)  # Approximate
+            )
+            logger.info(f"CPCV enabled: n_splits={cpcv_config.n_splits}, n_test_splits={cpcv_config.n_test_splits}")
+
         # ===== СОЗДАЕМ CLASS BALANCING CONFIG =====
         # ВАЖНО: Используем значения из запроса, НЕ хардкодим!
         # По умолчанию включён ТОЛЬКО Focal Loss для избежания перекомпенсации
@@ -395,6 +458,7 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
             trainer_config=trainer_config,
             data_config=data_config,
             balancing_config=balancing_config,
+            cpcv_config=cpcv_config,  # CPCV конфигурация (может быть None)
             force_new=True  # Всегда создаём новый инстанс для каждого обучения
         )
 
@@ -403,8 +467,39 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
             model_name=request.model_name,
             export_onnx=request.export_onnx,
             auto_promote=request.auto_promote,
-            min_accuracy_for_promotion=request.min_accuracy
+            min_accuracy_for_promotion=request.min_accuracy,
+            use_cpcv=request.use_cpcv  # Передаём флаг CPCV
         )
+
+        # ===== PBO CALCULATION =====
+        if request.calculate_pbo and request.use_cpcv and result.get("success"):
+            logger.info("Calculating Probability of Backtest Overfitting (PBO)...")
+            if current_training_job:
+                current_training_job["progress"]["stage"] = "PBO calculation"
+
+            try:
+                from backend.ml_engine.validation.cpcv import ProbabilityOfBacktestOverfitting
+
+                # Get CPCV results from training
+                cpcv_results = result.get("cpcv_results", {})
+                if cpcv_results and "sharpe_ratios" in cpcv_results:
+                    pbo_calculator = ProbabilityOfBacktestOverfitting()
+                    pbo_result = pbo_calculator.calculate(
+                        is_sharpe_ratios=cpcv_results.get("is_sharpe_ratios", []),
+                        oos_sharpe_ratios=cpcv_results.get("oos_sharpe_ratios", [])
+                    )
+
+                    result["pbo"] = {
+                        "probability": pbo_result.pbo,
+                        "is_overfit": pbo_result.is_overfit,
+                        "confidence_level": pbo_result.confidence_level,
+                        "interpretation": pbo_result.interpretation
+                    }
+                    logger.info(f"PBO calculated: {pbo_result.pbo:.2%} (overfit: {pbo_result.is_overfit})")
+                else:
+                    logger.warning("CPCV results not available for PBO calculation")
+            except Exception as e:
+                logger.error(f"PBO calculation failed: {e}")
 
         # Update job status
         current_training_job.update({

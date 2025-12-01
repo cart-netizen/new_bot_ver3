@@ -76,6 +76,17 @@ interface TrainingParams {
   // Labeling Method
   labeling_method: 'fixed_threshold' | 'triple_barrier';
 
+  // Triple Barrier Parameters (используются только если labeling_method='triple_barrier')
+  tb_tp_multiplier: number;  // Take Profit = ATR * multiplier
+  tb_sl_multiplier: number;  // Stop Loss = ATR * multiplier
+  tb_max_holding_period: number;  // Max bars to hold position
+
+  // ===== CPCV (Combinatorial Purged Cross-Validation) =====
+  use_cpcv: boolean;
+  cpcv_n_splits: number;  // Number of groups
+  cpcv_n_test_splits: number;  // Number of test groups per combination
+  calculate_pbo: boolean;  // Calculate Probability of Backtest Overfitting
+
   // ===== СТАНДАРТНЫЕ ПАРАМЕТРЫ =====
   export_onnx: boolean;
   auto_promote: boolean;
@@ -163,6 +174,22 @@ type TabType = 'training' | 'models' | 'retraining' | 'mlflow' | 'statistics' | 
 
 /**
  * ============================================================
+ * HELPER FUNCTIONS
+ * ============================================================
+ */
+
+// Factorial for calculating CPCV combinations C(n, k) = n! / (k! * (n-k)!)
+function factorial(n: number): number {
+  if (n <= 1) return 1;
+  let result = 1;
+  for (let i = 2; i <= n; i++) {
+    result *= i;
+  }
+  return result;
+}
+
+/**
+ * ============================================================
  * TOOLTIP COMPONENT
  * ============================================================
  */
@@ -247,6 +274,17 @@ export function MLManagementPage() {
 
     // Labeling Method
     labeling_method: 'fixed_threshold', // По умолчанию: фиксированный порог
+
+    // Triple Barrier Parameters (López de Prado)
+    tb_tp_multiplier: 1.5,            // Take Profit = 1.5 * ATR
+    tb_sl_multiplier: 1.0,            // Stop Loss = 1.0 * ATR
+    tb_max_holding_period: 24,        // 24 bars (при 1-minute = 24 минуты)
+
+    // ===== CPCV (Combinatorial Purged Cross-Validation) =====
+    use_cpcv: false,                  // По умолчанию выключено
+    cpcv_n_splits: 6,                 // Рекомендуется: 6 групп
+    cpcv_n_test_splits: 2,            // Рекомендуется: 2 тестовых группы
+    calculate_pbo: false,             // Расчёт PBO после обучения
 
     // ===== СТАНДАРТНЫЕ ПАРАМЕТРЫ =====
     export_onnx: true,
@@ -1431,17 +1469,213 @@ export function MLManagementPage() {
               </div>
 
               {trainingParams.labeling_method === 'triple_barrier' && (
-                <div className="flex items-center p-3 bg-yellow-900/30 border border-yellow-700/50 rounded-lg">
-                  <AlertTriangle className="h-5 w-5 text-yellow-500 mr-2 flex-shrink-0" />
-                  <span className="text-xs text-yellow-400">
-                    ⚠️ Требуется предварительная обработка данных! Запустите:<br />
-                    <code className="bg-gray-800 px-1 rounded text-green-400">
-                      python -m backend.ml_engine.scripts.preprocess_labels --method triple_barrier
-                    </code>
+                <div className="flex items-center p-3 bg-blue-900/30 border border-blue-700/50 rounded-lg">
+                  <Target className="h-5 w-5 text-blue-400 mr-2 flex-shrink-0" />
+                  <span className="text-xs text-blue-400">
+                    Triple Barrier автоматически применится при обучении.<br />
+                    Настройте параметры ниже.
                   </span>
                 </div>
               )}
             </div>
+
+            {/* Triple Barrier Parameters - показываем только если выбран triple_barrier */}
+            {trainingParams.labeling_method === 'triple_barrier' && (
+              <div className="mt-4 p-4 bg-blue-900/10 border border-blue-800/30 rounded-lg">
+                <p className="text-sm text-blue-400 mb-3 font-medium">
+                  <Target className="inline h-4 w-4 mr-1" />
+                  Triple Barrier Parameters
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {/* Take Profit Multiplier */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-400 mb-1">
+                      Take Profit (ATR ×)
+                      <Tooltip content="Множитель ATR для Take Profit. Например: 1.5 = TP на расстоянии 1.5 × ATR. Рекомендуется: 1.5-2.0">
+                        <Info className="inline-block ml-1 h-3 w-3 text-gray-500 cursor-help" />
+                      </Tooltip>
+                    </label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0.5"
+                      max="5.0"
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                      value={trainingParams.tb_tp_multiplier}
+                      onChange={e =>
+                        setTrainingParams({ ...trainingParams, tb_tp_multiplier: parseFloat(e.target.value) })
+                      }
+                      disabled={trainingStatus.is_training}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Рекомендуется: 1.5</p>
+                  </div>
+
+                  {/* Stop Loss Multiplier */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-400 mb-1">
+                      Stop Loss (ATR ×)
+                      <Tooltip content="Множитель ATR для Stop Loss. Например: 1.0 = SL на расстоянии 1.0 × ATR. Рекомендуется: 1.0-1.5">
+                        <Info className="inline-block ml-1 h-3 w-3 text-gray-500 cursor-help" />
+                      </Tooltip>
+                    </label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0.5"
+                      max="5.0"
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                      value={trainingParams.tb_sl_multiplier}
+                      onChange={e =>
+                        setTrainingParams({ ...trainingParams, tb_sl_multiplier: parseFloat(e.target.value) })
+                      }
+                      disabled={trainingStatus.is_training}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Рекомендуется: 1.0</p>
+                  </div>
+
+                  {/* Max Holding Period */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-400 mb-1">
+                      Max Holding (bars)
+                      <Tooltip content="Максимальное время удержания позиции в барах. Если TP/SL не сработал за это время - выход по времени. Рекомендуется: 24 для 1-min data.">
+                        <Info className="inline-block ml-1 h-3 w-3 text-gray-500 cursor-help" />
+                      </Tooltip>
+                    </label>
+                    <input
+                      type="number"
+                      step="1"
+                      min="6"
+                      max="100"
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                      value={trainingParams.tb_max_holding_period}
+                      onChange={e =>
+                        setTrainingParams({ ...trainingParams, tb_max_holding_period: parseInt(e.target.value) })
+                      }
+                      disabled={trainingStatus.is_training}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Рекомендуется: 24</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* CPCV Section */}
+          <div className="pt-4 border-t border-gray-700">
+            <p className="text-sm text-gray-400 mb-3">
+              <strong>CPCV & PBO</strong> — Combinatorial Purged Cross-Validation и Probability of Backtest Overfitting
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <label className="flex items-center gap-3 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  className="w-5 h-5 rounded border-gray-700 text-green-500 focus:ring-green-500"
+                  checked={trainingParams.use_cpcv}
+                  onChange={e =>
+                    setTrainingParams({ ...trainingParams, use_cpcv: e.target.checked })
+                  }
+                  disabled={trainingStatus.is_training}
+                />
+                <Tooltip content="CPCV создаёт все комбинации train/test сплитов без data leakage. Более надёжная оценка модели, но требует больше времени.">
+                  <span className="text-sm text-gray-300 group-hover:text-white transition-colors cursor-help">
+                    Enable CPCV (рекомендуется для финальной оценки)
+                  </span>
+                </Tooltip>
+              </label>
+
+              <label className="flex items-center gap-3 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  className="w-5 h-5 rounded border-gray-700 text-green-500 focus:ring-green-500"
+                  checked={trainingParams.calculate_pbo}
+                  onChange={e =>
+                    setTrainingParams({ ...trainingParams, calculate_pbo: e.target.checked })
+                  }
+                  disabled={trainingStatus.is_training || !trainingParams.use_cpcv}
+                />
+                <Tooltip content="PBO оценивает вероятность переобучения на бэктесте. Значение <0.5 = хорошо, >0.5 = вероятно переобучение. Требует включенного CPCV.">
+                  <span className={cn(
+                    "text-sm transition-colors cursor-help",
+                    trainingParams.use_cpcv ? "text-gray-300 group-hover:text-white" : "text-gray-500"
+                  )}>
+                    Calculate PBO (Probability of Backtest Overfitting)
+                  </span>
+                </Tooltip>
+              </label>
+            </div>
+
+            {/* CPCV Parameters - показываем только если CPCV включен */}
+            {trainingParams.use_cpcv && (
+              <div className="mt-4 p-4 bg-purple-900/10 border border-purple-800/30 rounded-lg">
+                <p className="text-sm text-purple-400 mb-3 font-medium">
+                  <Gauge className="inline h-4 w-4 mr-1" />
+                  CPCV Parameters
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* N Splits */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-400 mb-1">
+                      Number of Groups (N)
+                      <Tooltip content="Количество групп для разбиения данных. Больше групп = больше комбинаций = надёжнее, но дольше. Рекомендуется: 6">
+                        <Info className="inline-block ml-1 h-3 w-3 text-gray-500 cursor-help" />
+                      </Tooltip>
+                    </label>
+                    <input
+                      type="number"
+                      step="1"
+                      min="3"
+                      max="12"
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-purple-500"
+                      value={trainingParams.cpcv_n_splits}
+                      onChange={e =>
+                        setTrainingParams({ ...trainingParams, cpcv_n_splits: parseInt(e.target.value) })
+                      }
+                      disabled={trainingStatus.is_training}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Рекомендуется: 6</p>
+                  </div>
+
+                  {/* N Test Splits */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-400 mb-1">
+                      Test Groups per Combo (K)
+                      <Tooltip content="Количество тестовых групп в каждой комбинации. При N=6, K=2 получаем C(6,2)=15 комбинаций. Рекомендуется: 2">
+                        <Info className="inline-block ml-1 h-3 w-3 text-gray-500 cursor-help" />
+                      </Tooltip>
+                    </label>
+                    <input
+                      type="number"
+                      step="1"
+                      min="1"
+                      max="4"
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-purple-500"
+                      value={trainingParams.cpcv_n_test_splits}
+                      onChange={e =>
+                        setTrainingParams({ ...trainingParams, cpcv_n_test_splits: parseInt(e.target.value) })
+                      }
+                      disabled={trainingStatus.is_training}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Комбинаций: {Math.round(
+                        factorial(trainingParams.cpcv_n_splits) /
+                        (factorial(trainingParams.cpcv_n_test_splits) * factorial(trainingParams.cpcv_n_splits - trainingParams.cpcv_n_test_splits))
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Info about what CPCV does */}
+                <div className="mt-3 p-2 bg-gray-800/50 rounded text-xs text-gray-400">
+                  <strong>CPCV</strong> разбивает данные на {trainingParams.cpcv_n_splits} групп и создаёт все комбинации
+                  {' '}train/test сплитов с purging для предотвращения data leakage.
+                  {trainingParams.calculate_pbo && (
+                    <span className="text-purple-400">
+                      {' '}После обучения будет рассчитан <strong>PBO</strong> для оценки риска переобучения.
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
