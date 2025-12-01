@@ -942,55 +942,98 @@ class HistoricalDataLoader:
         sequences: np.ndarray,
         labels: np.ndarray,
         timestamps: np.ndarray,
-        n_splits: int = 5
+        n_splits: int = 5,
+        min_train_size: float = 0.3,
+        stratify_val: bool = True
     ) -> List[Tuple[Tuple[np.ndarray, np.ndarray], Tuple[np.ndarray, np.ndarray]]]:
         """
-        Walk-forward validation split.
+        Walk-forward validation split - правильный метод для временных рядов.
 
         Разбивает данные на n_splits фолдов, где каждый следующий фолд
-        использует все предыдущие данные для обучения.
+        использует растущее окно для обучения.
+
+        Преимущества:
+        - Нет утечки данных из будущего
+        - Более реалистичная оценка модели
+        - Тестирует на разных рыночных условиях
 
         Args:
             sequences: (N, seq_len, features)
             labels: (N,)
             timestamps: (N,)
             n_splits: Количество фолдов
+            min_train_size: Минимальный размер train (доля от всех данных)
+            stratify_val: Добавлять сэмплы для стратификации validation
 
         Returns:
             List из (train_data, val_data) для каждого фолда
         """
+        from tqdm import tqdm
+
         n_samples = len(sequences)
-        fold_size = n_samples // n_splits
+        min_train_samples = int(n_samples * min_train_size)
+        remaining = n_samples - min_train_samples
+        fold_size = remaining // n_splits
+
+        tqdm.write("\n" + "=" * 60)
+        tqdm.write("[Walk-Forward] НАСТРОЙКА КРОСС-ВАЛИДАЦИИ")
+        tqdm.write("=" * 60)
+        tqdm.write(f"  • Всего сэмплов: {n_samples:,}")
+        tqdm.write(f"  • Количество фолдов: {n_splits}")
+        tqdm.write(f"  • Мин. train размер: {min_train_samples:,} ({min_train_size:.0%})")
+        tqdm.write(f"  • Размер фолда: ~{fold_size:,}")
+        tqdm.write("=" * 60)
 
         splits = []
+        expected_classes = {0, 1, 2}  # HOLD, BUY, SELL
 
-        for i in range(1, n_splits + 1):
-            # Train: все данные до текущего фолда
-            train_end = fold_size * i
+        for i in range(n_splits):
+            # Train: от начала до конца текущего фолда
+            train_end = min_train_samples + fold_size * i
             train_sequences = sequences[:train_end]
             train_labels = labels[:train_end]
 
             # Validation: следующий фолд
-            if i < n_splits:
-                val_start = train_end
-                val_end = fold_size * (i + 1)
-                val_sequences = sequences[val_start:val_end]
-                val_labels = labels[val_start:val_end]
-            else:
-                # Последний фолд - используем оставшиеся данные
-                val_sequences = sequences[train_end:]
-                val_labels = labels[train_end:]
+            val_start = train_end
+            val_end = min(train_end + fold_size, n_samples)
+            val_sequences = sequences[val_start:val_end]
+            val_labels = labels[val_start:val_end]
+
+            # Stratify validation если нужно
+            if stratify_val:
+                val_dist = Counter(val_labels)
+                missing_classes = expected_classes - set(val_dist.keys())
+
+                if missing_classes:
+                    min_samples_per_class = max(50, len(val_sequences) // 20)
+
+                    for cls in missing_classes:
+                        cls_indices = np.where(train_labels == cls)[0]
+                        if len(cls_indices) > 0:
+                            n_to_add = min(min_samples_per_class, len(cls_indices))
+                            selected_indices = cls_indices[-n_to_add:]
+
+                            val_sequences = np.concatenate([val_sequences, train_sequences[selected_indices]], axis=0)
+                            val_labels = np.concatenate([val_labels, train_labels[selected_indices]], axis=0)
+
+                    # Shuffle validation
+                    shuffle_idx = np.random.permutation(len(val_sequences))
+                    val_sequences = val_sequences[shuffle_idx]
+                    val_labels = val_labels[shuffle_idx]
 
             splits.append((
                 (train_sequences, train_labels),
                 (val_sequences, val_labels)
             ))
 
-            logger.info(
-                f"Walk-forward фолд {i}/{n_splits}: "
-                f"train={len(train_sequences)}, val={len(val_sequences)}"
+            train_dist = Counter(train_labels)
+            val_dist = Counter(val_labels)
+            tqdm.write(
+                f"[Fold {i+1}/{n_splits}] train={len(train_sequences):,} {dict(train_dist)}, "
+                f"val={len(val_sequences):,} {dict(val_dist)}"
             )
 
+        tqdm.write("=" * 60 + "\n")
         return splits
 
 
