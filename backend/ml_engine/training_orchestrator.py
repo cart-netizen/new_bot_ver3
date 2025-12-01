@@ -324,12 +324,11 @@ class TrainingOrchestrator:
                     'precision': final_metrics.get('val_precision', 0),
                     'recall': final_metrics.get('val_recall', 0),
                     'f1': final_metrics.get('val_f1', 0),
-                    '_source': 'validation'  # Указываем источник метрик
                 }
                 tqdm.write(f"[Registry] Метрики для Model Registry (из validation):")
                 tqdm.write(f"  • Accuracy:  {registry_metrics['accuracy']:.4f}")
-                tqdm.write(f"  • Precision: {registry_metrics.get('precision', 'N/A')}")
-                tqdm.write(f"  • Recall:    {registry_metrics.get('recall', 'N/A')}")
+                tqdm.write(f"  • Precision: {registry_metrics.get('precision', 0):.4f}")
+                tqdm.write(f"  • Recall:    {registry_metrics.get('recall', 0):.4f}")
                 tqdm.write(f"  • F1 Score:  {registry_metrics['f1']:.4f}")
             else:
                 registry_metrics = test_metrics
