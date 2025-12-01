@@ -2830,10 +2830,12 @@ class BotController:
                     logger.warning(f"{symbol} | Не удалось извлечь signal_type, пропускаем drift monitoring")
                   else:
                     # Конвертируем SignalType в int для drift detector
+                    # ВАЖНО: Маппинг должен соответствовать labels при обучении!
+                    # DOWN/SELL=0, NEUTRAL/HOLD=1, UP/BUY=2
                     signal_type_map = {
-                      "BUY": 1,
-                      "SELL": 2,
-                      "HOLD": 0
+                      "SELL": 0,  # DOWN
+                      "HOLD": 1,  # NEUTRAL
+                      "BUY": 2    # UP
                     }
 
                     prediction_int = signal_type_map.get(signal_type_value, 0)
