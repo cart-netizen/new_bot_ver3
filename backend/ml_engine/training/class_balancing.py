@@ -35,9 +35,10 @@ def _log(msg: str, prefix: str = "Balancing"):
 class ClassBalancingConfig:
   """Конфигурация балансировки классов."""
   # Методы балансировки
-  use_class_weights: bool = True
-  use_focal_loss: bool = False
-  use_oversampling: bool = False
+  # ВАЖНО: Используем ТОЛЬКО Focal Loss для избежания перекомпенсации
+  use_class_weights: bool = False  # Отключено - конфликтует с Focal Loss
+  use_focal_loss: bool = True  # Основной метод балансировки
+  use_oversampling: bool = False  # Отключено - вызывает overfitting
   use_undersampling: bool = False
   use_smote: bool = False
 

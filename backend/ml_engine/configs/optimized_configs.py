@@ -275,10 +275,10 @@ class OptimizedBalancingConfig:
     """
     
     # === Основной метод ===
-    method: ClassBalancingMethod = ClassBalancingMethod.FOCAL_WITH_WEIGHTS
+    method: ClassBalancingMethod = ClassBalancingMethod.FOCAL_LOSS  # Только Focal Loss
     
     # === Class Weights ===
-    use_class_weights: bool = True
+    use_class_weights: bool = False  # ОТКЛЮЧЕНО - используем только Focal Loss
     class_weight_method: str = "balanced"  # balanced, sqrt, log
     
     # Custom веса (если не auto)
@@ -292,7 +292,7 @@ class OptimizedBalancingConfig:
     focal_alpha: Optional[List[float]] = None  # Auto-compute if None
     
     # === Resampling параметры (НОВОЕ) ===
-    use_oversampling: bool = True
+    use_oversampling: bool = False  # ОТКЛЮЧЕНО - используем только Focal Loss
     oversample_ratio: float = 0.5  # Увеличить minority до 50% от majority
     
     use_undersampling: bool = False  # Не рекомендуется при малом датасете
@@ -418,14 +418,15 @@ class ConfigPresets:
         )
         
         balancing_config = OptimizedBalancingConfig(
-            method=ClassBalancingMethod.FOCAL_WITH_WEIGHTS,
+            method=ClassBalancingMethod.FOCAL_LOSS,  # Только Focal Loss
+            use_class_weights=False,
+            use_focal_loss=True,
             focal_gamma=2.5,
-            use_oversampling=True,
-            oversample_ratio=0.5
+            use_oversampling=False  # Отключено
         )
-        
+
         return model_config, trainer_config, balancing_config
-    
+
     @staticmethod
     def production_large_data() -> Tuple[OptimizedModelConfig, OptimizedTrainerConfig, OptimizedBalancingConfig]:
         """
