@@ -61,6 +61,19 @@ interface TrainingParams {
   use_oversampling: boolean;
   oversample_ratio: number;
 
+  // ===== INDUSTRY STANDARD FEATURES =====
+  // Purging & Embargo (предотвращение data leakage)
+  use_purging: boolean;
+  use_embargo: boolean;
+  embargo_pct: number;
+
+  // Rolling Normalization (для нестационарных данных)
+  use_rolling_normalization: boolean;
+  rolling_window_size: number;
+
+  // Labeling Method
+  labeling_method: 'fixed_threshold' | 'triple_barrier';
+
   // ===== СТАНДАРТНЫЕ ПАРАМЕТРЫ =====
   export_onnx: boolean;
   auto_promote: boolean;
@@ -217,6 +230,19 @@ export function MLManagementPage() {
     focal_gamma: 2.5,                 // v2: 2.5 (было 2.0)
     use_oversampling: true,
     oversample_ratio: 0.5,
+
+    // ===== INDUSTRY STANDARD FEATURES =====
+    // Purging & Embargo (предотвращение data leakage)
+    use_purging: true,                // Рекомендуется: включено
+    use_embargo: true,                // Рекомендуется: включено
+    embargo_pct: 0.02,                // Рекомендуется: 2% от данных
+
+    // Rolling Normalization
+    use_rolling_normalization: false, // По умолчанию выключено
+    rolling_window_size: 500,         // Рекомендуется: 500
+
+    // Labeling Method
+    labeling_method: 'fixed_threshold', // По умолчанию: фиксированный порог
 
     // ===== СТАНДАРТНЫЕ ПАРАМЕТРЫ =====
     export_onnx: true,
@@ -1219,6 +1245,166 @@ export function MLManagementPage() {
               </span>
             </Tooltip>
           </label>
+        </div>
+
+        {/* ===== INDUSTRY STANDARD FEATURES ===== */}
+        <div className="bg-gradient-to-r from-green-900/20 to-emerald-900/20 border border-green-800/50 rounded-lg p-4 mt-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Shield className="h-5 w-5 text-green-400" />
+            <h3 className="text-lg font-semibold text-green-400">Industry Standard Features</h3>
+            <Tooltip content="Методы из академических исследований для предотвращения переобучения и data leakage">
+              <Info className="h-4 w-4 text-green-500 cursor-help" />
+            </Tooltip>
+          </div>
+
+          {/* Purging & Embargo Section */}
+          <div className="mb-4">
+            <p className="text-sm text-gray-400 mb-3">
+              <strong>Purging & Embargo</strong> — предотвращение утечки данных между train/val/test
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <label className="flex items-center gap-3 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  className="w-5 h-5 rounded border-gray-700 text-green-500 focus:ring-green-500"
+                  checked={trainingParams.use_purging}
+                  onChange={e =>
+                    setTrainingParams({ ...trainingParams, use_purging: e.target.checked })
+                  }
+                  disabled={trainingStatus.is_training}
+                />
+                <Tooltip content="Удаляет samples на границах train/val/test для предотвращения data leakage. Критически важно для временных рядов!">
+                  <span className="text-sm text-gray-300 group-hover:text-white transition-colors cursor-help">
+                    ✓ Enable Purging (рекомендуется)
+                  </span>
+                </Tooltip>
+              </label>
+
+              <label className="flex items-center gap-3 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  className="w-5 h-5 rounded border-gray-700 text-green-500 focus:ring-green-500"
+                  checked={trainingParams.use_embargo}
+                  onChange={e =>
+                    setTrainingParams({ ...trainingParams, use_embargo: e.target.checked })
+                  }
+                  disabled={trainingStatus.is_training}
+                />
+                <Tooltip content="Добавляет gap между sets для учёта автокорреляции. Предотвращает look-ahead bias.">
+                  <span className="text-sm text-gray-300 group-hover:text-white transition-colors cursor-help">
+                    ✓ Enable Embargo (рекомендуется)
+                  </span>
+                </Tooltip>
+              </label>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-400 mb-1">
+                  Embargo %
+                  <Tooltip content="Процент данных для embargo gap. Рекомендуется: 2%. Больше = безопаснее, но меньше данных для обучения.">
+                    <Info className="inline-block ml-1 h-3 w-3 text-gray-500 cursor-help" />
+                  </Tooltip>
+                </label>
+                <input
+                  type="number"
+                  step="0.005"
+                  min="0.01"
+                  max="0.1"
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-green-500"
+                  value={trainingParams.embargo_pct}
+                  onChange={e =>
+                    setTrainingParams({ ...trainingParams, embargo_pct: parseFloat(e.target.value) })
+                  }
+                  disabled={trainingStatus.is_training}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Rolling Normalization Section */}
+          <div className="mb-4 pt-4 border-t border-gray-700">
+            <p className="text-sm text-gray-400 mb-3">
+              <strong>Rolling Normalization</strong> — адаптивная нормализация для нестационарных данных
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <label className="flex items-center gap-3 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  className="w-5 h-5 rounded border-gray-700 text-green-500 focus:ring-green-500"
+                  checked={trainingParams.use_rolling_normalization}
+                  onChange={e =>
+                    setTrainingParams({ ...trainingParams, use_rolling_normalization: e.target.checked })
+                  }
+                  disabled={trainingStatus.is_training}
+                />
+                <Tooltip content="Использует скользящее окно для расчёта статистик. Помогает при изменении распределения данных со временем.">
+                  <span className="text-sm text-gray-300 group-hover:text-white transition-colors cursor-help">
+                    Enable Rolling Normalization (экспериментально)
+                  </span>
+                </Tooltip>
+              </label>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-400 mb-1">
+                  Rolling Window Size
+                  <Tooltip content="Размер скользящего окна для статистик. Рекомендуется: 500. Больше окно = стабильнее, но медленнее адаптация.">
+                    <Info className="inline-block ml-1 h-3 w-3 text-gray-500 cursor-help" />
+                  </Tooltip>
+                </label>
+                <input
+                  type="number"
+                  step="50"
+                  min="100"
+                  max="2000"
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-green-500"
+                  value={trainingParams.rolling_window_size}
+                  onChange={e =>
+                    setTrainingParams({ ...trainingParams, rolling_window_size: parseInt(e.target.value) })
+                  }
+                  disabled={trainingStatus.is_training || !trainingParams.use_rolling_normalization}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Labeling Method Section */}
+          <div className="pt-4 border-t border-gray-700">
+            <p className="text-sm text-gray-400 mb-3">
+              <strong>Labeling Method</strong> — метод разметки данных
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-400 mb-1">
+                  Метод разметки
+                  <Tooltip content="fixed_threshold: простой порог движения цены. triple_barrier: адаптивный метод с учётом волатильности (López de Prado).">
+                    <Info className="inline-block ml-1 h-3 w-3 text-gray-500 cursor-help" />
+                  </Tooltip>
+                </label>
+                <select
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-green-500"
+                  value={trainingParams.labeling_method}
+                  onChange={e =>
+                    setTrainingParams({ ...trainingParams, labeling_method: e.target.value as 'fixed_threshold' | 'triple_barrier' })
+                  }
+                  disabled={trainingStatus.is_training}
+                >
+                  <option value="fixed_threshold">Fixed Threshold (стандартный)</option>
+                  <option value="triple_barrier">Triple Barrier (López de Prado)</option>
+                </select>
+              </div>
+
+              {trainingParams.labeling_method === 'triple_barrier' && (
+                <div className="flex items-center p-3 bg-yellow-900/30 border border-yellow-700/50 rounded-lg">
+                  <AlertTriangle className="h-5 w-5 text-yellow-500 mr-2 flex-shrink-0" />
+                  <span className="text-xs text-yellow-400">
+                    ⚠️ Требуется предварительная обработка данных! Запустите:<br />
+                    <code className="bg-gray-800 px-1 rounded text-green-400">
+                      python -m backend.ml_engine.scripts.preprocess_labels --method triple_barrier
+                    </code>
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Action Buttons */}
