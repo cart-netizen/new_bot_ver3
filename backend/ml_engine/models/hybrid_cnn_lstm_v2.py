@@ -22,6 +22,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 from typing import Dict, Tuple, Optional, List
 from dataclasses import dataclass, field
 
@@ -71,7 +72,10 @@ class ModelConfigV2:
     use_multi_head_attention: bool = True
     use_se_block: bool = False  # Squeeze-and-Excitation
     stochastic_depth_prob: float = 0.0  # 0 = off
-    
+
+    # === Memory optimization ===
+    use_gradient_checkpointing: bool = False  # Trade compute for memory
+
     # === Инициализация ===
     init_method: str = "kaiming"  # kaiming, xavier, orthogonal
 
@@ -276,14 +280,26 @@ class MultiHeadTemporalAttention(nn.Module):
         q = self.q_proj(x_norm).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.k_proj(x_norm).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x_norm).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
-        
-        # Attention scores: (B, num_heads, T, T)
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = F.softmax(attn, dim=-1)
-        attn = self.attn_dropout(attn)
-        
-        # Weighted sum: (B, num_heads, T, head_dim)
-        out = attn @ v
+
+        # Use memory-efficient attention (Flash Attention) if available (PyTorch 2.0+)
+        # This is O(n) memory instead of O(n²) for the attention matrix
+        use_flash_attention = hasattr(F, 'scaled_dot_product_attention') and not return_weights
+
+        if use_flash_attention:
+            # Flash Attention - memory efficient, but doesn't return weights
+            dropout_p = self.attn_dropout.p if self.training else 0.0
+            out = F.scaled_dot_product_attention(
+                q, k, v,
+                dropout_p=dropout_p,
+                is_causal=False  # Not causal for full sequence attention
+            )
+            attn = None  # Weights not available with Flash Attention
+        else:
+            # Standard attention - needed when return_weights=True
+            attn = (q @ k.transpose(-2, -1)) * self.scale
+            attn = F.softmax(attn, dim=-1)
+            attn = self.attn_dropout(attn)
+            out = attn @ v
         
         # Reshape: (B, T, hidden_size)
         out = out.transpose(1, 2).contiguous().view(B, T, C)
@@ -296,13 +312,13 @@ class MultiHeadTemporalAttention(nn.Module):
         # Global context: mean pooling + last timestep (ensemble)
         context = out.mean(dim=1) + out[:, -1, :]
         
-        if return_weights:
+        if return_weights and attn is not None:
             # Average attention across heads
             avg_attn = attn.mean(dim=1)  # (B, T, T)
             # Attention на последний timestep
             last_attn = avg_attn[:, -1, :]  # (B, T)
             return context, last_attn
-        
+
         return context, None
 
 
@@ -598,23 +614,31 @@ class HybridCNNLSTMv2(nn.Module):
                 - attention_weights: (batch, sequence) если return_attention=True
         """
         batch_size = x.size(0)
-        
+        use_checkpointing = self.config.use_gradient_checkpointing and self.training
+
         # ==================== CNN PROCESSING ====================
         # (batch, sequence, features) -> (batch, 1, sequence * features)
         x = x.reshape(batch_size, 1, -1)
-        
-        # Пропускаем через CNN блоки
+
+        # Пропускаем через CNN блоки (с gradient checkpointing если включено)
         for block in self.cnn_blocks:
-            x = block(x)
-        
+            if use_checkpointing:
+                x = checkpoint(block, x, use_reentrant=False)
+            else:
+                x = block(x)
+
         # ==================== LSTM PROCESSING ====================
         # (batch, channels, reduced_sequence) -> (batch, reduced_sequence, channels)
         x = x.transpose(1, 2)
-        
-        # BiLSTM с LayerNorm
-        lstm_out = self.lstm(x)  # (batch, reduced_sequence, lstm_hidden * 2)
-        
+
+        # BiLSTM с LayerNorm (с gradient checkpointing если включено)
+        if use_checkpointing:
+            lstm_out = checkpoint(self.lstm, x, use_reentrant=False)
+        else:
+            lstm_out = self.lstm(x)  # (batch, reduced_sequence, lstm_hidden * 2)
+
         # ==================== ATTENTION ====================
+        # Attention не checkpoint'им т.к. уже используем Flash Attention
         context, attention_weights = self.attention(
             lstm_out,
             return_weights=return_attention
