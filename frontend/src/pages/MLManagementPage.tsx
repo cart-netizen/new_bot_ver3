@@ -58,8 +58,10 @@ interface TrainingParams {
   // Class Balancing
   use_focal_loss: boolean;
   focal_gamma: number;
+  use_class_weights: boolean;
   use_oversampling: boolean;
   oversample_ratio: number;
+  use_undersampling: boolean;
 
   // ===== СТАНДАРТНЫЕ ПАРАМЕТРЫ =====
   export_onnx: boolean;
@@ -212,11 +214,13 @@ export function MLManagementPage() {
     use_augmentation: true,
     gaussian_noise_std: 0.01,
 
-    // Class Balancing
-    use_focal_loss: true,
-    focal_gamma: 2.5,                 // v2: 2.5 (было 2.0)
-    use_oversampling: true,
+    // Class Balancing - ТОЛЬКО Focal Loss по умолчанию (избежание перекомпенсации)
+    use_focal_loss: true,             // Рекомендуется - основной метод балансировки
+    focal_gamma: 2.5,                 // v2: 2.5 (фокус на сложных примерах)
+    use_class_weights: false,         // Отключено - конфликтует с Focal Loss
+    use_oversampling: false,          // Отключено - вызывает перекомпенсацию
     oversample_ratio: 0.5,
+    use_undersampling: false,         // Отключено - не рекомендуется
 
     // ===== СТАНДАРТНЫЕ ПАРАМЕТРЫ =====
     export_onnx: true,
@@ -1207,15 +1211,49 @@ export function MLManagementPage() {
             <input
               type="checkbox"
               className="w-5 h-5 rounded border-gray-700 text-primary focus:ring-primary"
+              checked={trainingParams.use_class_weights}
+              onChange={e =>
+                setTrainingParams({ ...trainingParams, use_class_weights: e.target.checked })
+              }
+              disabled={trainingStatus.is_training}
+            />
+            <Tooltip content="Веса классов в loss функции. НЕ рекомендуется с Focal Loss - вызывает перекомпенсацию.">
+              <span className="text-sm text-gray-300 group-hover:text-white transition-colors cursor-help">
+                Use Class Weights (не рекомендуется с Focal Loss)
+              </span>
+            </Tooltip>
+          </label>
+
+          <label className="flex items-center gap-3 cursor-pointer group">
+            <input
+              type="checkbox"
+              className="w-5 h-5 rounded border-gray-700 text-primary focus:ring-primary"
               checked={trainingParams.use_oversampling}
               onChange={e =>
                 setTrainingParams({ ...trainingParams, use_oversampling: e.target.checked })
               }
               disabled={trainingStatus.is_training}
             />
-            <Tooltip content="Увеличить количество примеров редких классов. Балансирует датасет.">
+            <Tooltip content="Дублирование редких классов. НЕ рекомендуется с Focal Loss - вызывает перекомпенсацию.">
               <span className="text-sm text-gray-300 group-hover:text-white transition-colors cursor-help">
-                Use Oversampling (рекомендуется для v2)
+                Use Oversampling (не рекомендуется с Focal Loss)
+              </span>
+            </Tooltip>
+          </label>
+
+          <label className="flex items-center gap-3 cursor-pointer group">
+            <input
+              type="checkbox"
+              className="w-5 h-5 rounded border-gray-700 text-primary focus:ring-primary"
+              checked={trainingParams.use_undersampling}
+              onChange={e =>
+                setTrainingParams({ ...trainingParams, use_undersampling: e.target.checked })
+              }
+              disabled={trainingStatus.is_training}
+            />
+            <Tooltip content="Удаление примеров мажорного класса. НЕ рекомендуется - теряются данные.">
+              <span className="text-sm text-gray-300 group-hover:text-white transition-colors cursor-help">
+                Use Undersampling (не рекомендуется)
               </span>
             </Tooltip>
           </label>
