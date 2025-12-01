@@ -19,10 +19,16 @@ from typing import Dict, List, Optional, Tuple, Union
 from collections import Counter
 from dataclasses import dataclass
 from sklearn.utils.class_weight import compute_class_weight
+from tqdm import tqdm
 
 from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _log(msg: str, prefix: str = "Balancing"):
+    """Логирование через tqdm.write() для немедленного вывода в консоль."""
+    tqdm.write(f"[{prefix}] {msg}")
 
 
 @dataclass
@@ -119,8 +125,8 @@ class ClassWeightCalculator:
     for cls in all_classes:
       if cls not in class_weights:
         class_weights[cls] = 1.0
-        logger.warning(
-          f"Class {cls} not found in training data, assigning neutral weight 1.0"
+        _log(
+          f"⚠️ Class {cls} not found in training data, assigning neutral weight 1.0"
         )
 
     # Нормализация весов
@@ -131,7 +137,7 @@ class ClassWeightCalculator:
         for cls, weight in class_weights.items()
       }
 
-    logger.info(f"Class weights ({method}): {class_weights}")
+    _log(f"Class weights ({method}): {class_weights}")
     return class_weights
 
   @staticmethod
@@ -195,7 +201,7 @@ class FocalLoss(nn.Module):
     self.reduction = reduction
     self.ignore_index = ignore_index
 
-    logger.info(
+    _log(
       f"Инициализирован Focal Loss: "
       f"gamma={gamma}, alpha={alpha is not None}"
     )
@@ -277,7 +283,7 @@ class DatasetBalancer:
     try:
       from imblearn.over_sampling import RandomOverSampler
     except ImportError:
-      logger.error("imbalanced-learn не установлен. pip install imbalanced-learn")
+      _log("❌ imbalanced-learn не установлен. pip install imbalanced-learn")
       return X, y
 
     ros = RandomOverSampler(
@@ -294,10 +300,10 @@ class DatasetBalancer:
     # Reshape обратно
     X_resampled = X_resampled.reshape(-1, *original_shape[1:])
 
-    logger.info(
+    _log(
       f"Oversampling: {len(X)} → {len(X_resampled)} семплов"
     )
-    logger.info(f"Распределение классов: {Counter(y_resampled)}")
+    _log(f"Распределение классов: {Counter(y_resampled)}")
 
     return X_resampled, y_resampled
 
@@ -323,7 +329,7 @@ class DatasetBalancer:
     try:
       from imblearn.under_sampling import RandomUnderSampler
     except ImportError:
-      logger.error("imbalanced-learn не установлен")
+      _log("❌ imbalanced-learn не установлен")
       return X, y
 
     rus = RandomUnderSampler(
@@ -337,10 +343,10 @@ class DatasetBalancer:
     X_resampled, y_resampled = rus.fit_resample(X_2d, y)
     X_resampled = X_resampled.reshape(-1, *original_shape[1:])
 
-    logger.info(
+    _log(
       f"Undersampling: {len(X)} → {len(X_resampled)} семплов"
     )
-    logger.info(f"Распределение классов: {Counter(y_resampled)}")
+    _log(f"Распределение классов: {Counter(y_resampled)}")
 
     return X_resampled, y_resampled
 
@@ -371,7 +377,7 @@ class DatasetBalancer:
     try:
       from imblearn.over_sampling import SMOTE
     except ImportError:
-      logger.error("imbalanced-learn не установлен")
+      _log("❌ imbalanced-learn не установлен")
       return X, y
 
     # SMOTE работает только с 2D данными
@@ -387,10 +393,10 @@ class DatasetBalancer:
     X_resampled, y_resampled = smote.fit_resample(X_2d, y)
     X_resampled = X_resampled.reshape(-1, *original_shape[1:])
 
-    logger.info(
+    _log(
       f"SMOTE: {len(X)} → {len(X_resampled)} семплов"
     )
-    logger.info(f"Распределение классов: {Counter(y_resampled)}")
+    _log(f"Распределение классов: {Counter(y_resampled)}")
 
     return X_resampled, y_resampled
 
@@ -406,12 +412,12 @@ class ClassBalancingStrategy:
     """Инициализация стратегии."""
     self.config = config
 
-    logger.info("Инициализирована стратегия балансировки классов")
-    logger.info(f"  • Class weights: {config.use_class_weights}")
-    logger.info(f"  • Focal Loss: {config.use_focal_loss}")
-    logger.info(f"  • Oversampling: {config.use_oversampling}")
-    logger.info(f"  • Undersampling: {config.use_undersampling}")
-    logger.info(f"  • SMOTE: {config.use_smote}")
+    _log("Инициализирована стратегия балансировки классов")
+    _log(f"  • Class weights: {config.use_class_weights}")
+    _log(f"  • Focal Loss: {config.use_focal_loss}")
+    _log(f"  • Oversampling: {config.use_oversampling}")
+    _log(f"  • Undersampling: {config.use_undersampling}")
+    _log(f"  • SMOTE: {config.use_smote}")
 
   def get_loss_function(
       self,
