@@ -97,7 +97,10 @@ class OptimizedModelConfig:
     use_residual: bool = True  # Residual connections в CNN
     use_layer_norm: bool = True  # LayerNorm вместо BatchNorm в LSTM
     use_multi_head_attention: bool = True  # Multi-Head Attention
-    
+
+    # === Memory Optimization ===
+    use_gradient_checkpointing: bool = True  # Trade compute for memory (saves ~40% GPU RAM)
+
     # === Инициализация ===
     init_method: str = "kaiming"  # kaiming, xavier, orthogonal
     
@@ -173,9 +176,9 @@ class OptimizedTrainerConfig:
     min_learning_rate: float = 1e-7
     max_learning_rate: float = 1e-4  # Для OneCycleLR
     
-    # КРИТИЧНО: Batch Size увеличен в 4 раза!
-    # Больший batch = более стабильные градиенты
-    batch_size: int = 128  # Было: 64
+    # Batch Size: выбирается исходя из GPU памяти
+    # 12GB GPU (RTX 3060): 32-48, 24GB GPU: 64-128, 40GB+ GPU: 128-256
+    batch_size: int = 32  # Уменьшено для 12GB GPU (было: 128)
     
     # КРИТИЧНО: Weight Decay добавлен!
     # L2 регуляризация предотвращает overfitting
@@ -217,7 +220,12 @@ class OptimizedTrainerConfig:
     gaussian_noise_std: float = 0.01  # Шум к features
     time_mask_ratio: float = 0.1  # Маскирование временных шагов
     feature_dropout_ratio: float = 0.05  # Dropout отдельных features
-    
+
+    # === Memory Optimization ===
+    gradient_accumulation_steps: int = 1  # Accumulate gradients (effective_batch = batch_size * steps)
+    use_mixed_precision: bool = True  # FP16 training
+    use_gradient_checkpointing: bool = True  # Trade compute for memory
+
     # === Checkpoint ===
     checkpoint_dir: str = "checkpoints/models"
     save_best_only: bool = True
@@ -344,7 +352,7 @@ class OptimizedDataConfig:
     test_ratio: float = 0.15
     
     # === DataLoader параметры (СИНХРОНИЗИРОВАНЫ) ===
-    batch_size: int = 128  # Синхронизировано с TrainerConfig (было 256)
+    batch_size: int = 32  # Синхронизировано с TrainerConfig (уменьшено для 12GB GPU)
     shuffle: bool = True
     num_workers: int = 4  # Оптимально для 12GB GPU
     pin_memory: bool = True
@@ -403,7 +411,7 @@ class ConfigPresets:
         trainer_config = OptimizedTrainerConfig(
             epochs=150,
             learning_rate=5e-5,
-            batch_size=256,
+            batch_size=32,  # Уменьшено для 12GB GPU
             weight_decay=0.01,
             label_smoothing=0.1,
             use_augmentation=True,
@@ -441,7 +449,7 @@ class ConfigPresets:
         trainer_config = OptimizedTrainerConfig(
             epochs=100,
             learning_rate=1e-4,
-            batch_size=128,
+            batch_size=48,  # Уменьшено для 12GB GPU
             weight_decay=0.005,
             label_smoothing=0.05,
             use_augmentation=True,
@@ -480,7 +488,7 @@ class ConfigPresets:
         trainer_config = OptimizedTrainerConfig(
             epochs=30,
             learning_rate=1e-4,
-            batch_size=128,
+            batch_size=64,  # Быстрый эксперимент - можно больше
             weight_decay=0.001,
             label_smoothing=0.0,
             use_augmentation=False,
@@ -517,7 +525,7 @@ class ConfigPresets:
         trainer_config = OptimizedTrainerConfig(
             epochs=200,
             learning_rate=3e-5,  # Ещё меньше LR
-            batch_size=256,
+            batch_size=32,  # Уменьшено для 12GB GPU
             weight_decay=0.02,  # Ещё больше регуляризации
             label_smoothing=0.15,
             use_augmentation=True,

@@ -151,6 +151,15 @@ class TrainingOrchestrator:
 
         logger.info(f"Starting training: {run_name}")
 
+        # CUDA memory cleanup before training
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
+            # Set memory allocation config for better fragmentation handling
+            import os
+            os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')
+            logger.info(f"CUDA memory cleaned. Available: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB")
+
         # Start MLflow run
         self.mlflow_tracker.start_run(
             run_name=run_name,
