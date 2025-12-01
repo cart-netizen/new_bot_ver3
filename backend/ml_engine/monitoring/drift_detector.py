@@ -230,7 +230,7 @@ class DriftDetector:
     baseline_hist, bins = np.histogram(
       self.baseline_predictions,
       bins=10,
-      range=(0, 2),  # 0=HOLD, 1=BUY, 2=SELL
+      range=(0, 2),  # 0=SELL, 1=HOLD, 2=BUY
       density=True
     )
     current_hist, _ = np.histogram(

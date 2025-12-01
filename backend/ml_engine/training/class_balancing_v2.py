@@ -245,13 +245,13 @@ class ThresholdOptimizer:
         buy_threshold: float
     ) -> np.ndarray:
         """Применить пороги к доходностям."""
-        labels = np.ones(len(returns), dtype=np.int64)  # Default: HOLD (0 или 1 в зависимости от схемы)
-        
-        # SELL = 2, HOLD = 0, BUY = 1
-        labels[returns < sell_threshold] = 2  # SELL
-        labels[returns > buy_threshold] = 1   # BUY
-        labels[(returns >= sell_threshold) & (returns <= buy_threshold)] = 0  # HOLD
-        
+        labels = np.ones(len(returns), dtype=np.int64)  # Default: HOLD = 1
+
+        # СТАНДАРТНЫЙ МАППИНГ: SELL=0, HOLD=1, BUY=2
+        labels[returns < sell_threshold] = 0  # SELL
+        labels[returns > buy_threshold] = 2   # BUY
+        labels[(returns >= sell_threshold) & (returns <= buy_threshold)] = 1  # HOLD
+
         return labels
     
     def relabel_data(
@@ -267,7 +267,7 @@ class ThresholdOptimizer:
             method: Метод определения порогов
         
         Returns:
-            labels: Массив меток (0=HOLD, 1=BUY, 2=SELL)
+            labels: Массив меток (0=SELL, 1=HOLD, 2=BUY)
         """
         sell_threshold, buy_threshold = self.compute_thresholds(returns, method)
         labels = self._apply_thresholds(returns, sell_threshold, buy_threshold)
