@@ -581,14 +581,245 @@ class RetrainingPipeline:
         return False
 
     async def _check_drift(self) -> bool:
-        """Проверить наличие drift"""
-        # Placeholder - integrate with DriftDetector
-        return False
+        """
+        Проверить наличие data/concept drift.
+
+        Интегрируется с DriftDetector для:
+        - Data drift (изменение распределения features)
+        - Concept drift (изменение зависимости target от features)
+        - Performance drift (падение accuracy)
+
+        Returns:
+            True если обнаружен drift, требующий retraining
+        """
+        try:
+            # Проверяем, инициализирован ли baseline
+            if self.drift_detector.baseline_features is None:
+                logger.warning(
+                    "Drift baseline not initialized. "
+                    "Call initialize_drift_baseline() first or wait for auto-initialization."
+                )
+                # Пытаемся инициализировать baseline из Feature Store
+                await self._try_initialize_drift_baseline()
+                return False
+
+            # Запускаем проверку drift
+            drift_metrics = self.drift_detector.check_drift()
+
+            if drift_metrics is None:
+                logger.debug("Drift check skipped (not enough data or too early)")
+                return False
+
+            # Сохраняем метрики в MLflow если есть активный run
+            try:
+                if self.mlflow_tracker:
+                    self.mlflow_tracker.log_metrics({
+                        "drift_feature_score": drift_metrics.feature_drift_score,
+                        "drift_prediction_score": drift_metrics.prediction_drift_score,
+                        "drift_accuracy_drop": drift_metrics.accuracy_drop,
+                        "drift_detected": int(drift_metrics.drift_detected)
+                    })
+            except Exception:
+                pass  # Ignore MLflow errors
+
+            # Логируем результат
+            if drift_metrics.drift_detected:
+                logger.warning(
+                    f"DRIFT DETECTED!\n"
+                    f"  • Severity: {drift_metrics.severity}\n"
+                    f"  • Feature drift score: {drift_metrics.feature_drift_score:.4f}\n"
+                    f"  • Prediction drift score: {drift_metrics.prediction_drift_score:.4f}\n"
+                    f"  • Accuracy drop: {drift_metrics.accuracy_drop:.4f}\n"
+                    f"  • Drifting features: {len(drift_metrics.drifting_features)}\n"
+                    f"  • Recommendation: {drift_metrics.recommendation}"
+                )
+
+                # Сохраняем историю drift
+                self._save_drift_report(drift_metrics)
+
+                # Проверяем порог для trigger
+                should_retrain = (
+                    drift_metrics.severity in ['high', 'critical'] or
+                    drift_metrics.prediction_drift_score > self.config.drift_threshold or
+                    drift_metrics.accuracy_drop > self.config.performance_threshold - self.config.min_accuracy_for_promotion
+                )
+
+                return should_retrain
+
+            logger.info(
+                f"Drift check passed. "
+                f"Feature drift: {drift_metrics.feature_drift_score:.4f}, "
+                f"Prediction drift: {drift_metrics.prediction_drift_score:.4f}"
+            )
+            return False
+
+        except Exception as e:
+            logger.error(f"Error checking drift: {e}", exc_info=True)
+            return False
 
     async def _check_performance(self) -> bool:
-        """Проверить падение performance"""
-        # Placeholder - check recent predictions accuracy
-        return False
+        """
+        Проверить падение production performance.
+
+        Сравнивает текущую accuracy с baseline и threshold.
+
+        Returns:
+            True если performance упала ниже порога
+        """
+        try:
+            # Получаем отчет о drift (включает performance metrics)
+            drift_report = self.drift_detector.get_drift_report()
+
+            if drift_report.get('status') == 'no_checks':
+                logger.debug("No drift checks performed yet")
+                return False
+
+            # Извлекаем метрики performance
+            metrics = drift_report.get('metrics', {})
+            recent_accuracy = metrics.get('recent_accuracy', 0)
+            baseline_accuracy = metrics.get('baseline_accuracy', 0)
+            accuracy_drop = metrics.get('accuracy_drop', 0)
+
+            # Проверяем абсолютный порог
+            if recent_accuracy < self.config.performance_threshold:
+                logger.warning(
+                    f"PERFORMANCE DROP DETECTED!\n"
+                    f"  • Recent accuracy: {recent_accuracy:.4f}\n"
+                    f"  • Threshold: {self.config.performance_threshold:.4f}\n"
+                    f"  • Baseline accuracy: {baseline_accuracy:.4f}\n"
+                    f"  • Accuracy drop: {accuracy_drop:.4f}"
+                )
+                return True
+
+            # Проверяем относительное падение
+            if accuracy_drop > 0.10:  # > 10% drop
+                logger.warning(
+                    f"SIGNIFICANT ACCURACY DROP!\n"
+                    f"  • Accuracy dropped by {accuracy_drop*100:.1f}%\n"
+                    f"  • From {baseline_accuracy:.4f} to {recent_accuracy:.4f}"
+                )
+                return True
+
+            logger.debug(
+                f"Performance OK. "
+                f"Recent accuracy: {recent_accuracy:.4f}, "
+                f"Baseline: {baseline_accuracy:.4f}"
+            )
+            return False
+
+        except Exception as e:
+            logger.error(f"Error checking performance: {e}", exc_info=True)
+            return False
+
+    async def _try_initialize_drift_baseline(self) -> bool:
+        """
+        Попытаться инициализировать drift baseline из Feature Store.
+
+        Returns:
+            True если baseline успешно инициализирован
+        """
+        try:
+            logger.info("Attempting to initialize drift baseline from Feature Store...")
+
+            # Получаем последние данные из Feature Store
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=7)  # Last 7 days for baseline
+
+            features_df = self.feature_store.read_offline_features(
+                feature_group="training_features",
+                start_date=start_date.strftime("%Y-%m-%d"),
+                end_date=end_date.strftime("%Y-%m-%d")
+            )
+
+            if features_df.empty or len(features_df) < 1000:
+                logger.warning(
+                    f"Insufficient data for baseline: {len(features_df)} samples "
+                    f"(need at least 1000)"
+                )
+                return False
+
+            # Получаем feature columns
+            from backend.ml_engine.feature_store.feature_schema import DEFAULT_SCHEMA
+            feature_cols = DEFAULT_SCHEMA.get_all_feature_columns()
+            label_col = DEFAULT_SCHEMA.label_column
+
+            # Извлекаем данные
+            available_cols = [c for c in feature_cols if c in features_df.columns]
+            if len(available_cols) < 50:
+                logger.warning(f"Not enough feature columns: {len(available_cols)}")
+                return False
+
+            features = features_df[available_cols].values
+            labels = features_df[label_col].values if label_col in features_df.columns else np.zeros(len(features_df))
+
+            # Для predictions используем labels как proxy (пока нет реальных predictions)
+            predictions = labels.copy()
+
+            # Устанавливаем baseline
+            self.drift_detector.set_baseline(
+                features=features,
+                predictions=predictions,
+                labels=labels,
+                feature_names=available_cols
+            )
+
+            logger.info(
+                f"✓ Drift baseline initialized from Feature Store: "
+                f"{len(features)} samples, {len(available_cols)} features"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to initialize drift baseline: {e}")
+            return False
+
+    def _save_drift_report(self, drift_metrics) -> None:
+        """Сохранить отчет о drift."""
+        try:
+            report_path = self.logs_dir / f"drift_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+
+            report = {
+                'timestamp': drift_metrics.timestamp,
+                'severity': drift_metrics.severity,
+                'drift_detected': drift_metrics.drift_detected,
+                'feature_drift_score': drift_metrics.feature_drift_score,
+                'prediction_drift_score': drift_metrics.prediction_drift_score,
+                'accuracy_drop': drift_metrics.accuracy_drop,
+                'recent_accuracy': drift_metrics.recent_accuracy,
+                'baseline_accuracy': drift_metrics.baseline_accuracy,
+                'drifting_features': drift_metrics.drifting_features[:20],  # Top 20
+                'recommendation': drift_metrics.recommendation
+            }
+
+            with open(report_path, 'w') as f:
+                json.dump(report, f, indent=2)
+
+            logger.info(f"Drift report saved: {report_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to save drift report: {e}")
+
+    async def add_prediction_sample(
+        self,
+        features: np.ndarray,
+        prediction: int,
+        label: Optional[int] = None
+    ) -> None:
+        """
+        Добавить sample для drift monitoring.
+
+        Вызывать после каждого prediction в production для
+        накопления данных для drift detection.
+
+        Args:
+            features: Feature vector (1D array)
+            prediction: Model prediction
+            label: True label (если известен)
+        """
+        try:
+            self.drift_detector.add_sample(features, prediction, label)
+        except Exception as e:
+            logger.debug(f"Failed to add prediction sample: {e}")
 
 
 # Singleton instance
