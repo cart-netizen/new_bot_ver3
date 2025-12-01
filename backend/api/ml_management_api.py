@@ -119,6 +119,22 @@ class TrainingRequest(BaseModel):
     oversample_ratio: float = Field(default=0.5, ge=0, le=1, description="Oversample ratio")
     use_undersampling: bool = Field(default=False, description="Use undersampling (not recommended)")
 
+    # ===== INDUSTRY STANDARD FEATURES =====
+    # Purging & Embargo (предотвращение data leakage)
+    use_purging: bool = Field(default=True, description="Enable purging at train/val/test boundaries")
+    use_embargo: bool = Field(default=True, description="Enable embargo gap between sets")
+    embargo_pct: float = Field(default=0.02, ge=0, le=0.1, description="Embargo as % of dataset (default: 2%)")
+
+    # Rolling Normalization (для нестационарных данных)
+    use_rolling_normalization: bool = Field(default=False, description="Enable rolling window normalization")
+    rolling_window_size: int = Field(default=500, ge=100, le=2000, description="Rolling window size")
+
+    # Labeling Method
+    labeling_method: str = Field(
+        default="fixed_threshold",
+        description="Labeling method: 'fixed_threshold' or 'triple_barrier'"
+    )
+
     # Model Architecture (CNN channels и LSTM hidden можно передать через ml_model_config)
 
     # ===== СТАНДАРТНЫЕ ПАРАМЕТРЫ =====
@@ -268,6 +284,19 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
     try:
         logger.info(f"Starting training job: {job_id}")
 
+        # ===== ПРЕДУПРЕЖДЕНИЕ О TRIPLE BARRIER =====
+        if request.labeling_method == "triple_barrier":
+            logger.warning(
+                "Triple Barrier labeling selected! Make sure you have preprocessed labels:\n"
+                "python -m backend.ml_engine.scripts.preprocess_labels --method triple_barrier"
+            )
+            # Добавляем в job info
+            if current_training_job:
+                current_training_job["labeling_warning"] = (
+                    "Triple Barrier requires preprocessing. "
+                    "Run: python -m backend.ml_engine.scripts.preprocess_labels --method triple_barrier"
+                )
+
         # ===== СОЗДАЕМ MODEL CONFIG С V2 ПАРАМЕТРАМИ =====
         # Dropout - это параметр модели, а не trainer'а
         if request.ml_model_config:
@@ -321,10 +350,21 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
 
         logger.info(f"Training data source: {request.data_source}, path: {storage_path}")
 
+        # ===== DATA CONFIG С INDUSTRY STANDARD ПАРАМЕТРАМИ =====
         data_config = DataConfig(
             batch_size=request.batch_size,
-            storage_path=storage_path
+            storage_path=storage_path,
+            # Purging & Embargo (Industry Standard)
+            use_purging=request.use_purging,
+            use_embargo=request.use_embargo,
+            embargo_pct=request.embargo_pct
         )
+
+        logger.info(
+            f"Data Config: purging={request.use_purging}, embargo={request.use_embargo}, "
+            f"embargo_pct={request.embargo_pct}"
+        )
+
         if request.data_config:
             # Override with custom data config
             for k, v in _to_dict(request.data_config).items():
