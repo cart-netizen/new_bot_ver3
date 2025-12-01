@@ -40,11 +40,21 @@ class DataConfig:
     storage_path: str = "data/ml_training"
     sequence_length: int = 60  # Длина последовательности
     target_horizon: str = "future_direction_60s"  # Целевая переменная
+    label_horizon: int = 60  # Горизонт предсказания в секундах/барах
 
     # Split параметры
     train_ratio: float = 0.7
     val_ratio: float = 0.15
     test_ratio: float = 0.15
+
+    # ===== PURGING & EMBARGO (Industry Standard) =====
+    # Purging: удаляет samples на границах train/val/test для предотвращения data leakage
+    # Embargo: добавляет gap между sets для учёта автокорреляции
+    use_purging: bool = True  # Включить purging
+    use_embargo: bool = True  # Включить embargo
+    purge_length: int = None  # Если None, используется sequence_length
+    embargo_length: int = None  # Если None, используется max(label_horizon, 2% от dataset)
+    embargo_pct: float = 0.02  # Процент от dataset для embargo (если embargo_length=None)
 
     # DataLoader параметры
     batch_size: int = 64
@@ -301,6 +311,31 @@ class HistoricalDataLoader:
 
         return sequences, seq_labels, seq_timestamps
 
+    def _calculate_purge_embargo_lengths(self, n_samples: int) -> Tuple[int, int]:
+        """
+        Рассчитать длины purge и embargo на основе конфигурации.
+
+        Args:
+            n_samples: Общее количество samples
+
+        Returns:
+            (purge_length, embargo_length)
+        """
+        # Purge length: по умолчанию = sequence_length
+        if self.config.purge_length is not None:
+            purge_length = self.config.purge_length
+        else:
+            purge_length = self.config.sequence_length
+
+        # Embargo length: по умолчанию = max(label_horizon, embargo_pct * n_samples)
+        if self.config.embargo_length is not None:
+            embargo_length = self.config.embargo_length
+        else:
+            embargo_from_pct = int(n_samples * self.config.embargo_pct)
+            embargo_length = max(self.config.label_horizon, embargo_from_pct)
+
+        return purge_length, embargo_length
+
     def train_val_test_split(
         self,
         sequences: np.ndarray,
@@ -312,13 +347,18 @@ class HistoricalDataLoader:
         Optional[Tuple[np.ndarray, np.ndarray]]
     ]:
         """
-        Разбить данные на train/val/test с сохранением временного порядка.
+        Разбить данные на train/val/test с Purging и Embargo (Industry Standard).
 
         ВАЖНО: Для временных рядов НЕ используем shuffle!
-        Данные разбиваются последовательно:
-        - Train: первые 70%
-        - Val: следующие 15%
-        - Test: последние 15%
+
+        Purging: Удаляет samples из train, чьи labels могут пересекаться с val/test.
+                 Это предотвращает data leakage из-за overlapping sequences.
+
+        Embargo: Добавляет gap между train и val/test для учёта автокорреляции
+                 и предотвращения leakage из-за временной зависимости.
+
+        Схема разбиения:
+        [TRAIN] --purge-- [EMBARGO] -- [VAL] --purge-- [EMBARGO] -- [TEST]
 
         Args:
             sequences: (N, seq_len, features)
@@ -330,31 +370,107 @@ class HistoricalDataLoader:
             val_data: (X_val, y_val)
             test_data: (X_test, y_test) или None если test_ratio=0
         """
+        from tqdm import tqdm
+
         n_samples = len(sequences)
 
-        # Вычисляем индексы split
-        train_end = int(n_samples * self.config.train_ratio)
-        val_end = train_end + int(n_samples * self.config.val_ratio)
+        # Рассчитываем purge и embargo lengths
+        purge_length, embargo_length = self._calculate_purge_embargo_lengths(n_samples)
 
-        # Split
-        X_train = sequences[:train_end]
-        y_train = labels[:train_end]
+        # Базовые индексы split (без purging/embargo)
+        base_train_end = int(n_samples * self.config.train_ratio)
+        base_val_end = base_train_end + int(n_samples * self.config.val_ratio)
 
-        X_val = sequences[train_end:val_end]
-        y_val = labels[train_end:val_end]
+        # ===== ПРИМЕНЯЕМ PURGING & EMBARGO =====
+        if self.config.use_purging or self.config.use_embargo:
+            tqdm.write("\n" + "=" * 60)
+            tqdm.write("[Purging & Embargo] INDUSTRY STANDARD DATA SPLIT")
+            tqdm.write("=" * 60)
 
-        # Test (если указано)
-        if self.config.test_ratio > 0:
-            X_test = sequences[val_end:]
-            y_test = labels[val_end:]
-            test_data = (X_test, y_test)
-            test_size = len(X_test)
+            effective_purge = purge_length if self.config.use_purging else 0
+            effective_embargo = embargo_length if self.config.use_embargo else 0
+
+            tqdm.write(f"  • Purging: {effective_purge} samples (enabled: {self.config.use_purging})")
+            tqdm.write(f"  • Embargo: {effective_embargo} samples (enabled: {self.config.use_embargo})")
+
+            # Train: от начала до (base_train_end - purge)
+            train_end_purged = base_train_end - effective_purge
+
+            # Val: от (base_train_end + embargo) до (base_val_end - purge)
+            val_start = base_train_end + effective_embargo
+            val_end_purged = base_val_end - effective_purge
+
+            # Test: от (base_val_end + embargo) до конца
+            test_start = base_val_end + effective_embargo
+
+            # Проверяем валидность индексов
+            if train_end_purged <= 0:
+                tqdm.write("[WARNING] Purge length слишком большой! Уменьшаем...")
+                train_end_purged = max(int(n_samples * 0.5), 100)
+
+            if val_start >= val_end_purged:
+                tqdm.write("[WARNING] Val set пустой после purging! Корректируем...")
+                val_start = train_end_purged + effective_embargo
+                val_end_purged = max(val_start + 100, base_val_end)
+
+            if test_start >= n_samples and self.config.test_ratio > 0:
+                tqdm.write("[WARNING] Test set пустой после embargo! Корректируем...")
+                test_start = min(val_end_purged + effective_embargo, n_samples - 100)
+
+            # Логируем итоговые размеры
+            train_size = train_end_purged
+            val_size = val_end_purged - val_start
+            test_size = n_samples - test_start if self.config.test_ratio > 0 else 0
+
+            # Считаем потери от purging/embargo
+            total_kept = train_size + val_size + test_size
+            total_lost = n_samples - total_kept
+            loss_pct = (total_lost / n_samples) * 100
+
+            tqdm.write(f"\n  Effective split:")
+            tqdm.write(f"  • Train: 0 -> {train_end_purged} ({train_size:,} samples)")
+            tqdm.write(f"  • Gap (purge+embargo): {train_end_purged} -> {val_start}")
+            tqdm.write(f"  • Val: {val_start} -> {val_end_purged} ({val_size:,} samples)")
+            tqdm.write(f"  • Gap (purge+embargo): {val_end_purged} -> {test_start}")
+            tqdm.write(f"  • Test: {test_start} -> {n_samples} ({test_size:,} samples)")
+            tqdm.write(f"\n  Data loss from purging/embargo: {total_lost:,} samples ({loss_pct:.1f}%)")
+            tqdm.write("=" * 60 + "\n")
+
+            # Выполняем split
+            X_train = sequences[:train_end_purged]
+            y_train = labels[:train_end_purged]
+
+            X_val = sequences[val_start:val_end_purged]
+            y_val = labels[val_start:val_end_purged]
+
+            if self.config.test_ratio > 0 and test_start < n_samples:
+                X_test = sequences[test_start:]
+                y_test = labels[test_start:]
+                test_data = (X_test, y_test)
+            else:
+                test_data = None
+                test_size = 0
+
         else:
-            test_data = None
-            test_size = 0
+            # ===== LEGACY SPLIT (без purging/embargo) =====
+            tqdm.write("[Data] Using legacy split (purging/embargo disabled)")
 
-        # Используем tqdm.write для немедленного вывода в консоль
-        from tqdm import tqdm
+            X_train = sequences[:base_train_end]
+            y_train = labels[:base_train_end]
+
+            X_val = sequences[base_train_end:base_val_end]
+            y_val = labels[base_train_end:base_val_end]
+
+            if self.config.test_ratio > 0:
+                X_test = sequences[base_val_end:]
+                y_test = labels[base_val_end:]
+                test_data = (X_test, y_test)
+                test_size = len(X_test)
+            else:
+                test_data = None
+                test_size = 0
+
+        # Логируем размеры
         tqdm.write(f"[Data] Train/Val/Test split: train={len(X_train)}, val={len(X_val)}, test={test_size}")
 
         # Логируем распределение классов
@@ -379,17 +495,18 @@ class HistoricalDataLoader:
             additional_y = []
 
             for cls in missing_classes:
-                # Находим сэмплы этого класса в train (берём из конца, ближе к val по времени)
+                # Находим сэмплы этого класса в train (берём из начала train, далеко от val)
+                # ВАЖНО: берём из НАЧАЛА train (не конца) для соблюдения temporal order
                 cls_indices = np.where(y_train == cls)[0]
 
                 if len(cls_indices) > 0:
-                    # Берём последние сэмплы этого класса из train
+                    # Берём первые сэмплы этого класса из train (дальше от val)
                     n_to_add = min(min_samples_per_class, len(cls_indices))
-                    selected_indices = cls_indices[-n_to_add:]  # Последние (ближе к val по времени)
+                    selected_indices = cls_indices[:n_to_add]  # Первые (далеко от val)
 
                     additional_X.append(X_train[selected_indices])
                     additional_y.append(y_train[selected_indices])
-                    tqdm.write(f"  • Class {cls}: added {n_to_add} samples from train")
+                    tqdm.write(f"  • Class {cls}: added {n_to_add} samples from train (early samples)")
 
             if additional_X:
                 # Добавляем в validation
@@ -405,9 +522,8 @@ class HistoricalDataLoader:
                 tqdm.write(f"[Data] Val class distribution (after stratification): {dict(val_dist)}")
 
         if test_data:
-            test_dist = Counter(y_test)
+            test_dist = Counter(test_data[1])
             tqdm.write(f"[Data] Test class distribution: {dict(test_dist)}")
-            # Предупреждение если test set несбалансирован
             if len(test_dist) < 3:
                 tqdm.write("=" * 60)
                 tqdm.write("[WARNING] Test set содержит не все классы!")
@@ -966,18 +1082,27 @@ class HistoricalDataLoader:
         timestamps: np.ndarray,
         n_splits: int = 5,
         min_train_size: float = 0.3,
-        stratify_val: bool = True
+        stratify_val: bool = True,
+        use_purging: bool = None,
+        use_embargo: bool = None
     ) -> List[Tuple[Tuple[np.ndarray, np.ndarray], Tuple[np.ndarray, np.ndarray]]]:
         """
-        Walk-forward validation split - правильный метод для временных рядов.
+        Walk-forward validation split с поддержкой Purging (Industry Standard).
 
         Разбивает данные на n_splits фолдов, где каждый следующий фолд
         использует растущее окно для обучения.
+
+        С включенным purging между train и val добавляется gap для
+        предотвращения data leakage.
+
+        Схема для каждого фолда:
+        [TRAIN] --purge-- [VAL]
 
         Преимущества:
         - Нет утечки данных из будущего
         - Более реалистичная оценка модели
         - Тестирует на разных рыночных условиях
+        - С purging: честная оценка без leakage
 
         Args:
             sequences: (N, seq_len, features)
@@ -986,6 +1111,8 @@ class HistoricalDataLoader:
             n_splits: Количество фолдов
             min_train_size: Минимальный размер train (доля от всех данных)
             stratify_val: Добавлять сэмплы для стратификации validation
+            use_purging: Использовать purging (если None - берётся из config)
+            use_embargo: Использовать embargo (если None - берётся из config)
 
         Returns:
             List из (train_data, val_data) для каждого фолда
@@ -997,32 +1124,61 @@ class HistoricalDataLoader:
         remaining = n_samples - min_train_samples
         fold_size = remaining // n_splits
 
+        # Определяем использование purging/embargo
+        apply_purging = use_purging if use_purging is not None else self.config.use_purging
+        apply_embargo = use_embargo if use_embargo is not None else self.config.use_embargo
+
+        # Рассчитываем длины
+        purge_length, embargo_length = self._calculate_purge_embargo_lengths(n_samples)
+        effective_purge = purge_length if apply_purging else 0
+        effective_embargo = embargo_length if apply_embargo else 0
+        total_gap = effective_purge + effective_embargo
+
         tqdm.write("\n" + "=" * 60)
-        tqdm.write("[Walk-Forward] НАСТРОЙКА КРОСС-ВАЛИДАЦИИ")
+        tqdm.write("[Walk-Forward] НАСТРОЙКА КРОСС-ВАЛИДАЦИИ С PURGING")
         tqdm.write("=" * 60)
         tqdm.write(f"  • Всего сэмплов: {n_samples:,}")
         tqdm.write(f"  • Количество фолдов: {n_splits}")
         tqdm.write(f"  • Мин. train размер: {min_train_samples:,} ({min_train_size:.0%})")
         tqdm.write(f"  • Размер фолда: ~{fold_size:,}")
+        tqdm.write(f"  • Purging: {effective_purge} samples (enabled: {apply_purging})")
+        tqdm.write(f"  • Embargo: {effective_embargo} samples (enabled: {apply_embargo})")
+        tqdm.write(f"  • Total gap per fold: {total_gap} samples")
         tqdm.write("=" * 60)
 
         splits = []
         expected_classes = {0, 1, 2}  # HOLD, BUY, SELL
 
         for i in range(n_splits):
-            # Train: от начала до конца текущего фолда
-            train_end = min_train_samples + fold_size * i
-            train_sequences = sequences[:train_end]
-            train_labels = labels[:train_end]
+            # Train: от начала до (train_end - purge)
+            base_train_end = min_train_samples + fold_size * i
+            train_end_purged = base_train_end - effective_purge
 
-            # Validation: следующий фолд
-            val_start = train_end
-            val_end = min(train_end + fold_size, n_samples)
+            # Validation: от (train_end + embargo) до val_end
+            val_start = base_train_end + effective_embargo
+            val_end = min(base_train_end + fold_size, n_samples)
+
+            # Проверяем валидность индексов
+            if train_end_purged <= 0:
+                tqdm.write(f"[Fold {i+1}] WARNING: train_end_purged <= 0, adjusting...")
+                train_end_purged = max(100, min_train_samples // 2)
+
+            if val_start >= val_end:
+                tqdm.write(f"[Fold {i+1}] WARNING: val_start >= val_end, adjusting...")
+                val_start = train_end_purged + total_gap
+                val_end = max(val_start + 100, base_train_end + fold_size)
+
+            if val_end > n_samples:
+                val_end = n_samples
+
+            train_sequences = sequences[:train_end_purged]
+            train_labels = labels[:train_end_purged]
+
             val_sequences = sequences[val_start:val_end]
             val_labels = labels[val_start:val_end]
 
             # Stratify validation если нужно
-            if stratify_val:
+            if stratify_val and len(val_labels) > 0:
                 val_dist = Counter(val_labels)
                 missing_classes = expected_classes - set(val_dist.keys())
 
@@ -1030,10 +1186,11 @@ class HistoricalDataLoader:
                     min_samples_per_class = max(50, len(val_sequences) // 20)
 
                     for cls in missing_classes:
+                        # ВАЖНО: берём из НАЧАЛА train (далеко от val) для соблюдения purging
                         cls_indices = np.where(train_labels == cls)[0]
                         if len(cls_indices) > 0:
                             n_to_add = min(min_samples_per_class, len(cls_indices))
-                            selected_indices = cls_indices[-n_to_add:]
+                            selected_indices = cls_indices[:n_to_add]  # Первые (далеко от val)
 
                             val_sequences = np.concatenate([val_sequences, train_sequences[selected_indices]], axis=0)
                             val_labels = np.concatenate([val_labels, train_labels[selected_indices]], axis=0)
@@ -1050,9 +1207,10 @@ class HistoricalDataLoader:
 
             train_dist = Counter(train_labels)
             val_dist = Counter(val_labels)
+            gap_info = f" (gap: {base_train_end - train_end_purged + val_start - base_train_end})" if total_gap > 0 else ""
             tqdm.write(
                 f"[Fold {i+1}/{n_splits}] train={len(train_sequences):,} {dict(train_dist)}, "
-                f"val={len(val_sequences):,} {dict(val_dist)}"
+                f"val={len(val_sequences):,} {dict(val_dist)}{gap_info}"
             )
 
         tqdm.write("=" * 60 + "\n")

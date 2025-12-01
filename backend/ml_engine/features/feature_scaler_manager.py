@@ -50,6 +50,12 @@ class ScalerConfig:
     min_samples_for_fitting: int = 100  # Minimum samples to fit scalers
     refit_interval_samples: int = 1000  # Refit every N samples
 
+    # === ROLLING NORMALIZATION (Industry Standard for Non-Stationary Data) ===
+    use_rolling_normalization: bool = False  # Enable rolling normalization
+    rolling_window_size: int = 500  # Window size for rolling statistics
+    rolling_method: str = "robust"  # robust (IQR), standard (mean/std)
+    rolling_update_interval: int = 10  # Update statistics every N samples
+
     # Persistence
     save_dir: str = "ml_models/scalers"
     auto_save: bool = True
@@ -61,6 +67,193 @@ class ScalerConfig:
 
     # Version
     version: str = "v1.0.0"
+
+
+class RollingScaler:
+    """
+    Rolling Window Scaler for non-stationary time series data.
+
+    Maintains a sliding window of recent data and computes normalization
+    statistics (median, IQR for robust; mean, std for standard) on this window.
+
+    Advantages:
+    - Adapts to changing market conditions
+    - Handles non-stationarity in financial data
+    - Provides consistent scaling even when data distribution shifts
+
+    Methods:
+    - robust: Uses median and IQR (Interquartile Range) - resistant to outliers
+    - standard: Uses mean and standard deviation
+    """
+
+    def __init__(
+        self,
+        window_size: int = 500,
+        method: str = "robust",
+        n_features: int = None,
+        eps: float = 1e-8
+    ):
+        """
+        Initialize RollingScaler.
+
+        Args:
+            window_size: Number of samples to keep in rolling window
+            method: "robust" (IQR) or "standard" (mean/std)
+            n_features: Number of features (auto-detected if None)
+            eps: Small value to prevent division by zero
+        """
+        self.window_size = window_size
+        self.method = method
+        self.n_features = n_features
+        self.eps = eps
+
+        # Rolling buffer for each feature
+        self._buffer: Optional[deque] = None
+        self._is_initialized = False
+
+        # Cached statistics
+        self._center: Optional[np.ndarray] = None  # median or mean
+        self._scale: Optional[np.ndarray] = None   # IQR or std
+        self._stats_sample_count = 0
+
+        logger.debug(
+            f"RollingScaler initialized: window={window_size}, method={method}"
+        )
+
+    def _initialize_buffer(self, n_features: int):
+        """Initialize buffer with known number of features."""
+        self.n_features = n_features
+        self._buffer = deque(maxlen=self.window_size)
+        self._is_initialized = True
+        logger.debug(f"RollingScaler buffer initialized for {n_features} features")
+
+    def partial_fit(self, X: np.ndarray) -> 'RollingScaler':
+        """
+        Update rolling window with new samples.
+
+        Args:
+            X: New data (n_samples, n_features) or (n_features,)
+
+        Returns:
+            self for chaining
+        """
+        X = np.atleast_2d(X)
+
+        # Initialize on first call
+        if not self._is_initialized:
+            self._initialize_buffer(X.shape[1])
+
+        # Add samples to buffer
+        for sample in X:
+            self._buffer.append(sample.copy())
+
+        # Update statistics if enough samples
+        if len(self._buffer) >= 100:  # Min 100 samples for stable stats
+            self._update_statistics()
+
+        return self
+
+    def _update_statistics(self):
+        """Recompute center and scale from current buffer."""
+        if len(self._buffer) < 100:
+            return
+
+        buffer_array = np.array(self._buffer)
+
+        if self.method == "robust":
+            # Robust method: median and IQR
+            self._center = np.median(buffer_array, axis=0)
+            q75 = np.percentile(buffer_array, 75, axis=0)
+            q25 = np.percentile(buffer_array, 25, axis=0)
+            self._scale = (q75 - q25) + self.eps
+        else:
+            # Standard method: mean and std
+            self._center = np.mean(buffer_array, axis=0)
+            self._scale = np.std(buffer_array, axis=0) + self.eps
+
+        self._stats_sample_count = len(self._buffer)
+
+    def transform(self, X: np.ndarray) -> np.ndarray:
+        """
+        Transform data using current rolling statistics.
+
+        Args:
+            X: Data to transform (n_samples, n_features) or (n_features,)
+
+        Returns:
+            Transformed data
+        """
+        X = np.atleast_2d(X)
+
+        # Return unchanged if not enough data
+        if self._center is None or self._scale is None:
+            logger.debug("RollingScaler: Not enough data, returning unchanged")
+            return X
+
+        # Check feature dimension
+        if X.shape[1] != self.n_features:
+            raise ValueError(
+                f"Feature dimension mismatch: expected {self.n_features}, "
+                f"got {X.shape[1]}"
+            )
+
+        # Normalize
+        X_scaled = (X - self._center) / self._scale
+
+        return X_scaled
+
+    def fit_transform(self, X: np.ndarray) -> np.ndarray:
+        """Fit and transform in one call."""
+        self.partial_fit(X)
+        return self.transform(X)
+
+    def inverse_transform(self, X_scaled: np.ndarray) -> np.ndarray:
+        """
+        Reverse the transformation.
+
+        Args:
+            X_scaled: Scaled data
+
+        Returns:
+            Original scale data
+        """
+        X_scaled = np.atleast_2d(X_scaled)
+
+        if self._center is None or self._scale is None:
+            return X_scaled
+
+        return X_scaled * self._scale + self._center
+
+    @property
+    def is_fitted(self) -> bool:
+        """Check if scaler has been fitted."""
+        return self._center is not None and self._scale is not None
+
+    @property
+    def buffer_size(self) -> int:
+        """Current number of samples in buffer."""
+        return len(self._buffer) if self._buffer else 0
+
+    def get_statistics(self) -> Dict:
+        """Get current statistics."""
+        return {
+            'is_fitted': self.is_fitted,
+            'buffer_size': self.buffer_size,
+            'window_size': self.window_size,
+            'method': self.method,
+            'n_features': self.n_features,
+            'center_mean': float(np.mean(self._center)) if self._center is not None else None,
+            'scale_mean': float(np.mean(self._scale)) if self._scale is not None else None
+        }
+
+    def reset(self):
+        """Reset scaler state."""
+        self._buffer = None
+        self._is_initialized = False
+        self._center = None
+        self._scale = None
+        self._stats_sample_count = 0
+        logger.debug("RollingScaler reset")
 
 
 @dataclass
@@ -171,6 +364,22 @@ class FeatureScalerManager:
         self.state = ScalerState(version=self.config.version)
         self._init_scalers()
 
+        # === ROLLING NORMALIZATION (Industry Standard) ===
+        self.rolling_scaler: Optional[RollingScaler] = None
+        if self.config.use_rolling_normalization:
+            self.rolling_scaler = RollingScaler(
+                window_size=self.config.rolling_window_size,
+                method=self.config.rolling_method
+            )
+            logger.info(
+                f"Rolling normalization enabled: "
+                f"window={self.config.rolling_window_size}, "
+                f"method={self.config.rolling_method}"
+            )
+
+        # Rolling update counter
+        self._rolling_update_counter = 0
+
         # Try to load existing state
         self._load_state()
 
@@ -191,6 +400,7 @@ class FeatureScalerManager:
             f"orderbook={self.config.orderbook_scaler_type}, "
             f"candle={self.config.candle_scaler_type}, "
             f"indicator={self.config.indicator_scaler_type}, "
+            f"rolling={self.config.use_rolling_normalization}, "
             f"fitted={self.state.is_fitted}"
         )
 
@@ -518,6 +728,40 @@ class FeatureScalerManager:
             orderbook_scaled = self.state.orderbook_scaler.transform(orderbook_raw).flatten()
             candle_scaled = self.state.candle_scaler.transform(candle_raw).flatten()
             indicator_scaled = self.state.indicator_scaler.transform(indicator_raw).flatten()
+
+            # ========================================================================
+            # STEP 2.5: Optional Rolling Normalization (Industry Standard)
+            # ========================================================================
+            # Rolling normalization adapts to non-stationary market conditions
+            # by using a sliding window of recent data for normalization stats
+            if self.rolling_scaler is not None:
+                # Combine all channels for rolling normalization
+                combined_scaled = np.concatenate([
+                    orderbook_scaled, candle_scaled, indicator_scaled
+                ]).reshape(1, -1)
+
+                # Update rolling buffer with new sample
+                self._rolling_update_counter += 1
+                if self._rolling_update_counter >= self.config.rolling_update_interval:
+                    self.rolling_scaler.partial_fit(combined_scaled)
+                    self._rolling_update_counter = 0
+
+                # Apply rolling normalization if fitted
+                if self.rolling_scaler.is_fitted:
+                    combined_rolling = self.rolling_scaler.transform(combined_scaled).flatten()
+
+                    # Split back into channels
+                    ob_len = len(orderbook_scaled)
+                    candle_len = len(candle_scaled)
+
+                    orderbook_scaled = combined_rolling[:ob_len]
+                    candle_scaled = combined_rolling[ob_len:ob_len + candle_len]
+                    indicator_scaled = combined_rolling[ob_len + candle_len:]
+
+                    logger.debug(
+                        f"{self.symbol} | Rolling normalization applied: "
+                        f"buffer_size={self.rolling_scaler.buffer_size}"
+                    )
 
             logger.debug(
                 f"{self.symbol} | Scaled features: "
