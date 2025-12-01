@@ -319,7 +319,7 @@ Single prediction
 {
   "symbol": "BTCUSDT",
   "prediction": {
-    "direction": 0,      // 0=HOLD, 1=BUY, 2=SELL
+    "direction": 0,      // 0=SELL, 1=HOLD, 2=BUY
     "confidence": 0.85,
     "expected_return": 0.025
   },

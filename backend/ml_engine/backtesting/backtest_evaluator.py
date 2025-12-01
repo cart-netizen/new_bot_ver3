@@ -96,7 +96,7 @@ class BacktestEvaluator:
         results = evaluator.run_backtest(X_test, y_test, timestamps)
     """
 
-    CLASS_NAMES = {0: 'HOLD', 1: 'BUY', 2: 'SELL'}
+    CLASS_NAMES = {0: 'SELL', 1: 'HOLD', 2: 'BUY'}  # СТАНДАРТ: 0=SELL, 1=HOLD, 2=BUY
 
     def __init__(
         self,

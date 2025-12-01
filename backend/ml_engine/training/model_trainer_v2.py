@@ -821,7 +821,7 @@ class ModelTrainerV2:
         tqdm.write(f"  • F1 Score: {f1:.4f}")
 
         # Classification report
-        class_names = ['HOLD', 'BUY', 'SELL']
+        class_names = ['SELL', 'HOLD', 'BUY']  # 0=SELL, 1=HOLD, 2=BUY
         report = classification_report(
             all_labels, all_predictions,
             target_names=class_names,
