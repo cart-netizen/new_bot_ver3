@@ -74,7 +74,7 @@ class ModelConfigV2:
     stochastic_depth_prob: float = 0.0  # 0 = off
 
     # === Memory optimization ===
-    use_gradient_checkpointing: bool = False  # Trade compute for memory
+    use_gradient_checkpointing: bool = False  # Enable only if OOM (may cause NaN with mixed precision)
 
     # === Инициализация ===
     init_method: str = "kaiming"  # kaiming, xavier, orthogonal

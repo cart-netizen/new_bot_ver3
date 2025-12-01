@@ -99,7 +99,7 @@ class OptimizedModelConfig:
     use_multi_head_attention: bool = True  # Multi-Head Attention
 
     # === Memory Optimization ===
-    use_gradient_checkpointing: bool = True  # Trade compute for memory (saves ~40% GPU RAM)
+    use_gradient_checkpointing: bool = False  # Enable only if OOM (may conflict with mixed precision)
 
     # === Инициализация ===
     init_method: str = "kaiming"  # kaiming, xavier, orthogonal
@@ -224,7 +224,7 @@ class OptimizedTrainerConfig:
     # === Memory Optimization ===
     gradient_accumulation_steps: int = 1  # Accumulate gradients (effective_batch = batch_size * steps)
     use_mixed_precision: bool = True  # FP16 training
-    use_gradient_checkpointing: bool = True  # Trade compute for memory
+    use_gradient_checkpointing: bool = False  # Enable only if OOM (may conflict with mixed precision)
 
     # === Checkpoint ===
     checkpoint_dir: str = "checkpoints/models"
