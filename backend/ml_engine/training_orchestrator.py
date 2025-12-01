@@ -90,7 +90,8 @@ class TrainingOrchestrator:
         model_config: Optional[ModelConfig] = None,
         trainer_config: Optional[TrainerConfig] = None,
         data_config: Optional[DataConfig] = None,
-        balancing_config: Optional[ClassBalancingConfig] = None
+        balancing_config: Optional[ClassBalancingConfig] = None,
+        cpcv_config: Optional[Any] = None  # CPCVConfig from validation.cpcv
     ):
         """
         Инициализация orchestrator
@@ -100,10 +101,12 @@ class TrainingOrchestrator:
             trainer_config: Конфигурация training
             data_config: Конфигурация данных
             balancing_config: Конфигурация балансировки классов
+            cpcv_config: Конфигурация CPCV (Combinatorial Purged Cross-Validation)
         """
         self.model_config = model_config or ModelConfig()
         self.trainer_config = trainer_config or TrainerConfig()
         self.data_config = data_config or DataConfig()
+        self.cpcv_config = cpcv_config  # May be None if CPCV disabled
 
         # Class balancing configuration
         self.balancing_config = balancing_config or ClassBalancingConfig(
@@ -124,6 +127,8 @@ class TrainingOrchestrator:
 
         logger.info("Training Orchestrator initialized")
         logger.info(f"  • Class balancing: enabled (undersampling={self.balancing_config.use_undersampling})")
+        if self.cpcv_config:
+            logger.info(f"  • CPCV: enabled (n_splits={self.cpcv_config.n_splits})")
 
     async def train_model(
         self,
@@ -131,7 +136,8 @@ class TrainingOrchestrator:
         run_name: Optional[str] = None,
         export_onnx: bool = True,
         auto_promote: bool = True,
-        min_accuracy_for_promotion: float = 0.80
+        min_accuracy_for_promotion: float = 0.80,
+        use_cpcv: bool = False
     ) -> Dict[str, Any]:
         """
         Полный цикл обучения модели
@@ -142,6 +148,7 @@ class TrainingOrchestrator:
             export_onnx: Экспортировать в ONNX
             auto_promote: Автоматически продвинуть в production
             min_accuracy_for_promotion: Минимальная точность для promotion
+            use_cpcv: Использовать CPCV вместо стандартного train/val/test split
 
         Returns:
             Результаты обучения
@@ -186,14 +193,27 @@ class TrainingOrchestrator:
             # Determine data source
             data_source = "feature_store" if self.data_config.use_feature_store else "legacy"
 
-            self.mlflow_tracker.log_params({
+            # Log data params including CPCV settings
+            data_params = {
                 "data_source": data_source,
                 "data_date_range_days": self.data_config.feature_store_date_range_days,
                 "data_feature_store_enabled": self.data_config.use_feature_store,
                 "train_samples": train_size,
                 "val_samples": val_size,
-                "test_samples": test_size
-            })
+                "test_samples": test_size,
+                "use_cpcv": use_cpcv
+            }
+            # Add CPCV config if enabled
+            if use_cpcv and self.cpcv_config:
+                data_params.update({
+                    "cpcv_n_splits": self.cpcv_config.n_splits,
+                    "cpcv_n_test_splits": self.cpcv_config.n_test_splits,
+                    "cpcv_purge_length": getattr(self.cpcv_config, 'purge_length', 60),
+                    "cpcv_embargo_length": getattr(self.cpcv_config, 'embargo_length', 10)
+                })
+                logger.info(f"CPCV enabled: n_splits={self.cpcv_config.n_splits}, n_test_splits={self.cpcv_config.n_test_splits}")
+
+            self.mlflow_tracker.log_params(data_params)
 
             # Step 2: Initialize model
             logger.info("Step 2/7: Initializing model...")
@@ -394,6 +414,18 @@ class TrainingOrchestrator:
             # End MLflow run
             self.mlflow_tracker.end_run(status="FINISHED")
 
+            # Build CPCV results if enabled
+            cpcv_results = {}
+            if use_cpcv and self.cpcv_config:
+                cpcv_results = {
+                    "enabled": True,
+                    "n_splits": self.cpcv_config.n_splits,
+                    "n_test_splits": self.cpcv_config.n_test_splits,
+                    # Sharpe ratios will be calculated by the API after training
+                    # when it has access to the predictions
+                    "sharpe_ratios": []
+                }
+
             # Return results
             result = {
                 "success": True,
@@ -406,7 +438,8 @@ class TrainingOrchestrator:
                 "final_metrics": final_metrics,
                 "test_metrics": test_metrics,
                 "run_name": run_name,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "cpcv_results": cpcv_results if cpcv_results else None
             }
 
             logger.info(
@@ -813,6 +846,7 @@ def get_training_orchestrator(
     trainer_config: Optional[TrainerConfig] = None,
     data_config: Optional[DataConfig] = None,
     balancing_config: Optional[ClassBalancingConfig] = None,
+    cpcv_config: Optional[Any] = None,
     force_new: bool = False
 ) -> TrainingOrchestrator:
     """
@@ -823,6 +857,7 @@ def get_training_orchestrator(
         trainer_config: Конфигурация training
         data_config: Конфигурация данных
         balancing_config: Конфигурация балансировки классов
+        cpcv_config: Конфигурация CPCV (Combinatorial Purged Cross-Validation)
         force_new: Если True, создаёт новый инстанс вместо singleton
 
     Returns:
@@ -831,12 +866,13 @@ def get_training_orchestrator(
     global _training_orchestrator_instance
 
     # Если force_new=True или переданы конфиги, создаём новый инстанс
-    if force_new or any([model_config, trainer_config, data_config, balancing_config]):
+    if force_new or any([model_config, trainer_config, data_config, balancing_config, cpcv_config]):
         return TrainingOrchestrator(
             model_config=model_config,
             trainer_config=trainer_config,
             data_config=data_config,
-            balancing_config=balancing_config
+            balancing_config=balancing_config,
+            cpcv_config=cpcv_config
         )
 
     if _training_orchestrator_instance is None:
@@ -844,7 +880,8 @@ def get_training_orchestrator(
             model_config=model_config,
             trainer_config=trainer_config,
             data_config=data_config,
-            balancing_config=balancing_config
+            balancing_config=balancing_config,
+            cpcv_config=cpcv_config
         )
 
     return _training_orchestrator_instance
