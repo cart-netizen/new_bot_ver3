@@ -172,9 +172,9 @@ class BacktestEvaluator:
             precision=class_metrics['precision'],
             recall=class_metrics['recall'],
             f1=class_metrics['f1'],
-            total_trades=trading_metrics.get('total_trades', 0),
-            winning_trades=trading_metrics.get('winning_trades', 0),
-            losing_trades=trading_metrics.get('losing_trades', 0),
+            total_trades=int(trading_metrics.get('total_trades', 0)),
+            winning_trades=int(trading_metrics.get('winning_trades', 0)),
+            losing_trades=int(trading_metrics.get('losing_trades', 0)),
             win_rate=trading_metrics.get('win_rate', 0.0),
             total_pnl=trading_metrics.get('total_pnl', 0.0),
             total_pnl_percent=trading_metrics.get('total_pnl_percent', 0.0),
@@ -339,8 +339,8 @@ class BacktestEvaluator:
                 preds = torch.argmax(probs, dim=-1).cpu().numpy()
 
                 # Confidence (если есть) или max probability
-                if confidence is not None:
-                    confs = confidence.squeeze().cpu().numpy()
+                if confidence is not None and isinstance(confidence, torch.Tensor):
+                    confs = confidence.squeeze(-1).cpu().numpy()
                 else:
                     confs = probs.max(dim=-1).values.cpu().numpy()
 
