@@ -482,8 +482,8 @@ class HistoricalDataLoader:
 
     def _apply_train_resampling(
         self,
-        train_data: Tuple[np.ndarray, np.ndarray, np.ndarray]
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        train_data: Tuple[np.ndarray, ...]
+    ) -> Tuple[np.ndarray, ...]:
         """
         Применить resampling ТОЛЬКО к train данным.
 
@@ -491,17 +491,22 @@ class HistoricalDataLoader:
         Val/Test данные остаются с оригинальным распределением для честной оценки.
 
         Args:
-            train_data: (X_train, y_train, timestamps_train)
+            train_data: (X_train, y_train) или (X_train, y_train, timestamps_train)
 
         Returns:
-            (X_train_resampled, y_train_resampled, timestamps_resampled)
+            Tuple с resampled данными (того же размера что и вход)
         """
         from tqdm import tqdm
 
         if not self.balancing_strategy:
             return train_data
 
-        X_train, y_train, timestamps_train = train_data
+        # Поддержка и 2-tuple и 3-tuple
+        if len(train_data) == 2:
+            X_train, y_train = train_data
+            timestamps_train = None
+        else:
+            X_train, y_train, timestamps_train = train_data
 
         tqdm.write("\n" + "="*60)
         tqdm.write("[Resampling] Применяем ТОЛЬКО к TRAIN данным (после split)")
@@ -521,21 +526,26 @@ class HistoricalDataLoader:
         tqdm.write(f"[Resampling] ПОСЛЕ: {dict(after_dist)}")
         tqdm.write(f"[Resampling] Размер: {len(X_train)} → {len(X_train_new)}")
 
-        # Обновляем timestamps для новых данных
-        if len(timestamps_train) != len(X_train_new):
-            if len(timestamps_train) < len(X_train_new):
-                # Oversample: дублируем timestamps
-                indices = np.random.choice(len(timestamps_train), len(X_train_new), replace=True)
-                timestamps_new = timestamps_train[indices]
-            else:
-                # Undersample: обрезаем timestamps
-                timestamps_new = timestamps_train[:len(X_train_new)]
-        else:
-            timestamps_new = timestamps_train
-
         tqdm.write("="*60 + "\n")
 
-        return X_train_new, y_train_new, timestamps_new
+        # Возвращаем в том же формате, что и получили
+        if timestamps_train is None:
+            # 2-tuple: (X, y)
+            return X_train_new, y_train_new
+        else:
+            # 3-tuple: (X, y, timestamps) - обновляем timestamps
+            if len(timestamps_train) != len(X_train_new):
+                if len(timestamps_train) < len(X_train_new):
+                    # Oversample: дублируем timestamps
+                    indices = np.random.choice(len(timestamps_train), len(X_train_new), replace=True)
+                    timestamps_new = timestamps_train[indices]
+                else:
+                    # Undersample: обрезаем timestamps
+                    timestamps_new = timestamps_train[:len(X_train_new)]
+            else:
+                timestamps_new = timestamps_train
+
+            return X_train_new, y_train_new, timestamps_new
 
     def load_and_prepare(
         self,
