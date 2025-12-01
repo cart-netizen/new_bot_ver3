@@ -566,6 +566,146 @@ class FeatureStore:
         except Exception as e:
             logger.error(f"Failed to load metadata: {e}")
 
+    async def initialize(self) -> bool:
+        """
+        Асинхронная инициализация Feature Store.
+
+        Выполняет проверку директорий, загружает метаданные,
+        очищает просроченный кэш.
+
+        Returns:
+            True если инициализация успешна
+        """
+        try:
+            logger.info("Initializing Feature Store...")
+
+            # Ensure directories exist
+            for dir_path in [self.offline_dir, self.online_dir, self.metadata_dir]:
+                dir_path.mkdir(parents=True, exist_ok=True)
+
+            # Reload metadata
+            self._load_metadata()
+
+            # Clean expired online cache
+            self._clean_expired_cache()
+
+            logger.info(
+                f"✓ Feature Store initialized: "
+                f"{len(self.feature_metadata)} features registered"
+            )
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to initialize Feature Store: {e}")
+            return False
+
+    def _clean_expired_cache(self) -> int:
+        """
+        Очистить просроченные записи из online cache.
+
+        Returns:
+            Количество удалённых записей
+        """
+        expired_keys = []
+        now = datetime.now()
+
+        for entity_id, (features, expire_at) in self.online_cache.items():
+            if now >= expire_at:
+                expired_keys.append(entity_id)
+
+        for key in expired_keys:
+            del self.online_cache[key]
+
+        if expired_keys:
+            logger.debug(f"Cleaned {len(expired_keys)} expired cache entries")
+
+        return len(expired_keys)
+
+    async def get_training_data(
+        self,
+        symbols: List[str],
+        start_date: datetime,
+        end_date: datetime,
+        feature_group: str = "training_features"
+    ) -> Optional[pd.DataFrame]:
+        """
+        Получить данные для обучения за указанный период.
+
+        Args:
+            symbols: Список торговых пар (BTCUSDT, ETHUSDT, ...)
+            start_date: Начальная дата
+            end_date: Конечная дата
+            feature_group: Группа фич для загрузки
+
+        Returns:
+            DataFrame с фичами или None если данные не найдены
+        """
+        try:
+            logger.info(
+                f"Loading training data: symbols={symbols}, "
+                f"period={start_date.date()} to {end_date.date()}"
+            )
+
+            # Convert dates to string format for read_offline_features
+            start_str = start_date.strftime("%Y-%m-%d")
+            end_str = end_date.strftime("%Y-%m-%d")
+
+            # Try to read from offline store
+            df = self.read_offline_features(
+                feature_group=feature_group,
+                start_date=start_str,
+                end_date=end_str
+            )
+
+            if df.empty:
+                # Try alternative feature groups
+                alternative_groups = [
+                    "ml_features",
+                    "orderbook_features",
+                    "candle_features",
+                    "combined_features"
+                ]
+
+                for alt_group in alternative_groups:
+                    df = self.read_offline_features(
+                        feature_group=alt_group,
+                        start_date=start_str,
+                        end_date=end_str
+                    )
+                    if not df.empty:
+                        logger.info(f"Found data in feature group: {alt_group}")
+                        break
+
+            if df.empty:
+                logger.warning(
+                    f"No training data found for period {start_str} to {end_str}"
+                )
+                return None
+
+            # Filter by symbols if 'symbol' column exists
+            if 'symbol' in df.columns and symbols:
+                df = df[df['symbol'].isin(symbols)]
+
+                if df.empty:
+                    logger.warning(f"No data found for symbols: {symbols}")
+                    return None
+
+            # Sort by timestamp if column exists
+            if 'timestamp' in df.columns:
+                df = df.sort_values('timestamp').reset_index(drop=True)
+
+            logger.info(
+                f"✓ Loaded {len(df)} rows of training data "
+                f"({df.shape[1]} features)"
+            )
+
+            return df
+
+        except Exception as e:
+            logger.error(f"Failed to get training data: {e}")
+            return None
+
 
 # Singleton instance
 _feature_store_instance: Optional[FeatureStore] = None

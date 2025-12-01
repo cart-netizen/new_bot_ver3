@@ -32,7 +32,8 @@ from backend.ml_engine.inference.ab_testing import (
     ModelVariant,
     PredictionOutcome
 )
-from backend.ml_engine.models.hybrid_cnn_lstm import HybridCNNLSTM
+# UPDATED: Используем v2 модель для совместимости с обученными моделями
+from backend.ml_engine.models.hybrid_cnn_lstm_v2 import HybridCNNLSTMv2 as HybridCNNLSTM
 from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -265,9 +266,9 @@ class ModelServer:
             if not use_onnx:
                 # Создать архитектуру модели (зависит от model_type)
                 model_type = model_info.metadata.model_type
-                if model_type == "HybridCNNLSTM":
-                    # Импортировать ModelConfig
-                    from backend.ml_engine.models.hybrid_cnn_lstm import ModelConfig
+                if model_type == "HybridCNNLSTM" or model_type == "HybridCNNLSTM_v2":
+                    # Импортировать ModelConfig (v2)
+                    from backend.ml_engine.models.hybrid_cnn_lstm_v2 import ModelConfigV2 as ModelConfig
 
                     # Загрузить параметры из metadata
                     training_params = model_info.metadata.training_params

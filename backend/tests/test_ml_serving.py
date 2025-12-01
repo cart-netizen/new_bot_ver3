@@ -25,7 +25,8 @@ from backend.ml_engine.inference.ab_testing import (
     PredictionOutcome
 )
 from backend.ml_engine.optimization.onnx_optimizer import ONNXOptimizer
-from backend.ml_engine.models.hybrid_cnn_lstm import HybridCNNLSTM
+# UPDATED: Используем v2 версию модели
+from backend.ml_engine.models.hybrid_cnn_lstm_v2 import HybridCNNLSTMv2 as HybridCNNLSTM
 
 
 @pytest.fixture
@@ -42,13 +43,13 @@ async def model_registry():
 @pytest.fixture
 def sample_model():
     """Fixture для sample модели"""
-    from backend.ml_engine.models.hybrid_cnn_lstm import ModelConfig
+    # UPDATED: Используем v2 версию
+    from backend.ml_engine.models.hybrid_cnn_lstm_v2 import ModelConfigV2 as ModelConfig
 
     config = ModelConfig(
         input_features=110,
         sequence_length=60,
         cnn_channels=(32, 64),
-        cnn_kernel_sizes=(3, 5),
         lstm_hidden=128,
         lstm_layers=1,
         lstm_dropout=0.2,
@@ -421,16 +422,15 @@ async def test_end_to_end_workflow(tmp_path):
     # 1. Create и register model
     registry = ModelRegistry(registry_dir=str(tmp_path / "models"))
 
-    from backend.ml_engine.models.hybrid_cnn_lstm import ModelConfig
+    # UPDATED: Используем v2 версию
+    from backend.ml_engine.models.hybrid_cnn_lstm_v2 import ModelConfigV2 as ModelConfig
 
     config = ModelConfig(
         input_features=110,
         sequence_length=60,
         cnn_channels=(32,),
-        cnn_kernel_sizes=(3,),
         lstm_hidden=64,
         lstm_layers=1,
-        lstm_dropout=0.1,
         attention_units=32,
         num_classes=3,
         dropout=0.1
