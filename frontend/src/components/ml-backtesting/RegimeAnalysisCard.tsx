@@ -23,7 +23,7 @@ import { TrendingUp, TrendingDown, Activity, Zap, RefreshCw } from 'lucide-react
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { cn } from '../../utils/helpers';
-import { getRegimeAnalysis, type RegimeAnalysis, type RegimeData } from '../../api/ml-backtesting.api';
+import { getRegimeAnalysis, type RegimeAnalysis } from '../../api/ml-backtesting.api';
 
 interface RegimeAnalysisCardProps {
   backtestId: string;
@@ -155,7 +155,7 @@ export function RegimeAnalysisCard({ backtestId }: RegimeAnalysisCardProps) {
             Performance breakdown by market conditions
           </p>
         </div>
-        <Button variant="secondary" size="sm" onClick={loadAnalysis} disabled={loading}>
+        <Button variant="outline" size="sm" onClick={loadAnalysis} disabled={loading}>
           <RefreshCw className={cn("h-4 w-4 mr-1", loading && "animate-spin")} />
           Refresh
         </Button>
@@ -284,7 +284,7 @@ export function RegimeAnalysisCard({ backtestId }: RegimeAnalysisCardProps) {
                   innerRadius={40}
                   outerRadius={70}
                   paddingAngle={2}
-                  label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                  label={({ name, percent }: { name: string; percent: number }) => `${name}: ${(percent * 100).toFixed(0)}%`}
                   labelLine={false}
                 >
                   {pieData.map((entry, index) => (

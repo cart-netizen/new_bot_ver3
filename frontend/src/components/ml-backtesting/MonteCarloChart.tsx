@@ -1,23 +1,20 @@
 // frontend/src/components/ml-backtesting/MonteCarloChart.tsx
 
 import { useState } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import {
-  LineChart,
   Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
   Area,
   AreaChart
 } from 'recharts';
-import { RefreshCw, Play, TrendingUp, TrendingDown, AlertTriangle } from 'lucide-react';
+import { RefreshCw, Play, TrendingUp, AlertTriangle } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
-import { cn } from '../../utils/helpers';
 import * as mlBacktestingApi from '../../api/ml-backtesting.api';
 
 interface MonteCarloChartProps {
