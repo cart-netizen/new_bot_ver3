@@ -15,7 +15,7 @@ Endpoints:
 """
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 from uuid import UUID
@@ -110,22 +110,24 @@ class CreateBacktestRequest(BaseModel):
     skip_trades_generation_every_n: Optional[int] = Field(default=None, ge=1, description="Генерировать trades каждые N свечей")
     log_trades: Optional[bool] = Field(default=False, description="Логировать каждую сделку")
 
-    @validator('start_date', 'end_date')
-    def validate_dates(cls, v):
+    @field_validator('start_date', 'end_date')
+    @classmethod
+    def validate_dates(cls, v: datetime) -> datetime:
         """Валидация дат"""
         if v > datetime.now():
             raise ValueError("Дата не может быть в будущем")
         return v
 
-    @validator('end_date')
-    def validate_date_range(cls, v, values):
+    @model_validator(mode='after')
+    def validate_date_range(self):
         """Валидация диапазона дат"""
-        if 'start_date' in values and v <= values['start_date']:
+        if self.end_date <= self.start_date:
             raise ValueError("end_date должна быть больше start_date")
-        return v
+        return self
 
-    @validator('slippage_model')
-    def validate_slippage_model(cls, v):
+    @field_validator('slippage_model')
+    @classmethod
+    def validate_slippage_model(cls, v: str) -> str:
         """Валидация модели slippage"""
         valid_models = ["fixed", "volume_based", "percentage"]
         if v not in valid_models:
