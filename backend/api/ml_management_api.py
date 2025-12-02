@@ -389,6 +389,7 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
             try:
                 from backend.ml_engine.features.labeling import TripleBarrierLabeler, TripleBarrierConfig
                 from backend.ml_engine.feature_store.feature_store import get_feature_store
+                from datetime import timedelta
 
                 tb_config = TripleBarrierConfig(
                     tp_multiplier=request.tb_tp_multiplier,
@@ -397,9 +398,16 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
                 )
                 labeler = TripleBarrierLabeler(tb_config)
 
-                # Get Feature Store data
+                # Get Feature Store data using read_offline_features
                 feature_store = get_feature_store()
-                df = await feature_store.get_training_data(days=90)
+                end_date = datetime.now()
+                start_date = end_date - timedelta(days=90)
+
+                df = feature_store.read_offline_features(
+                    feature_group="training_features",
+                    start_date=start_date.strftime("%Y-%m-%d"),
+                    end_date=end_date.strftime("%Y-%m-%d")
+                )
 
                 if df is not None and len(df) > 0:
                     # Apply Triple Barrier
