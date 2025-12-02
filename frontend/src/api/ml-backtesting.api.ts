@@ -250,6 +250,13 @@ export async function listAvailableModels(): Promise<{ models: ModelInfo[]; tota
 }
 
 /**
+ * Get class name from class ID
+ */
+export function getClassName(classId: number): string {
+  return { 0: 'SELL', 1: 'HOLD', 2: 'BUY' }[classId] || 'UNKNOWN';
+}
+
+/**
  * Default config for creating ML backtest
  */
 export function getDefaultMLBacktestConfig(): MLBacktestConfig {
