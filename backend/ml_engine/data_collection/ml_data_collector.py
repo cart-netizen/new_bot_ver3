@@ -120,15 +120,32 @@ class MLDataCollector:
       logger.error(f"Ошибка инициализации хранилища: {e}")
       raise
 
-  def should_collect(self) -> bool:
+  def should_collect(self, cycle_time_seconds: float = 3.0) -> bool:
     """
     Проверка нужно ли собирать данные в этой итерации.
+
+    АДАПТИВНЫЙ ИНТЕРВАЛ:
+    - Цель: собирать семплы каждые ~20-30 секунд
+    - При 15 парах и 3 сек/цикл: интервал=10 → каждые 30 сек
+    - При 50 парах и 11 сек/цикл: интервал=2-3 → каждые 22-33 сек
+
+    Args:
+        cycle_time_seconds: Время одного цикла анализа в секундах
 
     Returns:
         bool: True если нужно собрать
     """
     self.iteration_counter += 1
-    return self.iteration_counter % self.collection_interval == 0
+
+    # АДАПТИВНЫЙ ИНТЕРВАЛ: цель ~25 секунд между сборами
+    target_interval_seconds = 25.0
+    adaptive_interval = max(1, int(target_interval_seconds / max(cycle_time_seconds, 1.0)))
+
+    # Ограничиваем разумными рамками
+    adaptive_interval = min(adaptive_interval, 15)  # Максимум 15 итераций
+    adaptive_interval = max(adaptive_interval, 2)   # Минимум 2 итерации
+
+    return self.iteration_counter % adaptive_interval == 0
 
   async def collect_sample(
       self,

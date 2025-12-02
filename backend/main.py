@@ -1969,6 +1969,9 @@ class BotController:
       f"🔄 Проверка статуса перед циклом: self.status = {self.status}, BotStatus.RUNNING = {BotStatus.RUNNING}")
     logger.info(f"🔄 Статус совпадает: {self.status == BotStatus.RUNNING}")
 
+    # НОВОЕ: Отслеживаем время предыдущего цикла для адаптивного сбора ML данных
+    last_cycle_time = 3.0  # Начальное предположение
+
     while self.status == BotStatus.RUNNING:
       cycle_start = time.time()
       cycle_number += 1
@@ -2009,7 +2012,7 @@ class BotController:
 
         should_collect_ml_data_this_cycle = (
             has_ml_data_collector and
-            self.ml_data_collector.should_collect()
+            self.ml_data_collector.should_collect(cycle_time_seconds=last_cycle_time)
         )
 
         # Анализируем каждую пару
@@ -3056,6 +3059,9 @@ class BotController:
 
           # Расчет времени выполнения цикла
         cycle_elapsed = time.time() - cycle_start
+
+        # НОВОЕ: Обновляем время цикла для адаптивного ML сбора
+        last_cycle_time = cycle_elapsed
 
         try:
           analysis_interval = float(settings.ANALYSIS_INTERVAL)
