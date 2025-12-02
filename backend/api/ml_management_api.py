@@ -486,11 +486,12 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
 
                 # Get CPCV results from training
                 cpcv_results = result.get("cpcv_results", {})
-                if cpcv_results and "sharpe_ratios" in cpcv_results:
+                if cpcv_results and cpcv_results.get("sharpe_ratios"):
                     pbo_calculator = ProbabilityOfBacktestOverfitting()
+                    # Note: calculate() expects is_sharpes and oos_sharpes (not is_sharpe_ratios)
                     pbo_result = pbo_calculator.calculate(
-                        is_sharpe_ratios=cpcv_results.get("is_sharpe_ratios", []),
-                        oos_sharpe_ratios=cpcv_results.get("oos_sharpe_ratios", [])
+                        is_sharpes=cpcv_results.get("is_sharpe_ratios", []),
+                        oos_sharpes=cpcv_results.get("oos_sharpe_ratios", [])
                     )
 
                     result["pbo"] = {
