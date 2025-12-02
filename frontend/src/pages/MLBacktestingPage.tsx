@@ -16,7 +16,10 @@ import {
   Activity,
   Grid3X3,
   LineChart,
-  AlertCircle
+  AlertCircle,
+  Shuffle,
+  Zap,
+  Shield
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card } from '../components/ui/Card';
@@ -24,6 +27,14 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { cn } from '../utils/helpers';
 import * as mlBacktestingApi from '../api/ml-backtesting.api';
+
+// Chart Components
+import { EquityCurveChart } from '../components/ml-backtesting/EquityCurveChart';
+import { MonteCarloChart } from '../components/ml-backtesting/MonteCarloChart';
+import { WalkForwardChart } from '../components/ml-backtesting/WalkForwardChart';
+import { PBOAnalysisCard } from '../components/ml-backtesting/PBOAnalysisCard';
+import { RegimeAnalysisCard } from '../components/ml-backtesting/RegimeAnalysisCard';
+import { ConfusionMatrixHeatmap } from '../components/ml-backtesting/ConfusionMatrixHeatmap';
 
 interface ApiError {
   response?: {
@@ -664,8 +675,10 @@ interface MLBacktestResultsProps {
   isLoading: boolean;
 }
 
+type ResultsTab = 'overview' | 'classification' | 'trading' | 'walk_forward' | 'equity' | 'monte_carlo' | 'pbo' | 'regimes' | 'predictions';
+
 function MLBacktestResults({ backtest, isLoading }: MLBacktestResultsProps) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'classification' | 'trading' | 'walk_forward' | 'predictions'>('overview');
+  const [activeTab, setActiveTab] = useState<ResultsTab>('overview');
 
   if (isLoading) {
     return (
@@ -676,13 +689,17 @@ function MLBacktestResults({ backtest, isLoading }: MLBacktestResultsProps) {
     );
   }
 
-  const tabNames = {
-    overview: 'Обзор',
-    classification: 'Классификация',
-    trading: 'Trading',
-    walk_forward: 'Walk-Forward',
-    predictions: 'Predictions'
-  };
+  const tabConfig: { key: ResultsTab; label: string; icon: typeof TrendingUp }[] = [
+    { key: 'overview', label: 'Обзор', icon: Grid3X3 },
+    { key: 'classification', label: 'Классификация', icon: Target },
+    { key: 'trading', label: 'Trading', icon: TrendingUp },
+    { key: 'walk_forward', label: 'Walk-Forward', icon: LineChart },
+    { key: 'equity', label: 'Equity Curve', icon: Activity },
+    { key: 'monte_carlo', label: 'Monte Carlo', icon: Shuffle },
+    { key: 'pbo', label: 'PBO Analysis', icon: Shield },
+    { key: 'regimes', label: 'Regimes', icon: Zap },
+    { key: 'predictions', label: 'Predictions', icon: BarChart3 },
+  ];
 
   return (
     <div className="space-y-6">
@@ -733,19 +750,20 @@ function MLBacktestResults({ backtest, isLoading }: MLBacktestResultsProps) {
       </Card>
 
       {/* Tabs */}
-      <div className="flex gap-2 border-b border-gray-800 overflow-x-auto">
-        {(['overview', 'classification', 'trading', 'walk_forward', 'predictions'] as const).map((tab) => (
+      <div className="flex gap-1 border-b border-gray-800 overflow-x-auto pb-1">
+        {tabConfig.map(({ key, label, icon: Icon }) => (
           <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
+            key={key}
+            onClick={() => setActiveTab(key)}
             className={cn(
-              "px-4 py-2 font-medium transition-colors whitespace-nowrap",
-              activeTab === tab
-                ? "text-purple-400 border-b-2 border-purple-400"
-                : "text-gray-400 hover:text-white"
+              "flex items-center gap-1.5 px-3 py-2 font-medium transition-colors whitespace-nowrap rounded-t-lg text-sm",
+              activeTab === key
+                ? "text-purple-400 bg-purple-500/10 border-b-2 border-purple-400"
+                : "text-gray-400 hover:text-white hover:bg-gray-800/50"
             )}
           >
-            {tabNames[tab]}
+            <Icon className="h-4 w-4" />
+            {label}
           </button>
         ))}
       </div>
@@ -755,6 +773,10 @@ function MLBacktestResults({ backtest, isLoading }: MLBacktestResultsProps) {
       {activeTab === 'classification' && <ClassificationTab backtest={backtest} />}
       {activeTab === 'trading' && <TradingTab backtest={backtest} />}
       {activeTab === 'walk_forward' && <WalkForwardTab backtest={backtest} />}
+      {activeTab === 'equity' && <EquityCurveTab backtestId={backtest.id} />}
+      {activeTab === 'monte_carlo' && <MonteCarloTab backtestId={backtest.id} />}
+      {activeTab === 'pbo' && <PBOTab backtestId={backtest.id} />}
+      {activeTab === 'regimes' && <RegimesTab backtestId={backtest.id} />}
       {activeTab === 'predictions' && <PredictionsTab backtest={backtest} />}
     </div>
   );
@@ -848,110 +870,46 @@ function OverviewTab({ backtest }: { backtest: mlBacktestingApi.MLBacktestRun })
 }
 
 function ClassificationTab({ backtest }: { backtest: mlBacktestingApi.MLBacktestRun }) {
-  const classes = ['SELL', 'HOLD', 'BUY'];
-
   return (
     <div className="space-y-6">
-      {/* Confusion Matrix */}
+      {/* Confusion Matrix Heatmap */}
       {backtest.confusion_matrix && (
-        <Card className="p-6">
-          <h3 className="text-lg font-semibold text-white mb-4">Confusion Matrix</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full max-w-md mx-auto">
-              <thead>
-                <tr>
-                  <th className="p-2"></th>
-                  <th className="p-2 text-center text-gray-400" colSpan={3}>Predicted</th>
-                </tr>
-                <tr>
-                  <th className="p-2"></th>
-                  {classes.map(c => (
-                    <th key={c} className="p-2 text-center text-gray-300 font-medium">{c}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {backtest.confusion_matrix.map((row, i) => (
-                  <tr key={i}>
-                    {i === 0 && (
-                      <td rowSpan={3} className="p-2 text-gray-400 font-medium vertical-text">
-                        Actual
-                      </td>
-                    )}
-                    <td className="p-2 text-gray-300 font-medium">{classes[i]}</td>
-                    {row.map((val, j) => {
-                      const rowSum = row.reduce((a, b) => a + b, 0);
-                      const pct = rowSum > 0 ? (val / rowSum) * 100 : 0;
-                      const isCorrect = i === j;
-                      return (
-                        <td
-                          key={j}
-                          className={cn(
-                            "p-3 text-center font-medium rounded",
-                            isCorrect ? "bg-green-500/20 text-green-400" : "bg-gray-800 text-gray-300"
-                          )}
-                        >
-                          <div>{val}</div>
-                          <div className="text-xs text-gray-500">{pct.toFixed(1)}%</div>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+        <ConfusionMatrixHeatmap
+          matrix={backtest.confusion_matrix}
+          labels={['SELL', 'HOLD', 'BUY']}
+          title="Confusion Matrix"
+          showPercentages={true}
+        />
       )}
 
-      {/* Per-Class Metrics */}
+      {/* Macro Metrics Summary */}
       <Card className="p-6">
-        <h3 className="text-lg font-semibold text-white mb-4">Метрики по классам</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-gray-700">
-                <th className="text-left p-3 text-gray-400">Класс</th>
-                <th className="text-center p-3 text-gray-400">Precision</th>
-                <th className="text-center p-3 text-gray-400">Recall</th>
-                <th className="text-center p-3 text-gray-400">F1</th>
-                <th className="text-center p-3 text-gray-400">Support</th>
-              </tr>
-            </thead>
-            <tbody>
-              {classes.map(cls => (
-                <tr key={cls} className="border-b border-gray-800">
-                  <td className="p-3">
-                    <span className={cn(
-                      "font-medium",
-                      cls === 'SELL' ? 'text-red-400' :
-                      cls === 'HOLD' ? 'text-yellow-400' : 'text-green-400'
-                    )}>
-                      {cls}
-                    </span>
-                  </td>
-                  <td className="text-center p-3 text-white">
-                    {backtest.precision_per_class?.[cls] !== undefined
-                      ? `${(backtest.precision_per_class[cls] * 100).toFixed(1)}%`
-                      : 'N/A'}
-                  </td>
-                  <td className="text-center p-3 text-white">
-                    {backtest.recall_per_class?.[cls] !== undefined
-                      ? `${(backtest.recall_per_class[cls] * 100).toFixed(1)}%`
-                      : 'N/A'}
-                  </td>
-                  <td className="text-center p-3 text-white">
-                    {backtest.f1_per_class?.[cls] !== undefined
-                      ? `${(backtest.f1_per_class[cls] * 100).toFixed(1)}%`
-                      : 'N/A'}
-                  </td>
-                  <td className="text-center p-3 text-gray-400">
-                    {backtest.support_per_class?.[cls]?.toLocaleString() || 'N/A'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <h3 className="text-lg font-semibold text-white mb-4">Macro Metrics Summary</h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="p-4 bg-gray-800/50 rounded-lg text-center">
+            <p className="text-2xl font-bold text-purple-400">
+              {backtest.accuracy ? `${(backtest.accuracy * 100).toFixed(1)}%` : 'N/A'}
+            </p>
+            <p className="text-sm text-gray-400">Accuracy</p>
+          </div>
+          <div className="p-4 bg-gray-800/50 rounded-lg text-center">
+            <p className="text-2xl font-bold text-cyan-400">
+              {backtest.precision_macro ? `${(backtest.precision_macro * 100).toFixed(1)}%` : 'N/A'}
+            </p>
+            <p className="text-sm text-gray-400">Precision (macro)</p>
+          </div>
+          <div className="p-4 bg-gray-800/50 rounded-lg text-center">
+            <p className="text-2xl font-bold text-green-400">
+              {backtest.recall_macro ? `${(backtest.recall_macro * 100).toFixed(1)}%` : 'N/A'}
+            </p>
+            <p className="text-sm text-gray-400">Recall (macro)</p>
+          </div>
+          <div className="p-4 bg-gray-800/50 rounded-lg text-center">
+            <p className="text-2xl font-bold text-yellow-400">
+              {backtest.f1_macro ? `${(backtest.f1_macro * 100).toFixed(1)}%` : 'N/A'}
+            </p>
+            <p className="text-sm text-gray-400">F1 (macro)</p>
+          </div>
         </div>
       </Card>
     </div>
@@ -1033,69 +991,74 @@ function WalkForwardTab({ backtest }: { backtest: mlBacktestingApi.MLBacktestRun
 
   return (
     <div className="space-y-6">
-      {/* Period Results Table */}
-      <Card className="p-6">
-        <h3 className="text-lg font-semibold text-white mb-4">Результаты по периодам</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-gray-700">
-                <th className="text-left p-3 text-gray-400">Period</th>
-                <th className="text-center p-3 text-gray-400">Samples</th>
-                <th className="text-center p-3 text-gray-400">Accuracy</th>
-                <th className="text-center p-3 text-gray-400">F1 (macro)</th>
-                <th className="text-center p-3 text-gray-400">P&L %</th>
-                <th className="text-center p-3 text-gray-400">Win Rate</th>
-              </tr>
-            </thead>
-            <tbody>
-              {backtest.period_results.map((period) => (
-                <tr key={period.period} className="border-b border-gray-800">
-                  <td className="p-3 text-white font-medium">Period {period.period}</td>
-                  <td className="text-center p-3 text-gray-300">{period.samples.toLocaleString()}</td>
-                  <td className="text-center p-3 text-white">
-                    {(period.accuracy * 100).toFixed(1)}%
-                  </td>
-                  <td className="text-center p-3 text-white">
-                    {(period.f1_macro * 100).toFixed(1)}%
-                  </td>
-                  <td className={cn(
-                    "text-center p-3",
-                    (period.pnl_percent || 0) >= 0 ? "text-green-400" : "text-red-400"
-                  )}>
-                    {period.pnl_percent !== undefined
-                      ? `${(period.pnl_percent * 100).toFixed(1)}%`
-                      : 'N/A'}
-                  </td>
-                  <td className="text-center p-3 text-white">
-                    {period.win_rate !== undefined
-                      ? `${(period.win_rate * 100).toFixed(1)}%`
-                      : 'N/A'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      {/* Walk-Forward Chart */}
+      <WalkForwardChart
+        periodResults={backtest.period_results}
+        threshold={backtest.min_confidence || 0.6}
+      />
 
-      {/* Visual Chart Placeholder */}
+      {/* Summary Statistics */}
       <Card className="p-6">
-        <h3 className="text-lg font-semibold text-white mb-4">Стабильность по периодам</h3>
-        <div className="h-48 flex items-center justify-center bg-gray-800/30 rounded-lg">
-          <div className="flex items-center gap-4">
-            {backtest.period_results.map((period, idx) => (
-              <div key={idx} className="flex flex-col items-center">
-                <div
-                  className="w-12 bg-purple-500/80 rounded-t"
-                  style={{ height: `${period.accuracy * 150}px` }}
-                />
-                <span className="text-xs text-gray-400 mt-2">P{period.period}</span>
-              </div>
-            ))}
+        <h3 className="text-lg font-semibold text-white mb-4">Walk-Forward Summary</h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="p-4 bg-gray-800/50 rounded-lg text-center">
+            <p className="text-2xl font-bold text-purple-400">{backtest.n_periods || backtest.period_results.length}</p>
+            <p className="text-sm text-gray-400">Total Periods</p>
+          </div>
+          <div className="p-4 bg-gray-800/50 rounded-lg text-center">
+            <p className="text-2xl font-bold text-cyan-400">
+              {backtest.period_results.reduce((a, b) => a + b.samples, 0).toLocaleString()}
+            </p>
+            <p className="text-sm text-gray-400">Total Samples</p>
+          </div>
+          <div className="p-4 bg-gray-800/50 rounded-lg text-center">
+            <p className="text-2xl font-bold text-green-400">
+              {(backtest.period_results.reduce((a, b) => a + b.accuracy, 0) / backtest.period_results.length * 100).toFixed(1)}%
+            </p>
+            <p className="text-sm text-gray-400">Avg Accuracy</p>
+          </div>
+          <div className="p-4 bg-gray-800/50 rounded-lg text-center">
+            <p className="text-2xl font-bold text-yellow-400">
+              {(backtest.period_results.reduce((a, b) => a + b.f1_macro, 0) / backtest.period_results.length * 100).toFixed(1)}%
+            </p>
+            <p className="text-sm text-gray-400">Avg F1 Score</p>
           </div>
         </div>
       </Card>
+    </div>
+  );
+}
+
+// New Tab Components for Advanced Analysis
+
+function EquityCurveTab({ backtestId }: { backtestId: string }) {
+  return (
+    <div className="space-y-6">
+      <EquityCurveChart backtestId={backtestId} />
+    </div>
+  );
+}
+
+function MonteCarloTab({ backtestId }: { backtestId: string }) {
+  return (
+    <div className="space-y-6">
+      <MonteCarloChart backtestId={backtestId} />
+    </div>
+  );
+}
+
+function PBOTab({ backtestId }: { backtestId: string }) {
+  return (
+    <div className="space-y-6">
+      <PBOAnalysisCard backtestId={backtestId} />
+    </div>
+  );
+}
+
+function RegimesTab({ backtestId }: { backtestId: string }) {
+  return (
+    <div className="space-y-6">
+      <RegimeAnalysisCard backtestId={backtestId} />
     </div>
   );
 }
