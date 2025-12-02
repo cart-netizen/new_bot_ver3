@@ -409,8 +409,12 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
                     df['future_direction_60s'] = result.labels
 
                     # Save back to Feature Store (or temp location)
+                    import numpy as np
+                    sell_count = int(np.sum(result.labels == 0))
+                    hold_count = int(np.sum(result.labels == 1))
+                    buy_count = int(np.sum(result.labels == 2))
                     logger.info(f"Triple Barrier applied: {len(result.labels)} samples relabeled")
-                    logger.info(f"Label distribution: SELL={(result.labels==0).sum()}, HOLD={(result.labels==1).sum()}, BUY={(result.labels==2).sum()}")
+                    logger.info(f"Label distribution: SELL={sell_count}, HOLD={hold_count}, BUY={buy_count}")
 
                     # Store relabeled data for training
                     data_config.triple_barrier_data = df
@@ -482,22 +486,53 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
 
                 # Get CPCV results from training
                 cpcv_results = result.get("cpcv_results", {})
-                if cpcv_results and "sharpe_ratios" in cpcv_results:
-                    pbo_calculator = ProbabilityOfBacktestOverfitting()
-                    pbo_result = pbo_calculator.calculate(
-                        is_sharpe_ratios=cpcv_results.get("is_sharpe_ratios", []),
-                        oos_sharpe_ratios=cpcv_results.get("oos_sharpe_ratios", [])
-                    )
+                is_sharpes = cpcv_results.get("is_sharpe_ratios", [])
+                oos_sharpes = cpcv_results.get("oos_sharpe_ratios", [])
 
-                    result["pbo"] = {
-                        "probability": pbo_result.pbo,
-                        "is_overfit": pbo_result.is_overfit,
-                        "confidence_level": pbo_result.confidence_level,
-                        "interpretation": pbo_result.interpretation
-                    }
-                    logger.info(f"PBO calculated: {pbo_result.pbo:.2%} (overfit: {pbo_result.is_overfit})")
+                if cpcv_results and len(is_sharpes) > 0 and len(oos_sharpes) > 0:
+                    # Логируем Sharpe ratios
+                    logger.info(f"CPCV Sharpe ratios: IS={is_sharpes}, OOS={oos_sharpes}")
+
+                    if len(is_sharpes) >= 2:
+                        # Полноценный PBO расчёт (требует >= 2 комбинаций)
+                        pbo_calculator = ProbabilityOfBacktestOverfitting()
+                        pbo_result = pbo_calculator.calculate(
+                            is_sharpes=is_sharpes,
+                            oos_sharpes=oos_sharpes
+                        )
+
+                        result["pbo"] = {
+                            "probability": pbo_result.pbo,
+                            "is_overfit": pbo_result.is_overfit,
+                            "confidence_level": pbo_result.confidence_level,
+                            "interpretation": pbo_result.interpretation
+                        }
+                        logger.info(f"PBO calculated: {pbo_result.pbo:.2%} (overfit: {pbo_result.is_overfit})")
+                    else:
+                        # Упрощённый PBO для одного split (IS vs OOS сравнение)
+                        is_sharpe = is_sharpes[0] if is_sharpes else 0
+                        oos_sharpe = oos_sharpes[0] if oos_sharpes else 0
+
+                        # Простой критерий: если OOS Sharpe значительно хуже IS - возможен overfit
+                        sharpe_degradation = (is_sharpe - oos_sharpe) / (abs(is_sharpe) + 1e-8)
+                        is_overfit = sharpe_degradation > 0.3  # >30% деградация = overfit risk
+
+                        result["pbo"] = {
+                            "probability": min(max(sharpe_degradation, 0), 1),
+                            "is_overfit": is_overfit,
+                            "confidence_level": 0.5,  # Низкая confidence для single split
+                            "interpretation": (
+                                f"Single split analysis: IS Sharpe={is_sharpe:.2f}, OOS Sharpe={oos_sharpe:.2f}. "
+                                f"Degradation={sharpe_degradation:.1%}. "
+                                f"{'High overfit risk' if is_overfit else 'Acceptable generalization'}. "
+                                f"Note: Full PBO requires multiple CPCV combinations."
+                            ),
+                            "is_sharpe": is_sharpe,
+                            "oos_sharpe": oos_sharpe
+                        }
+                        logger.info(f"Simplified PBO: IS={is_sharpe:.2f}, OOS={oos_sharpe:.2f}, degradation={sharpe_degradation:.1%}")
                 else:
-                    logger.warning("CPCV results not available for PBO calculation")
+                    logger.warning("CPCV Sharpe ratios not available for PBO calculation")
             except Exception as e:
                 logger.error(f"PBO calculation failed: {e}")
 

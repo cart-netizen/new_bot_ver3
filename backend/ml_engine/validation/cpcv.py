@@ -601,6 +601,94 @@ def run_cpcv_validation(
     return is_scores, oos_scores, pbo_result
 
 
+def calculate_sharpe_from_predictions(
+    predictions: np.ndarray,
+    actual_labels: np.ndarray,
+    price_changes: Optional[np.ndarray] = None,
+    annualization_factor: float = np.sqrt(252 * 24)  # Hourly data default
+) -> float:
+    """
+    Рассчитать Sharpe Ratio на основе predictions модели.
+
+    Симулирует торговлю на основе predictions:
+    - BUY (2): +1 позиция
+    - SELL (0): -1 позиция
+    - HOLD (1): 0 позиция
+
+    Args:
+        predictions: Predictions модели (0, 1, 2)
+        actual_labels: Реальные labels (0, 1, 2)
+        price_changes: Реальные изменения цены (если доступны)
+        annualization_factor: Фактор для annualized Sharpe
+
+    Returns:
+        Sharpe Ratio
+    """
+    if len(predictions) == 0:
+        return 0.0
+
+    # Конвертируем predictions в позиции (-1, 0, +1)
+    positions = np.zeros_like(predictions, dtype=float)
+    positions[predictions == 2] = 1.0   # BUY → long
+    positions[predictions == 0] = -1.0  # SELL → short
+    # HOLD (1) → 0 (без позиции)
+
+    if price_changes is not None and len(price_changes) == len(predictions):
+        # Если есть реальные изменения цены, используем их
+        returns = positions * price_changes
+    else:
+        # Иначе используем labels как proxy для returns
+        # Правильное предсказание = положительный return
+        actual_positions = np.zeros_like(actual_labels, dtype=float)
+        actual_positions[actual_labels == 2] = 1.0
+        actual_positions[actual_labels == 0] = -1.0
+
+        # Return = 1 если позиция совпадает с реальным движением
+        returns = positions * actual_positions
+
+    if len(returns) == 0 or np.std(returns) == 0:
+        return 0.0
+
+    # Sharpe Ratio = mean(returns) / std(returns) * annualization_factor
+    sharpe = float(np.mean(returns) / (np.std(returns) + 1e-8) * annualization_factor)
+
+    return sharpe
+
+
+def calculate_trading_sharpe(
+    predictions: np.ndarray,
+    actual_returns: np.ndarray,
+    annualization_factor: float = np.sqrt(252)
+) -> float:
+    """
+    Рассчитать Trading Sharpe Ratio для PBO.
+
+    Более простая версия - считает accuracy-based returns.
+
+    Args:
+        predictions: Predictions модели (0, 1, 2)
+        actual_returns: Реальные returns или labels
+        annualization_factor: Фактор для annualization
+
+    Returns:
+        Sharpe Ratio
+    """
+    if len(predictions) == 0:
+        return 0.0
+
+    # Считаем "returns" как правильные предсказания
+    correct = (predictions == actual_returns).astype(float)
+
+    # Преобразуем в [-1, 1] range
+    returns = 2 * correct - 1  # 1 если правильно, -1 если неправильно
+
+    if np.std(returns) == 0:
+        return 0.0
+
+    sharpe = float(np.mean(returns) / (np.std(returns) + 1e-8) * annualization_factor)
+    return sharpe
+
+
 # ============================================================================
 # EXAMPLE USAGE
 # ============================================================================

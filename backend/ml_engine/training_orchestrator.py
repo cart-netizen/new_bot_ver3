@@ -281,8 +281,20 @@ class TrainingOrchestrator:
             logger.info("Step 5/7: Evaluating model...")
             test_metrics = {}
             use_val_metrics_for_registry = False
+            test_predictions = None
+            test_labels = None
+
             if test_loader:
-                test_metrics = await self._evaluate_model(model, test_loader)
+                # Запрашиваем predictions если CPCV включен (для расчёта Sharpe)
+                test_metrics = await self._evaluate_model(
+                    model, test_loader,
+                    return_predictions=use_cpcv
+                )
+
+                # Извлекаем predictions если они есть
+                if use_cpcv:
+                    test_predictions = test_metrics.pop('_predictions', None)
+                    test_labels = test_metrics.pop('_labels', None)
 
                 # Проверяем, сбалансирован ли test set
                 is_test_imbalanced = test_metrics.pop('_is_imbalanced', False)
@@ -295,6 +307,7 @@ class TrainingOrchestrator:
 
                 self.mlflow_tracker.log_metrics({
                     f"test_{k}": v for k, v in test_metrics.items()
+                    if not k.startswith('_')  # Не логируем internal keys
                 })
 
             # Step 6: Save and register model
@@ -417,13 +430,35 @@ class TrainingOrchestrator:
             # Build CPCV results if enabled
             cpcv_results = {}
             if use_cpcv and self.cpcv_config:
+                # Рассчитываем Sharpe ratios из predictions
+                is_sharpe = 0.0
+                oos_sharpe = 0.0
+
+                if test_predictions is not None and test_labels is not None and len(test_predictions) > 0:
+                    try:
+                        from backend.ml_engine.validation.cpcv import calculate_trading_sharpe
+
+                        # OOS Sharpe (test set)
+                        oos_sharpe = calculate_trading_sharpe(test_predictions, test_labels)
+
+                        # IS Sharpe - используем accuracy-based proxy
+                        # (для полного IS нужно было бы predictions на train set)
+                        is_accuracy = final_metrics.get('final_train_accuracy', 0.5)
+                        # Конвертируем accuracy в pseudo-Sharpe
+                        is_sharpe = (is_accuracy - 0.33) / 0.2 * np.sqrt(252)  # 0.33 = random baseline
+
+                        logger.info(f"CPCV Sharpe calculated: IS={is_sharpe:.3f}, OOS={oos_sharpe:.3f}")
+                    except Exception as e:
+                        logger.warning(f"Failed to calculate Sharpe: {e}")
+
                 cpcv_results = {
                     "enabled": True,
                     "n_splits": self.cpcv_config.n_splits,
                     "n_test_splits": self.cpcv_config.n_test_splits,
-                    # Sharpe ratios will be calculated by the API after training
-                    # when it has access to the predictions
-                    "sharpe_ratios": []
+                    # Sharpe ratios для PBO
+                    "sharpe_ratios": [is_sharpe, oos_sharpe],
+                    "is_sharpe_ratios": [is_sharpe],
+                    "oos_sharpe_ratios": [oos_sharpe]
                 }
 
             # Return results
@@ -651,9 +686,20 @@ class TrainingOrchestrator:
     async def _evaluate_model(
         self,
         model: torch.nn.Module,
-        test_loader
+        test_loader,
+        return_predictions: bool = False
     ) -> Dict[str, float]:
-        """Оценить модель на test set"""
+        """
+        Оценить модель на test set.
+
+        Args:
+            model: Обученная модель
+            test_loader: DataLoader для test set
+            return_predictions: Если True, включает predictions и labels в результат
+
+        Returns:
+            Dict с метриками и опционально predictions/labels
+        """
         try:
             model.eval()
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -766,11 +812,20 @@ class TrainingOrchestrator:
             tqdm.write(f"  • F1 Score:  {f1:.4f}")
             tqdm.write("=" * 80)
 
+            # Опционально добавляем predictions для расчёта Sharpe (PBO)
+            if return_predictions:
+                metrics['_predictions'] = all_predictions
+                metrics['_labels'] = all_labels
+
             return metrics
 
         except Exception as e:
             logger.error(f"Evaluation failed: {e}", exc_info=True)
-            return {'accuracy': 0.0, 'precision': 0.0, 'recall': 0.0, 'f1': 0.0}
+            result = {'accuracy': 0.0, 'precision': 0.0, 'recall': 0.0, 'f1': 0.0}
+            if return_predictions:
+                result['_predictions'] = np.array([])
+                result['_labels'] = np.array([])
+            return result
 
     async def _export_to_onnx(
         self,
