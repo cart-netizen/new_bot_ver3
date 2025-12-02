@@ -25,7 +25,8 @@ import os
 from pathlib import Path
 
 from backend.core.logger import get_logger
-from backend.database.models import MLBacktestStatus
+from backend.database.models import MLBacktestStatus, MLBacktestRun
+from backend.infrastructure.repositories.ml_backtesting.ml_backtest_repository import ml_backtest_repo
 
 logger = get_logger(__name__)
 
@@ -267,10 +268,35 @@ async def create_ml_backtest(
                     detail=f"Model checkpoint not found: {request.model_checkpoint}"
                 )
 
-        # Generate ID
-        backtest_id = str(uuid.uuid4())
+        # Create in database
+        db_run = await ml_backtest_repo.create_run(
+            name=request.name,
+            description=request.description,
+            model_checkpoint=request.model_checkpoint,
+            model_version=request.model_version,
+            data_source=request.data_source,
+            symbol=request.symbol,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            holdout_set_id=request.holdout_set_id,
+            use_walk_forward=request.use_walk_forward,
+            n_periods=request.n_periods,
+            retrain_each_period=request.retrain_each_period,
+            initial_capital=request.initial_capital,
+            position_size=request.position_size,
+            commission=request.commission,
+            slippage=request.slippage,
+            use_confidence_filter=request.use_confidence_filter,
+            min_confidence=request.min_confidence,
+            confidence_mode=request.confidence_mode,
+            sequence_length=request.sequence_length,
+            batch_size=request.batch_size,
+            device=request.device
+        )
 
-        # Create run record
+        backtest_id = str(db_run.id)
+
+        # Also keep in memory for running job tracking
         run_data = {
             "id": backtest_id,
             "name": request.name,
@@ -297,7 +323,7 @@ async def create_ml_backtest(
             "sequence_length": request.sequence_length,
             "batch_size": request.batch_size,
             "device": request.device,
-            "created_at": datetime.now(),
+            "created_at": db_run.created_at,
             "started_at": None,
             "completed_at": None,
             "progress_pct": 0.0,
@@ -337,7 +363,7 @@ async def create_ml_backtest(
             "name": request.name,
             "status": "pending",
             "message": "ML Backtest created and started in background",
-            "created_at": run_data["created_at"].isoformat()
+            "created_at": db_run.created_at.isoformat()
         }
 
     except HTTPException:
@@ -365,61 +391,59 @@ async def list_ml_backtests(
         Список бэктестов
     """
     try:
-        # Filter runs
-        runs = list(ml_backtest_runs.values())
-
-        if status:
-            runs = [r for r in runs if r["status"] == status]
-
-        # Sort by created_at descending
-        runs.sort(key=lambda x: x["created_at"], reverse=True)
-
-        # Pagination
-        total = len(runs)
+        # Get from database
         offset = (page - 1) * page_size
-        runs = runs[offset:offset + page_size]
+        db_runs = await ml_backtest_repo.list_runs(
+            limit=page_size,
+            offset=offset,
+            status=status
+        )
+        total = await ml_backtest_repo.count_runs(status=status)
 
         # Convert to response
         run_responses = []
-        for run in runs:
+        for run in db_runs:
+            # Check if there's a running version in memory with more up-to-date progress
+            mem_run = ml_backtest_runs.get(str(run.id))
+
             run_responses.append(MLBacktestRunResponse(
-                id=run["id"],
-                name=run["name"],
-                description=run.get("description"),
-                status=run["status"],
-                model_checkpoint=run["model_checkpoint"],
-                model_version=run.get("model_version"),
-                model_architecture=run.get("model_architecture"),
-                data_source=run["data_source"],
-                symbol=run.get("symbol"),
-                start_date=run.get("start_date"),
-                end_date=run.get("end_date"),
-                total_samples=run.get("total_samples"),
-                accuracy=run.get("accuracy"),
-                precision_macro=run.get("precision_macro"),
-                recall_macro=run.get("recall_macro"),
-                f1_macro=run.get("f1_macro"),
-                precision_per_class=run.get("precision_per_class"),
-                recall_per_class=run.get("recall_per_class"),
-                f1_per_class=run.get("f1_per_class"),
-                confusion_matrix=run.get("confusion_matrix"),
-                total_trades=run.get("total_trades"),
-                winning_trades=run.get("winning_trades"),
-                losing_trades=run.get("losing_trades"),
-                win_rate=run.get("win_rate"),
-                total_pnl=run.get("total_pnl"),
-                total_pnl_percent=run.get("total_pnl_percent"),
-                max_drawdown=run.get("max_drawdown"),
-                sharpe_ratio=run.get("sharpe_ratio"),
-                profit_factor=run.get("profit_factor"),
-                final_capital=run.get("final_capital"),
-                period_results=run.get("period_results"),
-                created_at=run["created_at"],
-                started_at=run.get("started_at"),
-                completed_at=run.get("completed_at"),
-                duration_seconds=run.get("duration_seconds"),
-                progress_pct=run.get("progress_pct"),
-                error_message=run.get("error_message")
+                id=str(run.id),
+                name=run.name,
+                description=run.description,
+                status=mem_run["status"] if mem_run else run.status.value,
+                model_checkpoint=run.model_checkpoint,
+                model_version=run.model_version,
+                model_architecture=run.model_architecture,
+                data_source=run.data_source,
+                symbol=run.symbol,
+                start_date=run.start_date,
+                end_date=run.end_date,
+                total_samples=run.total_samples,
+                accuracy=run.accuracy,
+                precision_macro=run.precision_macro,
+                recall_macro=run.recall_macro,
+                f1_macro=run.f1_macro,
+                precision_per_class=run.precision_per_class,
+                recall_per_class=run.recall_per_class,
+                f1_per_class=run.f1_per_class,
+                confusion_matrix=run.confusion_matrix,
+                total_trades=run.total_trades,
+                winning_trades=run.winning_trades,
+                losing_trades=run.losing_trades,
+                win_rate=run.win_rate,
+                total_pnl=run.total_pnl,
+                total_pnl_percent=run.total_pnl_percent,
+                max_drawdown=run.max_drawdown,
+                sharpe_ratio=run.sharpe_ratio,
+                profit_factor=run.profit_factor,
+                final_capital=run.final_capital,
+                period_results=run.period_results,
+                created_at=run.created_at,
+                started_at=run.started_at,
+                completed_at=run.completed_at,
+                duration_seconds=run.duration_seconds,
+                progress_pct=mem_run["progress_pct"] if mem_run else run.progress_pct,
+                error_message=run.error_message
             ))
 
         return MLBacktestListResponse(
@@ -450,65 +474,145 @@ async def get_ml_backtest(
         Детальная информация
     """
     try:
-        if backtest_id not in ml_backtest_runs:
+        import uuid as uuid_module
+
+        # Try to get from database first
+        try:
+            run_uuid = uuid_module.UUID(backtest_id)
+            db_run = await ml_backtest_repo.get_run(run_uuid)
+        except ValueError:
+            db_run = None
+
+        # Also check memory for running/recent backtests
+        mem_run = ml_backtest_runs.get(backtest_id)
+
+        if not db_run and not mem_run:
             raise HTTPException(status_code=404, detail=f"ML Backtest {backtest_id} not found")
 
-        run = ml_backtest_runs[backtest_id]
-
-        response = {
-            "id": run["id"],
-            "name": run["name"],
-            "description": run.get("description"),
-            "status": run["status"],
-            "model_checkpoint": run["model_checkpoint"],
-            "model_version": run.get("model_version"),
-            "model_architecture": run.get("model_architecture"),
-            "data_source": run["data_source"],
-            "symbol": run.get("symbol"),
-            "start_date": run.get("start_date").isoformat() if run.get("start_date") else None,
-            "end_date": run.get("end_date").isoformat() if run.get("end_date") else None,
-            "use_walk_forward": run.get("use_walk_forward"),
-            "n_periods": run.get("n_periods"),
-            "initial_capital": run.get("initial_capital"),
-            "position_size": run.get("position_size"),
-            "commission": run.get("commission"),
-            "slippage": run.get("slippage"),
-            "use_confidence_filter": run.get("use_confidence_filter"),
-            "min_confidence": run.get("min_confidence"),
-            "sequence_length": run.get("sequence_length"),
-            "batch_size": run.get("batch_size"),
-            "device": run.get("device"),
-            "total_samples": run.get("total_samples"),
-            "accuracy": run.get("accuracy"),
-            "precision_macro": run.get("precision_macro"),
-            "recall_macro": run.get("recall_macro"),
-            "f1_macro": run.get("f1_macro"),
-            "precision_per_class": run.get("precision_per_class"),
-            "recall_per_class": run.get("recall_per_class"),
-            "f1_per_class": run.get("f1_per_class"),
-            "support_per_class": run.get("support_per_class"),
-            "confusion_matrix": run.get("confusion_matrix"),
-            "total_trades": run.get("total_trades"),
-            "winning_trades": run.get("winning_trades"),
-            "losing_trades": run.get("losing_trades"),
-            "win_rate": run.get("win_rate"),
-            "total_pnl": run.get("total_pnl"),
-            "total_pnl_percent": run.get("total_pnl_percent"),
-            "max_drawdown": run.get("max_drawdown"),
-            "sharpe_ratio": run.get("sharpe_ratio"),
-            "profit_factor": run.get("profit_factor"),
-            "final_capital": run.get("final_capital"),
-            "period_results": run.get("period_results"),
-            "created_at": run["created_at"].isoformat(),
-            "started_at": run.get("started_at").isoformat() if run.get("started_at") else None,
-            "completed_at": run.get("completed_at").isoformat() if run.get("completed_at") else None,
-            "duration_seconds": run.get("duration_seconds"),
-            "progress_pct": run.get("progress_pct"),
-            "error_message": run.get("error_message")
-        }
-
-        if include_predictions:
-            response["predictions"] = run.get("predictions", [])
+        # Prefer memory data for running backtests, otherwise use DB
+        if mem_run and mem_run.get("status") in ["running", "pending"]:
+            run = mem_run
+            response = {
+                "id": run["id"],
+                "name": run["name"],
+                "description": run.get("description"),
+                "status": run["status"],
+                "model_checkpoint": run["model_checkpoint"],
+                "model_version": run.get("model_version"),
+                "model_architecture": run.get("model_architecture"),
+                "data_source": run["data_source"],
+                "symbol": run.get("symbol"),
+                "start_date": run.get("start_date").isoformat() if run.get("start_date") else None,
+                "end_date": run.get("end_date").isoformat() if run.get("end_date") else None,
+                "use_walk_forward": run.get("use_walk_forward"),
+                "n_periods": run.get("n_periods"),
+                "initial_capital": run.get("initial_capital"),
+                "position_size": run.get("position_size"),
+                "commission": run.get("commission"),
+                "slippage": run.get("slippage"),
+                "use_confidence_filter": run.get("use_confidence_filter"),
+                "min_confidence": run.get("min_confidence"),
+                "sequence_length": run.get("sequence_length"),
+                "batch_size": run.get("batch_size"),
+                "device": run.get("device"),
+                "total_samples": run.get("total_samples"),
+                "accuracy": run.get("accuracy"),
+                "precision_macro": run.get("precision_macro"),
+                "recall_macro": run.get("recall_macro"),
+                "f1_macro": run.get("f1_macro"),
+                "precision_per_class": run.get("precision_per_class"),
+                "recall_per_class": run.get("recall_per_class"),
+                "f1_per_class": run.get("f1_per_class"),
+                "support_per_class": run.get("support_per_class"),
+                "confusion_matrix": run.get("confusion_matrix"),
+                "total_trades": run.get("total_trades"),
+                "winning_trades": run.get("winning_trades"),
+                "losing_trades": run.get("losing_trades"),
+                "win_rate": run.get("win_rate"),
+                "total_pnl": run.get("total_pnl"),
+                "total_pnl_percent": run.get("total_pnl_percent"),
+                "max_drawdown": run.get("max_drawdown"),
+                "sharpe_ratio": run.get("sharpe_ratio"),
+                "profit_factor": run.get("profit_factor"),
+                "final_capital": run.get("final_capital"),
+                "period_results": run.get("period_results"),
+                "created_at": run["created_at"].isoformat() if hasattr(run["created_at"], 'isoformat') else str(run["created_at"]),
+                "started_at": run.get("started_at").isoformat() if run.get("started_at") else None,
+                "completed_at": run.get("completed_at").isoformat() if run.get("completed_at") else None,
+                "duration_seconds": run.get("duration_seconds"),
+                "progress_pct": run.get("progress_pct"),
+                "error_message": run.get("error_message")
+            }
+            if include_predictions:
+                response["predictions"] = run.get("predictions", [])
+        else:
+            # Use database data
+            run = db_run
+            response = {
+                "id": str(run.id),
+                "name": run.name,
+                "description": run.description,
+                "status": run.status.value,
+                "model_checkpoint": run.model_checkpoint,
+                "model_version": run.model_version,
+                "model_architecture": run.model_architecture,
+                "data_source": run.data_source,
+                "symbol": run.symbol,
+                "start_date": run.start_date.isoformat() if run.start_date else None,
+                "end_date": run.end_date.isoformat() if run.end_date else None,
+                "use_walk_forward": run.use_walk_forward,
+                "n_periods": run.n_periods,
+                "initial_capital": run.initial_capital,
+                "position_size": run.position_size,
+                "commission": run.commission,
+                "slippage": run.slippage,
+                "use_confidence_filter": run.use_confidence_filter,
+                "min_confidence": run.min_confidence,
+                "sequence_length": run.sequence_length,
+                "batch_size": run.batch_size,
+                "device": run.device,
+                "total_samples": run.total_samples,
+                "accuracy": run.accuracy,
+                "precision_macro": run.precision_macro,
+                "recall_macro": run.recall_macro,
+                "f1_macro": run.f1_macro,
+                "precision_per_class": run.precision_per_class,
+                "recall_per_class": run.recall_per_class,
+                "f1_per_class": run.f1_per_class,
+                "support_per_class": run.support_per_class,
+                "confusion_matrix": run.confusion_matrix,
+                "total_trades": run.total_trades,
+                "winning_trades": run.winning_trades,
+                "losing_trades": run.losing_trades,
+                "win_rate": run.win_rate,
+                "total_pnl": run.total_pnl,
+                "total_pnl_percent": run.total_pnl_percent,
+                "max_drawdown": run.max_drawdown,
+                "sharpe_ratio": run.sharpe_ratio,
+                "profit_factor": run.profit_factor,
+                "final_capital": run.final_capital,
+                "period_results": run.period_results,
+                "created_at": run.created_at.isoformat() if run.created_at else None,
+                "started_at": run.started_at.isoformat() if run.started_at else None,
+                "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+                "duration_seconds": run.duration_seconds,
+                "progress_pct": run.progress_pct,
+                "error_message": run.error_message
+            }
+            if include_predictions:
+                # Get predictions from database
+                preds = await ml_backtest_repo.get_predictions(run.id, limit=5000)
+                response["predictions"] = [
+                    {
+                        "sequence": p.sequence,
+                        "timestamp": p.timestamp.isoformat() if p.timestamp else None,
+                        "predicted_class": p.predicted_class,
+                        "actual_class": p.actual_class,
+                        "confidence": p.confidence,
+                        "period": p.period
+                    }
+                    for p in preds
+                ]
 
         return response
 
@@ -701,18 +805,29 @@ async def delete_ml_backtest(backtest_id: str) -> Dict[str, Any]:
         Результат операции
     """
     try:
-        if backtest_id not in ml_backtest_runs:
-            raise HTTPException(status_code=404, detail=f"ML Backtest {backtest_id} not found")
+        import uuid as uuid_module
 
-        run = ml_backtest_runs[backtest_id]
-
-        if run["status"] == "running":
+        # Check if it's running in memory
+        mem_run = ml_backtest_runs.get(backtest_id)
+        if mem_run and mem_run["status"] == "running":
             raise HTTPException(
                 status_code=400,
                 detail="Cannot delete running backtest. Cancel it first."
             )
 
-        del ml_backtest_runs[backtest_id]
+        # Delete from memory if exists
+        if backtest_id in ml_backtest_runs:
+            del ml_backtest_runs[backtest_id]
+
+        # Delete from database
+        try:
+            run_uuid = uuid_module.UUID(backtest_id)
+            deleted = await ml_backtest_repo.delete_run(run_uuid)
+            if not deleted and not mem_run:
+                raise HTTPException(status_code=404, detail=f"ML Backtest {backtest_id} not found")
+        except ValueError:
+            if not mem_run:
+                raise HTTPException(status_code=404, detail=f"ML Backtest {backtest_id} not found")
 
         logger.info(f"ML Backtest deleted: {backtest_id}")
 
@@ -1798,6 +1913,43 @@ async def _run_ml_backtest_job(backtest_id: str, config: CreateMLBacktestRequest
             f"sharpe={run['sharpe_ratio']:.2f}"
         )
 
+        # Sync to database
+        try:
+            import uuid as uuid_module
+            run_uuid = uuid_module.UUID(backtest_id)
+            await ml_backtest_repo.update_run(
+                run_uuid,
+                status=MLBacktestStatus.COMPLETED,
+                model_architecture=run.get("model_architecture"),
+                total_samples=run.get("total_samples"),
+                accuracy=run.get("accuracy"),
+                precision_per_class=run.get("precision_per_class"),
+                recall_per_class=run.get("recall_per_class"),
+                f1_per_class=run.get("f1_per_class"),
+                confusion_matrix=run.get("confusion_matrix"),
+                precision_macro=run.get("precision_macro"),
+                recall_macro=run.get("recall_macro"),
+                f1_macro=run.get("f1_macro"),
+                total_trades=run.get("total_trades"),
+                winning_trades=run.get("winning_trades"),
+                losing_trades=run.get("losing_trades"),
+                win_rate=run.get("win_rate"),
+                total_pnl=run.get("total_pnl"),
+                total_pnl_percent=run.get("total_pnl_percent"),
+                max_drawdown=run.get("max_drawdown"),
+                sharpe_ratio=run.get("sharpe_ratio"),
+                profit_factor=run.get("profit_factor"),
+                final_capital=run.get("final_capital"),
+                period_results=run.get("period_results"),
+                started_at=run.get("started_at"),
+                completed_at=run.get("completed_at"),
+                duration_seconds=run.get("duration_seconds"),
+                progress_pct=100.0
+            )
+            logger.info(f"ML Backtest results synced to database: {backtest_id}")
+        except Exception as db_err:
+            logger.error(f"Failed to sync results to database: {db_err}")
+
     except Exception as e:
         logger.error(f"Error in ML backtest {backtest_id}: {e}", exc_info=True)
 
@@ -1806,6 +1958,19 @@ async def _run_ml_backtest_job(backtest_id: str, config: CreateMLBacktestRequest
             run["status"] = MLBacktestStatus.FAILED.value
             run["error_message"] = str(e)
             run["completed_at"] = datetime.now()
+
+            # Sync failure to database
+            try:
+                import uuid as uuid_module
+                run_uuid = uuid_module.UUID(backtest_id)
+                await ml_backtest_repo.update_run(
+                    run_uuid,
+                    status=MLBacktestStatus.FAILED,
+                    error_message=str(e),
+                    completed_at=datetime.now()
+                )
+            except Exception as db_err:
+                logger.error(f"Failed to sync failure to database: {db_err}")
 
     finally:
         if backtest_id in running_backtests:
