@@ -1645,8 +1645,9 @@ async def _run_ml_backtest_job(backtest_id: str, config: CreateMLBacktestRequest
 
             # Convert DataFrame to X, y arrays
             from backend.ml_engine.feature_store.feature_schema import DEFAULT_SCHEMA
-            feature_columns = [f.name for f in DEFAULT_SCHEMA.features
-                             if f.name in df.columns and f.name not in ['timestamp', 'future_direction_60s']]
+            all_features = DEFAULT_SCHEMA.get_all_feature_columns()
+            feature_columns = [f for f in all_features
+                             if f in df.columns and f not in ['timestamp', 'future_direction_60s']]
 
             if 'future_direction_60s' not in df.columns:
                 raise ValueError("Feature Store data missing labels. Please run labeling first.")
