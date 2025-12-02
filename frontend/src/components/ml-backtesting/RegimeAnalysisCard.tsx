@@ -155,7 +155,7 @@ export function RegimeAnalysisCard({ backtestId }: RegimeAnalysisCardProps) {
             Performance breakdown by market conditions
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={loadAnalysis} disabled={loading}>
+        <Button variant="outline" onClick={loadAnalysis} disabled={loading}>
           <RefreshCw className={cn("h-4 w-4 mr-1", loading && "animate-spin")} />
           Refresh
         </Button>
