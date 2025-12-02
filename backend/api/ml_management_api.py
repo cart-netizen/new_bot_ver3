@@ -410,7 +410,7 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
 
                     # Save back to Feature Store (or temp location)
                     logger.info(f"Triple Barrier applied: {len(result.labels)} samples relabeled")
-                    logger.info(f"Label distribution: SELL={sum(result.labels==0)}, HOLD={sum(result.labels==1)}, BUY={sum(result.labels==2)}")
+                    logger.info(f"Label distribution: SELL={(result.labels==0).sum()}, HOLD={(result.labels==1).sum()}, BUY={(result.labels==2).sum()}")
 
                     # Store relabeled data for training
                     data_config.triple_barrier_data = df
