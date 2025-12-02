@@ -891,9 +891,25 @@ class BotController:
           self.symbols = settings.get_trading_pairs_list()
           logger.info(f"✓ Используется статический список: {len(self.symbols)} пар")
       else:
-        # Если screener выключен - статический список
-        self.symbols = settings.get_trading_pairs_list()
-        logger.info(f"✓ Screener отключен, статический список: {len(self.symbols)} пар")
+        # Screener выключен - проверяем standalone режим
+        if settings.DYNAMIC_SYMBOLS_ENABLED and self.dynamic_symbols_manager:
+          # STANDALONE MODE: динамический выбор БЕЗ скринера
+          logger.info("=" * 60)
+          logger.info("STANDALONE MODE: Динамический выбор пар без скринера")
+          logger.info("=" * 60)
+
+          self.symbols = await self.dynamic_symbols_manager.select_symbols_standalone()
+
+          if self.symbols:
+            logger.info(f"✓ [Standalone] Динамически отобрано {len(self.symbols)} пар")
+          else:
+            # Fallback на статический список если standalone не сработал
+            self.symbols = settings.get_trading_pairs_list()
+            logger.warning(f"⚠️ [Standalone] Ошибка, fallback на статический список: {len(self.symbols)} пар")
+        else:
+          # Статический список
+          self.symbols = settings.get_trading_pairs_list()
+          logger.info(f"✓ Screener отключен, статический список: {len(self.symbols)} пар")
 
       # Инициализируем анализатор стакана
       self.orderbook_analyzer = OrderBookAnalyzer(self.symbols)
@@ -1360,9 +1376,18 @@ class BotController:
     """
     Цикл обновления списка торговых пар.
     Запускается каждые DYNAMIC_REFRESH_INTERVAL секунд.
+
+    Поддерживает два режима:
+    1. С скринером: получает данные от ScreenerManager
+    2. Standalone: сам получает тикеры от Bybit REST API
     """
     interval = settings.DYNAMIC_REFRESH_INTERVAL
-    logger.info(f"Запущен symbols refresh loop (интервал: {interval}s)")
+    use_standalone = not settings.SCREENER_ENABLED
+
+    if use_standalone:
+      logger.info(f"Запущен symbols refresh loop [STANDALONE MODE] (интервал: {interval}s)")
+    else:
+      logger.info(f"Запущен symbols refresh loop (интервал: {interval}s)")
 
     # Даем время на стабилизацию
     await asyncio.sleep(interval)
@@ -1370,13 +1395,24 @@ class BotController:
     while self.status == BotStatus.RUNNING:
       try:
         logger.info("=" * 60)
-        logger.info("ОБНОВЛЕНИЕ СПИСКА ТОРГОВЫХ ПАР")
+        if use_standalone:
+          logger.info("ОБНОВЛЕНИЕ СПИСКА ТОРГОВЫХ ПАР [STANDALONE]")
+        else:
+          logger.info("ОБНОВЛЕНИЕ СПИСКА ТОРГОВЫХ ПАР")
 
-        # Получаем актуальные данные от screener
-        screener_pairs = self.screener_manager.get_all_pairs()
-
-        # Отбираем по критериям
-        new_symbols = self.dynamic_symbols_manager.select_symbols(screener_pairs)
+        # Получаем актуальные данные
+        if use_standalone:
+          # STANDALONE MODE: получаем тикеры напрямую от API
+          pairs = await self.dynamic_symbols_manager.fetch_tickers_standalone()
+          if not pairs:
+            logger.warning("[Standalone] Не удалось получить тикеры, пропускаем обновление")
+            await asyncio.sleep(interval)
+            continue
+          new_symbols = self.dynamic_symbols_manager.select_symbols(pairs)
+        else:
+          # Режим со скринером
+          screener_pairs = self.screener_manager.get_all_pairs()
+          new_symbols = self.dynamic_symbols_manager.select_symbols(screener_pairs)
 
         # Определяем изменения
         changes = self.dynamic_symbols_manager.get_changes(new_symbols)

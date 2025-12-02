@@ -2,10 +2,17 @@
 """
 Управление динамическим списком торговых пар.
 Логика отбора: объем > 4M → топ-200 по объему → топ-40 растущих + топ-20 падающих.
+
+Поддерживает два режима:
+1. С скринером: получает данные от ScreenerManager
+2. Standalone: сам получает тикеры от Bybit REST API (без скринера)
 """
 
-from typing import List, Dict
+import aiohttp
+import asyncio
+from typing import List, Dict, Optional
 from backend.core.logger import get_logger
+from backend.config import settings
 
 logger = get_logger(__name__)
 
@@ -151,3 +158,116 @@ class DynamicSymbolsManager:
             'added': added,
             'removed': removed
         }
+
+    # ========== STANDALONE MODE - работа без скринера ==========
+
+    async def fetch_tickers_standalone(self) -> List[Dict]:
+        """
+        Получение тикеров напрямую от Bybit REST API.
+
+        Standalone режим: позволяет динамический выбор пар без запуска полного скринера.
+        Делает один HTTP запрос для получения всех USDT фьючерсов.
+
+        Returns:
+            List[Dict]: Список пар с данными для select_symbols()
+                - symbol: str
+                - volume_24h: float (turnover24h)
+                - price_change_24h_percent: float
+                - last_price: float
+        """
+        api_url = (
+            "https://api-testnet.bybit.com"
+            if settings.BYBIT_MODE == "testnet"
+            else "https://api.bybit.com"
+        )
+
+        pairs = []
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=15)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                url = f"{api_url}/v5/market/tickers"
+                params = {"category": "linear"}  # Все USDT perpetual фьючерсы
+
+                async with session.get(url, params=params) as response:
+                    if response.status != 200:
+                        logger.error(f"[Standalone] API вернул статус {response.status}")
+                        return []
+
+                    data = await response.json()
+
+                    # MEMORY FIX: Явно освобождаем response
+                    await response.release()
+
+                    if data.get("retCode") != 0:
+                        logger.error(f"[Standalone] API ошибка: {data.get('retMsg')}")
+                        return []
+
+                    tickers = data.get("result", {}).get("list", [])
+
+                    if not tickers:
+                        logger.warning("[Standalone] API вернул пустой список тикеров")
+                        return []
+
+                    # Обрабатываем тикеры
+                    for ticker in tickers:
+                        symbol = ticker.get("symbol", "")
+
+                        # Только USDT пары
+                        if not symbol.endswith("USDT"):
+                            continue
+
+                        try:
+                            volume_24h = float(ticker.get("turnover24h", 0))
+                            price_change_pct = float(ticker.get("price24hPcnt", 0)) * 100
+                            last_price = float(ticker.get("lastPrice", 0))
+
+                            pairs.append({
+                                "symbol": symbol,
+                                "volume_24h": volume_24h,
+                                "price_change_24h_percent": price_change_pct,
+                                "last_price": last_price
+                            })
+                        except (ValueError, TypeError) as e:
+                            logger.debug(f"[Standalone] Ошибка парсинга {symbol}: {e}")
+                            continue
+
+            logger.info(f"[Standalone] Получено {len(pairs)} USDT пар от Bybit API")
+            return pairs
+
+        except asyncio.TimeoutError:
+            logger.error("[Standalone] Таймаут при запросе к Bybit API")
+            return []
+        except aiohttp.ClientError as e:
+            logger.error(f"[Standalone] Ошибка HTTP: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"[Standalone] Ошибка получения тикеров: {e}")
+            import traceback
+            logger.error(f"Traceback:\n{traceback.format_exc()}")
+            return []
+
+    async def select_symbols_standalone(self) -> List[str]:
+        """
+        Полный цикл выбора пар в standalone режиме.
+
+        Комбинирует fetch_tickers_standalone() + select_symbols().
+        Используется когда скринер отключен.
+
+        Returns:
+            List[str]: Отобранные символы
+        """
+        logger.info("[Standalone] Запуск автономного выбора пар...")
+
+        # Получаем тикеры
+        pairs = await self.fetch_tickers_standalone()
+
+        if not pairs:
+            logger.warning("[Standalone] Не удалось получить тикеры, возвращаем текущий список")
+            return self.current_symbols
+
+        # Отбираем по критериям
+        symbols = self.select_symbols(pairs)
+
+        logger.info(f"[Standalone] ✓ Отобрано {len(symbols)} пар")
+        return symbols
