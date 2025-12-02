@@ -404,8 +404,8 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
                 df = await feature_store.get_training_data(days=90)
 
                 if df is not None and len(df) > 0:
-                    # Apply Triple Barrier
-                    result = labeler.fit_transform(df)
+                    # Apply Triple Barrier - метод называется generate_labels
+                    result = labeler.generate_labels(df)
                     df['future_direction_60s'] = result.labels
 
                     # Save back to Feature Store (or temp location)
