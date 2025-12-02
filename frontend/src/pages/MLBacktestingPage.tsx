@@ -425,7 +425,7 @@ function MLBacktestForm({ onSubmit, isSubmitting }: MLBacktestFormProps) {
             </label>
             <select
               value={formData.data_source}
-              onChange={(e) => updateForm({ data_source: e.target.value as any })}
+              onChange={(e) => updateForm({ data_source: e.target.value as mlBacktestingApi.MLBacktestConfig['data_source'] })}
               className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
             >
               <option value="holdout">Holdout Set</option>
@@ -523,7 +523,7 @@ function MLBacktestForm({ onSubmit, isSubmitting }: MLBacktestFormProps) {
             </label>
             <select
               value={formData.confidence_mode}
-              onChange={(e) => updateForm({ confidence_mode: e.target.value as any })}
+              onChange={(e) => updateForm({ confidence_mode: e.target.value as mlBacktestingApi.MLBacktestConfig['confidence_mode'] })}
               disabled={!formData.use_confidence_filter}
               className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 disabled:opacity-50"
             >
@@ -633,7 +633,7 @@ function MLBacktestForm({ onSubmit, isSubmitting }: MLBacktestFormProps) {
             </label>
             <select
               value={formData.device}
-              onChange={(e) => updateForm({ device: e.target.value as any })}
+              onChange={(e) => updateForm({ device: e.target.value as mlBacktestingApi.MLBacktestConfig['device'] })}
               className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
             >
               <option value="auto">Auto (GPU если доступен)</option>

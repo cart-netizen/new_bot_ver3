@@ -1,13 +1,8 @@
 import { cn } from '../../utils/helpers';
 import React from "react";
 
-interface InputProps {
+interface InputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'className'> {
   className?: string;
-  type?: string;
-  value?: string;
-  onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  placeholder?: string;
-  required?: boolean;
 }
 
 export function Input({ className, ...props }: InputProps) {

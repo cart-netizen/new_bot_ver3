@@ -15,7 +15,7 @@ Endpoints:
 """
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 from uuid import UUID
@@ -74,15 +74,17 @@ class CreateMLBacktestRequest(BaseModel):
     batch_size: int = Field(default=128, ge=16, le=512, description="Размер батча")
     device: str = Field(default="auto", description="Device: auto, cuda, cpu")
 
-    @validator('data_source')
-    def validate_data_source(cls, v):
+    @field_validator('data_source')
+    @classmethod
+    def validate_data_source(cls, v: str) -> str:
         valid = ["holdout", "custom", "feature_store"]
         if v not in valid:
             raise ValueError(f"data_source must be one of: {valid}")
         return v
 
-    @validator('confidence_mode')
-    def validate_confidence_mode(cls, v):
+    @field_validator('confidence_mode')
+    @classmethod
+    def validate_confidence_mode(cls, v: str) -> str:
         valid = ["threshold", "dynamic", "percentile"]
         if v not in valid:
             raise ValueError(f"confidence_mode must be one of: {valid}")
