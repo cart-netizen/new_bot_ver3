@@ -207,16 +207,27 @@ class MLDataCollector:
         f"память: {buffer_memory_mb:.2f}MB/{self.max_buffer_memory_mb}MB"
       )
 
-      # Проверяем нужно ли сохранить batch (по количеству ИЛИ по памяти)
+      # Проверяем нужно ли сохранить batch (по количеству, памяти ИЛИ времени)
       should_save = False
       save_reason = ""
 
+      # Проверка по количеству семплов
       if buffer_size >= self.max_samples_per_file:
         should_save = True
         save_reason = f"превышен лимит семплов ({buffer_size}/{self.max_samples_per_file})"
+      # Проверка по памяти
       elif buffer_memory_mb >= memory_threshold_mb:
         should_save = True
         save_reason = f"превышен лимит памяти ({buffer_memory_mb:.2f}MB/{memory_threshold_mb:.2f}MB)"
+      # НОВОЕ: Проверка по времени - сохраняем каждые 15 минут если есть хотя бы 10 семплов
+      else:
+        time_since_last_save = datetime.now().timestamp() - self.last_save_time.get(symbol, 0)
+        max_time_without_save = 900  # 15 минут
+        min_samples_for_time_save = 10  # Минимум семплов для сохранения по времени
+
+        if time_since_last_save >= max_time_without_save and buffer_size >= min_samples_for_time_save:
+          should_save = True
+          save_reason = f"прошло {time_since_last_save/60:.1f} мин без сохранения ({buffer_size} семплов)"
 
       if should_save:
         logger.info(f"{symbol} | 💾 Автосохранение: {save_reason}")
@@ -300,6 +311,9 @@ class MLDataCollector:
 
       # Инкрементируем batch number
       self.batch_numbers[symbol] += 1
+
+      # НОВОЕ: Обновляем время последнего сохранения
+      self.last_save_time[symbol] = datetime.now().timestamp()
 
       logger.info(
         f"✓ {symbol} | Batch сохранен: {buffer_size} семплов "
@@ -585,7 +599,7 @@ class MLDataCollector:
         f"(память: {total_memory_mb:.1f}MB/{total_memory_limit_mb:.1f}MB, {memory_usage_percent:.1f}%)"
       )
 
-  async def _emergency_save_all_buffers(self, min_buffer_size: int = 50):
+  async def _emergency_save_all_buffers(self, min_buffer_size: int = None):
     """
     🚨 ЭКСТРЕННОЕ СОХРАНЕНИЕ ВСЕХ БУФЕРОВ.
 
@@ -594,14 +608,25 @@ class MLDataCollector:
     вместо их урезания.
 
     Args:
-        min_buffer_size: Минимальный размер буфера для сохранения (по умолчанию 50)
-                        Буферы меньше этого размера не сохраняются (кроме финализации)
+        min_buffer_size: Минимальный размер буфера для сохранения.
+                        Если None - вычисляется адаптивно на основе числа символов.
+                        При финализации передаётся 0 для сохранения всех.
 
     КРИТИЧНО: Ноль потери данных!
     """
     import gc
 
-    logger.info(f"🧹 Проверка буферов ML Data Collector (минимум для сохранения: {min_buffer_size})")
+    # АДАПТИВНЫЙ min_buffer_size на основе количества символов
+    num_symbols = len(self.feature_buffers)
+    if min_buffer_size is None:
+      if num_symbols >= 40:
+        min_buffer_size = 5   # Много символов → сохраняем даже маленькие буферы
+      elif num_symbols >= 20:
+        min_buffer_size = 15  # Средне символов
+      else:
+        min_buffer_size = 30  # Мало символов → можно ждать побольше
+
+    logger.info(f"🧹 Проверка буферов ML Data Collector (символов: {num_symbols}, мин. для сохранения: {min_buffer_size})")
 
     saved_symbols = []
     skipped_symbols = []
