@@ -140,7 +140,7 @@ export function PBOAnalysisCard({ backtestId }: PBOAnalysisCardProps) {
             Based on {data.n_combinations} CPCV combinations
           </p>
         </div>
-        <Button variant="secondary" size="sm" onClick={runAnalysis} disabled={loading}>
+        <Button variant="outline" size="sm" onClick={runAnalysis} disabled={loading}>
           Refresh
         </Button>
       </div>
