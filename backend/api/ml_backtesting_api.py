@@ -1653,7 +1653,18 @@ async def _run_ml_backtest_job(backtest_id: str, config: CreateMLBacktestRequest
                 raise ValueError("Feature Store data missing labels. Please run labeling first.")
 
             X = df[feature_columns].values.astype(np.float32)
-            y = df['future_direction_60s'].values.astype(np.int64)
+
+            # Handle NaN values in labels - filter them out
+            label_values = df['future_direction_60s'].values
+            valid_mask = ~np.isnan(label_values)
+            if not valid_mask.all():
+                nan_count = (~valid_mask).sum()
+                logger.warning(f"Found {nan_count} NaN values in labels, filtering them out")
+                df = df[valid_mask].reset_index(drop=True)
+                X = df[feature_columns].values.astype(np.float32)
+                label_values = df['future_direction_60s'].values
+
+            y = label_values.astype(np.int64)
 
             # Reshape X to 3D for LSTM: (samples, sequence_length, features)
             seq_len = config.sequence_length
@@ -1711,37 +1722,51 @@ async def _run_ml_backtest_job(backtest_id: str, config: CreateMLBacktestRequest
 
         run["progress_pct"] = 80.0
 
+        # Helper function to convert numpy types to Python native types
+        def to_python(val):
+            if isinstance(val, (np.integer, np.int64, np.int32)):
+                return int(val)
+            elif isinstance(val, (np.floating, np.float64, np.float32)):
+                return float(val)
+            elif isinstance(val, np.ndarray):
+                return val.tolist()
+            elif isinstance(val, dict):
+                return {k: to_python(v) for k, v in val.items()}
+            elif isinstance(val, list):
+                return [to_python(v) for v in val]
+            return val
+
         # Calculate confusion matrix
         from sklearn.metrics import confusion_matrix as sk_confusion_matrix
         cm = sk_confusion_matrix(results.actuals, results.predictions, labels=[0, 1, 2])
         run["confusion_matrix"] = cm.tolist()
 
-        # Store results
-        run["accuracy"] = results.accuracy
-        run["precision_per_class"] = results.precision
-        run["recall_per_class"] = results.recall
-        run["f1_per_class"] = results.f1
+        # Store results - convert numpy types to Python native types
+        run["accuracy"] = to_python(results.accuracy)
+        run["precision_per_class"] = to_python(results.precision)
+        run["recall_per_class"] = to_python(results.recall)
+        run["f1_per_class"] = to_python(results.f1)
 
         # Calculate macro averages
-        run["precision_macro"] = np.mean(list(results.precision.values()))
-        run["recall_macro"] = np.mean(list(results.recall.values()))
-        run["f1_macro"] = np.mean(list(results.f1.values()))
+        run["precision_macro"] = float(np.mean(list(results.precision.values())))
+        run["recall_macro"] = float(np.mean(list(results.recall.values())))
+        run["f1_macro"] = float(np.mean(list(results.f1.values())))
 
-        # Trading metrics
-        run["total_trades"] = results.total_trades
-        run["winning_trades"] = results.winning_trades
-        run["losing_trades"] = results.losing_trades
-        run["win_rate"] = results.win_rate
-        run["total_pnl"] = results.total_pnl
-        run["total_pnl_percent"] = results.total_pnl_percent
-        run["max_drawdown"] = results.max_drawdown
-        run["sharpe_ratio"] = results.sharpe_ratio
-        run["profit_factor"] = results.profit_factor
-        run["final_capital"] = config.initial_capital + results.total_pnl
+        # Trading metrics - ensure Python native types
+        run["total_trades"] = int(results.total_trades)
+        run["winning_trades"] = int(results.winning_trades)
+        run["losing_trades"] = int(results.losing_trades)
+        run["win_rate"] = float(results.win_rate) if results.win_rate is not None else 0.0
+        run["total_pnl"] = float(results.total_pnl) if results.total_pnl is not None else 0.0
+        run["total_pnl_percent"] = float(results.total_pnl_percent) if results.total_pnl_percent is not None else 0.0
+        run["max_drawdown"] = float(results.max_drawdown) if results.max_drawdown is not None else 0.0
+        run["sharpe_ratio"] = float(results.sharpe_ratio) if results.sharpe_ratio is not None else 0.0
+        run["profit_factor"] = float(results.profit_factor) if results.profit_factor is not None else 0.0
+        run["final_capital"] = float(config.initial_capital + (results.total_pnl or 0.0))
 
-        # Walk-forward period results
+        # Walk-forward period results - convert numpy types
         if results.period_results:
-            run["period_results"] = results.period_results
+            run["period_results"] = to_python(results.period_results)
 
         # Store predictions (limited)
         predictions_list = []
