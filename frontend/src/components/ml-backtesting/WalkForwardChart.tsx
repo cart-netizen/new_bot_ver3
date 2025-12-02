@@ -1,7 +1,7 @@
 // frontend/src/components/ml-backtesting/WalkForwardChart.tsx
 
 import {
-  BarChart,
+
   Bar,
   XAxis,
   YAxis,
@@ -9,7 +9,7 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
-  LineChart,
+
   Line,
   ComposedChart,
   ReferenceLine
