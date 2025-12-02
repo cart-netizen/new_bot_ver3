@@ -660,3 +660,180 @@ class BacktestEquity(Base):
 
   def __repr__(self):
     return f"<BacktestEquity equity={self.equity} drawdown={self.drawdown_pct}%>"
+
+
+# ==================== ML BACKTESTING MODELS ====================
+
+class MLBacktestStatus(str, enum.Enum):
+  """Статус ML бэктеста."""
+  PENDING = "pending"
+  RUNNING = "running"
+  COMPLETED = "completed"
+  FAILED = "failed"
+  CANCELLED = "cancelled"
+
+
+class MLBacktestRun(Base):
+  """
+  ML Model Backtesting Run.
+
+  Хранит конфигурацию и результаты бэктеста ML модели на исторических данных.
+  Включает classification metrics, trading simulation и walk-forward анализ.
+  """
+
+  __tablename__ = "ml_backtest_runs"
+
+  # Идентификаторы
+  id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+  name = Column(String(200), nullable=False)
+  description = Column(Text, nullable=True)
+
+  # Модель
+  model_checkpoint = Column(String(500), nullable=False)  # Путь к .pt файлу или MLflow URI
+  model_version = Column(String(100), nullable=True)
+  model_architecture = Column(String(100), nullable=True)  # HybridCNNLSTMv2, etc.
+  model_config = Column(JSONB, nullable=True)  # Конфигурация модели
+
+  # Данные
+  data_source = Column(String(50), nullable=False)  # 'holdout', 'custom', 'feature_store'
+  symbol = Column(String(20), nullable=True, index=True)
+  start_date = Column(DateTime, nullable=True, index=True)
+  end_date = Column(DateTime, nullable=True, index=True)
+  holdout_set_id = Column(String(100), nullable=True)  # ID holdout set
+
+  # Walk-forward настройки
+  use_walk_forward = Column(Boolean, default=True)
+  n_periods = Column(Integer, default=5)
+  retrain_each_period = Column(Boolean, default=False)
+
+  # Trading simulation настройки
+  initial_capital = Column(Float, default=10000.0)
+  position_size = Column(Float, default=0.1)  # % от капитала
+  commission = Column(Float, default=0.001)
+  slippage = Column(Float, default=0.0005)
+
+  # Confidence filtering
+  use_confidence_filter = Column(Boolean, default=True)
+  min_confidence = Column(Float, default=0.6)
+  confidence_mode = Column(String(50), default='threshold')  # threshold, dynamic, percentile
+
+  # Inference настройки
+  sequence_length = Column(Integer, default=60)
+  batch_size = Column(Integer, default=128)
+  device = Column(String(20), default='auto')
+
+  # Статус
+  status = Column(
+    Enum(MLBacktestStatus, values_callable=lambda x: [e.value for e in x], name='mlbackteststatus'),
+    nullable=False,
+    default=MLBacktestStatus.PENDING,
+    index=True
+  )
+  progress_pct = Column(Float, default=0.0)
+
+  # === Classification Results ===
+  total_samples = Column(Integer, nullable=True)
+  accuracy = Column(Float, nullable=True)
+
+  # Per-class metrics (JSON)
+  precision_per_class = Column(JSONB, nullable=True)  # {"SELL": 0.65, "HOLD": 0.70, "BUY": 0.68}
+  recall_per_class = Column(JSONB, nullable=True)
+  f1_per_class = Column(JSONB, nullable=True)
+  support_per_class = Column(JSONB, nullable=True)
+
+  # Confusion matrix (JSON - 3x3 matrix)
+  confusion_matrix = Column(JSONB, nullable=True)  # [[TP_sell, FP_hold, FP_buy], [...], [...]]
+
+  # Macro/weighted averages
+  precision_macro = Column(Float, nullable=True)
+  recall_macro = Column(Float, nullable=True)
+  f1_macro = Column(Float, nullable=True)
+
+  # === Trading Results ===
+  total_trades = Column(Integer, default=0)
+  winning_trades = Column(Integer, default=0)
+  losing_trades = Column(Integer, default=0)
+  win_rate = Column(Float, nullable=True)
+  total_pnl = Column(Float, nullable=True)
+  total_pnl_percent = Column(Float, nullable=True)
+  max_drawdown = Column(Float, nullable=True)
+  sharpe_ratio = Column(Float, nullable=True)
+  profit_factor = Column(Float, nullable=True)
+  final_capital = Column(Float, nullable=True)
+
+  # === Walk-Forward Results ===
+  period_results = Column(JSONB, nullable=True)  # List of per-period metrics
+
+  # === Advanced Metrics ===
+  metrics = Column(JSONB, nullable=True)  # All detailed metrics
+
+  # Временные метки
+  created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+  started_at = Column(DateTime, nullable=True)
+  completed_at = Column(DateTime, nullable=True)
+  duration_seconds = Column(Float, nullable=True)
+
+  # Ошибки
+  error_message = Column(Text, nullable=True)
+  error_traceback = Column(Text, nullable=True)
+
+  # Метаданные
+  metadata_json = Column(JSONB, nullable=True)
+
+  # Связи
+  predictions = relationship("MLBacktestPrediction", back_populates="backtest_run", cascade="all, delete-orphan")
+
+  __table_args__ = (
+    Index("idx_ml_backtest_runs_status", "status"),
+    Index("idx_ml_backtest_runs_created_at", "created_at"),
+    Index("idx_ml_backtest_runs_model", "model_checkpoint"),
+  )
+
+  def __repr__(self):
+    return f"<MLBacktestRun {self.name} acc={self.accuracy} status={self.status.value}>"
+
+
+class MLBacktestPrediction(Base):
+  """
+  Детальные предсказания ML бэктеста.
+
+  Хранит предсказания модели с confidence для анализа.
+  """
+
+  __tablename__ = "ml_backtest_predictions"
+
+  # Идентификаторы
+  id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+  backtest_run_id = Column(UUID(as_uuid=True), ForeignKey("ml_backtest_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+
+  # Временная метка
+  timestamp = Column(DateTime, nullable=False, index=True)
+  sequence = Column(Integer, nullable=False)
+
+  # Предсказание
+  predicted_class = Column(Integer, nullable=False)  # 0=SELL, 1=HOLD, 2=BUY
+  actual_class = Column(Integer, nullable=False)
+  confidence = Column(Float, nullable=False)
+
+  # Probabilities per class
+  prob_sell = Column(Float, nullable=True)
+  prob_hold = Column(Float, nullable=True)
+  prob_buy = Column(Float, nullable=True)
+
+  # Был ли трейд на этом предсказании
+  trade_executed = Column(Boolean, default=False)
+  trade_pnl = Column(Float, nullable=True)
+
+  # Period для walk-forward
+  period = Column(Integer, nullable=True)
+
+  # Связь
+  backtest_run = relationship("MLBacktestRun", back_populates="predictions")
+
+  __table_args__ = (
+    Index("idx_ml_backtest_predictions_run_seq", "backtest_run_id", "sequence"),
+    Index("idx_ml_backtest_predictions_period", "backtest_run_id", "period"),
+  )
+
+  def __repr__(self):
+    return f"<MLBacktestPrediction pred={self.predicted_class} actual={self.actual_class} conf={self.confidence}>"

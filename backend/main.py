@@ -5349,6 +5349,7 @@ from backend.api.routes import (
   ml_management_router, layering_ml_router
 )
 from backend.api.backtesting_api import router as backtesting_router
+from backend.api.ml_backtesting_api import router as ml_backtesting_router
 
 app.include_router(auth_router)
 app.include_router(bot_router)
@@ -5363,6 +5364,8 @@ app.include_router(strategies_router)
 app.include_router(ml_management_router)
 app.include_router(layering_ml_router)
 app.include_router(backtesting_router)
+app.include_router(ml_backtesting_router)
+
 # WebSocket эндпоинт
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

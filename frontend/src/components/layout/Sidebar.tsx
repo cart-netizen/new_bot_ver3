@@ -1,7 +1,7 @@
 // frontend/src/components/layout/Sidebar.tsx
 
 import { Link, useLocation } from 'react-router-dom';
-import { User, Home, BarChart3, TrendingUp, LineChart, FileText, Search, Layers, Brain, Activity } from 'lucide-react';
+import { User, Home, BarChart3, TrendingUp, LineChart, FileText, Search, Layers, Brain, Activity, FlaskConical } from 'lucide-react';
 import { cn } from '../../utils/helpers';
 
 /**
@@ -18,6 +18,7 @@ const NAV_ITEMS = [
   { path: '/screener', label: 'Скринер', icon: Search },
   { path: '/strategies', label: 'Стратегии', icon: Layers },
   { path: '/backtesting', label: 'Backtesting', icon: Activity },
+  { path: '/ml-backtesting', label: 'ML Backtesting', icon: FlaskConical },
   { path: '/ml-management', label: 'ML Management', icon: Brain },
 ];
 
