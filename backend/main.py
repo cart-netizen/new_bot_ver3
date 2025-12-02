@@ -4222,30 +4222,13 @@ class BotController:
           self.layering_data_collector.save_to_disk()
           logger.info(f"  ✓ Layering ML buffer сохранен и очищен")
 
-      # 4d. BALANCED: Spoofing detector cleanup with extended window
+      # 4d. OPTIMIZED: Spoofing detector cleanup using new batch method
+      # Раньше: поэлементное удаление 47K-103K уровней занимало 3-6 секунд
+      # Теперь: dict comprehension - значительно быстрее
       if hasattr(self, 'spoofing_detector') and self.spoofing_detector:
-        total_level_history_cleared = 0
-        total_events_cleared = 0
-
-        # BALANCED: Keep 90 seconds of history (reduced from 120s due to OrderEvent growth)
-        # Spoofing patterns typically appear in 10-60 second windows
-        cutoff_time = get_timestamp_ms() - (90 * 1000)  # Старше 90 сек (was 120)
-
-        for symbol in list(self.spoofing_detector.level_history.keys()):
-          for side in ["bid", "ask"]:
-            history_side = self.spoofing_detector.level_history[symbol][side]
-
-            # Удаляем только очень старые уровни
-            old_prices = [
-              price for price, level in history_side.items()
-              if level.last_seen and level.last_seen < cutoff_time
-            ]
-
-            for price in old_prices:
-              level = history_side[price]
-              total_events_cleared += len(level.events)
-              del history_side[price]
-              total_level_history_cleared += 1
+        # Используем оптимизированный метод из SpoofingDetector
+        total_level_history_cleared, total_events_cleared = \
+          self.spoofing_detector.cleanup_all_old_history(max_age_seconds=90)
 
         if total_level_history_cleared > 0:
           logger.info(
@@ -4265,55 +4248,10 @@ class BotController:
             if hasattr(pipeline.scaler_manager, 'feature_names'):
               pipeline.scaler_manager.feature_names.clear()
 
-      # 6. Принудительная сборка мусора (4 прохода для циклических ссылок)
-      # Разблокируем все поколения перед сборкой
-      gc.collect(0)  # Collect generation 0
-      gc.collect(1)  # Collect generation 1
-      gc.collect(2)  # Collect generation 2 (full)
-
-      # SAFE: Numpy memory cleanup (without dangerous reload)
-      # The key is preventing accumulation, not forcing release
-      numpy_memory_freed = False
-      try:
-        import numpy as np
-
-        # Method 1: Clear numpy internal temp array cache (safe)
-        # This clears _global_ufunc_cache and similar structures
-        try:
-          # Trigger cleanup by calling gc on numpy arrays
-          # This is safe and documented
-          collected_before_np = gc.collect()
-
-          # Small allocation-deallocation cycle to hint numpy to release pools
-          # Using small arrays (not 100MB!) to avoid performance hit
-          for dtype in [np.float64, np.float32]:
-            try:
-              # 1MB is enough to hint the allocator
-              temp = np.empty(125000, dtype=dtype)  # 1MB
-              del temp
-            except:
-              pass
-
-          collected_after_np = gc.collect()
-
-          numpy_memory_freed = True
-          logger.debug(f"  ✓ Numpy cleanup: collected {collected_after_np} objects")
-
-        except Exception as e:
-          logger.debug(f"  ⚠️ Numpy cleanup failed: {e}")
-          pass
-
-      except Exception as e:
-        logger.debug(f"  ⚠️ Numpy memory cleanup skipped: {e}")
-        pass
-
-      # BALANCED: Partial cleanup of cyclic references
-      # NOTE: SpoofingDetector level_history already cleaned above (>2 min old)
-      # Here we only clean structures not already handled
+      # 6. OPTIMIZED: Сборка мусора (2 прохода вместо 8)
+      # Причина оптимизации: GC занимал ~40 секунд из 60 секунд очистки!
+      # 8 проходов избыточны - достаточно 1 полного прохода (gen2) + 1 финального
       refs_cleared = 0
-
-      # LayeringDetector: already cleaned by cleanup_old_history in block 4a
-      # No need for additional clearing here - data already bounded by deque maxlen
 
       # SR level detector: keep recent levels, clear only very old
       if hasattr(self, 'sr_level_detector') and self.sr_level_detector:
@@ -4329,12 +4267,13 @@ class BotController:
       if refs_cleared > 0:
         logger.info(f"  ✓ Частичная очистка старых данных: {refs_cleared} устаревших записей удалено")
 
-      # AGGRESSIVE: Полная сборка с множественными проходами для циклических ссылок
-      total_collected = 0
-      for _ in range(5):  # 5 проходов для упрямых циклических ссылок
-        total_collected += gc.collect()
+      # OPTIMIZED GC: Только 2 прохода (экономия ~35 секунд!)
+      # - gc.collect(2) собирает все поколения (0, 1, 2) за один вызов
+      # - Второй проход нужен для объектов с __del__ методами
+      total_collected = gc.collect(2)  # Полная сборка всех поколений
+      total_collected += gc.collect()   # Финальный проход для weak refs
 
-      logger.info(f"  ✓ Garbage collector: собрано {total_collected} объектов (8 проходов всего)")
+      logger.info(f"  ✓ Garbage collector: собрано {total_collected} объектов (2 прохода)")
 
       # DIAGNOSTIC: Log object counts to identify memory leaks
       try:

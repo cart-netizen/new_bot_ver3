@@ -132,6 +132,9 @@ class BybitRESTClient:
           data=request_body,  # ← ИЗМЕНЕНО: Используем data вместо json
           headers=headers
       ) as response:
+        # Сохраняем статус до чтения body (для обработки ошибок)
+        status = response.status
+
         # Пытаемся получить JSON
         try:
           data = await response.json()
@@ -141,14 +144,18 @@ class BybitRESTClient:
           logger.error(f"Не удалось распарсить JSON. Ответ: {text[:500]}")
           raise ExchangeAPIError(
             f"Invalid JSON response: {text[:200]}",
-            status_code=response.status
+            status_code=status
           )
 
+        # MEMORY FIX: Явно освобождаем response для предотвращения утечки CIMultiDict
+        # CIMultiDict/CIMultiDictProxy накапливались с 35K до 296K за 11 часов
+        await response.release()
+
         # Логируем статус
-        logger.debug(f"HTTP Status: {response.status}")
+        logger.debug(f"HTTP Status: {status}")
 
         # Проверяем код ответа HTTP
-        if response.status == 401:
+        if status == 401:
           logger.error("401 Unauthorized - проблема с аутентификацией")
           raise ExchangeAPIError(
             "Unauthorized: Invalid API key or signature",
@@ -156,7 +163,7 @@ class BybitRESTClient:
             response=data
           )
 
-        if response.status == 429:
+        if status == 429:
           logger.warning("Превышен лимит запросов к API")
           raise RateLimitError("Превышен лимит запросов к Bybit API")
 

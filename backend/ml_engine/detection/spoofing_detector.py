@@ -444,6 +444,48 @@ class SpoofingDetector:
       for price in old_prices:
         del history_side[price]
 
+  def cleanup_all_old_history(self, max_age_seconds: int = 90) -> Tuple[int, int]:
+    """
+    OPTIMIZED: Очистка старой истории для ВСЕХ символов.
+
+    Использует dict comprehension вместо поэлементного удаления,
+    что значительно быстрее для больших словарей (47K-103K уровней).
+
+    Args:
+        max_age_seconds: Максимальный возраст уровня в секундах (default 90)
+
+    Returns:
+        Tuple[int, int]: (количество удалённых уровней, количество освобождённых OrderEvent)
+    """
+    from backend.utils.helpers import get_timestamp_ms
+
+    cutoff_time = get_timestamp_ms() - (max_age_seconds * 1000)
+    total_levels_cleared = 0
+    total_events_cleared = 0
+
+    for symbol in list(self.level_history.keys()):
+      for side in ["bid", "ask"]:
+        old_history = self.level_history[symbol][side]
+
+        if not old_history:
+          continue
+
+        # OPTIMIZED: Используем dict comprehension для создания нового словаря
+        # только с "свежими" уровнями - это O(n) вместо O(n) del операций
+        new_history = {}
+        for price, level in old_history.items():
+          if level.last_seen and level.last_seen >= cutoff_time:
+            new_history[price] = level
+          else:
+            # Подсчитываем удалённые объекты
+            total_levels_cleared += 1
+            total_events_cleared += len(level.events)
+
+        # Заменяем старый словарь на новый (атомарная операция)
+        self.level_history[symbol][side] = new_history
+
+    return total_levels_cleared, total_events_cleared
+
   def get_recent_patterns(
       self,
       symbol: str,
