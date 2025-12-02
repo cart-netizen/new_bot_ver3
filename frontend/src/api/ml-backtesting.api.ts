@@ -398,3 +398,270 @@ export function getDefaultMLBacktestConfig(): MLBacktestConfig {
     device: 'auto'
   };
 }
+
+/**
+ * ============================================================
+ * PBO ANALYSIS TYPES & API
+ * ============================================================
+ */
+
+export interface PBOAnalysis {
+  pbo: number;
+  pbo_adjusted: number;
+  is_overfit: boolean;
+  confidence_level: number;
+  n_combinations: number;
+  is_sharpe_ratios: number[];
+  oos_sharpe_ratios: number[];
+  rank_correlation: number;
+  best_is_idx: number;
+  best_is_sharpe: number;
+  best_is_oos_sharpe: number;
+  best_is_oos_rank: number;
+  interpretation: string;
+  risk_level: 'low' | 'moderate' | 'high' | 'very_high';
+}
+
+/**
+ * Get PBO analysis for backtest
+ */
+export async function getPBOAnalysis(id: string): Promise<PBOAnalysis> {
+  const response = await apiClient.get(`/api/ml-backtesting/runs/${id}/pbo-analysis`);
+  return response.data;
+}
+
+/**
+ * ============================================================
+ * MONTE CARLO TYPES & API
+ * ============================================================
+ */
+
+export interface MonteCarloRequest {
+  n_simulations: number;
+  confidence_levels?: number[];
+}
+
+export interface MonteCarloResult {
+  n_simulations: number;
+  final_equity: {
+    mean: number;
+    std: number;
+    min: number;
+    max: number;
+    percentile_5: number;
+    percentile_25: number;
+    percentile_50: number;
+    percentile_75: number;
+    percentile_95: number;
+  };
+  max_drawdown: {
+    mean: number;
+    std: number;
+    worst_case_95: number;
+  };
+  probability_of_profit: number;
+  probability_of_ruin: number;
+  var_95: number;
+  cvar_95: number;
+  equity_paths: number[][];
+  percentile_paths: {
+    p5: number[];
+    p25: number[];
+    p50: number[];
+    p75: number[];
+    p95: number[];
+  };
+}
+
+/**
+ * Run Monte Carlo simulation
+ */
+export async function runMonteCarloSimulation(
+  id: string,
+  params: MonteCarloRequest = { n_simulations: 1000 }
+): Promise<MonteCarloResult> {
+  const response = await apiClient.post(`/api/ml-backtesting/runs/${id}/monte-carlo`, params);
+  return response.data;
+}
+
+/**
+ * ============================================================
+ * MODEL COMPARISON TYPES & API
+ * ============================================================
+ */
+
+export interface ModelComparisonRequest {
+  backtest_ids: string[];
+}
+
+export interface ModelComparisonResult {
+  models: Array<{
+    id: string;
+    name: string;
+    model_architecture?: string;
+  }>;
+  comparison_table: Array<{
+    id: string;
+    name: string;
+    model_architecture: string;
+    accuracy?: number;
+    f1_macro?: number;
+    sharpe_ratio?: number;
+    win_rate?: number;
+    max_drawdown?: number;
+    total_pnl_percent?: number;
+  }>;
+  best_model: {
+    id: string;
+    name: string;
+    composite_score: number;
+    accuracy?: number;
+    sharpe_ratio?: number;
+  };
+  rankings: Record<string, string[]>;
+  statistical_tests?: {
+    paired_t_tests?: Array<{
+      model_a: string;
+      model_b: string;
+      t_statistic: number;
+      p_value: number;
+      significant: boolean;
+    }>;
+  };
+}
+
+/**
+ * Compare multiple models
+ */
+export async function compareModels(
+  backtest_ids: string[]
+): Promise<ModelComparisonResult> {
+  const response = await apiClient.post('/api/ml-backtesting/compare', { backtest_ids });
+  return response.data;
+}
+
+/**
+ * ============================================================
+ * REGIME ANALYSIS TYPES & API
+ * ============================================================
+ */
+
+export interface RegimeMetrics {
+  accuracy: number;
+  avg_confidence: number;
+  n_samples: number;
+  pnl_estimate: number;
+  win_rate: number;
+}
+
+export interface RegimeData {
+  regime: string;
+  display_name: string;
+  accuracy: number;
+  avg_confidence: number;
+  n_samples: number;
+  pnl_estimate: number;
+  win_rate: number;
+}
+
+export interface RegimeAnalysis {
+  regimes: RegimeData[];
+  overall_regime_distribution: Record<string, number>;
+  best_regime: string;
+  worst_regime: string;
+  regime_metrics: Record<string, RegimeMetrics>;
+}
+
+/**
+ * Get regime analysis for backtest
+ */
+export async function getRegimeAnalysis(id: string): Promise<RegimeAnalysis> {
+  const response = await apiClient.get(`/api/ml-backtesting/runs/${id}/regime-analysis`);
+  return response.data;
+}
+
+/**
+ * ============================================================
+ * EQUITY CURVE TYPES & API
+ * ============================================================
+ */
+
+export interface EquityCurvePoint {
+  x: number;
+  equity: number;
+  drawdown: number;
+}
+
+export interface EquityCurveData {
+  backtest_id: string;
+  initial_capital: number;
+  final_capital: number;
+  total_return_pct: number;
+  max_drawdown_pct: number;
+  n_points: number;
+  data: EquityCurvePoint[];
+}
+
+/**
+ * Get equity curve data for charts
+ */
+export async function getEquityCurve(
+  id: string,
+  sampling = 100
+): Promise<EquityCurveData> {
+  const response = await apiClient.get(`/api/ml-backtesting/runs/${id}/equity-curve`, {
+    params: { sampling }
+  });
+  return response.data;
+}
+
+/**
+ * ============================================================
+ * RISK LEVEL HELPERS
+ * ============================================================
+ */
+
+export function getRiskLevelColor(level: string): string {
+  switch (level) {
+    case 'low':
+      return 'text-green-400 bg-green-500/10';
+    case 'moderate':
+      return 'text-yellow-400 bg-yellow-500/10';
+    case 'high':
+      return 'text-orange-400 bg-orange-500/10';
+    case 'very_high':
+      return 'text-red-400 bg-red-500/10';
+    default:
+      return 'text-gray-400 bg-gray-500/10';
+  }
+}
+
+export function getRiskLevelLabel(level: string): string {
+  switch (level) {
+    case 'low':
+      return 'Low Risk';
+    case 'moderate':
+      return 'Moderate Risk';
+    case 'high':
+      return 'High Risk';
+    case 'very_high':
+      return 'Very High Risk';
+    default:
+      return 'Unknown';
+  }
+}
+
+export function getRegimeColor(regime: string): string {
+  switch (regime) {
+    case 'trending_up':
+      return 'text-green-400';
+    case 'trending_down':
+      return 'text-red-400';
+    case 'ranging':
+      return 'text-blue-400';
+    case 'high_volatility':
+      return 'text-purple-400';
+    default:
+      return 'text-gray-400';
+  }
+}
