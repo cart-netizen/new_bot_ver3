@@ -1573,7 +1573,8 @@ async def _run_ml_backtest_job(backtest_id: str, config: CreateMLBacktestRequest
         # Load model
         logger.info(f"Loading model from {config.model_checkpoint}")
 
-        checkpoint = torch.load(config.model_checkpoint, map_location='cpu')
+        # weights_only=False required for loading model with custom classes
+        checkpoint = torch.load(config.model_checkpoint, map_location='cpu', weights_only=False)
 
         # Get model config and create model
         model_config_dict = checkpoint.get('model_config', {})
@@ -1624,17 +1625,67 @@ async def _run_ml_backtest_job(backtest_id: str, config: CreateMLBacktestRequest
             if data_path is None:
                 raise ValueError("No holdout data found. Please prepare test data first.")
 
+        elif config.data_source == "feature_store":
+            # Load from Feature Store
+            from backend.ml_engine.feature_store.feature_store import get_feature_store
+            from datetime import timedelta
+
+            feature_store = get_feature_store()
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=30)  # Last 30 days for backtesting
+
+            df = feature_store.read_offline_features(
+                feature_group="training_features",
+                start_date=start_date.strftime("%Y-%m-%d"),
+                end_date=end_date.strftime("%Y-%m-%d")
+            )
+
+            if df is None or len(df) == 0:
+                raise ValueError("No data in Feature Store. Please collect data first.")
+
+            # Convert DataFrame to X, y arrays
+            from backend.ml_engine.feature_store.feature_schema import DEFAULT_SCHEMA
+            feature_columns = [f.name for f in DEFAULT_SCHEMA.features
+                             if f.name in df.columns and f.name not in ['timestamp', 'future_direction_60s']]
+
+            if 'future_direction_60s' not in df.columns:
+                raise ValueError("Feature Store data missing labels. Please run labeling first.")
+
+            X = df[feature_columns].values.astype(np.float32)
+            y = df['future_direction_60s'].values.astype(np.int64)
+
+            # Reshape X to 3D for LSTM: (samples, sequence_length, features)
+            seq_len = config.sequence_length
+            n_samples = len(X) - seq_len + 1
+            if n_samples <= 0:
+                raise ValueError(f"Not enough data: {len(X)} samples, need at least {seq_len}")
+
+            X_seq = np.array([X[i:i+seq_len] for i in range(n_samples)], dtype=np.float32)
+            y_seq = y[seq_len-1:]  # Labels aligned with last element of each sequence
+
+            X = X_seq
+            y = y_seq
+            timestamps = df['timestamp'].values[seq_len-1:] if 'timestamp' in df.columns else None
+            prices = df['close'].values[seq_len-1:] if 'close' in df.columns else None
+
+            logger.info(f"Loaded {len(X)} sequences from Feature Store")
+
         elif config.data_source == "custom":
             # Custom data loading - implement as needed
             raise ValueError("Custom data source not implemented yet")
 
-        logger.info(f"Loading data from {data_path}")
-        data = np.load(data_path, allow_pickle=True)
+        else:
+            raise ValueError(f"Unknown data_source: {config.data_source}. Use 'holdout', 'feature_store', or 'custom'")
 
-        X = data['X']
-        y = data['y']
-        timestamps = data.get('timestamps', None)
-        prices = data.get('prices', None)
+        # Load data from file (for holdout source)
+        if data_path is not None:
+            logger.info(f"Loading data from {data_path}")
+            data = np.load(data_path, allow_pickle=True)
+
+            X = data['X']
+            y = data['y']
+            timestamps = data.get('timestamps', None)
+            prices = data.get('prices', None)
 
         run["total_samples"] = len(X)
         run["progress_pct"] = 10.0

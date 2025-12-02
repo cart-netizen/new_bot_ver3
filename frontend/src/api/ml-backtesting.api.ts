@@ -45,30 +45,6 @@ export interface MLBacktestConfig {
   device: 'auto' | 'cuda' | 'cpu';
 }
 
-export interface ClassificationMetrics {
-  accuracy: number;
-  precision_macro: number;
-  recall_macro: number;
-  f1_macro: number;
-  precision_per_class: Record<string, number>;  // SELL, HOLD, BUY
-  recall_per_class: Record<string, number>;
-  f1_per_class: Record<string, number>;
-  support_per_class?: Record<string, number>;
-}
-
-export interface TradingMetrics {
-  total_trades: number;
-  winning_trades: number;
-  losing_trades: number;
-  win_rate: number;
-  total_pnl: number;
-  total_pnl_percent: number;
-  max_drawdown: number;
-  sharpe_ratio: number;
-  profit_factor: number;
-  final_capital: number;
-}
-
 export interface PeriodResult {
   period: number;
   start_idx: number;
@@ -246,41 +222,6 @@ export async function getMLBacktest(
 }
 
 /**
- * Get ML backtest predictions
- */
-export async function getMLBacktestPredictions(
-  id: string,
-  limit = 1000,
-  period?: number
-): Promise<{ backtest_id: string; predictions: Prediction[]; total: number }> {
-  const response = await apiClient.get(`/api/ml-backtesting/runs/${id}/predictions`, {
-    params: { limit, period }
-  });
-  return response.data;
-}
-
-/**
- * Get confusion matrix
- */
-export async function getConfusionMatrix(id: string): Promise<ConfusionMatrix> {
-  const response = await apiClient.get(`/api/ml-backtesting/runs/${id}/confusion-matrix`);
-  return response.data;
-}
-
-/**
- * Get walk-forward period results
- */
-export async function getWalkForwardPeriods(id: string): Promise<{
-  backtest_id: string;
-  use_walk_forward: boolean;
-  n_periods: number;
-  periods: PeriodResult[];
-}> {
-  const response = await apiClient.get(`/api/ml-backtesting/runs/${id}/periods`);
-  return response.data;
-}
-
-/**
  * Cancel running ML backtest
  */
 export async function cancelMLBacktest(
@@ -306,67 +247,6 @@ export async function deleteMLBacktest(
 export async function listAvailableModels(): Promise<{ models: ModelInfo[]; total: number }> {
   const response = await apiClient.get('/api/ml-backtesting/models');
   return response.data;
-}
-
-/**
- * Get aggregate statistics
- */
-export async function getMLBacktestStatistics(): Promise<MLBacktestStatistics> {
-  const response = await apiClient.get('/api/ml-backtesting/statistics');
-  return response.data;
-}
-
-/**
- * Health check
- */
-export async function healthCheck(): Promise<{
-  status: string;
-  service: string;
-  timestamp: string;
-  running_backtests: number;
-}> {
-  const response = await apiClient.get('/api/ml-backtesting/health');
-  return response.data;
-}
-
-/**
- * ============================================================
- * HELPER FUNCTIONS
- * ============================================================
- */
-
-/**
- * Get class name from class ID
- */
-export function getClassName(classId: number): string {
-  return { 0: 'SELL', 1: 'HOLD', 2: 'BUY' }[classId] || 'UNKNOWN';
-}
-
-/**
- * Get class color for styling
- */
-export function getClassColor(className: string): string {
-  return {
-    'SELL': 'text-red-400',
-    'HOLD': 'text-yellow-400',
-    'BUY': 'text-green-400'
-  }[className] || 'text-gray-400';
-}
-
-/**
- * Format percentage
- */
-export function formatPercent(value: number | undefined | null, decimals = 2): string {
-  if (value === undefined || value === null) return 'N/A';
-  return `${(value * 100).toFixed(decimals)}%`;
-}
-
-/**
- * Format accuracy (already as decimal)
- */
-export function formatAccuracy(value: number | undefined | null, decimals = 2): string {
-  if (value === undefined || value === null) return 'N/A';
-  return `${(value * 100).toFixed(decimals)}%`;
 }
 
 /**
@@ -486,62 +366,6 @@ export async function runMonteCarloSimulation(
 
 /**
  * ============================================================
- * MODEL COMPARISON TYPES & API
- * ============================================================
- */
-
-export interface ModelComparisonRequest {
-  backtest_ids: string[];
-}
-
-export interface ModelComparisonResult {
-  models: Array<{
-    id: string;
-    name: string;
-    model_architecture?: string;
-  }>;
-  comparison_table: Array<{
-    id: string;
-    name: string;
-    model_architecture: string;
-    accuracy?: number;
-    f1_macro?: number;
-    sharpe_ratio?: number;
-    win_rate?: number;
-    max_drawdown?: number;
-    total_pnl_percent?: number;
-  }>;
-  best_model: {
-    id: string;
-    name: string;
-    composite_score: number;
-    accuracy?: number;
-    sharpe_ratio?: number;
-  };
-  rankings: Record<string, string[]>;
-  statistical_tests?: {
-    paired_t_tests?: Array<{
-      model_a: string;
-      model_b: string;
-      t_statistic: number;
-      p_value: number;
-      significant: boolean;
-    }>;
-  };
-}
-
-/**
- * Compare multiple models
- */
-export async function compareModels(
-  backtest_ids: string[]
-): Promise<ModelComparisonResult> {
-  const response = await apiClient.post('/api/ml-backtesting/compare', { backtest_ids });
-  return response.data;
-}
-
-/**
- * ============================================================
  * REGIME ANALYSIS TYPES & API
  * ============================================================
  */
@@ -615,53 +439,3 @@ export async function getEquityCurve(
   return response.data;
 }
 
-/**
- * ============================================================
- * RISK LEVEL HELPERS
- * ============================================================
- */
-
-export function getRiskLevelColor(level: string): string {
-  switch (level) {
-    case 'low':
-      return 'text-green-400 bg-green-500/10';
-    case 'moderate':
-      return 'text-yellow-400 bg-yellow-500/10';
-    case 'high':
-      return 'text-orange-400 bg-orange-500/10';
-    case 'very_high':
-      return 'text-red-400 bg-red-500/10';
-    default:
-      return 'text-gray-400 bg-gray-500/10';
-  }
-}
-
-export function getRiskLevelLabel(level: string): string {
-  switch (level) {
-    case 'low':
-      return 'Low Risk';
-    case 'moderate':
-      return 'Moderate Risk';
-    case 'high':
-      return 'High Risk';
-    case 'very_high':
-      return 'Very High Risk';
-    default:
-      return 'Unknown';
-  }
-}
-
-export function getRegimeColor(regime: string): string {
-  switch (regime) {
-    case 'trending_up':
-      return 'text-green-400';
-    case 'trending_down':
-      return 'text-red-400';
-    case 'ranging':
-      return 'text-blue-400';
-    case 'high_volatility':
-      return 'text-purple-400';
-    default:
-      return 'text-gray-400';
-  }
-}

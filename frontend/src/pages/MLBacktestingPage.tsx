@@ -25,6 +25,7 @@ import { toast } from 'sonner';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import { Tooltip } from '../components/ui/Tooltip';
 import { cn } from '../utils/helpers';
 import * as mlBacktestingApi from '../api/ml-backtesting.api';
 
@@ -420,8 +421,11 @@ function MLBacktestForm({ onSubmit, isSubmitting }: MLBacktestFormProps) {
             </div>
           )}
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-gray-300 mb-1 flex items-center gap-2">
               Источник данных
+              <Tooltip content="Holdout Set — данные, отложенные при обучении (рекомендуется для честного теста).
+Feature Store — последние 30 дней из Feature Store.
+Custom Data — загрузить свои данные (в разработке)." />
             </label>
             <select
               value={formData.data_source}
@@ -451,13 +455,15 @@ function MLBacktestForm({ onSubmit, isSubmitting }: MLBacktestFormProps) {
               onChange={(e) => updateForm({ use_walk_forward: e.target.checked })}
               className="rounded border-gray-700 bg-gray-800 text-purple-500 focus:ring-purple-500"
             />
-            <label htmlFor="use_walk_forward" className="text-sm text-gray-300">
+            <label htmlFor="use_walk_forward" className="text-sm text-gray-300 flex items-center gap-1">
               Использовать Walk-Forward
+              <Tooltip content="Walk-Forward валидация разбивает данные на последовательные периоды и тестирует модель на каждом периоде отдельно. Это более реалистичный тест, имитирующий реальную торговлю во времени. Рекомендуется включить." />
             </label>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-gray-300 mb-1 flex items-center gap-2">
               Количество периодов
+              <Tooltip content="На сколько частей разбить данные. Больше периодов = более детальный анализ, но меньше данных в каждом периоде. Рекомендуется: 5-10 периодов." />
             </label>
             <Input
               type="number"
@@ -477,8 +483,9 @@ function MLBacktestForm({ onSubmit, isSubmitting }: MLBacktestFormProps) {
               disabled={!formData.use_walk_forward}
               className="rounded border-gray-700 bg-gray-800 text-purple-500 focus:ring-purple-500"
             />
-            <label htmlFor="retrain_each_period" className="text-sm text-gray-300">
+            <label htmlFor="retrain_each_period" className="text-sm text-gray-300 flex items-center gap-1">
               Переобучать каждый период
+              <Tooltip content="Если включено, модель будет переобучаться на каждом периоде с использованием данных предыдущих периодов. Более реалистично, но значительно дольше. В разработке." />
             </label>
           </div>
         </div>
@@ -499,13 +506,15 @@ function MLBacktestForm({ onSubmit, isSubmitting }: MLBacktestFormProps) {
               onChange={(e) => updateForm({ use_confidence_filter: e.target.checked })}
               className="rounded border-gray-700 bg-gray-800 text-purple-500 focus:ring-purple-500"
             />
-            <label htmlFor="use_confidence_filter" className="text-sm text-gray-300">
+            <label htmlFor="use_confidence_filter" className="text-sm text-gray-300 flex items-center gap-1">
               Фильтровать по confidence
+              <Tooltip content="Открывать сделки только когда модель уверена в предсказании выше заданного порога. Снижает количество сделок, но повышает их качество. Рекомендуется включить." />
             </label>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-gray-300 mb-1 flex items-center gap-2">
               Минимальный confidence
+              <Tooltip content="Порог уверенности модели (0.5-0.99). Модель откроет сделку только если уверенность выше этого значения. Рекомендуется: 0.6-0.7 для баланса между количеством и качеством сигналов." />
             </label>
             <Input
               type="number"
@@ -518,8 +527,12 @@ function MLBacktestForm({ onSubmit, isSubmitting }: MLBacktestFormProps) {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-gray-300 mb-1 flex items-center gap-2">
               Режим фильтрации
+              <Tooltip content="Фиксированный порог — простое отсечение по заданному значению.
+Динамический — порог адаптируется к текущей волатильности.
+Перцентиль — отбираются только топ-N% самых уверенных сигналов.
+Рекомендуется: Фиксированный порог для начала." />
             </label>
             <select
               value={formData.confidence_mode}
@@ -543,8 +556,9 @@ function MLBacktestForm({ onSubmit, isSubmitting }: MLBacktestFormProps) {
         </h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-gray-300 mb-1 flex items-center gap-2">
               Начальный капитал ($)
+              <Tooltip content="Виртуальный начальный капитал для симуляции. Используется для расчёта PnL и Sharpe Ratio. Рекомендуется: 10000$ для удобного масштабирования." />
             </label>
             <Input
               type="number"
@@ -555,8 +569,9 @@ function MLBacktestForm({ onSubmit, isSubmitting }: MLBacktestFormProps) {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-gray-300 mb-1 flex items-center gap-2">
               Размер позиции (%)
+              <Tooltip content="Какую долю капитала использовать в каждой сделке (0.01 = 1%, 0.1 = 10%, 1.0 = 100%). Меньше = консервативнее, больше = агрессивнее. Рекомендуется: 0.1 (10%)." />
             </label>
             <Input
               type="number"
@@ -568,8 +583,9 @@ function MLBacktestForm({ onSubmit, isSubmitting }: MLBacktestFormProps) {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-gray-300 mb-1 flex items-center gap-2">
               Комиссия (%)
+              <Tooltip content="Комиссия биржи за сделку (0.001 = 0.1%). Для Binance: Maker 0.02-0.1%, Taker 0.04-0.1%. Рекомендуется: 0.001 (0.1%)." />
             </label>
             <Input
               type="number"
@@ -581,8 +597,9 @@ function MLBacktestForm({ onSubmit, isSubmitting }: MLBacktestFormProps) {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-gray-300 mb-1 flex items-center gap-2">
               Slippage (%)
+              <Tooltip content="Проскальзывание — разница между ожидаемой и реальной ценой исполнения. На волатильном рынке может достигать 0.05-0.1%. Рекомендуется: 0.0005 (0.05%)." />
             </label>
             <Input
               type="number"
@@ -604,8 +621,9 @@ function MLBacktestForm({ onSubmit, isSubmitting }: MLBacktestFormProps) {
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-gray-300 mb-1 flex items-center gap-2">
               Длина последовательности
+              <Tooltip content="Сколько последних свечей/точек данных подаётся на вход модели. Должно совпадать со значением при обучении модели. Обычно: 60 (последние 60 минут/свечей)." />
             </label>
             <Input
               type="number"
@@ -616,8 +634,9 @@ function MLBacktestForm({ onSubmit, isSubmitting }: MLBacktestFormProps) {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-gray-300 mb-1 flex items-center gap-2">
               Batch size
+              <Tooltip content="Количество примеров, обрабатываемых за раз. Больше = быстрее (если хватает памяти GPU), но требует больше VRAM. Рекомендуется: 128 для GPU, 32-64 для CPU." />
             </label>
             <Input
               type="number"
@@ -628,8 +647,12 @@ function MLBacktestForm({ onSubmit, isSubmitting }: MLBacktestFormProps) {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-gray-300 mb-1 flex items-center gap-2">
               Device
+              <Tooltip content="Auto — автоматически выберет GPU если доступен, иначе CPU.
+CUDA — принудительно использовать GPU (ошибка если нет).
+CPU — только процессор (медленнее, но стабильнее).
+Рекомендуется: Auto." />
             </label>
             <select
               value={formData.device}
