@@ -2169,8 +2169,22 @@ async def create_holdout_set(request: CreateHoldoutRequest, background_tasks: Ba
 def _process_dataframe_to_holdout(df: "pd.DataFrame", sequence_length: int, output_path: str) -> dict:
     """
     Обработка DataFrame и сохранение в NPZ формат.
+    Если данные сырые (только OHLCV), автоматически вычисляет фичи.
     """
     import pandas as pd
+
+    # Проверяем, есть ли уже фичи в данных
+    ohlcv_cols = {'open', 'high', 'low', 'close', 'volume'}
+    existing_cols = set(df.columns.str.lower())
+
+    # Если только OHLCV колонки, нужно вычислить фичи
+    feature_cols_exist = [c for c in df.columns if c not in ohlcv_cols and
+                          c not in ['timestamp', 'time', 'datetime', 'date', 'symbol', 'Unnamed: 0'] and
+                          df[c].dtype in ['float64', 'float32', 'int64', 'int32']]
+
+    if len(feature_cols_exist) < 10:
+        logger.info(f"Raw data detected ({len(feature_cols_exist)} features). Computing technical indicators...")
+        df = _compute_features_from_ohlcv(df)
 
     # Определяем колонку с метками
     label_column = None
@@ -2179,8 +2193,11 @@ def _process_dataframe_to_holdout(df: "pd.DataFrame", sequence_length: int, outp
             label_column = col
             break
 
+    # Если нет меток, создаём их
     if label_column is None:
-        raise ValueError(f"Не найдена колонка с метками. Доступные: {list(df.columns)[:20]}")
+        logger.info("No label column found. Creating future_direction_60s from price movement...")
+        df = _create_labels(df, horizon=60)
+        label_column = 'future_direction_60s'
 
     logger.info(f"Using label column: {label_column}")
 
@@ -2212,14 +2229,17 @@ def _process_dataframe_to_holdout(df: "pd.DataFrame", sequence_length: int, outp
     logger.info(f"Found {len(feature_cols)} feature columns")
 
     if len(feature_cols) == 0:
-        raise ValueError("Не найдено feature колонок")
+        raise ValueError("Не найдено feature колонок после обработки")
 
-    # Удаляем NaN
+    # Удаляем NaN (только из feature колонок и label)
+    initial_rows = len(df)
     df = df.dropna(subset=feature_cols + [label_column])
-    logger.info(f"After NaN removal: {len(df)} rows")
+    removed_rows = initial_rows - len(df)
+    logger.info(f"After NaN removal: {len(df)} rows (removed {removed_rows})")
 
     if len(df) < sequence_length * 2:
-        raise ValueError(f"Недостаточно данных: {len(df)} < {sequence_length * 2}")
+        raise ValueError(f"Недостаточно данных после обработки: {len(df)} < {sequence_length * 2}. "
+                        f"Попробуйте выбрать больше файлов данных.")
 
     # Извлекаем данные
     features = df[feature_cols].values.astype(np.float32)
@@ -2268,6 +2288,142 @@ def _process_dataframe_to_holdout(df: "pd.DataFrame", sequence_length: int, outp
         "features": len(feature_cols),
         "class_distribution": dict(zip(unique.tolist(), counts.tolist()))
     }
+
+
+def _compute_features_from_ohlcv(df: "pd.DataFrame") -> "pd.DataFrame":
+    """
+    Вычисление технических индикаторов из OHLCV данных.
+    """
+    import pandas as pd
+
+    # Нормализуем названия колонок
+    df.columns = df.columns.str.lower()
+
+    # Убедимся, что есть необходимые колонки
+    required = ['open', 'high', 'low', 'close', 'volume']
+    for col in required:
+        if col not in df.columns:
+            raise ValueError(f"Missing required column: {col}")
+
+    o, h, l, c, v = df['open'], df['high'], df['low'], df['close'], df['volume']
+
+    # === Price-based features ===
+    df['returns'] = c.pct_change()
+    df['log_returns'] = np.log(c / c.shift(1))
+    df['high_low_range'] = (h - l) / c
+    df['close_open_range'] = (c - o) / c
+
+    # === Moving Averages ===
+    for window in [5, 10, 20, 50]:
+        df[f'sma_{window}'] = c.rolling(window).mean()
+        df[f'ema_{window}'] = c.ewm(span=window).mean()
+        df[f'price_to_sma_{window}'] = c / df[f'sma_{window}']
+
+    # === Volatility ===
+    for window in [5, 10, 20]:
+        df[f'volatility_{window}'] = df['returns'].rolling(window).std()
+        df[f'atr_{window}'] = _calculate_atr(h, l, c, window)
+
+    # === Momentum ===
+    for window in [5, 10, 14, 20]:
+        df[f'momentum_{window}'] = c - c.shift(window)
+        df[f'roc_{window}'] = (c - c.shift(window)) / c.shift(window) * 100
+
+    # === RSI ===
+    for window in [7, 14, 21]:
+        df[f'rsi_{window}'] = _calculate_rsi(c, window)
+
+    # === MACD ===
+    ema12 = c.ewm(span=12).mean()
+    ema26 = c.ewm(span=26).mean()
+    df['macd'] = ema12 - ema26
+    df['macd_signal'] = df['macd'].ewm(span=9).mean()
+    df['macd_histogram'] = df['macd'] - df['macd_signal']
+
+    # === Bollinger Bands ===
+    for window in [20]:
+        sma = c.rolling(window).mean()
+        std = c.rolling(window).std()
+        df[f'bb_upper_{window}'] = sma + 2 * std
+        df[f'bb_lower_{window}'] = sma - 2 * std
+        df[f'bb_width_{window}'] = (df[f'bb_upper_{window}'] - df[f'bb_lower_{window}']) / sma
+        df[f'bb_position_{window}'] = (c - df[f'bb_lower_{window}']) / (df[f'bb_upper_{window}'] - df[f'bb_lower_{window}'])
+
+    # === Volume features ===
+    df['volume_sma_20'] = v.rolling(20).mean()
+    df['volume_ratio'] = v / df['volume_sma_20']
+    df['volume_change'] = v.pct_change()
+
+    # === Stochastic ===
+    for window in [14]:
+        lowest_low = l.rolling(window).min()
+        highest_high = h.rolling(window).max()
+        df[f'stoch_k_{window}'] = 100 * (c - lowest_low) / (highest_high - lowest_low)
+        df[f'stoch_d_{window}'] = df[f'stoch_k_{window}'].rolling(3).mean()
+
+    # === Williams %R ===
+    for window in [14]:
+        highest_high = h.rolling(window).max()
+        lowest_low = l.rolling(window).min()
+        df[f'williams_r_{window}'] = -100 * (highest_high - c) / (highest_high - lowest_low)
+
+    # === CCI ===
+    for window in [20]:
+        tp = (h + l + c) / 3
+        tp_sma = tp.rolling(window).mean()
+        tp_mad = tp.rolling(window).apply(lambda x: np.abs(x - x.mean()).mean())
+        df[f'cci_{window}'] = (tp - tp_sma) / (0.015 * tp_mad)
+
+    logger.info(f"Computed {len(df.columns)} total columns including features")
+
+    return df
+
+
+def _calculate_atr(high: "pd.Series", low: "pd.Series", close: "pd.Series", window: int) -> "pd.Series":
+    """Calculate Average True Range."""
+    tr1 = high - low
+    tr2 = abs(high - close.shift(1))
+    tr3 = abs(low - close.shift(1))
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    return tr.rolling(window).mean()
+
+
+def _calculate_rsi(close: "pd.Series", window: int) -> "pd.Series":
+    """Calculate RSI."""
+    import pandas as pd
+    delta = close.diff()
+    gain = delta.where(delta > 0, 0).rolling(window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+
+def _create_labels(df: "pd.DataFrame", horizon: int = 60) -> "pd.DataFrame":
+    """
+    Создание меток для классификации на основе будущего движения цены.
+    0 = SELL (цена упадёт), 1 = HOLD (нейтрально), 2 = BUY (цена вырастет)
+    """
+    close_col = 'close' if 'close' in df.columns else 'Close'
+    close = df[close_col]
+
+    # Future return
+    future_return = (close.shift(-horizon) - close) / close
+
+    # Thresholds для классификации
+    threshold = 0.001  # 0.1%
+
+    labels = np.where(
+        future_return > threshold, 2,  # BUY
+        np.where(future_return < -threshold, 0, 1)  # SELL or HOLD
+    )
+
+    df['future_direction_60s'] = labels
+    df['future_return_60s'] = future_return
+
+    # Удаляем последние horizon строк (нет будущих данных)
+    df = df.iloc[:-horizon].copy()
+
+    return df
 
 
 @router.delete("/holdout-sets/{filename}")
