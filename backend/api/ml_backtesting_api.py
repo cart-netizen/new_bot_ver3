@@ -1852,7 +1852,8 @@ async def _run_ml_backtest_job(backtest_id: str, config: CreateMLBacktestRequest
             elif isinstance(val, np.ndarray):
                 return val.tolist()
             elif isinstance(val, dict):
-                return {k: to_python(v) for k, v in val.items()}
+                # Convert both keys and values
+                return {to_python(k): to_python(v) for k, v in val.items()}
             elif isinstance(val, list):
                 return [to_python(v) for v in val]
             return val
