@@ -7,7 +7,7 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
-  Tooltip,
+  Tooltip as RechartsTooltip,
   ResponsiveContainer,
   ScatterChart,
   Scatter,
@@ -372,7 +372,7 @@ PBO анализирует множество комбинаций train/test sp
                   stroke="#9CA3AF"
                   fontSize={10}
                 />
-                <Tooltip
+                <RechartsTooltip
                   contentStyle={{
                     backgroundColor: '#1F2937',
                     border: '1px solid #374151',
@@ -423,7 +423,7 @@ PBO анализирует множество комбинаций train/test sp
                   interval={Math.floor(histogramBins / 5)}
                 />
                 <YAxis stroke="#9CA3AF" fontSize={10} />
-                <Tooltip
+                <RechartsTooltip
                   contentStyle={{
                     backgroundColor: '#1F2937',
                     border: '1px solid #374151',

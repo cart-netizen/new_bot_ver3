@@ -1,15 +1,13 @@
 // frontend/src/components/ml-backtesting/WalkForwardChart.tsx
 
 import {
-
   Bar,
   XAxis,
   YAxis,
   CartesianGrid,
-  Tooltip,
+  Tooltip as RechartsTooltip,
   Legend,
   ResponsiveContainer,
-
   Line,
   ComposedChart,
   ReferenceLine
@@ -119,7 +117,7 @@ export function WalkForwardChart({ periodResults, threshold = 0.6 }: WalkForward
               fontSize={12}
               tickFormatter={(v) => `${v}%`}
             />
-            <Tooltip
+            <RechartsTooltip
               contentStyle={{
                 backgroundColor: '#1F2937',
                 border: '1px solid #374151',
