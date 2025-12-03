@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import { Card } from '../ui/Card';
+import { Tooltip } from '../ui/Tooltip';
 import { cn } from '../../utils/helpers';
 
 interface ConfusionMatrixHeatmapProps {
@@ -91,7 +92,22 @@ export function ConfusionMatrixHeatmap({
   return (
     <Card className="p-6">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-white">{title}</h3>
+        <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+          {title}
+          <Tooltip content="Confusion Matrix (матрица ошибок) — визуализация того, как модель классифицирует данные.
+
+Строки — реальные классы (Actual)
+Столбцы — предсказанные классы (Predicted)
+
+Диагональ (зелёные ячейки) — правильные предсказания.
+Остальные ячейки (красные) — ошибки.
+
+Идеальная матрица: все значения на диагонали, остальные = 0.
+
+Анализируйте:
+• Какие классы путает модель (большие числа вне диагонали)
+• Есть ли bias к какому-то классу" />
+        </h3>
         <div className="flex items-center gap-4 text-sm">
           <span className="text-gray-400">
             Accuracy: <span className="text-white font-medium">{(accuracy * 100).toFixed(1)}%</span>
@@ -182,7 +198,20 @@ export function ConfusionMatrixHeatmap({
 
         {/* Per-Class Metrics */}
         <div className="lg:w-72">
-          <h4 className="text-sm font-medium text-gray-400 mb-3">Per-Class Metrics</h4>
+          <h4 className="text-sm font-medium text-gray-400 mb-3 flex items-center gap-1">
+            Per-Class Metrics
+            <Tooltip content="Метрики качества для каждого класса отдельно.
+
+Precision — из всех предсказаний этого класса, сколько было верных?
+Recall — из всех реальных случаев этого класса, сколько модель нашла?
+F1 — баланс между Precision и Recall.
+
+Важно для торговли:
+• Высокий Precision для BUY/SELL = меньше ложных входов
+• Высокий Recall = меньше пропущенных возможностей
+
+Support = количество реальных примеров этого класса." />
+          </h4>
           <div className="space-y-3">
             {perClassMetrics.map((metric) => (
               <div key={metric.label} className="p-3 bg-gray-800/50 rounded-lg">
@@ -251,7 +280,16 @@ export function ConfusionMatrixHeatmap({
 
           {/* Macro Averages */}
           <div className="mt-4 p-3 bg-gray-800/80 rounded-lg border border-gray-700">
-            <h5 className="text-xs font-medium text-gray-400 mb-2">Macro Average</h5>
+            <h5 className="text-xs font-medium text-gray-400 mb-2 flex items-center gap-1">
+              Macro Average
+              <Tooltip content="Macro Average — среднее арифметическое метрик по всем классам.
+
+Каждый класс имеет равный вес независимо от количества примеров.
+
+Важно: если классы несбалансированы (например, HOLD много, а BUY/SELL мало), macro average покажет честную картину для редких классов.
+
+Сравнивайте с weighted average, который учитывает размер классов." />
+            </h5>
             <div className="grid grid-cols-3 gap-2 text-xs">
               <div>
                 <span className="text-gray-500 block">Precision</span>
