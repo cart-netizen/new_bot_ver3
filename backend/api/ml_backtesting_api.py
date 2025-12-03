@@ -489,8 +489,9 @@ async def get_ml_backtest(
         if not db_run and not mem_run:
             raise HTTPException(status_code=404, detail=f"ML Backtest {backtest_id} not found")
 
-        # Prefer memory data for running backtests, otherwise use DB
-        if mem_run and mem_run.get("status") in ["running", "pending"]:
+        # Prefer memory data for running/pending backtests or recently completed ones
+        # Memory has more complete data (including predictions with trade_pnl)
+        if mem_run and mem_run.get("status") in ["running", "pending", "completed"]:
             run = mem_run
             response = {
                 "id": run["id"],
@@ -2062,6 +2063,14 @@ async def _run_ml_backtest_job(backtest_id: str, config: CreateMLBacktestRequest
                 "period": None
             })
         run["predictions"] = predictions_list
+
+        # Log predictions info
+        trades_with_pnl = sum(1 for p in predictions_list if p.get("trade_pnl") is not None)
+        logger.info(
+            f"Saved {len(predictions_list)} predictions, "
+            f"{trades_with_pnl} with trade_pnl, "
+            f"prices available: {pred_prices is not None}"
+        )
 
         # Complete
         run["status"] = MLBacktestStatus.COMPLETED.value
