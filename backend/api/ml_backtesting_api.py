@@ -489,8 +489,19 @@ async def get_ml_backtest(
         if not db_run and not mem_run:
             raise HTTPException(status_code=404, detail=f"ML Backtest {backtest_id} not found")
 
-        # Prefer memory data for running backtests, otherwise use DB
-        if mem_run and mem_run.get("status") in ["running", "pending"]:
+        # Prefer memory data if:
+        # 1. Status is running/pending (active backtest)
+        # 2. OR status is completed but we need predictions and they're in memory (not yet persisted to DB)
+        use_memory = False
+        if mem_run:
+            status = mem_run.get("status")
+            if status in ["running", "pending"]:
+                use_memory = True
+            elif status == "completed" and include_predictions and mem_run.get("predictions"):
+                # Use memory if predictions requested and available in memory
+                use_memory = True
+
+        if use_memory:
             run = mem_run
             response = {
                 "id": run["id"],
@@ -2222,6 +2233,27 @@ async def _run_ml_backtest_job(backtest_id: str, config: CreateMLBacktestRequest
                 progress_pct=100.0
             )
             logger.info(f"ML Backtest results synced to database: {backtest_id}")
+
+            # Save predictions to database (limit to 5000 for performance)
+            try:
+                if predictions_list:
+                    # Prepare predictions for database (remove trade_pnl and trade_executed as they're not in schema)
+                    db_predictions = [
+                        {
+                            "sequence": p["sequence"],
+                            "timestamp": p.get("timestamp"),
+                            "predicted_class": p["predicted_class"],
+                            "actual_class": p["actual_class"],
+                            "confidence": p["confidence"],
+                            "period": p.get("period")
+                        }
+                        for p in predictions_list[:5000]
+                    ]
+                    saved_count = await ml_backtest_repo.add_predictions(run_uuid, db_predictions)
+                    logger.info(f"Saved {saved_count} predictions to database for {backtest_id}")
+            except Exception as pred_err:
+                logger.error(f"Failed to save predictions to database: {pred_err}")
+
         except Exception as db_err:
             logger.error(f"Failed to sync results to database: {db_err}")
 
