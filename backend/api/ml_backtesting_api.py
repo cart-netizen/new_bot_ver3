@@ -1043,9 +1043,6 @@ async def get_pbo_analysis(backtest_id: str) -> PBOAnalysisResponse:
         # Calculate IS and OOS Sharpe ratios from period results
         from backend.ml_engine.validation.cpcv import ProbabilityOfBacktestOverfitting
 
-        # Calculate IS and OOS scores using leave-one-out approach
-        # For each period, treat it as OOS and the average of the rest as IS
-        # This creates N combinations (one per period) with matched IS/OOS pairs
         n_periods = len(period_results)
 
         # First, calculate composite scores for all periods
@@ -1059,21 +1056,40 @@ async def get_pbo_analysis(backtest_id: str) -> PBOAnalysisResponse:
             score = (accuracy * 0.4 + f1 * 0.3 + (pnl / 100 + 1) * 0.3) * 2
             period_scores.append(score)
 
-        # Create IS/OOS pairs using leave-one-out cross-validation style
-        # For each period i, IS = average of all OTHER periods, OOS = period i
+        # Create IS/OOS pairs using CPCV approach
+        # Split periods into train (IS) and test (OOS) combinations
+        # For n_periods, we create C(n, floor(n/2)) combinations
+        from itertools import combinations
+
         is_sharpes = []
         oos_sharpes = []
 
-        for i in range(n_periods):
-            # IS = average of all periods except i
-            other_scores = [s for j, s in enumerate(period_scores) if j != i]
-            is_score = np.mean(other_scores) if other_scores else period_scores[i]
+        # Use approximately half periods for test
+        n_test = max(1, n_periods // 2)
 
-            # OOS = current period score
-            oos_score = period_scores[i]
+        # Generate all combinations of test periods
+        test_combinations = list(combinations(range(n_periods), n_test))
+
+        for test_periods in test_combinations:
+            train_periods = [i for i in range(n_periods) if i not in test_periods]
+
+            if not train_periods:
+                continue
+
+            # IS = average score of training periods
+            is_score = np.mean([period_scores[i] for i in train_periods])
+
+            # OOS = average score of test periods
+            oos_score = np.mean([period_scores[i] for i in test_periods])
 
             is_sharpes.append(is_score)
             oos_sharpes.append(oos_score)
+
+        if len(is_sharpes) < 2:
+            raise HTTPException(
+                status_code=400,
+                detail="Not enough combinations for PBO analysis"
+            )
 
         # Calculate PBO
         pbo_calc = ProbabilityOfBacktestOverfitting()
