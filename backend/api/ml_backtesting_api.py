@@ -1723,25 +1723,30 @@ async def _run_ml_backtest_job(backtest_id: str, config: CreateMLBacktestRequest
         evaluator = BacktestEvaluator(model, bt_config, device)
 
         # Load test data
-        # For now, try to load from a default holdout file
         data_path = None
         if config.data_source == "holdout":
-            # Look for holdout data
-            holdout_paths = [
-                "data/holdout/test_data.npz",
-                "data/ml_data/holdout_set.npz",
-                "data/test_data.npz"
-            ]
-            for path in holdout_paths:
-                if Path(path).exists():
-                    data_path = path
-                    break
+            # Check if specific holdout set is provided
+            if config.holdout_set_id:
+                holdout_path = Path(config.holdout_set_id)
+                if holdout_path.exists():
+                    data_path = str(holdout_path)
+                else:
+                    raise ValueError(f"Holdout Set не найден: {config.holdout_set_id}")
+            else:
+                # Fallback to default paths
+                holdout_paths = [
+                    "data/holdout/test_data.npz",
+                    "data/ml_data/holdout_set.npz",
+                    "data/test_data.npz"
+                ]
+                for path in holdout_paths:
+                    if Path(path).exists():
+                        data_path = path
+                        break
 
             if data_path is None:
                 raise ValueError(
-                    "No holdout data found. Expected files in: data/holdout/test_data.npz, "
-                    "data/ml_data/holdout_set.npz, or data/test_data.npz. "
-                    "Try using 'feature_store' as data source instead."
+                    "No holdout data found. Please select or create a Holdout Set in the UI."
                 )
 
         elif config.data_source == "feature_store":
@@ -1982,3 +1987,307 @@ async def _run_ml_backtest_job(backtest_id: str, config: CreateMLBacktestRequest
     finally:
         if backtest_id in running_backtests:
             del running_backtests[backtest_id]
+
+
+# ==================== HOLDOUT SET MANAGEMENT ====================
+
+@router.get("/data-folders")
+async def list_data_folders():
+    """
+    Список папок с данными для создания Holdout Set.
+    Ищет папки с parquet файлами в data/ директории.
+    """
+    from pathlib import Path
+
+    data_dirs = [
+        Path("data"),
+        Path("data/features"),
+        Path("data/ml_training"),
+        Path("data/feature_store"),
+    ]
+
+    folders = []
+
+    for base_dir in data_dirs:
+        if not base_dir.exists():
+            continue
+
+        # Find folders containing parquet files
+        for item in base_dir.iterdir():
+            if item.is_dir():
+                parquet_files = list(item.glob("*.parquet"))
+                if parquet_files:
+                    # Get folder stats
+                    total_size = sum(f.stat().st_size for f in parquet_files)
+                    folders.append({
+                        "path": str(item),
+                        "name": item.name,
+                        "files_count": len(parquet_files),
+                        "size_mb": round(total_size / (1024 * 1024), 2),
+                        "files": [f.name for f in parquet_files[:5]]  # First 5 files
+                    })
+            elif item.suffix == ".parquet":
+                # Also include standalone parquet files
+                folders.append({
+                    "path": str(item),
+                    "name": item.name,
+                    "files_count": 1,
+                    "size_mb": round(item.stat().st_size / (1024 * 1024), 2),
+                    "files": [item.name]
+                })
+
+    return {"folders": folders}
+
+
+@router.get("/holdout-sets")
+async def list_holdout_sets():
+    """
+    Список доступных Holdout Set файлов.
+    """
+    from pathlib import Path
+
+    holdout_dir = Path("data/holdout")
+
+    if not holdout_dir.exists():
+        return {"holdout_sets": []}
+
+    sets = []
+    for file in holdout_dir.glob("*.npz"):
+        try:
+            # Get file info
+            stat = file.stat()
+
+            # Try to get sample count from file
+            sample_count = None
+            try:
+                import numpy as np
+                data = np.load(file, allow_pickle=True)
+                if 'X' in data:
+                    sample_count = len(data['X'])
+                elif 'y' in data:
+                    sample_count = len(data['y'])
+            except:
+                pass
+
+            sets.append({
+                "path": str(file),
+                "name": file.stem,
+                "filename": file.name,
+                "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                "sample_count": sample_count
+            })
+        except Exception as e:
+            logger.warning(f"Error reading holdout set {file}: {e}")
+
+    # Sort by creation time, newest first
+    sets.sort(key=lambda x: x["created_at"], reverse=True)
+
+    return {"holdout_sets": sets}
+
+
+class CreateHoldoutRequest(BaseModel):
+    """Запрос на создание Holdout Set."""
+    name: str
+    source_paths: List[str]
+    sequence_length: int = 60
+    days: Optional[int] = None  # If using feature store
+
+
+@router.post("/holdout-sets/create")
+async def create_holdout_set(request: CreateHoldoutRequest, background_tasks: BackgroundTasks):
+    """
+    Создание нового Holdout Set из выбранных папок/файлов.
+    """
+    from pathlib import Path
+    import pandas as pd
+
+    holdout_dir = Path("data/holdout")
+    holdout_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate output filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in request.name)
+    output_path = holdout_dir / f"{safe_name}_{timestamp}.npz"
+
+    # Collect all dataframes
+    dfs = []
+
+    for source_path in request.source_paths:
+        path = Path(source_path)
+
+        if not path.exists():
+            raise HTTPException(status_code=400, detail=f"Путь не существует: {source_path}")
+
+        if path.is_dir():
+            # Load all parquet files from folder
+            parquet_files = list(path.glob("*.parquet"))
+            for pf in parquet_files:
+                try:
+                    df = pd.read_parquet(pf)
+                    dfs.append(df)
+                except Exception as e:
+                    logger.warning(f"Error loading {pf}: {e}")
+        elif path.suffix == ".parquet":
+            try:
+                df = pd.read_parquet(path)
+                dfs.append(df)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Ошибка чтения {path}: {e}")
+
+    if not dfs:
+        raise HTTPException(status_code=400, detail="Не найдено данных в выбранных папках")
+
+    # Combine all dataframes
+    combined_df = pd.concat(dfs, ignore_index=True)
+
+    # Sort by timestamp if available
+    for ts_col in ['timestamp', 'time', 'datetime']:
+        if ts_col in combined_df.columns:
+            combined_df = combined_df.sort_values(ts_col).reset_index(drop=True)
+            break
+
+    logger.info(f"Combined {len(dfs)} files, total rows: {len(combined_df)}")
+
+    # Process data into sequences
+    try:
+        result = _process_dataframe_to_holdout(combined_df, request.sequence_length, str(output_path))
+
+        return {
+            "success": True,
+            "path": str(output_path),
+            "filename": output_path.name,
+            "samples": result["samples"],
+            "features": result["features"],
+            "size_mb": round(output_path.stat().st_size / (1024 * 1024), 2)
+        }
+    except Exception as e:
+        logger.error(f"Error creating holdout set: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка создания Holdout Set: {e}")
+
+
+def _process_dataframe_to_holdout(df: "pd.DataFrame", sequence_length: int, output_path: str) -> dict:
+    """
+    Обработка DataFrame и сохранение в NPZ формат.
+    """
+    import pandas as pd
+
+    # Определяем колонку с метками
+    label_column = None
+    for col in ['future_direction_60s', 'future_direction', 'label', 'target']:
+        if col in df.columns:
+            label_column = col
+            break
+
+    if label_column is None:
+        raise ValueError(f"Не найдена колонка с метками. Доступные: {list(df.columns)[:20]}")
+
+    logger.info(f"Using label column: {label_column}")
+
+    # Определяем timestamp колонку
+    timestamp_column = None
+    for col in ['timestamp', 'time', 'datetime', 'date']:
+        if col in df.columns:
+            timestamp_column = col
+            break
+
+    # Определяем price колонку
+    price_column = None
+    for col in ['close', 'price', 'close_price']:
+        if col in df.columns:
+            price_column = col
+            break
+
+    # Получаем feature колонки
+    exclude_cols = {
+        label_column, timestamp_column, price_column,
+        'symbol', 'id', 'index', 'open', 'high', 'low', 'volume',
+        'future_return_60s', 'future_price_60s', 'Unnamed: 0'
+    }
+    feature_cols = [
+        c for c in df.columns
+        if c not in exclude_cols and df[c].dtype in ['float64', 'float32', 'int64', 'int32']
+    ]
+
+    logger.info(f"Found {len(feature_cols)} feature columns")
+
+    if len(feature_cols) == 0:
+        raise ValueError("Не найдено feature колонок")
+
+    # Удаляем NaN
+    df = df.dropna(subset=feature_cols + [label_column])
+    logger.info(f"After NaN removal: {len(df)} rows")
+
+    if len(df) < sequence_length * 2:
+        raise ValueError(f"Недостаточно данных: {len(df)} < {sequence_length * 2}")
+
+    # Извлекаем данные
+    features = df[feature_cols].values.astype(np.float32)
+    labels = df[label_column].values.astype(np.int64)
+
+    timestamps = None
+    if timestamp_column:
+        timestamps = pd.to_datetime(df[timestamp_column]).values
+
+    prices = None
+    if price_column:
+        prices = df[price_column].values.astype(np.float32)
+
+    # Создаём последовательности
+    n_samples = len(features) - sequence_length + 1
+    X = np.zeros((n_samples, sequence_length, len(feature_cols)), dtype=np.float32)
+    y = np.zeros(n_samples, dtype=np.int64)
+
+    for i in range(n_samples):
+        X[i] = features[i:i + sequence_length]
+        y[i] = labels[i + sequence_length - 1]
+
+    # Timestamps и prices для последнего элемента
+    if timestamps is not None:
+        timestamps = timestamps[sequence_length - 1:]
+    if prices is not None:
+        prices = prices[sequence_length - 1:]
+
+    logger.info(f"Created {len(X)} sequences, shape: {X.shape}")
+
+    # Проверяем распределение классов
+    unique, counts = np.unique(y, return_counts=True)
+    logger.info(f"Class distribution: {dict(zip(unique.tolist(), counts.tolist()))}")
+
+    # Сохраняем
+    save_dict = {'X': X, 'y': y, 'feature_names': np.array(feature_cols)}
+    if timestamps is not None:
+        save_dict['timestamps'] = timestamps
+    if prices is not None:
+        save_dict['prices'] = prices
+
+    np.savez_compressed(output_path, **save_dict)
+
+    return {
+        "samples": len(X),
+        "features": len(feature_cols),
+        "class_distribution": dict(zip(unique.tolist(), counts.tolist()))
+    }
+
+
+@router.delete("/holdout-sets/{filename}")
+async def delete_holdout_set(filename: str):
+    """
+    Удаление Holdout Set файла.
+    """
+    from pathlib import Path
+
+    holdout_dir = Path("data/holdout")
+    file_path = holdout_dir / filename
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Holdout Set не найден")
+
+    if not file_path.suffix == ".npz":
+        raise HTTPException(status_code=400, detail="Недопустимый тип файла")
+
+    try:
+        file_path.unlink()
+        return {"success": True, "message": f"Holdout Set {filename} удалён"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка удаления: {e}")

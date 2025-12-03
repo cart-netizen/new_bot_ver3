@@ -288,6 +288,76 @@ export function getDefaultMLBacktestConfig(): MLBacktestConfig {
 
 /**
  * ============================================================
+ * HOLDOUT SET MANAGEMENT TYPES & API
+ * ============================================================
+ */
+
+export interface DataFolder {
+  path: string;
+  name: string;
+  files_count: number;
+  size_mb: number;
+  files: string[];
+}
+
+export interface HoldoutSet {
+  path: string;
+  name: string;
+  filename: string;
+  size_mb: number;
+  created_at: string;
+  sample_count: number | null;
+}
+
+export interface CreateHoldoutRequest {
+  name: string;
+  source_paths: string[];
+  sequence_length: number;
+}
+
+export interface CreateHoldoutResponse {
+  success: boolean;
+  path: string;
+  filename: string;
+  samples: number;
+  features: number;
+  size_mb: number;
+}
+
+/**
+ * List available data folders for creating holdout sets
+ */
+export async function listDataFolders(): Promise<{ folders: DataFolder[] }> {
+  const response = await apiClient.get('/api/ml-backtesting/data-folders');
+  return response.data;
+}
+
+/**
+ * List available holdout sets
+ */
+export async function listHoldoutSets(): Promise<{ holdout_sets: HoldoutSet[] }> {
+  const response = await apiClient.get('/api/ml-backtesting/holdout-sets');
+  return response.data;
+}
+
+/**
+ * Create a new holdout set from selected folders
+ */
+export async function createHoldoutSet(request: CreateHoldoutRequest): Promise<CreateHoldoutResponse> {
+  const response = await apiClient.post('/api/ml-backtesting/holdout-sets/create', request);
+  return response.data;
+}
+
+/**
+ * Delete a holdout set
+ */
+export async function deleteHoldoutSet(filename: string): Promise<{ success: boolean; message: string }> {
+  const response = await apiClient.delete(`/api/ml-backtesting/holdout-sets/${filename}`);
+  return response.data;
+}
+
+/**
+ * ============================================================
  * PBO ANALYSIS TYPES & API
  * ============================================================
  */
