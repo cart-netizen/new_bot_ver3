@@ -1016,31 +1016,90 @@ function OverviewTab({ backtest }: { backtest: mlBacktestingApi.MLBacktestRun })
         <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
           <Grid3X3 className="h-5 w-5 text-blue-400" />
           Classification Метрики
+          <Tooltip content="Метрики качества классификации модели. Показывают насколько точно модель предсказывает классы (BUY/SELL/HOLD).
+
+Идеальные значения: Accuracy > 60%, F1 > 55%.
+Случайное угадывание для 3 классов даёт ~33% accuracy." />
         </h3>
         <div className="grid grid-cols-2 gap-4">
           <div className="text-center p-4 bg-gray-800/50 rounded-lg">
             <p className="text-3xl font-bold text-white">
               {backtest.accuracy ? `${(backtest.accuracy * 100).toFixed(1)}%` : 'N/A'}
             </p>
-            <p className="text-sm text-gray-400">Accuracy</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              Accuracy
+              <Tooltip content="Accuracy — доля правильных предсказаний от общего числа.
+
+Формула: (TP + TN) / Total
+
+Идеальные значения:
+• > 60% — хороший результат
+• 50-60% — приемлемо
+• 40-50% — слабо
+• < 40% — модель не работает
+
+Важно: при несбалансированных классах accuracy может вводить в заблуждение. Смотрите также F1 Score." />
+            </p>
           </div>
           <div className="text-center p-4 bg-gray-800/50 rounded-lg">
             <p className="text-3xl font-bold text-white">
               {backtest.f1_macro ? `${(backtest.f1_macro * 100).toFixed(1)}%` : 'N/A'}
             </p>
-            <p className="text-sm text-gray-400">F1 (macro)</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              F1 (macro)
+              <Tooltip content="F1 Score (macro) — гармоническое среднее Precision и Recall, усреднённое по всем классам.
+
+Формула: 2 × (P × R) / (P + R)
+
+Учитывает баланс между точностью и полнотой для каждого класса.
+
+Идеальные значения:
+• > 55% — хорошо
+• 45-55% — приемлемо
+• < 45% — требуется доработка
+
+Более надёжная метрика чем Accuracy для несбалансированных данных." />
+            </p>
           </div>
           <div className="text-center p-4 bg-gray-800/50 rounded-lg">
             <p className="text-3xl font-bold text-white">
               {backtest.precision_macro ? `${(backtest.precision_macro * 100).toFixed(1)}%` : 'N/A'}
             </p>
-            <p className="text-sm text-gray-400">Precision (macro)</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              Precision (macro)
+              <Tooltip content="Precision (точность) — доля правильных предсказаний среди всех предсказаний данного класса.
+
+Формула: TP / (TP + FP)
+
+Отвечает на вопрос: 'Когда модель говорит BUY, насколько часто это действительно BUY?'
+
+Идеальные значения:
+• > 55% — хорошо
+• 45-55% — приемлемо
+• < 45% — много ложных сигналов
+
+Высокий Precision = меньше ложных входов в позицию." />
+            </p>
           </div>
           <div className="text-center p-4 bg-gray-800/50 rounded-lg">
             <p className="text-3xl font-bold text-white">
               {backtest.recall_macro ? `${(backtest.recall_macro * 100).toFixed(1)}%` : 'N/A'}
             </p>
-            <p className="text-sm text-gray-400">Recall (macro)</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              Recall (macro)
+              <Tooltip content="Recall (полнота) — доля правильно определённых случаев от всех фактических случаев данного класса.
+
+Формула: TP / (TP + FN)
+
+Отвечает на вопрос: 'Какую долю реальных BUY-сигналов модель смогла поймать?'
+
+Идеальные значения:
+• > 55% — хорошо
+• 45-55% — приемлемо
+• < 45% — модель пропускает много сигналов
+
+Высокий Recall = меньше упущенных возможностей." />
+            </p>
           </div>
         </div>
       </Card>
@@ -1050,6 +1109,11 @@ function OverviewTab({ backtest }: { backtest: mlBacktestingApi.MLBacktestRun })
         <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
           <TrendingUp className="h-5 w-5 text-green-400" />
           Trading Метрики
+          <Tooltip content="Торговые метрики показывают финансовый результат стратегии.
+
+Важно: эти метрики зависят от настроек симуляции (комиссия, slippage, размер позиции).
+
+Хороший результат: положительный P&L, Sharpe > 1.0, Win Rate > 50%, Max Drawdown < 20%." />
         </h3>
         <div className="grid grid-cols-2 gap-4">
           <div className="text-center p-4 bg-gray-800/50 rounded-lg">
@@ -1061,7 +1125,19 @@ function OverviewTab({ backtest }: { backtest: mlBacktestingApi.MLBacktestRun })
                 ? `${(backtest.total_pnl_percent * 100).toFixed(1)}%`
                 : 'N/A'}
             </p>
-            <p className="text-sm text-gray-400">Total P&L</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              Total P&L
+              <Tooltip content="Total P&L (Profit & Loss) — общая доходность стратегии в процентах от начального капитала.
+
+Формула: (Final Capital - Initial Capital) / Initial Capital × 100%
+
+Идеальные значения:
+• > 10% — отличный результат
+• 0-10% — положительно, но скромно
+• < 0% — убыточная стратегия
+
+Важно учитывать период тестирования: 10% за месяц vs 10% за год — разные результаты." />
+            </p>
           </div>
           <div className="text-center p-4 bg-gray-800/50 rounded-lg">
             <p className={cn(
@@ -1071,19 +1147,60 @@ function OverviewTab({ backtest }: { backtest: mlBacktestingApi.MLBacktestRun })
             )}>
               {backtest.sharpe_ratio?.toFixed(2) || 'N/A'}
             </p>
-            <p className="text-sm text-gray-400">Sharpe Ratio</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              Sharpe Ratio
+              <Tooltip content="Sharpe Ratio — соотношение доходности к риску. Показывает сколько доходности вы получаете на единицу принятого риска.
+
+Формула: (Return - Risk-Free Rate) / Std Dev
+
+Идеальные значения:
+• > 2.0 — отлично (топ хедж-фонды)
+• 1.0-2.0 — хорошо
+• 0.5-1.0 — приемлемо
+• 0-0.5 — слабо
+• < 0 — убыточно
+
+Sharpe > 1 означает, что доходность превышает волатильность." />
+            </p>
           </div>
           <div className="text-center p-4 bg-gray-800/50 rounded-lg">
             <p className="text-3xl font-bold text-white">
               {backtest.win_rate !== undefined ? `${(backtest.win_rate * 100).toFixed(1)}%` : 'N/A'}
             </p>
-            <p className="text-sm text-gray-400">Win Rate</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              Win Rate
+              <Tooltip content="Win Rate — процент прибыльных сделок от общего числа сделок.
+
+Формула: Winning Trades / Total Trades × 100%
+
+Идеальные значения:
+• > 55% — хорошо
+• 50-55% — приемлемо
+• 45-50% — возможно при высоком Risk/Reward
+• < 45% — требуется высокий R/R для прибыли
+
+Важно: Win Rate сам по себе не определяет прибыльность. Стратегия с 40% Win Rate может быть прибыльной, если средняя прибыль >> средний убыток." />
+            </p>
           </div>
           <div className="text-center p-4 bg-gray-800/50 rounded-lg">
             <p className="text-3xl font-bold text-red-400">
               {backtest.max_drawdown !== undefined ? `${(backtest.max_drawdown * 100).toFixed(1)}%` : 'N/A'}
             </p>
-            <p className="text-sm text-gray-400">Max Drawdown</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              Max Drawdown
+              <Tooltip content="Max Drawdown — максимальное пиковое падение капитала от локального максимума до локального минимума.
+
+Показывает худший период для инвестора — какой максимальный убыток он бы пережил.
+
+Идеальные значения:
+• < 10% — отлично, низкий риск
+• 10-20% — хорошо
+• 20-30% — умеренный риск
+• 30-50% — высокий риск
+• > 50% — очень высокий риск
+
+Психологически: большинство инвесторов не выдерживают drawdown > 30%." />
+            </p>
           </div>
         </div>
       </Card>
@@ -1106,31 +1223,66 @@ function ClassificationTab({ backtest }: { backtest: mlBacktestingApi.MLBacktest
 
       {/* Macro Metrics Summary */}
       <Card className="p-6">
-        <h3 className="text-lg font-semibold text-white mb-4">Macro Metrics Summary</h3>
+        <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          Macro Metrics Summary
+          <Tooltip content="Macro-усреднение вычисляет метрику отдельно для каждого класса и затем берёт среднее. Это даёт равный вес каждому классу независимо от его размера.
+
+Важно для торговли: если класс HOLD очень большой, а BUY/SELL маленькие, macro-метрики покажут реальную эффективность для всех классов." />
+        </h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="p-4 bg-gray-800/50 rounded-lg text-center">
             <p className="text-2xl font-bold text-purple-400">
               {backtest.accuracy ? `${(backtest.accuracy * 100).toFixed(1)}%` : 'N/A'}
             </p>
-            <p className="text-sm text-gray-400">Accuracy</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              Accuracy
+              <Tooltip content="Общая точность модели — процент всех правильных предсказаний.
+
+Для 3 классов случайное угадывание даёт ~33%.
+
+Accuracy > 50% означает, что модель лучше случайного выбора." />
+            </p>
           </div>
           <div className="p-4 bg-gray-800/50 rounded-lg text-center">
             <p className="text-2xl font-bold text-cyan-400">
               {backtest.precision_macro ? `${(backtest.precision_macro * 100).toFixed(1)}%` : 'N/A'}
             </p>
-            <p className="text-sm text-gray-400">Precision (macro)</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              Precision (macro)
+              <Tooltip content="Средняя точность по всем классам.
+
+Высокий Precision означает мало ложных срабатываний: когда модель предсказывает BUY, это скорее всего действительно выгодная покупка.
+
+Критично для минимизации убыточных сделок." />
+            </p>
           </div>
           <div className="p-4 bg-gray-800/50 rounded-lg text-center">
             <p className="text-2xl font-bold text-green-400">
               {backtest.recall_macro ? `${(backtest.recall_macro * 100).toFixed(1)}%` : 'N/A'}
             </p>
-            <p className="text-sm text-gray-400">Recall (macro)</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              Recall (macro)
+              <Tooltip content="Средняя полнота по всем классам.
+
+Высокий Recall означает, что модель ловит большинство реальных сигналов.
+
+Низкий Recall = много упущенных возможностей для прибыли." />
+            </p>
           </div>
           <div className="p-4 bg-gray-800/50 rounded-lg text-center">
             <p className="text-2xl font-bold text-yellow-400">
               {backtest.f1_macro ? `${(backtest.f1_macro * 100).toFixed(1)}%` : 'N/A'}
             </p>
-            <p className="text-sm text-gray-400">F1 (macro)</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              F1 (macro)
+              <Tooltip content="F1 Score — баланс между Precision и Recall.
+
+F1 = 2 × (Precision × Recall) / (Precision + Recall)
+
+Это главная метрика для оценки модели при несбалансированных классах.
+
+Хороший F1 > 50% означает сбалансированную модель." />
+            </p>
           </div>
         </div>
       </Card>
@@ -1143,38 +1295,95 @@ function TradingTab({ backtest }: { backtest: mlBacktestingApi.MLBacktestRun }) 
     <div className="space-y-6">
       {/* Trading Stats */}
       <Card className="p-6">
-        <h3 className="text-lg font-semibold text-white mb-4">Trading Statistics</h3>
+        <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          Trading Statistics
+          <Tooltip content="Статистика по сделкам, совершённым в симуляции.
+
+Эти данные основаны на сигналах модели (BUY/SELL) и настройках торговли (комиссия, slippage, размер позиции).
+
+Хороший результат: Profit Factor > 1.5, положительное соотношение Winning/Losing." />
+        </h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="p-4 bg-gray-800/50 rounded-lg">
             <p className="text-2xl font-bold text-white">{backtest.total_trades || 0}</p>
-            <p className="text-sm text-gray-400">Total Trades</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              Total Trades
+              <Tooltip content="Общее количество совершённых сделок.
+
+Зависит от:
+• Частоты сигналов модели
+• Порога confidence (если включен)
+• Длительности тестового периода
+
+Мало сделок (< 30) = статистически ненадёжные результаты. Идеально: > 100 сделок для достоверной оценки." />
+            </p>
           </div>
           <div className="p-4 bg-gray-800/50 rounded-lg">
             <p className="text-2xl font-bold text-green-400">{backtest.winning_trades || 0}</p>
-            <p className="text-sm text-gray-400">Winning</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              Winning
+              <Tooltip content="Количество прибыльных сделок.
+
+Сделка считается прибыльной, если цена закрытия лучше цены входа с учётом комиссии и slippage.
+
+Winning / Total = Win Rate" />
+            </p>
           </div>
           <div className="p-4 bg-gray-800/50 rounded-lg">
             <p className="text-2xl font-bold text-red-400">{backtest.losing_trades || 0}</p>
-            <p className="text-sm text-gray-400">Losing</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              Losing
+              <Tooltip content="Количество убыточных сделок.
+
+Важно анализировать не только количество, но и размер убытков.
+
+Несколько крупных убыточных сделок могут перевесить много мелких прибыльных." />
+            </p>
           </div>
           <div className="p-4 bg-gray-800/50 rounded-lg">
             <p className="text-2xl font-bold text-white">
               {backtest.profit_factor?.toFixed(2) || 'N/A'}
             </p>
-            <p className="text-sm text-gray-400">Profit Factor</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              Profit Factor
+              <Tooltip content="Profit Factor — отношение общей прибыли к общему убытку.
+
+Формула: Sum(Profits) / Sum(Losses)
+
+Идеальные значения:
+• > 2.0 — отличная стратегия
+• 1.5-2.0 — хорошо
+• 1.2-1.5 — приемлемо
+• 1.0-1.2 — на грани
+• < 1.0 — убыточная стратегия
+
+PF = 1.5 означает: на каждый $1 убытка приходится $1.5 прибыли." />
+            </p>
           </div>
         </div>
       </Card>
 
       {/* Capital */}
       <Card className="p-6">
-        <h3 className="text-lg font-semibold text-white mb-4">Capital</h3>
+        <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          Capital
+          <Tooltip content="Динамика капитала в симуляции торговли.
+
+Показывает начальный депозит, финальный результат и общий P&L в абсолютных значениях.
+
+Помните: результаты зависят от размера позиции (position_size) в настройках." />
+        </h3>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
           <div className="p-4 bg-gray-800/50 rounded-lg">
             <p className="text-2xl font-bold text-white">
               ${backtest.initial_capital?.toLocaleString() || 'N/A'}
             </p>
-            <p className="text-sm text-gray-400">Initial Capital</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              Initial Capital
+              <Tooltip content="Начальный виртуальный капитал для симуляции.
+
+Это значение задаётся в настройках теста и используется как база для расчёта всех процентных метрик." />
+            </p>
           </div>
           <div className="p-4 bg-gray-800/50 rounded-lg">
             <p className={cn(
@@ -1184,7 +1393,15 @@ function TradingTab({ backtest }: { backtest: mlBacktestingApi.MLBacktestRun }) 
             )}>
               ${backtest.final_capital?.toLocaleString() || 'N/A'}
             </p>
-            <p className="text-sm text-gray-400">Final Capital</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              Final Capital
+              <Tooltip content="Капитал в конце симуляции после всех сделок.
+
+Final > Initial = прибыльная стратегия
+Final < Initial = убыточная стратегия
+
+Зелёный цвет = прибыль, красный = убыток." />
+            </p>
           </div>
           <div className="p-4 bg-gray-800/50 rounded-lg">
             <p className={cn(
@@ -1193,7 +1410,17 @@ function TradingTab({ backtest }: { backtest: mlBacktestingApi.MLBacktestRun }) 
             )}>
               ${backtest.total_pnl?.toFixed(2) || 'N/A'}
             </p>
-            <p className="text-sm text-gray-400">Total P&L</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              Total P&L
+              <Tooltip content="Total P&L (Profit & Loss) — абсолютная прибыль/убыток в долларах.
+
+Формула: Final Capital - Initial Capital
+
+Положительное значение = заработок
+Отрицательное = убыток
+
+Для оценки эффективности смотрите также P&L % в других вкладках." />
+            </p>
           </div>
         </div>
       </Card>
@@ -1207,6 +1434,7 @@ function WalkForwardTab({ backtest }: { backtest: mlBacktestingApi.MLBacktestRun
       <Card className="p-8 text-center">
         <AlertCircle className="h-12 w-12 text-gray-600 mx-auto mb-4" />
         <p className="text-gray-400">Walk-Forward не был включен для этого теста</p>
+        <p className="text-sm text-gray-500 mt-2">Включите Walk-Forward валидацию при создании теста для анализа стабильности модели во времени.</p>
       </Card>
     );
   }
@@ -1221,29 +1449,66 @@ function WalkForwardTab({ backtest }: { backtest: mlBacktestingApi.MLBacktestRun
 
       {/* Summary Statistics */}
       <Card className="p-6">
-        <h3 className="text-lg font-semibold text-white mb-4">Walk-Forward Summary</h3>
+        <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          Walk-Forward Summary
+          <Tooltip content="Walk-Forward валидация разбивает данные на последовательные временные периоды и тестирует модель на каждом отдельно.
+
+Это имитирует реальную торговлю: модель обучается на прошлых данных и применяется к будущим.
+
+Хороший результат: стабильная accuracy по всем периодам с минимальным разбросом.
+
+Если accuracy сильно падает в поздних периодах — возможно, рынок изменился или модель переобучена." />
+        </h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="p-4 bg-gray-800/50 rounded-lg text-center">
             <p className="text-2xl font-bold text-purple-400">{backtest.n_periods || backtest.period_results.length}</p>
-            <p className="text-sm text-gray-400">Total Periods</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              Total Periods
+              <Tooltip content="Количество временных периодов в Walk-Forward валидации.
+
+Больше периодов = более детальный анализ стабильности, но меньше данных в каждом периоде.
+
+Рекомендуется: 5-10 периодов для хорошего баланса." />
+            </p>
           </div>
           <div className="p-4 bg-gray-800/50 rounded-lg text-center">
             <p className="text-2xl font-bold text-cyan-400">
               {backtest.period_results.reduce((a, b) => a + b.samples, 0).toLocaleString()}
             </p>
-            <p className="text-sm text-gray-400">Total Samples</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              Total Samples
+              <Tooltip content="Общее количество примеров (предсказаний) по всем периодам.
+
+Больше samples = более статистически значимые результаты.
+
+Рекомендуется: минимум 100 samples на период для надёжных выводов." />
+            </p>
           </div>
           <div className="p-4 bg-gray-800/50 rounded-lg text-center">
             <p className="text-2xl font-bold text-green-400">
               {(backtest.period_results.reduce((a, b) => a + b.accuracy, 0) / backtest.period_results.length * 100).toFixed(1)}%
             </p>
-            <p className="text-sm text-gray-400">Avg Accuracy</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              Avg Accuracy
+              <Tooltip content="Средняя точность по всем периодам.
+
+Показывает общую эффективность модели на протяжении всего тестового периода.
+
+Важно: смотрите не только среднее, но и разброс между периодами (см. Min/Max Accuracy в графике)." />
+            </p>
           </div>
           <div className="p-4 bg-gray-800/50 rounded-lg text-center">
             <p className="text-2xl font-bold text-yellow-400">
               {(backtest.period_results.reduce((a, b) => a + b.f1_macro, 0) / backtest.period_results.length * 100).toFixed(1)}%
             </p>
-            <p className="text-sm text-gray-400">Avg F1 Score</p>
+            <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+              Avg F1 Score
+              <Tooltip content="Средний F1 Score по всем периодам.
+
+F1 учитывает баланс классов и более надёжен при несбалансированных данных.
+
+Стабильный высокий F1 по периодам = надёжная модель." />
+            </p>
           </div>
         </div>
       </Card>
@@ -1309,7 +1574,16 @@ function PredictionsTab({ backtest }: { backtest: mlBacktestingApi.MLBacktestRun
     <div className="space-y-6">
       {/* Confidence Distribution */}
       <Card className="p-6">
-        <h3 className="text-lg font-semibold text-white mb-4">Распределение Confidence</h3>
+        <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          Распределение Confidence
+          <Tooltip content="Гистограмма показывает сколько предсказаний попало в каждый диапазон уверенности модели.
+
+Идеальное распределение: много предсказаний с высоким confidence (>70%) и мало с низким (<60%).
+
+Если большинство предсказаний имеют низкий confidence — модель неуверенна в своих решениях.
+
+Используйте фильтрацию по confidence, чтобы торговать только на сигналах с высокой уверенностью." />
+        </h3>
         <div className="grid grid-cols-5 gap-2">
           {confDistribution.map((bin, idx) => (
             <div key={idx} className="text-center p-3 bg-gray-800/50 rounded-lg">
@@ -1322,16 +1596,58 @@ function PredictionsTab({ backtest }: { backtest: mlBacktestingApi.MLBacktestRun
 
       {/* Sample Predictions */}
       <Card className="p-6">
-        <h3 className="text-lg font-semibold text-white mb-4">Примеры предсказаний (первые 100)</h3>
+        <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          Примеры предсказаний (первые 100)
+          <Tooltip content="Таблица с детализацией отдельных предсказаний модели.
+
+Predicted — класс, предсказанный моделью
+Actual — реальный класс (что произошло на рынке)
+Confidence — уверенность модели в предсказании
+Correct — совпало ли предсказание с реальностью
+
+Анализируйте ошибки: на каких confidence модель ошибается чаще? Какие классы путает?" />
+        </h3>
         <div className="overflow-x-auto max-h-96">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-gray-900">
               <tr className="border-b border-gray-700">
                 <th className="text-left p-2 text-gray-400">#</th>
-                <th className="text-center p-2 text-gray-400">Predicted</th>
-                <th className="text-center p-2 text-gray-400">Actual</th>
-                <th className="text-center p-2 text-gray-400">Confidence</th>
-                <th className="text-center p-2 text-gray-400">Correct</th>
+                <th className="text-center p-2 text-gray-400">
+                  <span className="flex items-center justify-center gap-1">
+                    Predicted
+                    <Tooltip content="Класс, который предсказала модель:
+• SELL (0) — сигнал на продажу
+• HOLD (1) — удержание позиции
+• BUY (2) — сигнал на покупку" />
+                  </span>
+                </th>
+                <th className="text-center p-2 text-gray-400">
+                  <span className="flex items-center justify-center gap-1">
+                    Actual
+                    <Tooltip content="Реальный класс, который произошёл на рынке.
+
+Определяется по движению цены после предсказания." />
+                  </span>
+                </th>
+                <th className="text-center p-2 text-gray-400">
+                  <span className="flex items-center justify-center gap-1">
+                    Confidence
+                    <Tooltip content="Уверенность модели в предсказании (0-100%).
+
+Высокий confidence (>70%) означает, что модель уверена в сигнале.
+
+Низкий confidence (<60%) — модель сомневается." />
+                  </span>
+                </th>
+                <th className="text-center p-2 text-gray-400">
+                  <span className="flex items-center justify-center gap-1">
+                    Correct
+                    <Tooltip content="Совпало ли предсказание с реальностью.
+
+Yes = правильное предсказание
+No = ошибка модели" />
+                  </span>
+                </th>
               </tr>
             </thead>
             <tbody>

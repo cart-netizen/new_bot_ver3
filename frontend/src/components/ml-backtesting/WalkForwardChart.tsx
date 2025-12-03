@@ -16,6 +16,7 @@ import {
 } from 'recharts';
 import { TrendingUp, TrendingDown, Target } from 'lucide-react';
 import { Card } from '../ui/Card';
+import { Tooltip } from '../ui/Tooltip';
 import { cn } from '../../utils/helpers';
 import type { PeriodResult } from '../../api/ml-backtesting.api';
 
@@ -58,9 +59,35 @@ export function WalkForwardChart({ periodResults, threshold = 0.6 }: WalkForward
   return (
     <Card className="p-6">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-white">Walk-Forward Performance</h3>
+        <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+          Walk-Forward Performance
+          <Tooltip content="Walk-Forward валидация разбивает данные на последовательные временные периоды.
+
+График показывает производительность модели в каждом периоде:
+• Фиолетовые столбцы — Accuracy
+• Голубые столбцы — F1 Score
+• Зелёная линия — P&L %
+
+Жёлтая пунктирная линия — порог confidence.
+
+Идеальный результат: все столбцы выше порога, стабильные по высоте.
+
+Если производительность падает в поздних периодах — возможно переобучение или изменение рынка." />
+        </h3>
         <div className="flex items-center gap-2">
-          <span className="text-sm text-gray-400">Stability Score:</span>
+          <span className="text-sm text-gray-400 flex items-center gap-1">
+            Stability Score:
+            <Tooltip content="Stability Score — показывает насколько стабильна accuracy между периодами.
+
+Формула: 1 - (Max Accuracy - Min Accuracy) / Avg Accuracy
+
+Идеальные значения:
+• > 80% — очень стабильно
+• 60-80% — приемлемо
+• < 60% — нестабильно
+
+Высокая стабильность означает, что модель работает предсказуемо независимо от периода." />
+          </span>
           <span className={cn(
             "text-sm font-medium px-2 py-0.5 rounded",
             stabilityScore > 0.8 ? "text-green-400 bg-green-500/10" :
@@ -142,12 +169,31 @@ export function WalkForwardChart({ periodResults, threshold = 0.6 }: WalkForward
             <Target className="h-4 w-4 text-purple-400" />
             <span className="text-purple-400 font-bold text-xl">{formatPercent(avgAccuracy)}</span>
           </div>
-          <p className="text-xs text-gray-400">Avg Accuracy</p>
+          <p className="text-xs text-gray-400 flex items-center justify-center gap-1">
+            Avg Accuracy
+            <Tooltip content="Средняя accuracy по всем периодам.
+
+Это основной показатель общей эффективности модели.
+
+Для торговых моделей с 3 классами:
+• > 50% — лучше случайного
+• > 55% — хорошо
+• > 60% — отлично" />
+          </p>
         </div>
 
         <div className="p-4 bg-gray-800/50 rounded-lg text-center">
           <span className="text-cyan-400 font-bold text-xl">{formatPercent(avgF1)}</span>
-          <p className="text-xs text-gray-400">Avg F1 Score</p>
+          <p className="text-xs text-gray-400 flex items-center justify-center gap-1">
+            Avg F1 Score
+            <Tooltip content="Средний F1 Score по всем периодам.
+
+F1 = гармоническое среднее Precision и Recall.
+
+Более надёжная метрика при несбалансированных классах.
+
+Если F1 сильно ниже Accuracy — проверьте баланс классов." />
+          </p>
         </div>
 
         <div className="p-4 bg-gray-800/50 rounded-lg text-center">
@@ -164,12 +210,30 @@ export function WalkForwardChart({ periodResults, threshold = 0.6 }: WalkForward
               {formatPercent(minAccuracy)}
             </span>
           </div>
-          <p className="text-xs text-gray-400">Min Accuracy</p>
+          <p className="text-xs text-gray-400 flex items-center justify-center gap-1">
+            Min Accuracy
+            <Tooltip content="Минимальная accuracy среди всех периодов.
+
+Показывает 'худший случай' — как модель работала в самый неудачный период.
+
+Зелёный = выше порога (модель работает даже в худшем случае).
+Красный = ниже порога (есть проблемные периоды).
+
+Важно для оценки рисков использования модели." />
+          </p>
         </div>
 
         <div className="p-4 bg-gray-800/50 rounded-lg text-center">
           <span className="text-green-400 font-bold text-xl">{formatPercent(maxAccuracy)}</span>
-          <p className="text-xs text-gray-400">Max Accuracy</p>
+          <p className="text-xs text-gray-400 flex items-center justify-center gap-1">
+            Max Accuracy
+            <Tooltip content="Максимальная accuracy среди всех периодов.
+
+Показывает 'лучший случай' — потенциал модели в благоприятных условиях.
+
+Большой разрыв между Max и Min = нестабильная модель.
+Маленький разрыв = стабильная модель." />
+          </p>
         </div>
       </div>
 

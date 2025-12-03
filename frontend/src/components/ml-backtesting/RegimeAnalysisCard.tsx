@@ -22,6 +22,7 @@ import {
 import { TrendingUp, TrendingDown, Activity, Zap, RefreshCw } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
+import { Tooltip } from '../ui/Tooltip';
 import { cn } from '../../utils/helpers';
 import { getRegimeAnalysis, type RegimeAnalysis } from '../../api/ml-backtesting.api';
 
@@ -91,7 +92,18 @@ export function RegimeAnalysisCard({ backtestId }: RegimeAnalysisCardProps) {
       <Card className="p-6">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="text-lg font-semibold text-white">Market Regime Analysis</h3>
+            <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+              Market Regime Analysis
+              <Tooltip content="Анализ производительности модели в разных рыночных режимах.
+
+Рынок может находиться в различных состояниях:
+• Trending Up — восходящий тренд
+• Trending Down — нисходящий тренд
+• Ranging — боковое движение (флэт)
+• High Volatility — высокая волатильность
+
+Модель может работать по-разному в разных режимах. Этот анализ поможет понять, когда лучше торговать, а когда воздержаться." />
+            </h3>
             <p className="text-sm text-gray-400 mt-1">
               Model performance breakdown by market conditions
             </p>
@@ -150,7 +162,18 @@ export function RegimeAnalysisCard({ backtestId }: RegimeAnalysisCardProps) {
     <Card className="p-6">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h3 className="text-lg font-semibold text-white">Market Regime Analysis</h3>
+          <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+            Market Regime Analysis
+            <Tooltip content="Комплексный анализ того, как модель работает в разных рыночных условиях.
+
+Используйте эту информацию для:
+• Фильтрации сигналов по режиму рынка
+• Адаптации размера позиции под режим
+• Понимания ограничений модели
+
+Идеальный результат: высокая accuracy во всех режимах.
+Типичный результат: модель лучше работает в трендовых условиях." />
+          </h3>
           <p className="text-sm text-gray-400 mt-1">
             Performance breakdown by market conditions
           </p>
@@ -166,7 +189,12 @@ export function RegimeAnalysisCard({ backtestId }: RegimeAnalysisCardProps) {
         <div className={cn("p-4 rounded-lg border", bestRegimeConfig?.bgColor || 'bg-gray-800/50', 'border-green-500/30')}>
           <div className="flex items-center gap-2 mb-2">
             {bestRegimeConfig && <bestRegimeConfig.icon className={cn("h-5 w-5", bestRegimeConfig.color)} />}
-            <span className="text-sm font-medium text-gray-400">Best Performance</span>
+            <span className="text-sm font-medium text-gray-400 flex items-center gap-1">
+              Best Performance
+              <Tooltip content="Режим рынка, в котором модель показывает наилучшую accuracy.
+
+Рекомендация: торгуйте более агрессивно (больший размер позиции) когда рынок находится в этом режиме." />
+            </span>
           </div>
           <p className={cn("text-lg font-bold", bestRegimeConfig?.color || 'text-white')}>
             {bestRegimeConfig?.label || data.best_regime}
@@ -181,7 +209,12 @@ export function RegimeAnalysisCard({ backtestId }: RegimeAnalysisCardProps) {
         <div className={cn("p-4 rounded-lg border", worstRegimeConfig?.bgColor || 'bg-gray-800/50', 'border-red-500/30')}>
           <div className="flex items-center gap-2 mb-2">
             {worstRegimeConfig && <worstRegimeConfig.icon className={cn("h-5 w-5", worstRegimeConfig.color)} />}
-            <span className="text-sm font-medium text-gray-400">Worst Performance</span>
+            <span className="text-sm font-medium text-gray-400 flex items-center gap-1">
+              Worst Performance
+              <Tooltip content="Режим рынка, в котором модель показывает наихудшую accuracy.
+
+Рекомендация: избегайте торговли или уменьшите размер позиции когда рынок находится в этом режиме." />
+            </span>
           </div>
           <p className={cn("text-lg font-bold", worstRegimeConfig?.color || 'text-white')}>
             {worstRegimeConfig?.label || data.worst_regime}
@@ -242,7 +275,17 @@ export function RegimeAnalysisCard({ backtestId }: RegimeAnalysisCardProps) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Performance Bar Chart */}
         <div className="lg:col-span-2">
-          <h4 className="text-sm font-medium text-gray-400 mb-3">Performance by Regime</h4>
+          <h4 className="text-sm font-medium text-gray-400 mb-3 flex items-center gap-1">
+            Performance by Regime
+            <Tooltip content="Сравнение производительности модели по рыночным режимам.
+
+Accuracy (основной столбец) — точность предсказаний.
+Win Rate (жёлтый столбец) — процент прибыльных сделок.
+
+Идеально: оба показателя высокие (>55%) во всех режимах.
+
+Если Accuracy высокая, а Win Rate низкий — модель правильно классифицирует, но торговые сигналы не приносят прибыль." />
+          </h4>
           <div className="h-64 bg-gray-800/30 rounded-lg p-2">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={barChartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
@@ -271,7 +314,16 @@ export function RegimeAnalysisCard({ backtestId }: RegimeAnalysisCardProps) {
 
         {/* Distribution Pie Chart */}
         <div>
-          <h4 className="text-sm font-medium text-gray-400 mb-3">Regime Distribution</h4>
+          <h4 className="text-sm font-medium text-gray-400 mb-3 flex items-center gap-1">
+            Regime Distribution
+            <Tooltip content="Распределение времени/данных по рыночным режимам.
+
+Показывает, какую долю тестового периода рынок провёл в каждом режиме.
+
+Важно: если модель хорошо работает в редком режиме (например 5% времени), это менее ценно, чем хорошая работа в частом режиме (40% времени).
+
+Используйте для взвешенной оценки общей производительности." />
+          </h4>
           <div className="h-64 bg-gray-800/30 rounded-lg p-2">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -306,7 +358,17 @@ export function RegimeAnalysisCard({ backtestId }: RegimeAnalysisCardProps) {
 
       {/* Radar Chart */}
       <div className="mt-6">
-        <h4 className="text-sm font-medium text-gray-400 mb-3">Multi-Metric Comparison</h4>
+        <h4 className="text-sm font-medium text-gray-400 mb-3 flex items-center gap-1">
+          Multi-Metric Comparison
+          <Tooltip content="Радарная диаграмма для визуального сравнения режимов по нескольким метрикам одновременно.
+
+Каждый угол = один режим рынка.
+Каждый слой = одна метрика (Accuracy, Win Rate, Confidence).
+
+Идеальная картина: большие равномерные области для всех метрик.
+
+Если какая-то метрика 'провалена' в определённом режиме — это видно как 'вмятина' на радаре." />
+        </h4>
         <div className="h-72 bg-gray-800/30 rounded-lg p-2">
           <ResponsiveContainer width="100%" height="100%">
             <RadarChart data={radarData}>

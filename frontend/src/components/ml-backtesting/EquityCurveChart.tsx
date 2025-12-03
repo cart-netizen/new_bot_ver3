@@ -15,6 +15,7 @@ import {
 } from 'recharts';
 import { RefreshCw } from 'lucide-react';
 import { Card } from '../ui/Card';
+import { Tooltip } from '../ui/Tooltip';
 import * as mlBacktestingApi from '../../api/ml-backtesting.api';
 
 interface EquityCurveChartProps {
@@ -54,7 +55,21 @@ export function EquityCurveChart({ backtestId, showDrawdown = true }: EquityCurv
   return (
     <Card className="p-6">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-white">Equity Curve</h3>
+        <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+          Equity Curve
+          <Tooltip content="Equity Curve — график изменения капитала во времени.
+
+Фиолетовая линия показывает рост/падение вашего портфеля после каждой сделки.
+
+Красная область внизу — текущий Drawdown (просадка от локального максимума).
+
+Идеальная кривая: плавный рост вверх с минимальными просадками.
+
+Признаки проблем:
+• Резкие падения — высокий риск
+• Долгие периоды без роста — стратегия не работает
+• Большие drawdown-ы — психологически тяжело торговать" />
+        </h3>
         <div className="flex gap-4 text-sm">
           <div>
             <span className="text-gray-400">Initial: </span>
@@ -144,17 +159,47 @@ export function EquityCurveChart({ backtestId, showDrawdown = true }: EquityCurv
       <div className="mt-4 grid grid-cols-3 gap-4 text-center">
         <div className="p-3 bg-gray-800/50 rounded-lg">
           <p className="text-2xl font-bold text-red-400">{formatPercent(data.max_drawdown_pct)}</p>
-          <p className="text-sm text-gray-400">Max Drawdown</p>
+          <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+            Max Drawdown
+            <Tooltip content="Максимальная просадка — наибольшее падение от локального максимума до локального минимума.
+
+Это худший период для инвестора — какой убыток он бы пережил, если бы вошёл на пике.
+
+Идеальные значения:
+• < 10% — отлично
+• 10-20% — хорошо
+• 20-30% — умеренный риск
+• > 30% — высокий риск
+
+Большинство трейдеров не выдерживают drawdown > 25-30%." />
+          </p>
         </div>
         <div className="p-3 bg-gray-800/50 rounded-lg">
           <p className="text-2xl font-bold text-white">{data.n_points}</p>
-          <p className="text-sm text-gray-400">Data Points</p>
+          <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+            Data Points
+            <Tooltip content="Количество точек данных на графике.
+
+Каждая точка соответствует состоянию капитала после определённого количества сделок.
+
+Больше точек = более детальная картина, но график может быть сэмплирован для производительности." />
+          </p>
         </div>
         <div className="p-3 bg-gray-800/50 rounded-lg">
           <p className={`text-2xl font-bold ${data.total_return_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
             {data.total_return_pct >= 0 ? '+' : ''}{formatPercent(data.total_return_pct)}
           </p>
-          <p className="text-sm text-gray-400">Total Return</p>
+          <p className="text-sm text-gray-400 flex items-center justify-center gap-1">
+            Total Return
+            <Tooltip content="Общая доходность стратегии в процентах.
+
+Формула: (Final - Initial) / Initial × 100%
+
+Положительное значение (зелёный) = прибыль
+Отрицательное (красный) = убыток
+
+Важно сравнивать с бенчмарком (например, buy & hold) и учитывать период тестирования." />
+          </p>
         </div>
       </div>
     </Card>
