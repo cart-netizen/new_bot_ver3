@@ -4,7 +4,9 @@
 """
 
 import logging
+import logging.handlers
 import sys
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -105,35 +107,42 @@ def setup_logging(
     console_handler.setFormatter(ColoredFormatter())
     root_logger.addHandler(console_handler)
 
-    # ===== ФАЙЛОВЫЙ ОБРАБОТЧИК =====
+    # ===== ФАЙЛОВЫЙ ОБРАБОТЧИК С РОТАЦИЕЙ ПО ДНЯМ =====
     if log_to_file:
         # Создаем директорию для логов
         log_path = Path(log_dir)
         log_path.mkdir(exist_ok=True)
 
-        # Имя файла с текущей датой
-        log_filename = f"bot_{datetime.now().strftime('%Y%m%d')}.log"
-        log_filepath = log_path / log_filename
+        # Базовое имя файла (без даты - TimedRotatingFileHandler добавит сам)
+        log_filepath = log_path / "bot.log"
 
-        # Обработчик для общего лога
-        file_handler = logging.FileHandler(
+        # Обработчик для общего лога с ротацией в полночь
+        # when='midnight' - ротация в полночь каждого дня
+        # backupCount=30 - хранить логи за 30 дней
+        file_handler = logging.handlers.TimedRotatingFileHandler(
             log_filepath,
-            mode='a',
+            when='midnight',
+            interval=1,
+            backupCount=30,
             encoding='utf-8'
         )
+        # Формат имени архивных файлов: bot.log.2025-12-03
+        file_handler.suffix = "%Y-%m-%d"
         file_handler.setLevel(numeric_level)
         file_handler.setFormatter(FileFormatter())
         root_logger.addHandler(file_handler)
 
-        # Обработчик для лога ошибок
-        error_log_filename = f"bot_errors_{datetime.now().strftime('%Y%m%d')}.log"
-        error_log_filepath = log_path / error_log_filename
+        # Обработчик для лога ошибок с ротацией
+        error_log_filepath = log_path / "bot_errors.log"
 
-        error_file_handler = logging.FileHandler(
+        error_file_handler = logging.handlers.TimedRotatingFileHandler(
             error_log_filepath,
-            mode='a',
+            when='midnight',
+            interval=1,
+            backupCount=30,
             encoding='utf-8'
         )
+        error_file_handler.suffix = "%Y-%m-%d"
         error_file_handler.setLevel(logging.ERROR)
         error_file_handler.setFormatter(FileFormatter())
         root_logger.addHandler(error_file_handler)
