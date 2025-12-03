@@ -7,7 +7,7 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
-  Tooltip,
+  Tooltip as RechartsTooltip,
   ResponsiveContainer,
   RadarChart,
   Radar,
@@ -292,7 +292,7 @@ Win Rate (жёлтый столбец) — процент прибыльных �
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                 <XAxis dataKey="name" stroke="#9CA3AF" fontSize={10} />
                 <YAxis stroke="#9CA3AF" fontSize={10} tickFormatter={(v) => `${v}%`} />
-                <Tooltip
+                <RechartsTooltip
                   contentStyle={{
                     backgroundColor: '#1F2937',
                     border: '1px solid #374151',
@@ -343,7 +343,7 @@ Win Rate (жёлтый столбец) — процент прибыльных �
                     <Cell key={`cell-${index}`} fill={entry.color} />
                   ))}
                 </Pie>
-                <Tooltip
+                <RechartsTooltip
                   contentStyle={{
                     backgroundColor: '#1F2937',
                     border: '1px solid #374151',
@@ -375,7 +375,7 @@ Win Rate (жёлтый столбец) — процент прибыльных �
               <PolarGrid stroke="#374151" />
               <PolarAngleAxis dataKey="regime" stroke="#9CA3AF" fontSize={10} />
               <PolarRadiusAxis angle={30} domain={[0, 100]} stroke="#9CA3AF" fontSize={10} />
-              <Tooltip
+              <RechartsTooltip
                 contentStyle={{
                   backgroundColor: '#1F2937',
                   border: '1px solid #374151',

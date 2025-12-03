@@ -1047,20 +1047,42 @@ async def get_pbo_analysis(backtest_id: str) -> PBOAnalysisResponse:
         is_sharpes = []
         oos_sharpes = []
 
+        # Calculate IS and OOS scores deterministically from period metrics
+        # Split periods: first half as "IS", second half as "OOS" (for comparison)
+        n_periods = len(period_results)
+        mid_point = n_periods // 2
+
         for i, period in enumerate(period_results):
             # Use accuracy * 2 - 1 as proxy (transforms 0-1 to -1 to 1 range)
             accuracy = period.get("accuracy", 0.5)
             f1 = period.get("f1_macro", 0.5)
             pnl = period.get("pnl_percent", 0)
 
-            # Composite score as IS sharpe proxy
-            is_score = (accuracy * 0.4 + f1 * 0.3 + (pnl + 1) * 0.3) * 2
+            # Composite score as sharpe proxy
+            score = (accuracy * 0.4 + f1 * 0.3 + (pnl + 1) * 0.3) * 2
 
-            # For OOS, use slightly degraded version (typical pattern)
-            oos_score = is_score * 0.85 + np.random.normal(0, 0.1)
+            # First half of periods are treated as "in-sample", second half as "out-of-sample"
+            # This provides a deterministic way to calculate IS vs OOS performance
+            if i < mid_point:
+                is_sharpes.append(score)
+            else:
+                oos_sharpes.append(score)
 
-            is_sharpes.append(is_score)
-            oos_sharpes.append(oos_score)
+        # If we have uneven split, duplicate the middle period for both
+        if len(is_sharpes) == 0 or len(oos_sharpes) == 0:
+            # Fallback: use all periods for both IS and OOS with different weights
+            is_sharpes = []
+            oos_sharpes = []
+            for i, period in enumerate(period_results):
+                accuracy = period.get("accuracy", 0.5)
+                f1 = period.get("f1_macro", 0.5)
+                pnl = period.get("pnl_percent", 0)
+                score = (accuracy * 0.4 + f1 * 0.3 + (pnl + 1) * 0.3) * 2
+                is_sharpes.append(score)
+                # OOS score is degraded by 15% (typical overfitting pattern)
+                # but deterministic based on position
+                degradation_factor = 1.0 - (0.05 * (i + 1) / n_periods)  # 0-5% degradation
+                oos_sharpes.append(score * degradation_factor)
 
         # Calculate PBO
         pbo_calc = ProbabilityOfBacktestOverfitting()
@@ -1163,18 +1185,27 @@ async def run_monte_carlo_simulation(
                 detail="Need at least 10 predictions for Monte Carlo simulation"
             )
 
-        # Calculate returns from predictions
+        # Calculate returns from predictions using actual trade PnL for consistency
+        initial_capital = run.get("initial_capital", 10000)
         returns = []
         for pred in predictions:
-            # Simple return model: correct prediction = +1%, wrong = -0.5%
-            if pred["predicted_class"] == pred["actual_class"]:
-                ret = 0.01 * pred["confidence"]  # Reward proportional to confidence
+            # Use actual trade_pnl if available (same as equity curve)
+            if "trade_pnl" in pred and pred["trade_pnl"] is not None:
+                # Convert absolute pnl to percentage return
+                pnl = pred["trade_pnl"]
+                ret = pnl / initial_capital  # Return as percentage of initial capital
             else:
-                ret = -0.005 * (1 - pred["confidence"])  # Penalty inversely proportional
+                # No trade was made (HOLD or filtered), return is 0
+                ret = 0.0
             returns.append(ret)
 
         returns = np.array(returns)
-        n_steps = len(returns)
+        # Filter out zero returns for Monte Carlo (we want to shuffle actual trades)
+        non_zero_returns = returns[returns != 0]
+        if len(non_zero_returns) < 5:
+            # Fallback if not enough actual trades
+            non_zero_returns = returns
+        n_steps = len(non_zero_returns)
 
         # Run Monte Carlo
         n_sims = request.n_simulations
@@ -1187,21 +1218,22 @@ async def run_monte_carlo_simulation(
         n_sample_paths = 100  # Store 100 paths for visualization
 
         for sim in range(n_sims):
-            # Bootstrap resampling
-            sampled_indices = np.random.choice(n_steps, size=n_steps, replace=True)
-            sampled_returns = returns[sampled_indices]
+            # Bootstrap resampling from actual trade returns
+            sampled_indices = np.random.choice(len(non_zero_returns), size=n_steps, replace=True)
+            sampled_returns = non_zero_returns[sampled_indices]
 
-            # Calculate equity path
+            # Calculate equity path using additive returns (PnL / initial_capital)
             equity = initial_capital
             path = [equity]
             peak = equity
             max_dd = 0
 
             for ret in sampled_returns:
-                equity *= (1 + ret)
+                # ret is PnL as fraction of initial capital, so add it back
+                equity += initial_capital * ret
                 path.append(equity)
                 peak = max(peak, equity)
-                dd = (peak - equity) / peak
+                dd = (peak - equity) / peak if peak > 0 else 0
                 max_dd = max(max_dd, dd)
 
             all_final_equities.append(equity)
@@ -1609,21 +1641,23 @@ async def get_equity_curve(
                 detail="Need predictions to generate equity curve"
             )
 
-        # Generate equity curve from predictions
+        # Generate equity curve from predictions using actual trade PnL
+        # Use the same calculation as in Trading Tab for consistency
         equity = initial_capital
         equity_points = [{"x": 0, "equity": equity, "drawdown": 0}]
         peak = equity
 
         for i, pred in enumerate(predictions):
-            # Simple return calculation
-            if pred["predicted_class"] == pred["actual_class"]:
-                ret = 0.005 * pred["confidence"]
+            # Use actual trade_pnl if available (set during backtest)
+            if "trade_pnl" in pred and pred["trade_pnl"] is not None:
+                pnl = pred["trade_pnl"]
+                equity += pnl
             else:
-                ret = -0.003
+                # Fallback: no trade was made (HOLD or filtered by confidence)
+                pass
 
-            equity *= (1 + ret)
             peak = max(peak, equity)
-            drawdown = (peak - equity) / peak * 100
+            drawdown = (peak - equity) / peak * 100 if peak > 0 else 0
 
             equity_points.append({
                 "x": i + 1,
@@ -1908,19 +1942,62 @@ async def _run_ml_backtest_job(backtest_id: str, config: CreateMLBacktestRequest
         if results.period_results:
             run["period_results"] = to_python(results.period_results)
 
-        # Store predictions (limited)
+        # Store predictions with trade PnL (limited)
+        # Calculate trade PnL for each prediction using the same logic as backtest_evaluator
         predictions_list = []
+        position_size = config.position_size
+        commission = config.commission
+        slippage = config.slippage
+        min_confidence = config.min_confidence
+        use_confidence_filter = config.use_confidence_filter
+
+        # Get prices if available
+        pred_prices = prices if prices is not None else None
+
         for i, (pred, actual, conf) in enumerate(zip(
             results.predictions[:5000],
             results.actuals[:5000],
             results.confidences[:5000]
         )):
+            trade_pnl = None
+            trade_executed = False
+
+            # Calculate trade PnL using same logic as BacktestEvaluator._calculate_trading_metrics
+            if pred_prices is not None and i < len(pred_prices) - 1:
+                # Check if trade would be executed
+                should_trade = True
+                if use_confidence_filter and conf < min_confidence:
+                    should_trade = False
+                if pred == 1:  # HOLD
+                    should_trade = False
+
+                if should_trade:
+                    trade_executed = True
+                    entry_price = float(pred_prices[i])
+                    exit_price = float(pred_prices[i + 1])
+
+                    if pred == 2:  # BUY
+                        pnl_percent = (exit_price - entry_price) / entry_price
+                    elif pred == 0:  # SELL
+                        pnl_percent = (entry_price - exit_price) / entry_price
+                    else:
+                        pnl_percent = 0.0
+
+                    # Account for commission and slippage
+                    pnl_percent -= (commission + slippage) * 2
+
+                    # Calculate absolute PnL
+                    position_value = config.initial_capital * position_size
+                    trade_pnl = position_value * pnl_percent
+
             predictions_list.append({
                 "sequence": i,
                 "timestamp": datetime.now().isoformat(),  # Replace with actual timestamp if available
                 "predicted_class": int(pred),
                 "actual_class": int(actual),
                 "confidence": float(conf),
+                "trade_executed": trade_executed,
+                "trade_pnl": trade_pnl,
                 "period": None
             })
         run["predictions"] = predictions_list

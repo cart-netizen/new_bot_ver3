@@ -2,12 +2,11 @@
 
 import { useQuery } from '@tanstack/react-query';
 import {
-
   Line,
   XAxis,
   YAxis,
   CartesianGrid,
-  Tooltip,
+  Tooltip as RechartsTooltip,
   Legend,
   ResponsiveContainer,
   Area,
@@ -117,7 +116,7 @@ export function EquityCurveChart({ backtestId, showDrawdown = true }: EquityCurv
                 domain={[0, 'auto']}
               />
             )}
-            <Tooltip
+            <RechartsTooltip
               contentStyle={{
                 backgroundColor: '#1F2937',
                 border: '1px solid #374151',
