@@ -1839,7 +1839,9 @@ async def _run_ml_backtest_job(backtest_id: str, config: CreateMLBacktestRequest
 
         # Helper function to convert numpy types to Python native types
         def to_python(val):
-            if isinstance(val, (np.integer, np.int64, np.int32)):
+            if isinstance(val, (np.bool_, bool)):
+                return bool(val)
+            elif isinstance(val, (np.integer, np.int64, np.int32)):
                 return int(val)
             elif isinstance(val, (np.floating, np.float64, np.float32)):
                 return float(val)
