@@ -282,16 +282,32 @@ class BacktestEvaluator:
         all_actuals = np.concatenate(all_actuals)
         all_confidences = np.concatenate(all_confidences)
 
-        # Общие метрики
+        # Общие метрики классификации
         total_metrics = self._calculate_classification_metrics(
             all_predictions, all_actuals, all_confidences
         )
+
+        # Общие trading метрики (если есть цены)
+        trading_metrics = {}
+        if prices is not None:
+            trading_metrics = self._calculate_trading_metrics(
+                all_predictions, all_actuals, prices, all_confidences
+            )
 
         results = BacktestResults(
             accuracy=total_metrics['accuracy'],
             precision=total_metrics['precision'],
             recall=total_metrics['recall'],
             f1=total_metrics['f1'],
+            total_trades=int(trading_metrics.get('total_trades', 0)),
+            winning_trades=int(trading_metrics.get('winning_trades', 0)),
+            losing_trades=int(trading_metrics.get('losing_trades', 0)),
+            win_rate=trading_metrics.get('win_rate', 0.0),
+            total_pnl=trading_metrics.get('total_pnl', 0.0),
+            total_pnl_percent=trading_metrics.get('total_pnl_percent', 0.0),
+            max_drawdown=trading_metrics.get('max_drawdown', 0.0),
+            sharpe_ratio=trading_metrics.get('sharpe_ratio', 0.0),
+            profit_factor=trading_metrics.get('profit_factor', 0.0),
             period_results=period_results,
             predictions=all_predictions,
             actuals=all_actuals,
@@ -301,6 +317,9 @@ class BacktestEvaluator:
         tqdm.write("\n" + "=" * 70)
         tqdm.write(f"[ИТОГО] Accuracy: {results.accuracy:.2%}")
         tqdm.write(f"[ИТОГО] F1 (macro): {np.mean(list(results.f1.values())):.2%}")
+        if trading_metrics:
+            tqdm.write(f"[ИТОГО] Trades: {results.total_trades}, Win Rate: {results.win_rate:.1%}")
+            tqdm.write(f"[ИТОГО] P&L: {results.total_pnl_percent:.2%}, Max DD: {results.max_drawdown:.2%}")
         tqdm.write("=" * 70 + "\n")
 
         return results
