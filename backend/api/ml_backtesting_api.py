@@ -1738,7 +1738,11 @@ async def _run_ml_backtest_job(backtest_id: str, config: CreateMLBacktestRequest
                     break
 
             if data_path is None:
-                raise ValueError("No holdout data found. Please prepare test data first.")
+                raise ValueError(
+                    "No holdout data found. Expected files in: data/holdout/test_data.npz, "
+                    "data/ml_data/holdout_set.npz, or data/test_data.npz. "
+                    "Try using 'feature_store' as data source instead."
+                )
 
         elif config.data_source == "feature_store":
             # Load from Feature Store

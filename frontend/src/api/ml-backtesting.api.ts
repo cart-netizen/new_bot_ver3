@@ -265,7 +265,7 @@ export function getDefaultMLBacktestConfig(): MLBacktestConfig {
     description: '',
     model_checkpoint: '',
     model_version: undefined,
-    data_source: 'holdout',
+    data_source: 'feature_store',
     symbol: undefined,
     start_date: undefined,
     end_date: undefined,
