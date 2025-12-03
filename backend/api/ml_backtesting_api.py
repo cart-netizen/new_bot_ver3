@@ -1695,37 +1695,41 @@ async def get_equity_curve(
                     "drawdown": round(drawdown, 2)
                 })
         else:
-            # Fallback for old backtests: use stored final_capital and distribute P&L
-            final_capital = run.get("final_capital", initial_capital)
-            total_pnl = run.get("total_pnl", 0) or (final_capital - initial_capital)
-            total_trades = run.get("total_trades", 0) or 1
+            # Fallback for old backtests: use stored metrics directly
+            final_capital = run.get("final_capital") or initial_capital
+            total_pnl = run.get("total_pnl") or (final_capital - initial_capital)
+            total_trades = run.get("total_trades") or 0
+            max_dd_stored = run.get("max_drawdown") or 0
 
-            # Create synthetic equity curve based on stored metrics
-            equity = initial_capital
-            equity_points = [{"x": 0, "equity": equity, "drawdown": 0}]
-            peak = equity
+            logger.info(f"Equity curve fallback: final={final_capital}, pnl={total_pnl}, trades={total_trades}")
 
-            # Distribute P&L across predictions proportionally
-            pnl_per_trade = total_pnl / total_trades if total_trades > 0 else 0
-            trade_count = 0
+            if total_trades == 0 or total_pnl == 0:
+                # No trades - flat line
+                n_points = min(len(predictions), sampling)
+                step = max(1, len(predictions) // n_points) if predictions else 1
+                equity_points = [
+                    {"x": i, "equity": initial_capital, "drawdown": 0}
+                    for i in range(0, len(predictions) + 1, step)
+                ]
+            else:
+                # Create synthetic equity curve that matches stored metrics
+                # Distribute P&L evenly across all predictions (simple linear interpolation)
+                pnl_per_step = total_pnl / len(predictions) if predictions else 0
 
-            for i, pred in enumerate(predictions):
-                # Only active trades (BUY or SELL, not HOLD) contribute to P&L
-                if pred.get("predicted_class") != 1:  # Not HOLD
-                    # Check confidence filter
-                    confidence = pred.get("confidence", 0.6)
-                    if confidence >= 0.6:  # Default min_confidence
-                        equity += pnl_per_trade
-                        trade_count += 1
+                equity = initial_capital
+                equity_points = [{"x": 0, "equity": equity, "drawdown": 0}]
+                peak = equity
 
-                peak = max(peak, equity)
-                drawdown = (peak - equity) / peak * 100 if peak > 0 else 0
+                for i in range(len(predictions)):
+                    equity += pnl_per_step
+                    peak = max(peak, equity)
+                    drawdown = (peak - equity) / peak * 100 if peak > 0 else 0
 
-                equity_points.append({
-                    "x": i + 1,
-                    "equity": round(equity, 2),
-                    "drawdown": round(drawdown, 2)
-                })
+                    equity_points.append({
+                        "x": i + 1,
+                        "equity": round(equity, 2),
+                        "drawdown": round(drawdown, 2)
+                    })
 
         # Downsample if needed
         if len(equity_points) > sampling:
