@@ -2237,18 +2237,26 @@ async def _run_ml_backtest_job(backtest_id: str, config: CreateMLBacktestRequest
             # Save predictions to database (limit to 5000 for performance)
             try:
                 if predictions_list:
-                    # Prepare predictions for database (remove trade_pnl and trade_executed as they're not in schema)
-                    db_predictions = [
-                        {
+                    # Prepare predictions for database
+                    # Convert timestamp string to datetime object
+                    from datetime import datetime as dt
+                    db_predictions = []
+                    for p in predictions_list[:5000]:
+                        ts = p.get("timestamp")
+                        # Convert ISO string to datetime if needed
+                        if isinstance(ts, str):
+                            try:
+                                ts = dt.fromisoformat(ts)
+                            except (ValueError, TypeError):
+                                ts = None
+                        db_predictions.append({
                             "sequence": p["sequence"],
-                            "timestamp": p.get("timestamp"),
+                            "timestamp": ts,
                             "predicted_class": p["predicted_class"],
                             "actual_class": p["actual_class"],
                             "confidence": p["confidence"],
                             "period": p.get("period")
-                        }
-                        for p in predictions_list[:5000]
-                    ]
+                        })
                     saved_count = await ml_backtest_repo.add_predictions(run_uuid, db_predictions)
                     logger.info(f"Saved {saved_count} predictions to database for {backtest_id}")
             except Exception as pred_err:
