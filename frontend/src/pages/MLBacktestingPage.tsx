@@ -323,10 +323,30 @@ function MLBacktestForm({ onSubmit, isSubmitting }: MLBacktestFormProps) {
     mlBacktestingApi.getDefaultMLBacktestConfig()
   );
 
+  // Holdout set creation state
+  const [selectedFolders, setSelectedFolders] = useState<string[]>([]);
+  const [holdoutName, setHoldoutName] = useState('');
+  const [isCreatingHoldout, setIsCreatingHoldout] = useState(false);
+  const queryClient = useQueryClient();
+
   // Fetch available models
   const { data: modelsData } = useQuery({
     queryKey: ['ml-models'],
     queryFn: mlBacktestingApi.listAvailableModels
+  });
+
+  // Fetch data folders for holdout creation
+  const { data: foldersData, isLoading: isLoadingFolders } = useQuery({
+    queryKey: ['data-folders'],
+    queryFn: mlBacktestingApi.listDataFolders,
+    enabled: formData.data_source === 'holdout'
+  });
+
+  // Fetch available holdout sets
+  const { data: holdoutSetsData, isLoading: isLoadingHoldoutSets, refetch: refetchHoldoutSets } = useQuery({
+    queryKey: ['holdout-sets'],
+    queryFn: mlBacktestingApi.listHoldoutSets,
+    enabled: formData.data_source === 'holdout'
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -340,12 +360,63 @@ function MLBacktestForm({ onSubmit, isSubmitting }: MLBacktestFormProps) {
       toast.error('Выберите модель');
       return;
     }
+    if (formData.data_source === 'holdout' && !formData.holdout_set_id) {
+      toast.error('Выберите или создайте Holdout Set');
+      return;
+    }
 
     onSubmit(formData);
   };
 
   const updateForm = (updates: Partial<mlBacktestingApi.MLBacktestConfig>) => {
     setFormData(prev => ({ ...prev, ...updates }));
+  };
+
+  // Toggle folder selection
+  const toggleFolder = (path: string) => {
+    setSelectedFolders(prev =>
+      prev.includes(path)
+        ? prev.filter(p => p !== path)
+        : [...prev, path]
+    );
+  };
+
+  // Create holdout set
+  const handleCreateHoldout = async () => {
+    if (!holdoutName.trim()) {
+      toast.error('Введите название для Holdout Set');
+      return;
+    }
+    if (selectedFolders.length === 0) {
+      toast.error('Выберите хотя бы одну папку с данными');
+      return;
+    }
+
+    setIsCreatingHoldout(true);
+    try {
+      const result = await mlBacktestingApi.createHoldoutSet({
+        name: holdoutName,
+        source_paths: selectedFolders,
+        sequence_length: formData.sequence_length
+      });
+
+      toast.success(`Holdout Set создан: ${result.samples.toLocaleString()} samples`);
+
+      // Refresh holdout sets list
+      await refetchHoldoutSets();
+
+      // Auto-select newly created holdout set
+      updateForm({ holdout_set_id: result.path });
+
+      // Reset form
+      setSelectedFolders([]);
+      setHoldoutName('');
+    } catch (error) {
+      const apiError = error as ApiError;
+      toast.error(apiError.response?.data?.detail || 'Ошибка создания Holdout Set');
+    } finally {
+      setIsCreatingHoldout(false);
+    }
   };
 
   return (
@@ -438,6 +509,134 @@ Custom Data — загрузить свои данные (в разработк�
             </select>
           </div>
         </div>
+
+        {/* Holdout Set Management - показывается только при выборе holdout */}
+        {formData.data_source === 'holdout' && (
+          <div className="mt-6 space-y-6">
+            {/* Выбор существующего Holdout Set */}
+            <div className="p-4 bg-gray-800/50 rounded-lg border border-gray-700">
+              <h3 className="text-lg font-medium text-white mb-3 flex items-center gap-2">
+                <Shield className="h-5 w-5 text-green-400" />
+                Выбрать Holdout Set
+              </h3>
+
+              {isLoadingHoldoutSets ? (
+                <div className="text-gray-400 text-sm">Загрузка...</div>
+              ) : holdoutSetsData?.holdout_sets && holdoutSetsData.holdout_sets.length > 0 ? (
+                <div className="space-y-2">
+                  <select
+                    value={formData.holdout_set_id || ''}
+                    onChange={(e) => updateForm({ holdout_set_id: e.target.value || undefined })}
+                    className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                  >
+                    <option value="">Выберите Holdout Set...</option>
+                    {holdoutSetsData.holdout_sets.map((set) => (
+                      <option key={set.path} value={set.path}>
+                        {set.name} ({set.sample_count?.toLocaleString() || '?'} samples, {set.size_mb} MB)
+                      </option>
+                    ))}
+                  </select>
+                  {formData.holdout_set_id && (
+                    <p className="text-xs text-gray-500">
+                      Путь: {formData.holdout_set_id}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="text-gray-400 text-sm">
+                  Нет доступных Holdout Set. Создайте новый ниже.
+                </div>
+              )}
+            </div>
+
+            {/* Создание нового Holdout Set */}
+            <div className="p-4 bg-gray-800/50 rounded-lg border border-gray-700">
+              <h3 className="text-lg font-medium text-white mb-3 flex items-center gap-2">
+                <Plus className="h-5 w-5 text-purple-400" />
+                Создать новый Holdout Set
+              </h3>
+
+              {/* Название */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-300 mb-1">
+                  Название Holdout Set
+                </label>
+                <Input
+                  value={holdoutName}
+                  onChange={(e) => setHoldoutName(e.target.value)}
+                  placeholder="my_holdout_set"
+                />
+              </div>
+
+              {/* Выбор папок с данными */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Выберите папки с данными
+                  <span className="text-gray-500 font-normal ml-2">
+                    (выбрано: {selectedFolders.length})
+                  </span>
+                </label>
+
+                {isLoadingFolders ? (
+                  <div className="text-gray-400 text-sm">Загрузка папок...</div>
+                ) : foldersData?.folders && foldersData.folders.length > 0 ? (
+                  <div className="max-h-48 overflow-y-auto space-y-2 bg-gray-900 p-3 rounded-lg border border-gray-600">
+                    {foldersData.folders.map((folder) => (
+                      <label
+                        key={folder.path}
+                        className={cn(
+                          "flex items-center gap-3 p-2 rounded cursor-pointer transition-colors",
+                          selectedFolders.includes(folder.path)
+                            ? "bg-purple-900/30 border border-purple-500"
+                            : "hover:bg-gray-800 border border-transparent"
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedFolders.includes(folder.path)}
+                          onChange={() => toggleFolder(folder.path)}
+                          className="rounded border-gray-600 bg-gray-800 text-purple-500 focus:ring-purple-500"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium text-white truncate">
+                            {folder.name}
+                          </div>
+                          <div className="text-xs text-gray-400">
+                            {folder.files_count} файлов • {folder.size_mb} MB
+                          </div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-gray-400 text-sm p-3 bg-gray-900 rounded-lg border border-gray-600">
+                    Папки с parquet файлами не найдены в data/
+                  </div>
+                )}
+              </div>
+
+              {/* Кнопка создания */}
+              <Button
+                type="button"
+                onClick={handleCreateHoldout}
+                disabled={isCreatingHoldout || !holdoutName.trim() || selectedFolders.length === 0}
+                className="w-full"
+              >
+                {isCreatingHoldout ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    Создание...
+                  </>
+                ) : (
+                  <>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Создать Holdout Set
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* Walk-Forward Settings */}
