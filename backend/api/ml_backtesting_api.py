@@ -2193,11 +2193,18 @@ def _process_dataframe_to_holdout(df: "pd.DataFrame", sequence_length: int, outp
             label_column = col
             break
 
-    # Если нет меток, создаём их
+    # Если нет меток ИЛИ метки содержат NaN - вычисляем их
     if label_column is None:
         logger.info("No label column found. Creating future_direction_60s from price movement...")
         df = _create_labels(df, horizon=60)
         label_column = 'future_direction_60s'
+    else:
+        # Проверяем, есть ли NaN в метках
+        nan_count = df[label_column].isna().sum()
+        if nan_count > len(df) * 0.5:  # Если больше 50% NaN
+            logger.info(f"Found {nan_count}/{len(df)} NaN values in {label_column}. Recalculating labels...")
+            df = _create_labels(df, horizon=60)
+            label_column = 'future_direction_60s'
 
     logger.info(f"Using label column: {label_column}")
 
@@ -2403,7 +2410,18 @@ def _create_labels(df: "pd.DataFrame", horizon: int = 60) -> "pd.DataFrame":
     Создание меток для классификации на основе будущего движения цены.
     0 = SELL (цена упадёт), 1 = HOLD (нейтрально), 2 = BUY (цена вырастет)
     """
-    close_col = 'close' if 'close' in df.columns else 'Close'
+    # Ищем колонку с ценой (Feature Store использует mid_price или current_mid_price)
+    price_candidates = ['close', 'Close', 'mid_price', 'current_mid_price', 'price']
+    close_col = None
+    for col in price_candidates:
+        if col in df.columns and df[col].notna().sum() > 0:
+            close_col = col
+            break
+
+    if close_col is None:
+        raise ValueError(f"Не найдена колонка с ценой. Доступные: {list(df.columns)[:20]}")
+
+    logger.info(f"Using price column for labels: {close_col}")
     close = df[close_col]
 
     # Future return
