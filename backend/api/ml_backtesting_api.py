@@ -1185,16 +1185,29 @@ async def run_monte_carlo_simulation(
         if has_trade_pnl:
             # Use actual trade_pnl from predictions
             returns = []
+            total_calculated_pnl = 0.0
             for pred in predictions:
                 if "trade_pnl" in pred and pred["trade_pnl"] is not None:
                     pnl = pred["trade_pnl"]
+                    total_calculated_pnl += pnl
                     ret = pnl / initial_capital
                 else:
                     ret = 0.0
                 returns.append(ret)
             returns = np.array(returns)
             non_zero_returns = returns[returns != 0]
-        else:
+
+            # Check if calculated P&L matches stored P&L
+            stored_pnl = run.get("total_pnl", 0) or 0
+            if stored_pnl != 0 and abs(total_calculated_pnl - stored_pnl) > 1:
+                logger.warning(
+                    f"Monte Carlo P&L mismatch: calculated={total_calculated_pnl:.2f}, stored={stored_pnl:.2f}. "
+                    f"Using fallback method."
+                )
+                # Use fallback method instead
+                has_trade_pnl = False
+
+        if not has_trade_pnl:
             # Fallback for old backtests: estimate returns from stored metrics
             total_pnl = run.get("total_pnl", 0) or 0
             total_trades = run.get("total_trades", 0) or 1
@@ -1672,18 +1685,37 @@ async def get_equity_curve(
         # Check if predictions have trade_pnl (new format) or need fallback (old format)
         has_trade_pnl = any("trade_pnl" in pred and pred["trade_pnl"] is not None for pred in predictions)
 
+        # Log diagnostic info
+        pnl_count = sum(1 for p in predictions if p.get("trade_pnl") is not None)
+        executed_count = sum(1 for p in predictions if p.get("trade_executed", False))
+        total_pnl_from_predictions = sum(p.get("trade_pnl", 0) or 0 for p in predictions)
+        logger.info(
+            f"Equity curve for {backtest_id}: "
+            f"predictions={len(predictions)}, "
+            f"has_trade_pnl={has_trade_pnl}, "
+            f"pnl_count={pnl_count}, "
+            f"executed_count={executed_count}, "
+            f"total_pnl_from_predictions={total_pnl_from_predictions:.2f}, "
+            f"stored_total_pnl={run.get('total_pnl', 0):.2f}, "
+            f"stored_final_capital={run.get('final_capital', initial_capital):.2f}"
+        )
+
         if has_trade_pnl:
             # Generate equity curve from predictions using actual trade PnL
             # Use the same calculation as in Trading Tab for consistency
             equity = initial_capital
             equity_points = [{"x": 0, "equity": equity, "drawdown": 0}]
             peak = equity
+            calculated_pnl = 0.0
+            trade_count = 0
 
             for i, pred in enumerate(predictions):
                 # Use actual trade_pnl if available (set during backtest)
                 if "trade_pnl" in pred and pred["trade_pnl"] is not None:
                     pnl = pred["trade_pnl"]
                     equity += pnl
+                    calculated_pnl += pnl
+                    trade_count += 1
 
                 peak = max(peak, equity)
                 drawdown = (peak - equity) / peak * 100 if peak > 0 else 0
@@ -1693,10 +1725,34 @@ async def get_equity_curve(
                     "equity": round(equity, 2),
                     "drawdown": round(drawdown, 2)
                 })
+
+            # Verify calculated P&L matches stored total_pnl
+            stored_pnl = run.get("total_pnl", 0)
+            stored_trades = run.get("total_trades", 0)
+            if stored_trades > 0 and trade_count != stored_trades:
+                logger.warning(
+                    f"Trade count mismatch: calculated={trade_count}, stored={stored_trades}. "
+                    f"Some trades may not have trade_pnl set."
+                )
+
+            # If there's a significant P&L mismatch, adjust the equity curve
+            if stored_pnl != 0 and abs(calculated_pnl - stored_pnl) > 1:
+                logger.warning(
+                    f"P&L mismatch: calculated={calculated_pnl:.2f}, stored={stored_pnl:.2f}. "
+                    f"Adjusting equity curve."
+                )
+                # Adjust final equity to match stored value
+                stored_final = run.get("final_capital", initial_capital + stored_pnl)
+                equity_points[-1]["equity"] = round(stored_final, 2)
+                # Recalculate final drawdown
+                peak = max(p["equity"] for p in equity_points)
+                equity_points[-1]["drawdown"] = round(
+                    (peak - stored_final) / peak * 100 if peak > 0 else 0, 2
+                )
         else:
             # Fallback for old backtests: use stored final_capital and distribute P&L
-            final_capital = run.get("final_capital", initial_capital)
-            total_pnl = run.get("total_pnl", 0) or (final_capital - initial_capital)
+            stored_final_capital = run.get("final_capital", initial_capital)
+            total_pnl = run.get("total_pnl", 0) or (stored_final_capital - initial_capital)
             total_trades = run.get("total_trades", 0) or 1
 
             # Create synthetic equity curve based on stored metrics
@@ -1709,11 +1765,17 @@ async def get_equity_curve(
             trade_count = 0
 
             for i, pred in enumerate(predictions):
-                # Only active trades (BUY or SELL, not HOLD) contribute to P&L
-                if pred.get("predicted_class") != 1:  # Not HOLD
-                    # Check confidence filter
-                    confidence = pred.get("confidence", 0.6)
-                    if confidence >= 0.6:  # Default min_confidence
+                # Use trade_executed flag if available, otherwise check predicted_class
+                if pred.get("trade_executed", False):
+                    # New format: use trade_executed flag
+                    equity += pnl_per_trade
+                    trade_count += 1
+                elif "trade_executed" not in pred and pred.get("predicted_class") != 1:
+                    # Old format fallback: check predicted_class != HOLD
+                    # Use confidence from prediction, not hardcoded value
+                    min_conf = run.get("min_confidence", 0.6)
+                    confidence = pred.get("confidence", 0.0)
+                    if confidence >= min_conf:
                         equity += pnl_per_trade
                         trade_count += 1
 
@@ -1726,21 +1788,46 @@ async def get_equity_curve(
                     "drawdown": round(drawdown, 2)
                 })
 
+            # Ensure final equity matches stored final_capital
+            if trade_count > 0 and abs(equity - stored_final_capital) > 1:
+                # Adjust for any discrepancy
+                logger.warning(
+                    f"Equity curve mismatch: calculated={equity:.2f}, stored={stored_final_capital:.2f}. "
+                    f"Using stored value."
+                )
+                equity_points[-1]["equity"] = round(stored_final_capital, 2)
+
         # Downsample if needed
         if len(equity_points) > sampling:
             step = len(equity_points) // sampling
             equity_points = equity_points[::step]
 
         # Calculate cumulative stats
-        final_equity = equity_points[-1]["equity"]
+        # Use stored final_capital as authoritative source if available
+        stored_final = run.get("final_capital")
+        calculated_final = equity_points[-1]["equity"]
+
+        if stored_final is not None and abs(stored_final - initial_capital) > 0.01:
+            # Use stored value and ensure last point matches
+            final_equity = stored_final
+            if abs(calculated_final - stored_final) > 1:
+                equity_points[-1]["equity"] = round(stored_final, 2)
+                # Recalculate drawdown for last point
+                peak = max(p["equity"] for p in equity_points)
+                equity_points[-1]["drawdown"] = round(
+                    (peak - stored_final) / peak * 100 if peak > 0 else 0, 2
+                )
+        else:
+            final_equity = calculated_final
+
         max_drawdown = max(p["drawdown"] for p in equity_points)
 
         return {
             "backtest_id": backtest_id,
             "initial_capital": initial_capital,
-            "final_capital": final_equity,
-            "total_return_pct": (final_equity - initial_capital) / initial_capital * 100,
-            "max_drawdown_pct": max_drawdown,
+            "final_capital": round(final_equity, 2),
+            "total_return_pct": round((final_equity - initial_capital) / initial_capital * 100, 2),
+            "max_drawdown_pct": round(max_drawdown, 2),
             "n_points": len(equity_points),
             "data": equity_points
         }
@@ -2033,23 +2120,32 @@ async def _run_ml_backtest_job(backtest_id: str, config: CreateMLBacktestRequest
                     should_trade = False
 
                 if should_trade:
-                    trade_executed = True
                     entry_price = float(pred_prices[i])
                     exit_price = float(pred_prices[i + 1])
 
-                    if pred == 2:  # BUY
-                        pnl_percent = (exit_price - entry_price) / entry_price
-                    elif pred == 0:  # SELL
-                        pnl_percent = (entry_price - exit_price) / entry_price
-                    else:
-                        pnl_percent = 0.0
+                    # Validate prices (must be positive and not NaN)
+                    if (np.isfinite(entry_price) and np.isfinite(exit_price) and
+                        entry_price > 0 and exit_price > 0):
+                        trade_executed = True
 
-                    # Account for commission and slippage
-                    pnl_percent -= (commission + slippage) * 2
+                        if pred == 2:  # BUY
+                            pnl_percent = (exit_price - entry_price) / entry_price
+                        elif pred == 0:  # SELL
+                            pnl_percent = (entry_price - exit_price) / entry_price
+                        else:
+                            pnl_percent = 0.0
 
-                    # Calculate absolute PnL
-                    position_value = config.initial_capital * position_size
-                    trade_pnl = position_value * pnl_percent
+                        # Account for commission and slippage
+                        pnl_percent -= (commission + slippage) * 2
+
+                        # Calculate absolute PnL
+                        position_value = config.initial_capital * position_size
+                        trade_pnl = position_value * pnl_percent
+
+                        # Validate trade_pnl is not NaN
+                        if not np.isfinite(trade_pnl):
+                            trade_pnl = None
+                            trade_executed = False
 
             predictions_list.append({
                 "sequence": i,
