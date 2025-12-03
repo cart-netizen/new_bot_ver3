@@ -1802,7 +1802,20 @@ async def _run_ml_backtest_job(backtest_id: str, config: CreateMLBacktestRequest
             X = X_seq
             y = y_seq
             timestamps = df['timestamp'].values[seq_len-1:] if 'timestamp' in df.columns else None
-            prices = df['close'].values[seq_len-1:] if 'close' in df.columns else None
+
+            # Ищем колонку с ценой для trading simulation
+            price_col = None
+            for col in ['close', 'mid_price', 'current_mid_price', 'price']:
+                if col in df.columns and df[col].notna().any():
+                    price_col = col
+                    break
+
+            if price_col:
+                prices = df[price_col].values[seq_len-1:].astype(np.float32)
+                logger.info(f"Using price column for trading simulation: {price_col}")
+            else:
+                prices = None
+                logger.warning("No price column found - trading simulation will be skipped")
 
             logger.info(f"Loaded {len(X)} sequences from Feature Store")
 
