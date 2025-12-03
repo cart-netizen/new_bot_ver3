@@ -395,10 +395,10 @@ def test_model_creation():
   print("=" * 60)
 
   try:
-    from ml_engine.models.hybrid_cnn_lstm import create_model
+    from ml_engine.models.hybrid_cnn_lstm_v2 import create_model_v2
 
-    print("Создание модели...")
-    model = create_model()
+    print("Создание модели V2...")
+    model = create_model_v2()
     print("✓ Модель создана")
 
     # Подсчет параметров
@@ -426,8 +426,8 @@ def test_minimal_training(symbol: str):
 
   try:
     from ml_engine.training.data_loader import HistoricalDataLoader, DataConfig
-    from ml_engine.training.model_trainer import ModelTrainer, TrainerConfig
-    from ml_engine.models.hybrid_cnn_lstm import create_model
+    from ml_engine.training.model_trainer_v2 import ModelTrainerV2, TrainerConfigV2
+    from ml_engine.models.hybrid_cnn_lstm_v2 import create_model_v2
 
     print("1. Загрузка данных...")
     config = DataConfig(
@@ -442,19 +442,18 @@ def test_minimal_training(symbol: str):
     print(f"✓ Train: {len(result['dataloaders']['train'])} batches")
     print(f"✓ Val: {len(result['dataloaders']['val'])} batches")
 
-    print("\n2. Создание модели...")
-    model = create_model()
-    print("✓ Модель создана")
+    print("\n2. Создание модели V2...")
+    model = create_model_v2()
+    print("✓ Модель V2 создана")
 
     print("\n3. Обучение (3 эпохи на CPU)...")
-    trainer_config = TrainerConfig(
+    trainer_config = TrainerConfigV2(
       epochs=3,
-      learning_rate=0.001,
-      device="cpu",  # CPU для стабильности
+      learning_rate=5e-5,  # V2 оптимизированный LR
       early_stopping_patience=10
     )
 
-    trainer = ModelTrainer(model, trainer_config)
+    trainer = ModelTrainerV2(model, trainer_config, device="cpu")
     history = trainer.train(
       result['dataloaders']['train'],
       result['dataloaders']['val']

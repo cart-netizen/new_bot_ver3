@@ -199,10 +199,10 @@ def create_optimized_model(config: Dict[str, Any]) -> torch.nn.Module:
     Returns:
         Инициализированная модель
     """
-    from backend.ml_engine.models.hybrid_cnn_lstm import ModelConfig, HybridCNNLSTM
-    
-    # Создаём конфигурацию модели
-    model_config = ModelConfig(
+    from backend.ml_engine.models.hybrid_cnn_lstm_v2 import ModelConfigV2, HybridCNNLSTMv2
+
+    # Создаём конфигурацию модели V2 (оптимизированная версия)
+    model_config = ModelConfigV2(
         input_features=110,
         sequence_length=60,
         cnn_channels=tuple(config["cnn_channels"]),
@@ -210,13 +210,17 @@ def create_optimized_model(config: Dict[str, Any]) -> torch.nn.Module:
         lstm_hidden=config["lstm_hidden"],
         lstm_layers=2,
         lstm_dropout=config.get("lstm_dropout", 0.3),
-        attention_units=config.get("attention_units", 64),
+        attention_heads=config.get("attention_heads", 4),
         num_classes=3,
-        dropout=config["dropout"]
+        dropout=config["dropout"],
+        # V2-specific features
+        use_residual=config.get("use_residual", True),
+        use_layer_norm=config.get("use_layer_norm", True),
+        activation="gelu"
     )
-    
-    # Создаём модель
-    model = HybridCNNLSTM(model_config)
+
+    # Создаём модель V2
+    model = HybridCNNLSTMv2(model_config)
     
     # Логируем параметры
     total_params = sum(p.numel() for p in model.parameters())
@@ -340,34 +344,37 @@ def run_training(
     Returns:
         Dict с результатами обучения
     """
-    from backend.ml_engine.training.model_trainer import (
-        ModelTrainer, TrainerConfig
+    from backend.ml_engine.training.model_trainer_v2 import (
+        ModelTrainerV2, TrainerConfigV2
     )
-    from backend.ml_engine.training.class_balancing import ClassBalancingConfig
-    
-    # Trainer config
-    trainer_config = TrainerConfig(
+
+    # Trainer config V2 (оптимизированные параметры)
+    trainer_config = TrainerConfigV2(
         epochs=config["epochs"],
         learning_rate=config["learning_rate"],
         weight_decay=config["weight_decay"],
         grad_clip_value=1.0,
         early_stopping_patience=config["early_stopping_patience"],
         checkpoint_dir=output_dir,
-        device="cuda" if torch.cuda.is_available() else "cpu"
-    )
-    
-    # Class balancing
-    balancing_config = ClassBalancingConfig(
+        # Scheduler
+        scheduler_type=config.get("scheduler_type", "cosine_warm_restarts"),
+        scheduler_T_0=config.get("scheduler_T_0", 10),
+        scheduler_T_mult=config.get("scheduler_T_mult", 2),
+        # Augmentation
+        use_augmentation=config.get("use_augmentation", True),
+        mixup_alpha=config.get("mixup_alpha", 0.2),
+        gaussian_noise_std=config.get("gaussian_noise_std", 0.01),
+        # Label smoothing
+        label_smoothing=config.get("label_smoothing", 0.1),
+        # Class balancing
         use_class_weights=config.get("use_class_weights", True),
         use_focal_loss=config.get("use_focal_loss", True),
         focal_gamma=config.get("focal_gamma", 2.5)
     )
-    
-    # Обновляем trainer config с class balancing
-    trainer_config.class_balancing = balancing_config
-    
-    # Создаём trainer
-    trainer = ModelTrainer(model, trainer_config)
+
+    # Создаём trainer V2
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    trainer = ModelTrainerV2(model, trainer_config, device=device)
     
     # Обучаем
     logger.info("\n" + "=" * 80)

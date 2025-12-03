@@ -947,11 +947,11 @@ if __name__ == "__main__":
     print("=" * 80)
     print("MODEL TRAINER V2 - EXAMPLE")
     print("=" * 80)
-    
-    # Создаём тестовую модель
-    from backend.ml_engine.models.hybrid_cnn_lstm import create_model
-    
-    model = create_model()
+
+    # Создаём тестовую модель V2
+    from backend.ml_engine.models.hybrid_cnn_lstm_v2 import create_model_v2
+
+    model = create_model_v2()
     
     # Создаём trainer с оптимизированными настройками
     config = TrainerConfigV2(

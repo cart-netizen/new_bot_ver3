@@ -62,9 +62,9 @@ logging.basicConfig(
 
 from core.logger import get_logger
 from ml_engine.training.data_loader import HistoricalDataLoader, DataConfig
-from ml_engine.training.model_trainer import ModelTrainer, TrainerConfig
+from ml_engine.training.model_trainer_v2 import ModelTrainerV2, TrainerConfigV2
 from ml_engine.training.class_balancing import ClassBalancingConfig
-from ml_engine.models.hybrid_cnn_lstm import create_model
+from ml_engine.models.hybrid_cnn_lstm_v2 import create_model_v2
 
 logger = get_logger(__name__)
 
@@ -539,18 +539,20 @@ class HyperparameterOptimizer:
 
       # ===== ОБУЧЕНИЕ МОДЕЛИ =====
 
-      logger.info("Шаг 3/4: Обучение модели...")
-      model = create_model()
+      logger.info("Шаг 3/4: Обучение модели V2...")
+      model = create_model_v2()
 
-      trainer_config = TrainerConfig(
+      trainer_config = TrainerConfigV2(
         epochs=self.config.max_epochs if not self.config.quick_mode else 10,
-        learning_rate=0.001,
+        learning_rate=5e-5,  # V2 оптимизированный LR
         early_stopping_patience=self.config.early_stopping_patience,
-        class_balancing=balancing_config,
+        use_class_weights=balancing_config.use_class_weights if balancing_config else True,
+        use_focal_loss=balancing_config.use_focal_loss if balancing_config else True,
+        focal_gamma=balancing_config.focal_gamma if balancing_config else 2.5,
         checkpoint_dir=str(self.output_dir / "checkpoints" / symbol)
       )
 
-      trainer = ModelTrainer(model, trainer_config)
+      trainer = ModelTrainerV2(model, trainer_config)
 
       # Обучение
       logger.info(f"  Обучение {trainer_config.epochs} эпох...")
