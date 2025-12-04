@@ -110,10 +110,10 @@ class CombinatorialPurgedCV:
     - Возможность расчёта PBO
 
     Usage:
-        >>> cpcv = CombinatorialPurgedCV(config)
-        >>> for train_idx, test_idx in cpcv.split(X, y):
-        ...     model.fit(X[train_idx], y[train_idx])
-        ...     score = model.score(X[test_idx], y[test_idx])
+         cpcv = CombinatorialPurgedCV(config)
+         for train_idx, test_idx in cpcv.split(X, y):
+             model.fit(X[train_idx], y[train_idx])
+             score = model.score(X[test_idx], y[test_idx])
     """
 
     def __init__(self, config: Optional[CPCVConfig] = None):
@@ -310,14 +310,14 @@ class ProbabilityOfBacktestOverfitting:
     - PBO > 0.5: Очень высокий риск (модель скорее всего overfit)
 
     Usage:
-        >>> pbo_calc = ProbabilityOfBacktestOverfitting()
-        >>> sharpe_is, sharpe_oos = [], []
-        >>> for train_idx, test_idx in cpcv.split(X):
-        ...     model.fit(X[train_idx], y[train_idx])
-        ...     sharpe_is.append(calculate_sharpe(model, X[train_idx]))
-        ...     sharpe_oos.append(calculate_sharpe(model, X[test_idx]))
-        >>> result = pbo_calc.calculate(sharpe_is, sharpe_oos)
-        >>> print(f"PBO: {result.pbo:.2%}")
+         pbo_calc = ProbabilityOfBacktestOverfitting()
+         sharpe_is, sharpe_oos = [], []
+         for train_idx, test_idx in cpcv.split(X):
+             model.fit(X[train_idx], y[train_idx])
+             sharpe_is.append(calculate_sharpe(model, X[train_idx]))
+             sharpe_oos.append(calculate_sharpe(model, X[test_idx]))
+        result = pbo_calc.calculate(sharpe_is, sharpe_oos)
+        print(f"PBO: {result.pbo:.2%}")
     """
 
     def __init__(self, n_simulations: int = 1000):
@@ -543,15 +543,15 @@ def run_cpcv_validation(
         (is_scores, oos_scores, pbo_result)
 
     Example:
-        >>> def create_model():
-        ...     return RandomForestClassifier(n_estimators=100)
-        >>> def score_model(model, X, y):
-        ...     preds = model.predict(X)
-        ...     returns = preds * y  # Simplified
-        ...     return np.mean(returns) / (np.std(returns) + 1e-8) * np.sqrt(252)
-        >>> is_scores, oos_scores, pbo = run_cpcv_validation(
-        ...     X, y, create_model, score_model
-        ... )
+        def create_model():
+             return RandomForestClassifier(n_estimators=100)
+        def score_model(model, X, y):
+             preds = model.predict(X)
+             returns = preds * y  # Simplified
+             return np.mean(returns) / (np.std(returns) + 1e-8) * np.sqrt(252)
+         is_scores, oos_scores, pbo = run_cpcv_validation(
+             X, y, create_model, score_model
+         )
     """
     config = config or CPCVConfig()
     cpcv = CombinatorialPurgedCV(config)

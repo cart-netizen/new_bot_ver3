@@ -14,6 +14,7 @@ Endpoints:
 - GET /api/ml-backtesting/statistics - Get aggregate statistics
 """
 import numpy as np
+import pandas as pd
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from pydantic import BaseModel, Field, field_validator
 from typing import Dict, Any, Optional, List
