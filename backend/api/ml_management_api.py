@@ -54,6 +54,7 @@ def _convert_numpy_types(obj: Any) -> Any:
 
     This fixes TypeError: 'float' object cannot be interpreted as an integer
     when FastAPI tries to serialize MLflow runs that contain numpy types.
+    Also fixes PydanticSerializationError for numpy.bool types.
     """
     import numpy as np
     import pandas as pd
@@ -67,11 +68,15 @@ def _convert_numpy_types(obj: Any) -> Any:
     elif isinstance(obj, (np.floating, np.float64, np.float32, np.float16)):
         return float(obj)
     elif isinstance(obj, np.bool_):
+        # Handle numpy boolean type
         return bool(obj)
     elif isinstance(obj, np.ndarray):
         return obj.tolist()
     elif pd.isna(obj):
         return None
+    elif type(obj).__module__ == 'numpy' and type(obj).__name__ == 'bool':
+        # Handle legacy numpy.bool type (deprecated but may exist in older numpy)
+        return bool(obj)
     else:
         return obj
 
@@ -276,10 +281,11 @@ async def get_training_status() -> TrainingStatusResponse:
     if training_history:
         last_completed = training_history[-1]
 
+    # Convert numpy types to Python native types for JSON serialization
     return TrainingStatusResponse(
         is_training=is_training,
-        current_job=current_training_job,
-        last_completed=last_completed
+        current_job=_convert_numpy_types(current_training_job) if current_training_job else None,
+        last_completed=_convert_numpy_types(last_completed) if last_completed else None
     )
 
 
@@ -522,11 +528,11 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
                         oos_sharpe = oos_sharpes[0] if oos_sharpes else 0
 
                         # Простой критерий: если OOS Sharpe значительно хуже IS - возможен overfit
-                        sharpe_degradation = (is_sharpe - oos_sharpe) / (abs(is_sharpe) + 1e-8)
-                        is_overfit = sharpe_degradation > 0.3  # >30% деградация = overfit risk
+                        sharpe_degradation = float((is_sharpe - oos_sharpe) / (abs(is_sharpe) + 1e-8))
+                        is_overfit = bool(sharpe_degradation > 0.3)  # >30% деградация = overfit risk
 
                         result["pbo"] = {
-                            "probability": min(max(sharpe_degradation, 0), 1),
+                            "probability": float(min(max(sharpe_degradation, 0), 1)),
                             "is_overfit": is_overfit,
                             "confidence_level": 0.5,  # Низкая confidence для single split
                             "interpretation": (
@@ -535,8 +541,8 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
                                 f"{'High overfit risk' if is_overfit else 'Acceptable generalization'}. "
                                 f"Note: Full PBO requires multiple CPCV combinations."
                             ),
-                            "is_sharpe": is_sharpe,
-                            "oos_sharpe": oos_sharpe
+                            "is_sharpe": float(is_sharpe),
+                            "oos_sharpe": float(oos_sharpe)
                         }
                         logger.info(f"Simplified PBO: IS={is_sharpe:.2f}, OOS={oos_sharpe:.2f}, degradation={sharpe_degradation:.1%}")
                 else:

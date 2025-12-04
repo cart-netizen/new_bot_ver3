@@ -425,18 +425,18 @@ class ProbabilityOfBacktestOverfitting:
             interpretation = "Very high overfitting risk. The best in-sample strategy likely won't perform well out-of-sample."
 
         result = PBOResult(
-            pbo=pbo,
-            pbo_adjusted=pbo_adjusted,
-            is_overfit=pbo > 0.5,
-            confidence_level=1.0 - pbo,
-            n_combinations=n_combinations,
+            pbo=float(pbo),
+            pbo_adjusted=float(pbo_adjusted),
+            is_overfit=bool(pbo > 0.5),
+            confidence_level=float(1.0 - pbo),
+            n_combinations=int(n_combinations),
             is_sharpe_ratios=is_sharpes.tolist(),
             oos_sharpe_ratios=oos_sharpes.tolist(),
-            rank_correlation=rank_corr,
-            best_is_idx=best_is_idx,
-            best_is_sharpe=best_is_sharpe,
-            best_is_oos_sharpe=best_is_oos_sharpe,
-            best_is_oos_rank=best_is_oos_rank,
+            rank_correlation=float(rank_corr),
+            best_is_idx=int(best_is_idx),
+            best_is_sharpe=float(best_is_sharpe),
+            best_is_oos_sharpe=float(best_is_oos_sharpe),
+            best_is_oos_rank=int(best_is_oos_rank),
             interpretation=interpretation
         )
 
