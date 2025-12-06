@@ -453,6 +453,12 @@ class Settings(BaseSettings):
     description="Enable memory profiling (adds overhead, use only for debugging)"
   )
 
+  # Skip memory analysis during cleanup (for faster cleanup)
+  SKIP_MEMORY_ANALYSIS: bool = Field(
+    default=True,  # По умолчанию True для быстрой очистки
+    description="Skip gc.get_objects() analysis during memory cleanup (saves ~5-10 sec per cleanup)"
+  )
+
   # Redis (для будущего использования)
   REDIS_URL: Optional[str] = None
   REDIS_HOST: str = "localhost"

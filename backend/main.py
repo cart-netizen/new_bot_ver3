@@ -4312,65 +4312,69 @@ class BotController:
       logger.info(f"  ✓ Garbage collector: собрано {total_collected} объектов (2 прохода)")
 
       # DIAGNOSTIC: Log object counts to identify memory leaks
-      try:
-        all_objects = gc.get_objects()
-        total_objects = len(all_objects)
+      # Skip if SKIP_MEMORY_ANALYSIS=True for faster cleanup (saves ~5-10 sec)
+      if not settings.SKIP_MEMORY_ANALYSIS:
+        try:
+          all_objects = gc.get_objects()
+          total_objects = len(all_objects)
 
-        # Count objects by type
-        type_counts = {}
-        for obj in all_objects:
-          obj_type = type(obj).__name__
-          type_counts[obj_type] = type_counts.get(obj_type, 0) + 1
+          # Count objects by type
+          type_counts = {}
+          for obj in all_objects:
+            obj_type = type(obj).__name__
+            type_counts[obj_type] = type_counts.get(obj_type, 0) + 1
 
-        # Get top 20 most common object types for detailed diagnostics
-        top_types = sorted(type_counts.items(), key=lambda x: x[1], reverse=True)[:20]
+          # Get top 20 most common object types for detailed diagnostics
+          top_types = sorted(type_counts.items(), key=lambda x: x[1], reverse=True)[:20]
 
-        logger.info(f"  📊 Total objects in memory: {total_objects:,}")
-        logger.info("  📊 Top 20 object types:")
-        for obj_type, count in top_types:
-          logger.info(f"     {obj_type}: {count:,}")
+          logger.info(f"  📊 Total objects in memory: {total_objects:,}")
+          logger.info("  📊 Top 20 object types:")
+          for obj_type, count in top_types:
+            logger.info(f"     {obj_type}: {count:,}")
 
-        # Check for specific potential leaks
-        feature_vectors = type_counts.get('FeatureVector', 0)
-        snapshots = type_counts.get('OrderBookSnapshot', 0)
-        ndarrays = type_counts.get('ndarray', 0)
+          # Check for specific potential leaks
+          feature_vectors = type_counts.get('FeatureVector', 0)
+          snapshots = type_counts.get('OrderBookSnapshot', 0)
+          ndarrays = type_counts.get('ndarray', 0)
 
-        # UPDATED THRESHOLDS based on actual steady-state measurements:
-        # For 15 symbols with optimized settings:
-        # - prev_snapshots: 20
-        # - orderbook_extractor: 15 × 20 = 300
-        # - quote_stuffing: 15 × 10 = 150
-        # - active processing: ~14
-        # Expected total: ~484 snapshots (steady state)
+          # UPDATED THRESHOLDS based on actual steady-state measurements:
+          # For 15 symbols with optimized settings:
+          # - prev_snapshots: 20
+          # - orderbook_extractor: 15 × 20 = 300
+          # - quote_stuffing: 15 × 10 = 150
+          # - active processing: ~14
+          # Expected total: ~484 snapshots (steady state)
 
-        if feature_vectors > 500:
-          logger.warning(f"  ⚠️ HIGH FeatureVector count: {feature_vectors} (expected < 500)")
+          if feature_vectors > 500:
+            logger.warning(f"  ⚠️ HIGH FeatureVector count: {feature_vectors} (expected < 500)")
 
-        if snapshots > 550:
-          # Warn if significantly above expected steady-state
-          logger.warning(f"  ⚠️ HIGH OrderBookSnapshot count: {snapshots} (expected < 550)")
-        elif snapshots > 500:
-          # Info if slightly elevated but not alarming
-          logger.info(f"  ℹ️ Elevated OrderBookSnapshot count: {snapshots} (normal range: 450-500)")
-        else:
-          # Healthy range
-          logger.debug(f"  ✓ Healthy OrderBookSnapshot count: {snapshots} (steady state)")
+          if snapshots > 550:
+            # Warn if significantly above expected steady-state
+            logger.warning(f"  ⚠️ HIGH OrderBookSnapshot count: {snapshots} (expected < 550)")
+          elif snapshots > 500:
+            # Info if slightly elevated but not alarming
+            logger.info(f"  ℹ️ Elevated OrderBookSnapshot count: {snapshots} (normal range: 450-500)")
+          else:
+            # Healthy range
+            logger.debug(f"  ✓ Healthy OrderBookSnapshot count: {snapshots} (steady state)")
 
-        if ndarrays > 5000:
-          logger.warning(f"  ⚠️ HIGH ndarray count: {ndarrays} (expected < 5000)")
+          if ndarrays > 5000:
+            logger.warning(f"  ⚠️ HIGH ndarray count: {ndarrays} (expected < 5000)")
 
-        # Additional leak diagnostics
-        dicts = type_counts.get('dict', 0)
-        lists = type_counts.get('list', 0)
-        deques = type_counts.get('deque', 0)
-        tuples = type_counts.get('tuple', 0)
-        orderbook_levels = type_counts.get('OrderBookLevel', 0)
+          # Additional leak diagnostics
+          dicts = type_counts.get('dict', 0)
+          lists = type_counts.get('list', 0)
+          deques = type_counts.get('deque', 0)
+          tuples = type_counts.get('tuple', 0)
+          orderbook_levels = type_counts.get('OrderBookLevel', 0)
 
-        logger.info(f"  📊 Data structures: dict={dicts:,}, list={lists:,}, deque={deques:,}, tuple={tuples:,}")
-        logger.info(f"  📊 Trading objects: OrderBookLevel={orderbook_levels:,}, FeatureVector={feature_vectors:,}")
+          logger.info(f"  📊 Data structures: dict={dicts:,}, list={lists:,}, deque={deques:,}, tuple={tuples:,}")
+          logger.info(f"  📊 Trading objects: OrderBookLevel={orderbook_levels:,}, FeatureVector={feature_vectors:,}")
 
-      except Exception as e:
-        logger.debug(f"  ⚠️ Object diagnostic failed: {e}")
+        except Exception as e:
+          logger.debug(f"  ⚠️ Object diagnostic failed: {e}")
+      else:
+        logger.debug("  ⏭️ Memory analysis skipped (SKIP_MEMORY_ANALYSIS=True)")
 
       # CRITICAL: Return memory to OS (CPython-specific)
       # This is essential for preventing the 13GB memory growth issue
