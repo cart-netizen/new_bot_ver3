@@ -21,6 +21,8 @@ from dataclasses import asdict, is_dataclass
 import torch
 import pandas as pd
 import numpy as np
+from mlflow.models.signature import ModelSignature
+from mlflow.types.schema import Schema, TensorSpec
 
 # Оптимизация CUDA памяти
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
@@ -349,13 +351,39 @@ class TrainingOrchestrator:
             with open(metadata_path, 'w') as f:
                 json.dump(metadata, f, indent=2)
 
-            # Log model to MLflow
+            # Log model to MLflow with signature and input_example
+            # Create model signature for MLflow schema display
+            input_schema = Schema([
+                TensorSpec(
+                    np.dtype(np.float32),
+                    shape=(-1, self.model_config.sequence_length, self.model_config.input_features),
+                    name="input"
+                )
+            ])
+            output_schema = Schema([
+                TensorSpec(
+                    np.dtype(np.float32),
+                    shape=(-1, self.model_config.num_classes),
+                    name="direction_logits"
+                )
+            ])
+            model_signature = ModelSignature(inputs=input_schema, outputs=output_schema)
+
+            # Create input example for documentation
+            input_example = np.random.randn(
+                1,
+                self.model_config.sequence_length,
+                self.model_config.input_features
+            ).astype(np.float32)
+
             model_uri = self.mlflow_tracker.log_model(
                 model=model,
                 model_name=model_name,
                 artifacts={
                     "metadata": str(metadata_path)
-                }
+                },
+                signature=model_signature,
+                input_example=input_example
             )
 
             # Register in Model Registry
@@ -389,11 +417,25 @@ class TrainingOrchestrator:
                 }
             )
 
-            # Register in MLflow Registry
+            # Register in MLflow Registry with tags
+            model_tags = {
+                "framework": "pytorch",
+                "model_type": "HybridCNNLSTM",
+                "training_mode": "manual",
+                "sequence_length": str(self.model_config.sequence_length),
+                "input_features": str(self.model_config.input_features),
+                "num_classes": str(self.model_config.num_classes),
+                "test_accuracy": f"{registry_metrics.get('accuracy', 0):.4f}",
+                "test_f1": f"{registry_metrics.get('f1', 0):.4f}",
+                "epochs": str(self.trainer_config.epochs),
+                "learning_rate": str(self.trainer_config.learning_rate),
+                "timestamp": timestamp
+            }
             mlflow_version = self.mlflow_tracker.register_model(
                 model_uri=model_uri,
                 model_name=model_name,
-                description=f"Trained model - {run_name}"
+                tags=model_tags,
+                description=f"Trained model - {run_name}. Accuracy: {registry_metrics.get('accuracy', 0):.4f}, F1: {registry_metrics.get('f1', 0):.4f}"
             )
 
             # Step 7: Export to ONNX (optional)
