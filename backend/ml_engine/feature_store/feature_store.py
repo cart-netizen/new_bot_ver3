@@ -23,6 +23,20 @@ from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Project root for resolving relative paths
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+
+
+def _resolve_path(path: str) -> Path:
+    """
+    Resolve a path to absolute.
+    If path is relative, resolve it relative to PROJECT_ROOT.
+    """
+    p = Path(path)
+    if p.is_absolute():
+        return p
+    return PROJECT_ROOT / p
+
 
 @dataclass
 class FeatureMetadata:
@@ -71,8 +85,10 @@ class FeatureStore:
             storage_path: Путь для хранения фич
             cache_ttl_seconds: TTL для online cache (секунды)
         """
-        self.storage_path = Path(storage_path)
+        # Resolve to absolute path
+        self.storage_path = _resolve_path(storage_path)
         self.storage_path.mkdir(parents=True, exist_ok=True)
+        logger.info(f"FeatureStore: Using storage path: {self.storage_path}")
 
         # Directories
         self.offline_dir = self.storage_path / "offline"
