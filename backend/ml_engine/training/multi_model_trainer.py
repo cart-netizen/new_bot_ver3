@@ -660,6 +660,180 @@ class MultiModelTrainer:
 
         return checkpoint
 
+    async def register_model_mlflow(
+        self,
+        model: nn.Module,
+        architecture: ModelArchitecture,
+        metrics: Dict[str, float],
+        training_params: Dict[str, Any]
+    ) -> Optional[str]:
+        """
+        Регистрирует модель в MLflow.
+
+        Args:
+            model: Обученная модель
+            architecture: Тип архитектуры
+            metrics: Метрики модели
+            training_params: Параметры обучения
+
+        Returns:
+            model_version или None при ошибке
+        """
+        try:
+            # Import MLflow tracker
+            from backend.ml_engine.mlflow_integration.mlflow_tracker import MLflowTracker
+            from backend.core.config import settings
+
+            # Initialize tracker
+            tracker = MLflowTracker(
+                tracking_uri=settings.MLFLOW_TRACKING_URI,
+                experiment_name=settings.MLFLOW_EXPERIMENT_NAME,
+                artifact_location=settings.MLFLOW_ARTIFACT_LOCATION
+            )
+
+            # Model name mapping
+            model_names = {
+                ModelArchitecture.CNN_LSTM: "hybrid_cnn_lstm",
+                ModelArchitecture.MPD_TRANSFORMER: "mpd_transformer",
+                ModelArchitecture.TLOB: "tlob_transformer"
+            }
+            model_name = model_names.get(architecture, architecture.value)
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            run_name = f"{model_name}_{timestamp}"
+
+            # Start MLflow run
+            run_id = tracker.start_run(
+                run_name=run_name,
+                tags={
+                    "model_type": architecture.value,
+                    "framework": "pytorch"
+                },
+                description=f"Training run for {model_name}"
+            )
+
+            # Log params
+            tracker.log_params({
+                "architecture": architecture.value,
+                "learning_rate": training_params.get("learning_rate", self.config.learning_rate),
+                "batch_size": training_params.get("batch_size", self.config.batch_size),
+                "epochs": training_params.get("epochs", self.config.epochs),
+                "weight_decay": self.config.weight_decay,
+                "dropout": training_params.get("dropout", 0.1)
+            })
+
+            # Log metrics
+            tracker.log_metrics(metrics)
+
+            # Save model artifact
+            model_path = self.checkpoint_dir / f"{model_name}_{timestamp}.pt"
+            torch.save({
+                'model_state_dict': model.state_dict(),
+                'architecture': architecture.value,
+                'config': self.config.__dict__,
+                'metrics': metrics
+            }, model_path)
+
+            # Log model to MLflow
+            model_uri = tracker.log_model(
+                model=model,
+                model_name=model_name,
+                artifacts={"model_checkpoint": str(model_path)}
+            )
+
+            # Register model
+            model_tags = {
+                "framework": "pytorch",
+                "model_type": architecture.value,
+                "training_mode": "manual",
+                "accuracy": f"{metrics.get('accuracy', 0):.4f}",
+                "val_loss": f"{metrics.get('val_loss', 0):.4f}",
+                "timestamp": timestamp
+            }
+
+            model_version = tracker.register_model(
+                model_uri=model_uri,
+                model_name=model_name,
+                tags=model_tags,
+                description=f"Trained {model_name} model. Accuracy: {metrics.get('accuracy', 0):.4f}"
+            )
+
+            tracker.end_run(status="FINISHED")
+
+            logger.info(f"Model registered in MLflow: {model_name} v{model_version}")
+
+            return model_version
+
+        except ImportError:
+            logger.warning("MLflow not available, skipping registration")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to register model in MLflow: {e}")
+            return None
+
+    async def register_model_registry(
+        self,
+        model: nn.Module,
+        architecture: ModelArchitecture,
+        metrics: Dict[str, float],
+        training_params: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Регистрирует модель во внутреннем реестре.
+
+        Args:
+            model: Обученная модель
+            architecture: Тип архитектуры
+            metrics: Метрики модели
+            training_params: Параметры обучения
+
+        Returns:
+            ModelInfo или None при ошибке
+        """
+        try:
+            from backend.ml_engine.inference.model_registry import ModelRegistry
+
+            # Initialize registry
+            registry = ModelRegistry()
+
+            # Model name mapping
+            model_names = {
+                ModelArchitecture.CNN_LSTM: "hybrid_cnn_lstm",
+                ModelArchitecture.MPD_TRANSFORMER: "mpd_transformer",
+                ModelArchitecture.TLOB: "tlob_transformer"
+            }
+            model_name = model_names.get(architecture, architecture.value)
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            # Save model
+            model_path = self.checkpoint_dir / f"{model_name}_{timestamp}.pt"
+            torch.save({
+                'model_state_dict': model.state_dict(),
+                'architecture': architecture.value,
+                'config': self.config.__dict__,
+                'metrics': metrics
+            }, model_path)
+
+            # Register
+            model_info = await registry.register_model(
+                name=model_name,
+                version=timestamp,
+                model_path=str(model_path),
+                model_type=architecture.value,
+                description=f"Trained {model_name} model",
+                metrics=metrics,
+                training_params=training_params
+            )
+
+            logger.info(f"Model registered: {model_name} v{timestamp}")
+
+            return model_info
+
+        except Exception as e:
+            logger.error(f"Failed to register model: {e}")
+            return None
+
 
 # ============================================================================
 # FACTORY FUNCTIONS

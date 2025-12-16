@@ -170,7 +170,10 @@ interface MLflowRun {
   };
 }
 
-type TabType = 'training' | 'models' | 'retraining' | 'mlflow' | 'statistics' | 'layering' | 'optimization';
+type TabType = 'training' | 'mpd_training' | 'tlob_training' | 'models' | 'retraining' | 'mlflow' | 'statistics' | 'layering' | 'optimization';
+
+// Model Registry sub-tab types
+type ModelSubTabType = 'cnn_lstm' | 'mpd_transformer' | 'tlob';
 
 /**
  * ============================================================
@@ -230,6 +233,7 @@ function Tooltip({ content, children }: TooltipProps) {
 export function MLManagementPage() {
   // ========== STATE ==========
   const [activeTab, setActiveTab] = useState<TabType>('training');
+  const [modelSubTab, setModelSubTab] = useState<ModelSubTabType>('cnn_lstm');
 
   // Training state
   const [trainingParams, setTrainingParams] = useState<TrainingParams>({
@@ -320,6 +324,68 @@ export function MLManagementPage() {
   const [layeringMetrics, setLayeringMetrics] = useState<any>(null);
   const [isLayeringTraining, setIsLayeringTraining] = useState(false);
   const [layeringTrainingOutput, setLayeringTrainingOutput] = useState<string>('');
+
+  // MPD Transformer training state
+  const [mpdTrainingStatus, setMpdTrainingStatus] = useState<{
+    is_training: boolean;
+    task_id?: string;
+    current_epoch: number;
+    total_epochs: number;
+    progress: number;
+    status: string;
+    error?: string;
+  }>({
+    is_training: false,
+    current_epoch: 0,
+    total_epochs: 0,
+    progress: 0,
+    status: 'idle'
+  });
+
+  const [mpdTrainingParams, setMpdTrainingParams] = useState({
+    epochs: 150,
+    learning_rate: 0.0001,
+    batch_size: 32,
+    symbols: ['BTCUSDT'],
+    days: 30,
+    embed_dim: 256,
+    num_layers: 6,
+    num_heads: 8,
+    dropout: 0.1,
+    use_amp: true,
+    data_path: 'D:\\PYTHON\\Bot_ver3_stakan_new\\data'
+  });
+
+  // TLOB Transformer training state
+  const [tlobTrainingStatus, setTlobTrainingStatus] = useState<{
+    is_training: boolean;
+    task_id?: string;
+    current_epoch: number;
+    total_epochs: number;
+    progress: number;
+    status: string;
+    error?: string;
+  }>({
+    is_training: false,
+    current_epoch: 0,
+    total_epochs: 0,
+    progress: 0,
+    status: 'idle'
+  });
+
+  const [tlobTrainingParams, setTlobTrainingParams] = useState({
+    epochs: 150,
+    learning_rate: 0.0001,
+    batch_size: 16,
+    symbols: ['BTCUSDT'],
+    days: 30,
+    num_levels: 20,
+    sequence_length: 100,
+    num_temporal_layers: 4,
+    dropout: 0.1,
+    use_amp: true,
+    data_path: 'D:\\PYTHON\\Bot_ver3_stakan_new\\data'
+  });
 
   // Hyperparameter Optimization state
   const [optimizationStatus, setOptimizationStatus] = useState<{
@@ -1927,9 +1993,142 @@ export function MLManagementPage() {
 
   /**
    * ============================================================
-   * RENDER FUNCTIONS - MODELS TAB
+   * RENDER FUNCTIONS - MODELS TAB (with sub-tabs)
    * ============================================================
    */
+
+  // Model type configuration
+  const modelTypeConfig: Record<ModelSubTabType, { name: string; icon: any; color: string; filter: string }> = {
+    cnn_lstm: { name: 'CNN-LSTM v2', icon: Rocket, color: 'text-blue-400', filter: 'hybrid_cnn_lstm' },
+    mpd_transformer: { name: 'MPD Transformer', icon: Brain, color: 'text-purple-400', filter: 'mpd_transformer' },
+    tlob: { name: 'TLOB Transformer', icon: Activity, color: 'text-green-400', filter: 'tlob' }
+  };
+
+  // Filter models by type
+  const getFilteredModels = (modelType: ModelSubTabType) => {
+    const filter = modelTypeConfig[modelType].filter;
+    return models.filter(m => m.name.includes(filter) || m.name === filter);
+  };
+
+  // Render model table for a specific type
+  const renderModelTable = (modelType: ModelSubTabType) => {
+    const filteredModels = getFilteredModels(modelType);
+    const config = modelTypeConfig[modelType];
+
+    if (filteredModels.length === 0) {
+      return (
+        <div className="p-12 text-center">
+          <config.icon className={cn('h-16 w-16 mx-auto mb-4', config.color, 'opacity-50')} />
+          <p className="text-gray-400 text-lg mb-2">No {config.name} models found</p>
+          <p className="text-gray-500 text-sm">
+            Train your first {config.name} model to get started
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead className="bg-gray-800">
+            <tr>
+              <th className="text-left py-4 px-6 text-sm font-medium text-gray-400">Version</th>
+              <th className="text-left py-4 px-6 text-sm font-medium text-gray-400">Stage</th>
+              <th className="text-left py-4 px-6 text-sm font-medium text-gray-400">Accuracy</th>
+              <th className="text-left py-4 px-6 text-sm font-medium text-gray-400">Precision</th>
+              <th className="text-left py-4 px-6 text-sm font-medium text-gray-400">Recall</th>
+              <th className="text-left py-4 px-6 text-sm font-medium text-gray-400">F1 Score</th>
+              <th className="text-left py-4 px-6 text-sm font-medium text-gray-400">Created</th>
+              <th className="text-left py-4 px-6 text-sm font-medium text-gray-400">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-800">
+            {filteredModels.map(model => (
+              <tr
+                key={`${model.name}_${model.version}`}
+                className="hover:bg-gray-800/50 transition-colors"
+              >
+                <td className="py-4 px-6">
+                  <span className="font-mono text-sm text-white">{model.version}</span>
+                </td>
+                <td className="py-4 px-6">
+                  <span
+                    className={cn(
+                      'px-3 py-1 rounded-full text-xs font-semibold',
+                      model.stage === 'production'
+                        ? 'bg-green-500/20 text-green-400'
+                        : model.stage === 'staging'
+                        ? 'bg-yellow-500/20 text-yellow-400'
+                        : 'bg-gray-500/20 text-gray-400'
+                    )}
+                  >
+                    {model.stage.toUpperCase()}
+                  </span>
+                </td>
+                <td className="py-4 px-6">
+                  <span className="text-white font-semibold">
+                    {model.metrics.accuracy?.toFixed(4) || 'N/A'}
+                  </span>
+                </td>
+                <td className="py-4 px-6">
+                  <span className="text-gray-300">
+                    {model.metrics.precision?.toFixed(4) || 'N/A'}
+                  </span>
+                </td>
+                <td className="py-4 px-6">
+                  <span className="text-gray-300">
+                    {model.metrics.recall?.toFixed(4) || 'N/A'}
+                  </span>
+                </td>
+                <td className="py-4 px-6">
+                  <span className="text-gray-300">{model.metrics.f1?.toFixed(4) || 'N/A'}</span>
+                </td>
+                <td className="py-4 px-6">
+                  <span className="text-sm text-gray-400">
+                    {new Date(model.created_at).toLocaleDateString()}
+                  </span>
+                </td>
+                <td className="py-4 px-6">
+                  <div className="flex items-center gap-2">
+                    {model.stage !== 'production' && (
+                      <Tooltip content="Promote to production">
+                        <button
+                          onClick={() => handlePromoteModel(model.name, model.version, 'production')}
+                          className="p-2 hover:bg-gray-700 rounded-lg transition-colors group"
+                        >
+                          <Upload className="h-4 w-4 text-green-400 group-hover:text-green-300" />
+                        </button>
+                      </Tooltip>
+                    )}
+
+                    {model.stage === 'production' && (
+                      <Tooltip content="Move to staging">
+                        <button
+                          onClick={() => handlePromoteModel(model.name, model.version, 'staging')}
+                          className="p-2 hover:bg-gray-700 rounded-lg transition-colors group"
+                        >
+                          <Download className="h-4 w-4 text-yellow-400 group-hover:text-yellow-300" />
+                        </button>
+                      </Tooltip>
+                    )}
+
+                    <Tooltip content="Download model">
+                      <button
+                        onClick={() => handleDownloadModel(model.name, model.version)}
+                        className="p-2 hover:bg-gray-700 rounded-lg transition-colors group"
+                      >
+                        <Download className="h-4 w-4 text-blue-400 group-hover:text-blue-300" />
+                      </button>
+                    </Tooltip>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
 
   const renderModelsTab = () => (
     <div className="space-y-6">
@@ -1942,7 +2141,7 @@ export function MLManagementPage() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Filter */}
+            {/* Stage Filter */}
             <select
               className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
               value={modelsFilter}
@@ -1967,126 +2166,88 @@ export function MLManagementPage() {
             </Tooltip>
           </div>
         </div>
+
+        {/* Model Type Sub-tabs */}
+        <div className="flex gap-2 mt-6 border-t border-gray-700 pt-6">
+          {(Object.keys(modelTypeConfig) as ModelSubTabType[]).map(type => {
+            const config = modelTypeConfig[type];
+            const Icon = config.icon;
+            const count = getFilteredModels(type).length;
+
+            return (
+              <button
+                key={type}
+                onClick={() => setModelSubTab(type)}
+                className={cn(
+                  'flex items-center gap-2 px-4 py-2 rounded-lg transition-all',
+                  modelSubTab === type
+                    ? 'bg-primary/20 text-primary border border-primary/50'
+                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700 border border-transparent'
+                )}
+              >
+                <Icon className={cn('h-4 w-4', modelSubTab === type ? 'text-primary' : config.color)} />
+                <span>{config.name}</span>
+                <span className={cn(
+                  'px-2 py-0.5 text-xs rounded-full',
+                  modelSubTab === type
+                    ? 'bg-primary/30 text-primary'
+                    : 'bg-gray-700 text-gray-400'
+                )}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Model Type Info Card */}
+      <div className={cn(
+        'bg-surface border rounded-lg p-4 flex items-start gap-4',
+        modelSubTab === 'cnn_lstm' ? 'border-blue-500/30' :
+        modelSubTab === 'mpd_transformer' ? 'border-purple-500/30' : 'border-green-500/30'
+      )}>
+        {modelSubTab === 'cnn_lstm' && (
+          <>
+            <Rocket className="h-8 w-8 text-blue-400 flex-shrink-0" />
+            <div>
+              <h3 className="font-semibold text-white">CNN-LSTM v2</h3>
+              <p className="text-sm text-gray-400 mt-1">
+                Hybrid model combining Convolutional Neural Networks for feature extraction with LSTM for temporal dependencies.
+                Trained on 112 features (50 LOB + 25 Candle + 37 Indicators).
+              </p>
+            </div>
+          </>
+        )}
+        {modelSubTab === 'mpd_transformer' && (
+          <>
+            <Brain className="h-8 w-8 text-purple-400 flex-shrink-0" />
+            <div>
+              <h3 className="font-semibold text-white">MPD Transformer</h3>
+              <p className="text-sm text-gray-400 mt-1">
+                Vision Transformer (ViT) adapted for financial time series. Converts 112 features × 60 timesteps
+                to 2D patches and processes them with multi-head attention.
+              </p>
+            </div>
+          </>
+        )}
+        {modelSubTab === 'tlob' && (
+          <>
+            <Activity className="h-8 w-8 text-green-400 flex-shrink-0" />
+            <div>
+              <h3 className="font-semibold text-white">TLOB Transformer</h3>
+              <p className="text-sm text-gray-400 mt-1">
+                Specialized model for raw Limit Order Book data. Combines Spatial CNN for cross-level patterns
+                with Temporal Transformer for sequential dependencies. Multi-horizon predictions.
+              </p>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Models Table */}
       <div className="bg-surface border border-gray-800 rounded-lg overflow-hidden">
-        {models.length === 0 ? (
-          <div className="p-12 text-center">
-            <Database className="h-16 w-16 text-gray-600 mx-auto mb-4" />
-            <p className="text-gray-400 text-lg mb-2">No models found</p>
-            <p className="text-gray-500 text-sm">Train your first model to get started</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-800">
-                <tr>
-                  <th className="text-left py-4 px-6 text-sm font-medium text-gray-400">Name</th>
-                  <th className="text-left py-4 px-6 text-sm font-medium text-gray-400">Version</th>
-                  <th className="text-left py-4 px-6 text-sm font-medium text-gray-400">Stage</th>
-                  <th className="text-left py-4 px-6 text-sm font-medium text-gray-400">Accuracy</th>
-                  <th className="text-left py-4 px-6 text-sm font-medium text-gray-400">
-                    Precision
-                  </th>
-                  <th className="text-left py-4 px-6 text-sm font-medium text-gray-400">Recall</th>
-                  <th className="text-left py-4 px-6 text-sm font-medium text-gray-400">F1 Score</th>
-                  <th className="text-left py-4 px-6 text-sm font-medium text-gray-400">Created</th>
-                  <th className="text-left py-4 px-6 text-sm font-medium text-gray-400">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-800">
-                {models.map(model => (
-                  <tr
-                    key={`${model.name}_${model.version}`}
-                    className="hover:bg-gray-800/50 transition-colors"
-                  >
-                    <td className="py-4 px-6">
-                      <div className="flex items-center gap-2">
-                        <Brain className="h-4 w-4 text-primary" />
-                        <span className="text-white font-medium">{model.name}</span>
-                      </div>
-                    </td>
-                    <td className="py-4 px-6">
-                      <span className="font-mono text-sm text-gray-400">{model.version}</span>
-                    </td>
-                    <td className="py-4 px-6">
-                      <span
-                        className={cn(
-                          'px-3 py-1 rounded-full text-xs font-semibold',
-                          model.stage === 'production'
-                            ? 'bg-green-500/20 text-green-400'
-                            : model.stage === 'staging'
-                            ? 'bg-yellow-500/20 text-yellow-400'
-                            : 'bg-gray-500/20 text-gray-400'
-                        )}
-                      >
-                        {model.stage.toUpperCase()}
-                      </span>
-                    </td>
-                    <td className="py-4 px-6">
-                      <span className="text-white font-semibold">
-                        {model.metrics.accuracy?.toFixed(4) || 'N/A'}
-                      </span>
-                    </td>
-                    <td className="py-4 px-6">
-                      <span className="text-gray-300">
-                        {model.metrics.precision?.toFixed(4) || 'N/A'}
-                      </span>
-                    </td>
-                    <td className="py-4 px-6">
-                      <span className="text-gray-300">
-                        {model.metrics.recall?.toFixed(4) || 'N/A'}
-                      </span>
-                    </td>
-                    <td className="py-4 px-6">
-                      <span className="text-gray-300">{model.metrics.f1?.toFixed(4) || 'N/A'}</span>
-                    </td>
-                    <td className="py-4 px-6">
-                      <span className="text-sm text-gray-400">
-                        {new Date(model.created_at).toLocaleDateString()}
-                      </span>
-                    </td>
-                    <td className="py-4 px-6">
-                      <div className="flex items-center gap-2">
-                        {model.stage !== 'production' && (
-                          <Tooltip content="Promote to production">
-                            <button
-                              onClick={() => handlePromoteModel(model.name, model.version, 'production')}
-                              className="p-2 hover:bg-gray-700 rounded-lg transition-colors group"
-                            >
-                              <Upload className="h-4 w-4 text-green-400 group-hover:text-green-300" />
-                            </button>
-                          </Tooltip>
-                        )}
-
-                        {model.stage === 'production' && (
-                          <Tooltip content="Move to staging">
-                            <button
-                              onClick={() => handlePromoteModel(model.name, model.version, 'staging')}
-                              className="p-2 hover:bg-gray-700 rounded-lg transition-colors group"
-                            >
-                              <Download className="h-4 w-4 text-yellow-400 group-hover:text-yellow-300" />
-                            </button>
-                          </Tooltip>
-                        )}
-
-                        <Tooltip content="Download model">
-                          <button
-                            onClick={() => handleDownloadModel(model.name, model.version)}
-                            className="p-2 hover:bg-gray-700 rounded-lg transition-colors group"
-                          >
-                            <Download className="h-4 w-4 text-blue-400 group-hover:text-blue-300" />
-                          </button>
-                        </Tooltip>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        {renderModelTable(modelSubTab)}
       </div>
     </div>
   );
@@ -3320,13 +3481,679 @@ export function MLManagementPage() {
 
   /**
    * ============================================================
+   * RENDER FUNCTIONS - MPD TRANSFORMER TRAINING TAB
+   * ============================================================
+   */
+
+  // Handle MPD training start
+  const handleStartMPDTraining = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const response = await fetch('/api/ensemble/training/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model_type: 'mpd_transformer',
+          epochs: mpdTrainingParams.epochs,
+          learning_rate: mpdTrainingParams.learning_rate,
+          symbols: mpdTrainingParams.symbols,
+          days: mpdTrainingParams.days
+        })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setMpdTrainingStatus(prev => ({
+          ...prev,
+          is_training: true,
+          task_id: result.task_id,
+          status: 'running',
+          total_epochs: mpdTrainingParams.epochs
+        }));
+
+        // Start polling for status
+        const pollStatus = async () => {
+          const statusResponse = await fetch(`/api/ensemble/training/status/${result.task_id}`);
+          const statusData = await statusResponse.json();
+
+          setMpdTrainingStatus(prev => ({
+            ...prev,
+            current_epoch: statusData.current_epoch || 0,
+            progress: statusData.progress || 0,
+            status: statusData.status,
+            error: statusData.error
+          }));
+
+          if (statusData.status === 'running') {
+            setTimeout(pollStatus, 2000);
+          } else {
+            setMpdTrainingStatus(prev => ({
+              ...prev,
+              is_training: false
+            }));
+          }
+        };
+
+        pollStatus();
+      } else {
+        setError(result.message || 'Failed to start training');
+      }
+    } catch (err) {
+      setError('Failed to start MPD training');
+      console.error('MPD Training failed:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const renderMPDTrainingTab = () => (
+    <div className="space-y-6">
+      {/* Training Status */}
+      <div className="bg-surface border border-gray-800 rounded-lg p-6">
+        <div className="flex items-center gap-3 mb-6">
+          <Brain className="h-6 w-6 text-primary" />
+          <h2 className="text-xl font-semibold">MPD Transformer Training</h2>
+          {mpdTrainingStatus.is_training && (
+            <span className="px-3 py-1 bg-primary/20 text-primary rounded-full text-sm animate-pulse">
+              Training...
+            </span>
+          )}
+        </div>
+
+        {mpdTrainingStatus.is_training ? (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-400">Task ID</p>
+                <p className="font-mono text-white">{mpdTrainingStatus.task_id}</p>
+              </div>
+              <span className="px-3 py-1 bg-blue-500/20 text-blue-400 rounded-full text-sm">
+                {mpdTrainingStatus.status}
+              </span>
+            </div>
+
+            <div>
+              <div className="flex justify-between text-sm mb-2">
+                <span className="text-gray-400">
+                  Epoch {mpdTrainingStatus.current_epoch} / {mpdTrainingStatus.total_epochs}
+                </span>
+                <span className="text-white">{mpdTrainingStatus.progress}%</span>
+              </div>
+              <div className="w-full bg-gray-700 rounded-full h-3">
+                <div
+                  className="bg-gradient-to-r from-primary to-blue-500 rounded-full h-3 transition-all duration-500"
+                  style={{ width: `${mpdTrainingStatus.progress}%` }}
+                />
+              </div>
+            </div>
+
+            {mpdTrainingStatus.error && (
+              <div className="p-4 bg-red-500/10 border border-red-500/50 rounded-lg">
+                <p className="text-red-400">{mpdTrainingStatus.error}</p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="text-center py-6">
+            <p className="text-gray-400 mb-2">Configure and start MPD Transformer training</p>
+            <p className="text-sm text-gray-500">
+              Vision Transformer model for financial time series analysis
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Data Source */}
+      <div className="bg-surface border border-gray-800 rounded-lg p-6">
+        <div className="flex items-center gap-3 mb-6">
+          <Database className="h-6 w-6 text-primary" />
+          <h2 className="text-xl font-semibold">Data Source</h2>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">
+              Data Path
+            </label>
+            <input
+              type="text"
+              placeholder="D:\PYTHON\Bot_ver3_stakan_new\data"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white font-mono text-sm focus:outline-none focus:border-primary"
+              value={mpdTrainingParams.data_path}
+              onChange={e => setMpdTrainingParams({ ...mpdTrainingParams, data_path: e.target.value })}
+              disabled={mpdTrainingStatus.is_training}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-400 mb-2">Symbol</label>
+              <select
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
+                value={mpdTrainingParams.symbols[0]}
+                onChange={e => setMpdTrainingParams({ ...mpdTrainingParams, symbols: [e.target.value] })}
+                disabled={mpdTrainingStatus.is_training}
+              >
+                <option value="BTCUSDT">BTCUSDT</option>
+                <option value="ETHUSDT">ETHUSDT</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-400 mb-2">Days of Data</label>
+              <input
+                type="number"
+                min="1"
+                max="365"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
+                value={mpdTrainingParams.days}
+                onChange={e => setMpdTrainingParams({ ...mpdTrainingParams, days: parseInt(e.target.value) })}
+                disabled={mpdTrainingStatus.is_training}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Training Configuration */}
+      <div className="bg-surface border border-gray-800 rounded-lg p-6">
+        <div className="flex items-center gap-3 mb-6">
+          <Settings className="h-6 w-6 text-primary" />
+          <h2 className="text-xl font-semibold">Training Configuration</h2>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">Epochs</label>
+            <input
+              type="number"
+              min="1"
+              max="500"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
+              value={mpdTrainingParams.epochs}
+              onChange={e => setMpdTrainingParams({ ...mpdTrainingParams, epochs: parseInt(e.target.value) })}
+              disabled={mpdTrainingStatus.is_training}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">Batch Size</label>
+            <input
+              type="number"
+              min="8"
+              max="128"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
+              value={mpdTrainingParams.batch_size}
+              onChange={e => setMpdTrainingParams({ ...mpdTrainingParams, batch_size: parseInt(e.target.value) })}
+              disabled={mpdTrainingStatus.is_training}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">Learning Rate</label>
+            <input
+              type="number"
+              step="0.00001"
+              min="0.00001"
+              max="0.01"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
+              value={mpdTrainingParams.learning_rate}
+              onChange={e => setMpdTrainingParams({ ...mpdTrainingParams, learning_rate: parseFloat(e.target.value) })}
+              disabled={mpdTrainingStatus.is_training}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">Embed Dimension</label>
+            <select
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
+              value={mpdTrainingParams.embed_dim}
+              onChange={e => setMpdTrainingParams({ ...mpdTrainingParams, embed_dim: parseInt(e.target.value) })}
+              disabled={mpdTrainingStatus.is_training}
+            >
+              <option value="128">128</option>
+              <option value="256">256</option>
+              <option value="512">512</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">Transformer Layers</label>
+            <select
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
+              value={mpdTrainingParams.num_layers}
+              onChange={e => setMpdTrainingParams({ ...mpdTrainingParams, num_layers: parseInt(e.target.value) })}
+              disabled={mpdTrainingStatus.is_training}
+            >
+              <option value="4">4</option>
+              <option value="6">6</option>
+              <option value="8">8</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">Attention Heads</label>
+            <select
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
+              value={mpdTrainingParams.num_heads}
+              onChange={e => setMpdTrainingParams({ ...mpdTrainingParams, num_heads: parseInt(e.target.value) })}
+              disabled={mpdTrainingStatus.is_training}
+            >
+              <option value="4">4</option>
+              <option value="8">8</option>
+              <option value="16">16</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">Dropout</label>
+            <input
+              type="number"
+              step="0.05"
+              min="0"
+              max="0.5"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
+              value={mpdTrainingParams.dropout}
+              onChange={e => setMpdTrainingParams({ ...mpdTrainingParams, dropout: parseFloat(e.target.value) })}
+              disabled={mpdTrainingStatus.is_training}
+            />
+          </div>
+        </div>
+
+        {/* Start Training Button */}
+        <button
+          onClick={handleStartMPDTraining}
+          disabled={mpdTrainingStatus.is_training || loading}
+          className={cn(
+            'w-full py-4 rounded-lg font-semibold flex items-center justify-center gap-3 transition-all',
+            mpdTrainingStatus.is_training || loading
+              ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+              : 'bg-gradient-to-r from-primary to-blue-500 text-white hover:opacity-90'
+          )}
+        >
+          {mpdTrainingStatus.is_training ? (
+            <>
+              <RefreshCw className="h-5 w-5 animate-spin" />
+              Training in Progress...
+            </>
+          ) : (
+            <>
+              <PlayCircle className="h-5 w-5" />
+              Start MPD Transformer Training
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Model Info */}
+      <div className="bg-surface border border-gray-800 rounded-lg p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <Info className="h-6 w-6 text-blue-400" />
+          <h2 className="text-xl font-semibold">MPD Transformer Info</h2>
+        </div>
+        <div className="space-y-2 text-sm text-gray-400">
+          <p><span className="text-gray-300">Architecture:</span> Vision Transformer (ViT) adapted for time series</p>
+          <p><span className="text-gray-300">Input:</span> 112 features × 60 timesteps converted to 2D patches</p>
+          <p><span className="text-gray-300">Output:</span> Direction (3 classes), Confidence, Expected Return</p>
+          <p><span className="text-gray-300">GPU Memory:</span> ~4-6 GB for training</p>
+        </div>
+      </div>
+    </div>
+  );
+
+  /**
+   * ============================================================
+   * RENDER FUNCTIONS - TLOB TRANSFORMER TRAINING TAB
+   * ============================================================
+   */
+
+  // Handle TLOB training start
+  const handleStartTLOBTraining = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const response = await fetch('/api/ensemble/training/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model_type: 'tlob',
+          epochs: tlobTrainingParams.epochs,
+          learning_rate: tlobTrainingParams.learning_rate,
+          symbols: tlobTrainingParams.symbols,
+          days: tlobTrainingParams.days
+        })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setTlobTrainingStatus(prev => ({
+          ...prev,
+          is_training: true,
+          task_id: result.task_id,
+          status: 'running',
+          total_epochs: tlobTrainingParams.epochs
+        }));
+
+        // Start polling for status
+        const pollStatus = async () => {
+          const statusResponse = await fetch(`/api/ensemble/training/status/${result.task_id}`);
+          const statusData = await statusResponse.json();
+
+          setTlobTrainingStatus(prev => ({
+            ...prev,
+            current_epoch: statusData.current_epoch || 0,
+            progress: statusData.progress || 0,
+            status: statusData.status,
+            error: statusData.error
+          }));
+
+          if (statusData.status === 'running') {
+            setTimeout(pollStatus, 2000);
+          } else {
+            setTlobTrainingStatus(prev => ({
+              ...prev,
+              is_training: false
+            }));
+          }
+        };
+
+        pollStatus();
+      } else {
+        setError(result.message || 'Failed to start training');
+      }
+    } catch (err) {
+      setError('Failed to start TLOB training');
+      console.error('TLOB Training failed:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const renderTLOBTrainingTab = () => (
+    <div className="space-y-6">
+      {/* Training Status */}
+      <div className="bg-surface border border-gray-800 rounded-lg p-6">
+        <div className="flex items-center gap-3 mb-6">
+          <Activity className="h-6 w-6 text-primary" />
+          <h2 className="text-xl font-semibold">TLOB Transformer Training</h2>
+          {tlobTrainingStatus.is_training && (
+            <span className="px-3 py-1 bg-primary/20 text-primary rounded-full text-sm animate-pulse">
+              Training...
+            </span>
+          )}
+        </div>
+
+        {tlobTrainingStatus.is_training ? (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-400">Task ID</p>
+                <p className="font-mono text-white">{tlobTrainingStatus.task_id}</p>
+              </div>
+              <span className="px-3 py-1 bg-blue-500/20 text-blue-400 rounded-full text-sm">
+                {tlobTrainingStatus.status}
+              </span>
+            </div>
+
+            <div>
+              <div className="flex justify-between text-sm mb-2">
+                <span className="text-gray-400">
+                  Epoch {tlobTrainingStatus.current_epoch} / {tlobTrainingStatus.total_epochs}
+                </span>
+                <span className="text-white">{tlobTrainingStatus.progress}%</span>
+              </div>
+              <div className="w-full bg-gray-700 rounded-full h-3">
+                <div
+                  className="bg-gradient-to-r from-green-500 to-teal-500 rounded-full h-3 transition-all duration-500"
+                  style={{ width: `${tlobTrainingStatus.progress}%` }}
+                />
+              </div>
+            </div>
+
+            {tlobTrainingStatus.error && (
+              <div className="p-4 bg-red-500/10 border border-red-500/50 rounded-lg">
+                <p className="text-red-400">{tlobTrainingStatus.error}</p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="text-center py-6">
+            <p className="text-gray-400 mb-2">Configure and start TLOB Transformer training</p>
+            <p className="text-sm text-gray-500">
+              Specialized model for Limit Order Book data analysis
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Important Notice */}
+      <div className="bg-yellow-500/10 border border-yellow-500/50 rounded-lg p-4 flex items-start gap-3">
+        <AlertTriangle className="h-5 w-5 text-yellow-400 flex-shrink-0 mt-0.5" />
+        <div>
+          <p className="text-yellow-400 font-medium">Raw LOB Data Required</p>
+          <p className="text-yellow-300 text-sm mt-1">
+            TLOB Transformer requires raw order book data. Make sure the Raw LOB Collector has been running
+            and collecting data before training. Without sufficient LOB data, training will fail.
+          </p>
+        </div>
+      </div>
+
+      {/* Data Source */}
+      <div className="bg-surface border border-gray-800 rounded-lg p-6">
+        <div className="flex items-center gap-3 mb-6">
+          <Database className="h-6 w-6 text-primary" />
+          <h2 className="text-xl font-semibold">Data Source</h2>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">
+              Data Path (Raw LOB)
+            </label>
+            <input
+              type="text"
+              placeholder="D:\PYTHON\Bot_ver3_stakan_new\data"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white font-mono text-sm focus:outline-none focus:border-primary"
+              value={tlobTrainingParams.data_path}
+              onChange={e => setTlobTrainingParams({ ...tlobTrainingParams, data_path: e.target.value })}
+              disabled={tlobTrainingStatus.is_training}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-400 mb-2">Symbol</label>
+              <select
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
+                value={tlobTrainingParams.symbols[0]}
+                onChange={e => setTlobTrainingParams({ ...tlobTrainingParams, symbols: [e.target.value] })}
+                disabled={tlobTrainingStatus.is_training}
+              >
+                <option value="BTCUSDT">BTCUSDT</option>
+                <option value="ETHUSDT">ETHUSDT</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-400 mb-2">Days of Data</label>
+              <input
+                type="number"
+                min="1"
+                max="365"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
+                value={tlobTrainingParams.days}
+                onChange={e => setTlobTrainingParams({ ...tlobTrainingParams, days: parseInt(e.target.value) })}
+                disabled={tlobTrainingStatus.is_training}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Training Configuration */}
+      <div className="bg-surface border border-gray-800 rounded-lg p-6">
+        <div className="flex items-center gap-3 mb-6">
+          <Settings className="h-6 w-6 text-primary" />
+          <h2 className="text-xl font-semibold">Training Configuration</h2>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">Epochs</label>
+            <input
+              type="number"
+              min="1"
+              max="500"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
+              value={tlobTrainingParams.epochs}
+              onChange={e => setTlobTrainingParams({ ...tlobTrainingParams, epochs: parseInt(e.target.value) })}
+              disabled={tlobTrainingStatus.is_training}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">Batch Size</label>
+            <input
+              type="number"
+              min="4"
+              max="64"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
+              value={tlobTrainingParams.batch_size}
+              onChange={e => setTlobTrainingParams({ ...tlobTrainingParams, batch_size: parseInt(e.target.value) })}
+              disabled={tlobTrainingStatus.is_training}
+            />
+            <p className="text-xs text-gray-500 mt-1">TLOB needs more memory, use smaller batch</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">Learning Rate</label>
+            <input
+              type="number"
+              step="0.00001"
+              min="0.00001"
+              max="0.01"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
+              value={tlobTrainingParams.learning_rate}
+              onChange={e => setTlobTrainingParams({ ...tlobTrainingParams, learning_rate: parseFloat(e.target.value) })}
+              disabled={tlobTrainingStatus.is_training}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">Order Book Levels</label>
+            <select
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
+              value={tlobTrainingParams.num_levels}
+              onChange={e => setTlobTrainingParams({ ...tlobTrainingParams, num_levels: parseInt(e.target.value) })}
+              disabled={tlobTrainingStatus.is_training}
+            >
+              <option value="10">10 levels</option>
+              <option value="20">20 levels</option>
+              <option value="50">50 levels</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">Sequence Length</label>
+            <select
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
+              value={tlobTrainingParams.sequence_length}
+              onChange={e => setTlobTrainingParams({ ...tlobTrainingParams, sequence_length: parseInt(e.target.value) })}
+              disabled={tlobTrainingStatus.is_training}
+            >
+              <option value="50">50 snapshots</option>
+              <option value="100">100 snapshots</option>
+              <option value="200">200 snapshots</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">Temporal Layers</label>
+            <select
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
+              value={tlobTrainingParams.num_temporal_layers}
+              onChange={e => setTlobTrainingParams({ ...tlobTrainingParams, num_temporal_layers: parseInt(e.target.value) })}
+              disabled={tlobTrainingStatus.is_training}
+            >
+              <option value="2">2</option>
+              <option value="4">4</option>
+              <option value="6">6</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">Dropout</label>
+            <input
+              type="number"
+              step="0.05"
+              min="0"
+              max="0.5"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
+              value={tlobTrainingParams.dropout}
+              onChange={e => setTlobTrainingParams({ ...tlobTrainingParams, dropout: parseFloat(e.target.value) })}
+              disabled={tlobTrainingStatus.is_training}
+            />
+          </div>
+        </div>
+
+        {/* Start Training Button */}
+        <button
+          onClick={handleStartTLOBTraining}
+          disabled={tlobTrainingStatus.is_training || loading}
+          className={cn(
+            'w-full py-4 rounded-lg font-semibold flex items-center justify-center gap-3 transition-all',
+            tlobTrainingStatus.is_training || loading
+              ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+              : 'bg-gradient-to-r from-green-500 to-teal-500 text-white hover:opacity-90'
+          )}
+        >
+          {tlobTrainingStatus.is_training ? (
+            <>
+              <RefreshCw className="h-5 w-5 animate-spin" />
+              Training in Progress...
+            </>
+          ) : (
+            <>
+              <PlayCircle className="h-5 w-5" />
+              Start TLOB Transformer Training
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Model Info */}
+      <div className="bg-surface border border-gray-800 rounded-lg p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <Info className="h-6 w-6 text-blue-400" />
+          <h2 className="text-xl font-semibold">TLOB Transformer Info</h2>
+        </div>
+        <div className="space-y-2 text-sm text-gray-400">
+          <p><span className="text-gray-300">Architecture:</span> Spatial CNN + Temporal Transformer</p>
+          <p><span className="text-gray-300">Input:</span> Raw LOB data (levels × 4: bid_price, bid_vol, ask_price, ask_vol)</p>
+          <p><span className="text-gray-300">Output:</span> Multi-horizon predictions (10, 30, 50 steps)</p>
+          <p><span className="text-gray-300">GPU Memory:</span> ~6-8 GB for training</p>
+          <p><span className="text-gray-300">Data Required:</span> Raw order book snapshots from LOB Collector</p>
+        </div>
+      </div>
+    </div>
+  );
+
+  /**
+   * ============================================================
    * MAIN RENDER
    * ============================================================
    */
 
   const tabs: { id: TabType; label: string; icon: any }[] = [
-    { id: 'training', label: 'Training', icon: Rocket },
-    { id: 'models', label: 'Models', icon: Database },
+    { id: 'training', label: 'CNN-LSTM Training', icon: Rocket },
+    { id: 'mpd_training', label: 'MPD Training', icon: Brain },
+    { id: 'tlob_training', label: 'TLOB Training', icon: Activity },
+    { id: 'models', label: 'Model Registry', icon: Database },
     { id: 'retraining', label: 'Auto-Retraining', icon: Zap },
     { id: 'mlflow', label: 'MLflow', icon: BarChart3 },
     { id: 'statistics', label: 'Statistics', icon: Gauge },
@@ -3388,6 +4215,8 @@ export function MLManagementPage() {
       {/* Tab Content */}
       <div>
         {activeTab === 'training' && renderTrainingTab()}
+        {activeTab === 'mpd_training' && renderMPDTrainingTab()}
+        {activeTab === 'tlob_training' && renderTLOBTrainingTab()}
         {activeTab === 'models' && renderModelsTab()}
         {activeTab === 'retraining' && renderRetrainingTab()}
         {activeTab === 'mlflow' && renderMLflowTab()}
