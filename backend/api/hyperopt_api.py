@@ -124,15 +124,21 @@ class OptimizationResultsResponse(BaseModel):
 # Global State
 # ============================================================
 
+# Project root for resolving relative paths
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
 # Текущая задача оптимизации
 current_optimization: Optional[Dict[str, Any]] = None
 optimization_task: Optional[asyncio.Task] = None
 optimization_history: List[Dict[str, Any]] = []
 
-# Paths
-HYPEROPT_DATA_PATH = Path("data/hyperopt")
+# Paths - use absolute paths based on project root
+HYPEROPT_DATA_PATH = PROJECT_ROOT / "data" / "hyperopt"
 HYPEROPT_RESULTS_PATH = HYPEROPT_DATA_PATH / "results.json"
 HYPEROPT_STATE_PATH = HYPEROPT_DATA_PATH / "state.json"
+
+logger.info(f"HYPEROPT API: Project root: {PROJECT_ROOT}")
+logger.info(f"HYPEROPT API: Data path: {HYPEROPT_DATA_PATH}")
 
 
 # ============================================================
