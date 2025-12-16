@@ -33,6 +33,20 @@ from backend.ml_engine.training.class_balancing import (
 
 logger = get_logger(__name__)
 
+# Project root for resolving relative paths
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+
+
+def _resolve_path(path: str) -> Path:
+    """
+    Resolve a path to absolute.
+    If path is relative, resolve it relative to PROJECT_ROOT.
+    """
+    p = Path(path)
+    if p.is_absolute():
+        return p
+    return PROJECT_ROOT / p
+
 
 @dataclass
 class DataConfig:
@@ -139,7 +153,9 @@ class HistoricalDataLoader:
             balancing_config: Конфигурация балансировки классов
         """
         self.config = config
-        self.storage_path = Path(config.storage_path)
+        # Resolve to absolute path
+        self.storage_path = _resolve_path(config.storage_path)
+        logger.info(f"HistoricalDataLoader: Using storage path: {self.storage_path}")
 
         if not self.storage_path.exists():
             raise FileNotFoundError(

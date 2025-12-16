@@ -76,6 +76,16 @@ from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Project root for resolving relative paths
+# This ensures paths work correctly regardless of working directory
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+ML_TRAINING_PATH = PROJECT_ROOT / "data" / "ml_training"
+FEATURE_STORE_PATH = PROJECT_ROOT / "data" / "feature_store"
+
+logger.info(f"HYPEROPT: Project root: {PROJECT_ROOT}")
+logger.info(f"HYPEROPT: ML Training path: {ML_TRAINING_PATH}")
+logger.info(f"HYPEROPT: Feature Store path: {FEATURE_STORE_PATH}")
+
 
 # ============================================================================
 # CONSTANTS & ENUMS
@@ -922,11 +932,14 @@ class HyperparameterOptimizer:
         )
 
         data_config = DataConfig(
+            storage_path=str(ML_TRAINING_PATH),  # Use absolute path
             batch_size=params.get("batch_size", 128),
             use_purging=params.get("use_purging", True),
             use_embargo=params.get("use_embargo", True),
             embargo_pct=params.get("embargo_pct", 0.02)
         )
+
+        logger.debug(f"HYPEROPT: DataConfig storage_path={data_config.storage_path}")
 
         balancing_config = ClassBalancingConfig(
             use_class_weights=params.get("use_class_weights", False),
