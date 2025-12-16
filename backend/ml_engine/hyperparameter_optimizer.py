@@ -591,9 +591,11 @@ class HyperparameterOptimizer:
             from datetime import timedelta
 
             # Create configs with default values
+            # CRITICAL: num_workers=0 to avoid Windows shared memory issues
             data_config = DataConfig(
                 storage_path=str(ML_TRAINING_PATH),
                 batch_size=128,
+                num_workers=0,  # Disable multiprocessing to avoid Windows memory errors
                 use_purging=True,
                 use_embargo=True,
                 embargo_pct=0.02,
@@ -1046,11 +1048,6 @@ class HyperparameterOptimizer:
 
         logger.info(f"HYPEROPT: Trial {trial.number} - using cached DataLoaders (NO reload)")
 
-        # Create model config
-        model_config = ModelConfigV2(
-            dropout=params.get("dropout", 0.4)
-        )
-
         # Create trainer config
         trainer_config = TrainerConfigV2(
             epochs=params.get("epochs", self.config.epochs_per_trial),
@@ -1078,13 +1075,16 @@ class HyperparameterOptimizer:
 
         logger.debug(f"HYPEROPT: Input shape: seq_len={seq_len}, input_dim={input_dim}")
 
-        # Create a NEW model for each trial (different hyperparameters)
-        model = HybridCNNLSTMv2(
-            input_dim=input_dim,
-            seq_len=seq_len,
+        # Create model config with correct input dimensions
+        model_config = ModelConfigV2(
+            input_features=input_dim,
+            sequence_length=seq_len,
             num_classes=3,
-            config=model_config
+            dropout=params.get("dropout", 0.4)
         )
+
+        # Create a NEW model for each trial (different hyperparameters)
+        model = HybridCNNLSTMv2(config=model_config)
 
         # Create trainer
         trainer = ModelTrainerV2(model=model, config=trainer_config)
