@@ -53,6 +53,50 @@ class ParquetFutureLabelProcessor:
         self.total_samples_processed = 0
         self.total_samples_labeled = 0
 
+    def _deduplicate_parquet_files(self):
+        """
+        CRITICAL: Дедупликация parquet файлов ПЕРЕД чтением.
+
+        Если в одной партиции несколько файлов, оставляем только самый новый.
+        Это предотвращает накопление дубликатов.
+        """
+        print("\n🔍 Проверка и дедупликация parquet файлов...")
+
+        feature_store_dir = PROJECT_ROOT / "data" / "feature_store" / "offline" / self.feature_store_group
+
+        if not feature_store_dir.exists():
+            print(f"  Директория не существует: {feature_store_dir}")
+            return
+
+        total_deleted = 0
+
+        # Проходим по всем партициям (date=YYYY-MM-DD)
+        for partition_dir in feature_store_dir.iterdir():
+            if not partition_dir.is_dir() or not partition_dir.name.startswith("date="):
+                continue
+
+            # Находим все parquet файлы в партиции
+            parquet_files = list(partition_dir.glob("*.parquet"))
+
+            if len(parquet_files) <= 1:
+                continue  # Нет дубликатов
+
+            # Сортируем по времени модификации (новые первые)
+            parquet_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+
+            # Оставляем только самый новый, удаляем остальные
+            for old_file in parquet_files[1:]:
+                try:
+                    old_file.unlink()
+                    total_deleted += 1
+                except Exception as e:
+                    print(f"  ⚠️ Не удалось удалить {old_file.name}: {e}")
+
+        if total_deleted > 0:
+            print(f"  ✓ Удалено {total_deleted} дубликатов parquet файлов")
+        else:
+            print(f"  ✓ Дубликатов не найдено")
+
     def process_all_data(self):
         """Обработка всех данных из Feature Store."""
         print("\n" + "=" * 80)
@@ -61,6 +105,9 @@ class ParquetFutureLabelProcessor:
         print(f"Feature Group: {self.feature_store_group}")
         print(f"Период: {self.start_date or 'начало'} → {self.end_date or 'конец'}")
         print("=" * 80 + "\n")
+
+        # CRITICAL: Дедупликация файлов ПЕРЕД чтением
+        self._deduplicate_parquet_files()
 
         # Читаем данные из Feature Store
         print("Загрузка данных из Feature Store...")
