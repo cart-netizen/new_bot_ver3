@@ -297,12 +297,30 @@ async def _run_optimization(request: OptimizationRequest):
             target_group = group_map.get(request.target_group)
             logger.info(f"HYPEROPT: Target group: {request.target_group} -> {target_group}")
 
-        # Запускаем оптимизацию
-        logger.info("HYPEROPT: Starting optimizer.optimize()...")
-        results = await optimizer.optimize(
-            mode=opt_mode,
-            target_group=target_group
-        )
+        # CRITICAL: Run optimization in a thread pool to avoid blocking event loop
+        # This allows FastAPI to respond to status requests while training runs
+        logger.info("HYPEROPT: Starting optimizer.optimize() in thread pool...")
+
+        import concurrent.futures
+        loop = asyncio.get_event_loop()
+
+        def run_sync_optimization():
+            """Wrapper to run async optimization in sync context."""
+            import asyncio
+            # Create new event loop for this thread
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                return new_loop.run_until_complete(
+                    optimizer.optimize(mode=opt_mode, target_group=target_group)
+                )
+            finally:
+                new_loop.close()
+
+        # Run in thread pool executor
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            results = await loop.run_in_executor(executor, run_sync_optimization)
+
         logger.info(f"HYPEROPT: Optimization finished, results keys: {results.keys() if results else 'None'}")
 
         # Обновляем статус
