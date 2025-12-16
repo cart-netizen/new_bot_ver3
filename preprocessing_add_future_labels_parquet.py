@@ -18,6 +18,9 @@ from datetime import datetime
 # Добавляем backend в path
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Project root for absolute paths
+PROJECT_ROOT = Path(__file__).resolve().parent
+
 from backend.core.logger import get_logger
 from backend.ml_engine.feature_store.feature_store import get_feature_store
 
@@ -201,7 +204,9 @@ class ParquetFutureLabelProcessor:
         print(f"  Затронуто дат: {len(dates)}")
 
         # Для каждой даты удаляем старые файлы
-        feature_store_dir = Path("data/feature_store/offline") / self.feature_store_group
+        # CRITICAL: Use absolute path to ensure files are found
+        feature_store_dir = PROJECT_ROOT / "data" / "feature_store" / "offline" / self.feature_store_group
+        print(f"  Путь очистки: {feature_store_dir}")
         deleted_count = 0
 
         for date_str in dates:
