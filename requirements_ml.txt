@@ -7,6 +7,9 @@ mlflow>=2.9.0
 # Optuna - Hyperparameter optimization
 optuna>=3.5.0
 
+# nest_asyncio - Allow nested event loops (needed for running async code in FastAPI)
+nest_asyncio>=1.5.0
+
 # PostgreSQL driver for MLflow backend store
 psycopg2-binary>=2.9.9  # Required for MLflow PostgreSQL backend
 

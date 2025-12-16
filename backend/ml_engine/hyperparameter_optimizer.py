@@ -48,6 +48,14 @@ import argparse
 from pathlib import Path
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field, asdict
+
+# Fix for "This event loop is already running" error when running inside FastAPI
+# This allows nested event loops (e.g., when asyncio.run_until_complete is called inside an already running loop)
+try:
+    import nest_asyncio
+    nest_asyncio.apply()
+except ImportError:
+    pass  # nest_asyncio not installed, will fail if running inside FastAPI
 from typing import Dict, List, Optional, Tuple, Any, Callable
 from enum import Enum
 import warnings
@@ -766,9 +774,20 @@ class HyperparameterOptimizer:
                     status="completed"
                 ))
 
-        # Лучшие параметры
-        best_params = study.best_trial.params if study.best_trial else {}
-        best_value = study.best_value if study.best_trial else self.best_value
+        # Лучшие параметры (safely handle case when all trials failed)
+        try:
+            completed_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+            if completed_trials:
+                best_params = study.best_trial.params
+                best_value = study.best_value
+            else:
+                logger.warning(f"No completed trials for group {group}. Using default params.")
+                best_params = {name: space.default for name, space in group_params.items()}
+                best_value = self.best_value
+        except Exception as e:
+            logger.warning(f"Failed to get best trial for group {group}: {e}. Using default params.")
+            best_params = {name: space.default for name, space in group_params.items()}
+            best_value = self.best_value
 
         return GroupOptimizationResult(
             group=group,
