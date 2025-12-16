@@ -10,6 +10,7 @@ Auto-Retraining Pipeline - автоматическое переобучение
 """
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
@@ -18,6 +19,8 @@ from enum import Enum
 import torch
 import pandas as pd
 import numpy as np
+from mlflow.models.signature import ModelSignature
+from mlflow.types.schema import Schema, TensorSpec
 
 from backend.core.logger import get_logger
 # UPDATED: Используем оптимизированные v2 версии
@@ -252,14 +255,39 @@ class RetrainingPipeline:
             logger.info("Step 5: Saving model...")
             model_path = await self._save_model(model, training_results, eval_results)
 
-            # Log model to MLflow
+            # Log model to MLflow with signature
+            model_config = self.config.model_config or ModelConfig()
+            input_schema = Schema([
+                TensorSpec(
+                    np.dtype(np.float32),
+                    shape=(-1, model_config.sequence_length, model_config.input_features),
+                    name="input"
+                )
+            ])
+            output_schema = Schema([
+                TensorSpec(
+                    np.dtype(np.float32),
+                    shape=(-1, model_config.num_classes),
+                    name="direction_logits"
+                )
+            ])
+            model_signature = ModelSignature(inputs=input_schema, outputs=output_schema)
+
+            input_example = np.random.randn(
+                1,
+                model_config.sequence_length,
+                model_config.input_features
+            ).astype(np.float32)
+
             model_uri = self.mlflow_tracker.log_model(
                 model=model,
                 model_name="hybrid_cnn_lstm",
                 artifacts={
                     "training_results": str(model_path.parent / "training_results.json"),
                     "eval_results": str(model_path.parent / "eval_results.json")
-                }
+                },
+                signature=model_signature,
+                input_example=input_example
             )
 
             # Step 6: Register model
@@ -268,12 +296,24 @@ class RetrainingPipeline:
                 model_path, training_results, eval_results
             )
 
-            # Register in MLflow
+            # Register in MLflow with detailed tags
+            model_tags = {
+                "framework": "pytorch",
+                "model_type": "HybridCNNLSTM",
+                "training_mode": "auto_retraining",
+                "trigger": trigger.value,
+                "sequence_length": str(model_config.sequence_length),
+                "input_features": str(model_config.input_features),
+                "num_classes": str(model_config.num_classes),
+                "accuracy": f"{eval_results.get('accuracy', 0):.4f}",
+                "f1": f"{eval_results.get('f1', 0):.4f}",
+                "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S")
+            }
             mlflow_version = self.mlflow_tracker.register_model(
                 model_uri=model_uri,
                 model_name="hybrid_cnn_lstm",
-                tags={"trigger": trigger.value},
-                description=f"Auto-retrained model (trigger: {trigger.value})"
+                tags=model_tags,
+                description=f"Auto-retrained model (trigger: {trigger.value}). Accuracy: {eval_results.get('accuracy', 0):.4f}, F1: {eval_results.get('f1', 0):.4f}"
             )
 
             # Step 7: Auto-promotion (if criteria met)
