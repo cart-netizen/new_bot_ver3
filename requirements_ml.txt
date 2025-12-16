@@ -4,6 +4,9 @@
 # MLflow - Experiment tracking and model registry
 mlflow>=2.9.0
 
+# Optuna - Hyperparameter optimization
+optuna>=3.5.0
+
 # PostgreSQL driver for MLflow backend store
 psycopg2-binary>=2.9.9  # Required for MLflow PostgreSQL backend
 
