@@ -663,9 +663,10 @@ class HyperparameterOptimizer:
                 logger.error("HYPEROPT: Failed to create DataLoaders!")
                 return False
 
-            train_size = len(self._cached_train_loader.dataset)
-            val_size = len(self._cached_val_loader.dataset) if self._cached_val_loader else 0
-            test_size = len(self._cached_test_loader.dataset) if self._cached_test_loader else 0
+            # Get dataset sizes (Dataset implements __len__ but type checker doesn't know)
+            train_size = len(self._cached_train_loader.dataset)  # type: ignore[arg-type]
+            val_size = len(self._cached_val_loader.dataset) if self._cached_val_loader else 0  # type: ignore[arg-type]
+            test_size = len(self._cached_test_loader.dataset) if self._cached_test_loader else 0  # type: ignore[arg-type]
 
             logger.info(f"HYPEROPT: ✓ DataLoaders created successfully:")
             logger.info(f"  • Train: {train_size:,} samples")
@@ -1273,7 +1274,7 @@ class HyperparameterOptimizer:
             "best_value": self.best_value,
             "fixed_params": self.fixed_params,
             "group_results": {g.value: r.to_dict() for g, r in self.group_results.items()},
-            "config": asdict(self.config)
+            "config": asdict(self.config) if self.config else {}  # type: ignore[arg-type]
         }
 
         # Сохраняем JSON
@@ -1291,7 +1292,8 @@ class HyperparameterOptimizer:
             try:
                 self.mlflow_tracker.start_run(run_name=f"hyperopt_{self.config.study_name}")
                 self.mlflow_tracker.log_params(self.best_params)
-                self.mlflow_tracker.log_metric("best_" + self.config.primary_metric, self.best_value)
+                # Use log_metrics (plural) with a dict
+                self.mlflow_tracker.log_metrics({"best_" + self.config.primary_metric: self.best_value})
                 self.mlflow_tracker.end_run()
             except Exception as e:
                 logger.warning(f"Failed to log to MLflow: {e}")
@@ -1389,7 +1391,7 @@ Examples:
     parser.add_argument(
         "--group",
         type=str,
-        choices=[g.value for g in ParameterGroup],
+        choices=[str(g.value) for g in ParameterGroup],  # Explicit str cast for type checker
         default=None,
         help="Target group for GROUP mode"
     )
