@@ -542,6 +542,13 @@ class HyperparameterOptimizer:
             except Exception as e:
                 logger.warning(f"MLflow not available: {e}")
 
+        # CRITICAL: Cached data loaders to avoid reloading data for each trial
+        # Data is loaded ONCE before optimization and reused across all trials
+        self._cached_train_loader = None
+        self._cached_val_loader = None
+        self._cached_test_loader = None
+        self._data_loaded = False
+
         logger.info(
             f"HyperparameterOptimizer initialized:\n"
             f"  • Study: {self.config.study_name}\n"
@@ -550,6 +557,125 @@ class HyperparameterOptimizer:
             f"  • Primary metric: {self.config.primary_metric}\n"
             f"  • MLflow: {self.config.use_mlflow and self.mlflow_tracker is not None}"
         )
+
+    # ========================================================================
+    # DATA LOADING (ONCE)
+    # ========================================================================
+
+    async def _preload_data(self) -> bool:
+        """
+        Preload training data ONCE before optimization starts.
+
+        This prevents the data from being reloaded and duplicated for each trial.
+        The data is cached in self._cached_train_loader, etc.
+
+        Returns:
+            True if data loaded successfully
+        """
+        if self._data_loaded:
+            logger.info("HYPEROPT: Data already loaded, reusing cached loaders")
+            return True
+
+        logger.info(f"\n{'='*60}")
+        logger.info("HYPEROPT: PRELOADING DATA (ONCE)")
+        logger.info(f"{'='*60}\n")
+
+        try:
+            from backend.ml_engine.training_orchestrator import TrainingOrchestrator
+            from backend.ml_engine.models.hybrid_cnn_lstm_v2 import ModelConfigV2
+            from backend.ml_engine.training.model_trainer_v2 import TrainerConfigV2
+            from backend.ml_engine.training.data_loader import DataConfig, HistoricalDataLoader
+            from backend.ml_engine.training.class_balancing import ClassBalancingConfig
+            from backend.ml_engine.feature_store.feature_store import get_feature_store
+            from backend.ml_engine.feature_store.feature_schema import DEFAULT_SCHEMA
+            from datetime import timedelta
+
+            # Create configs with default values
+            data_config = DataConfig(
+                storage_path=str(ML_TRAINING_PATH),
+                batch_size=128,
+                use_purging=True,
+                use_embargo=True,
+                embargo_pct=0.02,
+                use_feature_store=True,
+                feature_store_group="training_features",
+                feature_store_date_range_days=30
+            )
+
+            balancing_config = ClassBalancingConfig(
+                use_class_weights=False,
+                use_focal_loss=True,
+                focal_gamma=2.5,
+                use_oversampling=False,
+                use_undersampling=False
+            )
+
+            # Step 1: Run preprocessing ONCE
+            logger.info("HYPEROPT: Running preprocessing (adding future labels)...")
+            try:
+                from preprocessing_add_future_labels_parquet import ParquetFutureLabelProcessor
+                processor = ParquetFutureLabelProcessor(
+                    feature_store_group=data_config.feature_store_group,
+                    start_date=None,
+                    end_date=None
+                )
+                processor.process_all_data()
+                logger.info("HYPEROPT: ✅ Preprocessing completed")
+            except Exception as e:
+                logger.warning(f"HYPEROPT: ⚠️ Preprocessing failed: {e}")
+
+            # Step 2: Load data from Feature Store
+            logger.info("HYPEROPT: Loading data from Feature Store...")
+            feature_store = get_feature_store()
+
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=data_config.feature_store_date_range_days)
+
+            features_df = feature_store.read_offline_features(
+                feature_group=data_config.feature_store_group,
+                start_date=start_date.strftime("%Y-%m-%d"),
+                end_date=end_date.strftime("%Y-%m-%d")
+            )
+
+            if features_df.empty:
+                logger.error("HYPEROPT: No data found in Feature Store!")
+                return False
+
+            logger.info(f"HYPEROPT: ✓ Loaded {len(features_df):,} samples from Feature Store")
+
+            # Step 3: Create DataLoaders
+            logger.info("HYPEROPT: Creating DataLoaders...")
+            data_loader = HistoricalDataLoader(data_config, balancing_config=balancing_config)
+
+            self._cached_train_loader, self._cached_val_loader, self._cached_test_loader = \
+                data_loader.load_from_dataframe(
+                    features_df=features_df,
+                    feature_columns=DEFAULT_SCHEMA.get_all_feature_columns(),
+                    label_column=DEFAULT_SCHEMA.label_column,
+                    timestamp_column=DEFAULT_SCHEMA.timestamp_column,
+                    symbol_column=DEFAULT_SCHEMA.symbol_column,
+                    apply_resampling=True
+                )
+
+            if self._cached_train_loader is None:
+                logger.error("HYPEROPT: Failed to create DataLoaders!")
+                return False
+
+            train_size = len(self._cached_train_loader.dataset)
+            val_size = len(self._cached_val_loader.dataset) if self._cached_val_loader else 0
+            test_size = len(self._cached_test_loader.dataset) if self._cached_test_loader else 0
+
+            logger.info(f"HYPEROPT: ✓ DataLoaders created successfully:")
+            logger.info(f"  • Train: {train_size:,} samples")
+            logger.info(f"  • Val: {val_size:,} samples")
+            logger.info(f"  • Test: {test_size:,} samples")
+
+            self._data_loaded = True
+            return True
+
+        except Exception as e:
+            logger.error(f"HYPEROPT: Failed to preload data: {e}", exc_info=True)
+            return False
 
     # ========================================================================
     # MAIN OPTIMIZATION METHODS
@@ -583,6 +709,10 @@ class HyperparameterOptimizer:
         logger.info(f"Mode: {mode.value}")
         logger.info(f"Started at: {self.start_time.isoformat()}")
         logger.info(f"{'='*80}\n")
+
+        # CRITICAL: Preload data ONCE before starting optimization
+        if not await self._preload_data():
+            raise RuntimeError("Failed to preload training data")
 
         try:
             if mode == OptimizationMode.FULL:
@@ -895,6 +1025,9 @@ class HyperparameterOptimizer:
         """
         Запустить обучение модели с заданными параметрами.
 
+        CRITICAL: Uses pre-cached DataLoaders instead of reloading data each time.
+        This prevents data duplication and memory explosion.
+
         Args:
             params: Параметры обучения
             trial: Optuna trial для pruning
@@ -902,17 +1035,23 @@ class HyperparameterOptimizer:
         Returns:
             Словарь с метриками
         """
-        from backend.ml_engine.training_orchestrator import get_training_orchestrator
-        from backend.ml_engine.models.hybrid_cnn_lstm_v2 import ModelConfigV2
-        from backend.ml_engine.training.model_trainer_v2 import TrainerConfigV2
-        from backend.ml_engine.training.data_loader import DataConfig
-        from backend.ml_engine.training.class_balancing import ClassBalancingConfig
+        import torch
 
-        # Создаём конфигурации
+        from backend.ml_engine.models.hybrid_cnn_lstm_v2 import HybridCNNLSTMv2, ModelConfigV2
+        from backend.ml_engine.training.model_trainer_v2 import ModelTrainerV2, TrainerConfigV2
+
+        # Ensure data is loaded
+        if not self._data_loaded or self._cached_train_loader is None:
+            raise RuntimeError("Data not preloaded! Call _preload_data() first.")
+
+        logger.info(f"HYPEROPT: Trial {trial.number} - using cached DataLoaders (NO reload)")
+
+        # Create model config
         model_config = ModelConfigV2(
             dropout=params.get("dropout", 0.4)
         )
 
+        # Create trainer config
         trainer_config = TrainerConfigV2(
             epochs=params.get("epochs", self.config.epochs_per_trial),
             learning_rate=params.get("learning_rate", 5e-5),
@@ -927,72 +1066,87 @@ class HyperparameterOptimizer:
             focal_gamma=params.get("focal_gamma", 2.5),
             use_class_weights=params.get("use_class_weights", False),
             early_stopping_patience=max(3, self.config.epochs_per_trial // 2),
-            verbose=False,  # Меньше логов
+            verbose=False,  # Less logs
             use_tqdm=False
         )
 
-        data_config = DataConfig(
-            storage_path=str(ML_TRAINING_PATH),  # Use absolute path
-            batch_size=params.get("batch_size", 128),
-            use_purging=params.get("use_purging", True),
-            use_embargo=params.get("use_embargo", True),
-            embargo_pct=params.get("embargo_pct", 0.02)
+        # Get input dimension from first batch of cached train loader
+        first_batch = next(iter(self._cached_train_loader))
+        sequence_shape = first_batch['sequence'].shape
+        input_dim = sequence_shape[2]  # (batch, seq_len, features)
+        seq_len = sequence_shape[1]
+
+        logger.debug(f"HYPEROPT: Input shape: seq_len={seq_len}, input_dim={input_dim}")
+
+        # Create a NEW model for each trial (different hyperparameters)
+        model = HybridCNNLSTMv2(
+            input_dim=input_dim,
+            seq_len=seq_len,
+            num_classes=3,
+            config=model_config
         )
 
-        logger.debug(f"HYPEROPT: DataConfig storage_path={data_config.storage_path}")
+        # Create trainer
+        trainer = ModelTrainerV2(model=model, config=trainer_config)
 
-        balancing_config = ClassBalancingConfig(
-            use_class_weights=params.get("use_class_weights", False),
-            use_focal_loss=params.get("use_focal_loss", True),
-            focal_gamma=params.get("focal_gamma", 2.5),
-            use_oversampling=params.get("use_oversampling", False),
-            oversample_ratio=params.get("oversample_ratio", 0.5)
-        )
+        # Custom epoch callback for Optuna pruning
+        original_epoch_end = trainer._on_epoch_end if hasattr(trainer, '_on_epoch_end') else None
 
-        # Callback для pruning
-        def epoch_callback(epoch: int, metrics: Dict[str, float]) -> bool:
-            """Callback после каждой эпохи для pruning."""
-            # Сообщаем Optuna о промежуточном результате
+        def epoch_callback_wrapper(epoch: int, metrics: Dict[str, float]):
+            """Wrapper to report to Optuna and check pruning."""
             primary_value = metrics.get(self.config.primary_metric, 0)
             trial.report(primary_value, epoch)
 
-            # Проверяем, стоит ли продолжать
             if trial.should_prune():
                 raise optuna.TrialPruned()
 
-            return True  # Продолжаем обучение
+            if original_epoch_end:
+                original_epoch_end(epoch, metrics)
 
-        # Создаём orchestrator
-        orchestrator = get_training_orchestrator(
-            model_config=model_config,
-            trainer_config=trainer_config,
-            data_config=data_config,
-            balancing_config=balancing_config,
-            force_new=True
-        )
+        # Run training using CACHED DataLoaders
+        try:
+            history = trainer.train(
+                train_loader=self._cached_train_loader,
+                val_loader=self._cached_val_loader,
+                test_loader=self._cached_test_loader
+            )
 
-        # Устанавливаем epoch callback
-        if hasattr(orchestrator, 'set_epoch_callback'):
-            orchestrator.set_epoch_callback(epoch_callback)
+            # Get best metrics from history
+            if history:
+                best_epoch = max(history, key=lambda x: x.val_f1 if hasattr(x, 'val_f1') else 0)
+                metrics = {
+                    "val_f1": getattr(best_epoch, 'val_f1', 0),
+                    "val_accuracy": getattr(best_epoch, 'val_accuracy', 0),
+                    "val_precision": getattr(best_epoch, 'val_precision', 0),
+                    "val_recall": getattr(best_epoch, 'val_recall', 0),
+                    "val_loss": getattr(best_epoch, 'val_loss', float('inf')),
+                    "epochs_completed": len(history)
+                }
+            else:
+                metrics = {
+                    "val_f1": 0,
+                    "val_accuracy": 0,
+                    "val_precision": 0,
+                    "val_recall": 0,
+                    "val_loss": float('inf'),
+                    "epochs_completed": 0
+                }
 
-        # Запускаем обучение
-        result = await orchestrator.train_model(
-            model_name=f"hyperopt_trial_{trial.number}",
-            export_onnx=False,  # Не экспортируем для trials
-            auto_promote=False
-        )
+            # Clean up GPU memory after each trial
+            del model
+            del trainer
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
-        # Собираем метрики
-        metrics = result.get("metrics", {})
+            return metrics
 
-        return {
-            "val_f1": metrics.get("val_f1", metrics.get("f1", 0)),
-            "val_accuracy": metrics.get("val_accuracy", metrics.get("accuracy", 0)),
-            "val_precision": metrics.get("val_precision", metrics.get("precision", 0)),
-            "val_recall": metrics.get("val_recall", metrics.get("recall", 0)),
-            "val_loss": metrics.get("val_loss", float('inf')),
-            "epochs_completed": result.get("epochs_completed", self.config.epochs_per_trial)
-        }
+        except optuna.TrialPruned:
+            # Clean up even on pruning
+            del model
+            del trainer
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            raise
 
     # ========================================================================
     # FINE-TUNING
