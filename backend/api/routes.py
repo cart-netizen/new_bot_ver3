@@ -51,6 +51,9 @@ from backend.api.ml_management_api import router as ml_management_router
 # Layering ML Router - для управления Layering ML моделью
 from backend.api.layering_ml_api import router as layering_ml_router
 
+# Hyperparameter Optimization Router - для автоматического поиска оптимальных параметров
+from backend.api.hyperopt_api import router as hyperopt_router
+
 # ===== МОДЕЛИ ОТВЕТОВ =====
 
 class StatusResponse(BaseModel):

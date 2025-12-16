@@ -170,7 +170,7 @@ interface MLflowRun {
   };
 }
 
-type TabType = 'training' | 'models' | 'retraining' | 'mlflow' | 'statistics' | 'layering';
+type TabType = 'training' | 'models' | 'retraining' | 'mlflow' | 'statistics' | 'layering' | 'optimization';
 
 /**
  * ============================================================
@@ -320,6 +320,51 @@ export function MLManagementPage() {
   const [layeringMetrics, setLayeringMetrics] = useState<any>(null);
   const [isLayeringTraining, setIsLayeringTraining] = useState(false);
   const [layeringTrainingOutput, setLayeringTrainingOutput] = useState<string>('');
+
+  // Hyperparameter Optimization state
+  const [optimizationStatus, setOptimizationStatus] = useState<{
+    is_running: boolean;
+    can_resume: boolean;
+    current_mode?: string;
+    current_group?: string;
+    trials_completed: number;
+    total_trials: number;
+    best_metric?: number;
+    elapsed_time?: string;
+    estimated_remaining?: string;
+    current_trial_params?: Record<string, any>;
+    results_path?: string;
+    data_source_path?: string;
+  }>({
+    is_running: false,
+    can_resume: false,
+    trials_completed: 0,
+    total_trials: 0
+  });
+
+  const [optimizationConfig, setOptimizationConfig] = useState({
+    mode: 'full' as 'full' | 'quick' | 'group' | 'resume' | 'fine_tune',
+    target_group: 'learning_rate' as string,
+    epochs_per_trial: 4,
+    max_trials_per_group: 15,
+    max_total_hours: 24,
+    primary_metric: 'val_f1',
+    data_source: 'feature_store' as 'feature_store' | 'legacy',
+    enable_pruning: true,
+    use_warm_start: true
+  });
+
+  const [optimizationHistory, setOptimizationHistory] = useState<Array<{
+    trial_id: number;
+    params: Record<string, any>;
+    metrics: Record<string, number>;
+    group: string;
+    status: string;
+    duration_minutes: number;
+  }>>([]);
+
+  const [bestParams, setBestParams] = useState<Record<string, any> | null>(null);
+  const [optimizationPollingInterval, setOptimizationPollingInterval] = useState<number | null>(null);
 
   /**
    * ============================================================
@@ -623,6 +668,169 @@ export function MLManagementPage() {
     }
   };
 
+  // ========== HYPERPARAMETER OPTIMIZATION API FUNCTIONS ==========
+
+  // Fetch optimization status
+  const fetchOptimizationStatus = async () => {
+    try {
+      const response = await fetch('/api/hyperopt/status');
+      const data = await response.json();
+      setOptimizationStatus(data);
+
+      // Stop polling if optimization is complete
+      if (!data.is_running && optimizationPollingInterval) {
+        clearInterval(optimizationPollingInterval);
+        setOptimizationPollingInterval(null);
+        fetchOptimizationHistory();
+        fetchBestParams();
+      }
+    } catch (err) {
+      console.error('Failed to fetch optimization status:', err);
+    }
+  };
+
+  // Fetch optimization history
+  const fetchOptimizationHistory = async () => {
+    try {
+      const response = await fetch('/api/hyperopt/history?limit=50');
+      const data = await response.json();
+      setOptimizationHistory(data.trials || []);
+    } catch (err) {
+      console.error('Failed to fetch optimization history:', err);
+    }
+  };
+
+  // Fetch best parameters
+  const fetchBestParams = async () => {
+    try {
+      const response = await fetch('/api/hyperopt/best-params');
+      const data = await response.json();
+      if (data.success && data.best_params) {
+        setBestParams(data.best_params);
+      }
+    } catch (err) {
+      console.error('Failed to fetch best params:', err);
+    }
+  };
+
+  // Start optimization
+  const handleStartOptimization = async () => {
+    const modeDescriptions: Record<string, string> = {
+      'full': 'Полная оптимизация (все группы параметров последовательно)',
+      'quick': 'Быстрая оптимизация (только learning_rate и regularization)',
+      'group': `Оптимизация группы: ${optimizationConfig.target_group}`,
+      'resume': 'Возобновление с последней позиции',
+      'fine_tune': 'Тонкая настройка лучших параметров'
+    };
+
+    if (!confirm(`Запустить оптимизацию?\n\nРежим: ${modeDescriptions[optimizationConfig.mode]}\nЭпох на пробу: ${optimizationConfig.epochs_per_trial}\nМакс. часов: ${optimizationConfig.max_total_hours}\n\nКаждая проба занимает ~${optimizationConfig.epochs_per_trial * 12} минут.`)) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const response = await fetch('/api/hyperopt/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(optimizationConfig)
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        // Start polling for status
+        const interval = setInterval(fetchOptimizationStatus, 10000) as unknown as number;
+        setOptimizationPollingInterval(interval);
+        fetchOptimizationStatus();
+      } else {
+        setError(result.error || 'Failed to start optimization');
+      }
+    } catch (err) {
+      console.error('Failed to start optimization:', err);
+      setError('Failed to start optimization');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Stop optimization
+  const handleStopOptimization = async () => {
+    if (!confirm('Остановить оптимизацию? Прогресс будет сохранён для возобновления.')) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const response = await fetch('/api/hyperopt/stop', {
+        method: 'POST'
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        if (optimizationPollingInterval) {
+          clearInterval(optimizationPollingInterval);
+          setOptimizationPollingInterval(null);
+        }
+        fetchOptimizationStatus();
+        fetchOptimizationHistory();
+      } else {
+        setError(result.error || 'Failed to stop optimization');
+      }
+    } catch (err) {
+      console.error('Failed to stop optimization:', err);
+      setError('Failed to stop optimization');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Resume optimization
+  const handleResumeOptimization = async () => {
+    if (!confirm('Возобновить оптимизацию с последней сохранённой позиции?')) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const response = await fetch('/api/hyperopt/resume', {
+        method: 'POST'
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        const interval = setInterval(fetchOptimizationStatus, 10000) as unknown as number;
+        setOptimizationPollingInterval(interval);
+        fetchOptimizationStatus();
+      } else {
+        setError(result.error || 'Failed to resume optimization');
+      }
+    } catch (err) {
+      console.error('Failed to resume optimization:', err);
+      setError('Failed to resume optimization');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Apply best params to training config
+  const handleApplyBestParams = () => {
+    if (!bestParams) return;
+
+    if (!confirm('Применить лучшие найденные параметры к конфигурации обучения?')) {
+      return;
+    }
+
+    setTrainingParams(prev => ({
+      ...prev,
+      ...bestParams
+    }));
+
+    setActiveTab('training');
+    alert('Параметры применены! Перейдите к вкладке "Training" для начала обучения.');
+  };
+
   /**
    * ============================================================
    * EFFECTS
@@ -651,6 +859,10 @@ export function MLManagementPage() {
       fetchLayeringStatus();
       fetchDataStatus();
       fetchLayeringMetrics();
+    } else if (activeTab === 'optimization') {
+      fetchOptimizationStatus();
+      fetchOptimizationHistory();
+      fetchBestParams();
     }
   }, [activeTab, modelsFilter]);
 
@@ -660,8 +872,11 @@ export function MLManagementPage() {
       if (pollingInterval) {
         clearInterval(pollingInterval);
       }
+      if (optimizationPollingInterval) {
+        clearInterval(optimizationPollingInterval);
+      }
     };
-  }, [pollingInterval]);
+  }, [pollingInterval, optimizationPollingInterval]);
 
   /**
    * ============================================================
@@ -2630,6 +2845,481 @@ export function MLManagementPage() {
 
   /**
    * ============================================================
+   * RENDER FUNCTIONS - OPTIMIZATION TAB
+   * ============================================================
+   */
+
+  const renderOptimizationTab = () => (
+    <div className="space-y-6">
+      {/* Status Banner */}
+      <div className={cn(
+        'p-4 rounded-lg border',
+        optimizationStatus.is_running
+          ? 'bg-blue-500/10 border-blue-500/50'
+          : optimizationStatus.can_resume
+          ? 'bg-yellow-500/10 border-yellow-500/50'
+          : 'bg-gray-800 border-gray-700'
+      )}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            {optimizationStatus.is_running ? (
+              <RefreshCw className="h-6 w-6 text-blue-400 animate-spin" />
+            ) : optimizationStatus.can_resume ? (
+              <PauseCircle className="h-6 w-6 text-yellow-400" />
+            ) : (
+              <Target className="h-6 w-6 text-gray-400" />
+            )}
+            <div>
+              <p className="font-medium">
+                {optimizationStatus.is_running
+                  ? `Оптимизация запущена: ${optimizationStatus.current_mode || 'full'}`
+                  : optimizationStatus.can_resume
+                  ? 'Оптимизация приостановлена'
+                  : 'Оптимизация не запущена'}
+              </p>
+              {optimizationStatus.is_running && (
+                <p className="text-sm text-gray-400">
+                  Группа: {optimizationStatus.current_group || 'N/A'} |
+                  Пробы: {optimizationStatus.trials_completed}/{optimizationStatus.total_trials} |
+                  Время: {optimizationStatus.elapsed_time || '0:00'}
+                  {optimizationStatus.estimated_remaining && ` (осталось: ${optimizationStatus.estimated_remaining})`}
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="flex gap-2">
+            {optimizationStatus.is_running ? (
+              <button
+                onClick={handleStopOptimization}
+                disabled={loading}
+                className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50"
+              >
+                <PauseCircle className="h-4 w-4" />
+                Остановить
+              </button>
+            ) : optimizationStatus.can_resume ? (
+              <>
+                <button
+                  onClick={handleResumeOptimization}
+                  disabled={loading}
+                  className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50"
+                >
+                  <PlayCircle className="h-4 w-4" />
+                  Продолжить
+                </button>
+                <button
+                  onClick={handleStartOptimization}
+                  disabled={loading}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50"
+                >
+                  <Rocket className="h-4 w-4" />
+                  Новый запуск
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={handleStartOptimization}
+                disabled={loading}
+                className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/80 text-white rounded-lg transition-colors disabled:opacity-50"
+              >
+                <Rocket className="h-4 w-4" />
+                Запустить оптимизацию
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Progress bar */}
+        {optimizationStatus.is_running && optimizationStatus.total_trials > 0 && (
+          <div className="mt-4">
+            <div className="w-full bg-gray-700 rounded-full h-2">
+              <div
+                className="bg-blue-500 rounded-full h-2 transition-all duration-500"
+                style={{ width: `${(optimizationStatus.trials_completed / optimizationStatus.total_trials) * 100}%` }}
+              />
+            </div>
+            <div className="flex justify-between text-xs text-gray-400 mt-1">
+              <span>{Math.round((optimizationStatus.trials_completed / optimizationStatus.total_trials) * 100)}%</span>
+              {optimizationStatus.best_metric && (
+                <span>Лучший результат: {(optimizationStatus.best_metric * 100).toFixed(2)}%</span>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Data Paths Info */}
+      <div className="bg-surface border border-gray-800 rounded-lg p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <Database className="h-5 w-5 text-primary" />
+          <h3 className="text-lg font-semibold">Пути данных</h3>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="p-4 bg-gray-800 rounded-lg">
+            <Tooltip content="Путь к данным, используемым для обучения модели при оптимизации">
+              <div className="flex items-center gap-2 text-sm text-gray-400 mb-2">
+                <Download className="h-4 w-4" />
+                <span>Источник данных для обучения</span>
+                <Info className="h-3 w-3" />
+              </div>
+            </Tooltip>
+            <p className="text-white font-mono text-sm break-all">
+              {optimizationStatus.data_source_path || optimizationConfig.data_source === 'feature_store'
+                ? 'data/feature_store/'
+                : 'data/collected/'}
+            </p>
+          </div>
+          <div className="p-4 bg-gray-800 rounded-lg">
+            <Tooltip content="Путь для сохранения результатов оптимизации и состояния">
+              <div className="flex items-center gap-2 text-sm text-gray-400 mb-2">
+                <Upload className="h-4 w-4" />
+                <span>Результаты оптимизации</span>
+                <Info className="h-3 w-3" />
+              </div>
+            </Tooltip>
+            <p className="text-white font-mono text-sm break-all">
+              {optimizationStatus.results_path || 'data/hyperopt/'}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Configuration */}
+        <div className="bg-surface border border-gray-800 rounded-lg p-6">
+          <div className="flex items-center gap-3 mb-6">
+            <Settings className="h-5 w-5 text-primary" />
+            <h3 className="text-lg font-semibold">Конфигурация оптимизации</h3>
+          </div>
+
+          <div className="space-y-4">
+            {/* Mode Selection */}
+            <div>
+              <Tooltip content="Режим оптимизации определяет стратегию поиска гиперпараметров">
+                <label className="flex items-center gap-2 text-sm font-medium text-gray-400 mb-2">
+                  Режим оптимизации
+                  <Info className="h-3 w-3" />
+                </label>
+              </Tooltip>
+              <select
+                value={optimizationConfig.mode}
+                onChange={(e) => setOptimizationConfig(prev => ({ ...prev, mode: e.target.value as typeof prev.mode }))}
+                disabled={optimizationStatus.is_running}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-primary focus:border-transparent disabled:opacity-50"
+              >
+                <option value="full">Полная оптимизация (все группы параметров)</option>
+                <option value="quick">Быстрая оптимизация (только ключевые параметры)</option>
+                <option value="group">Оптимизация одной группы</option>
+                <option value="resume">Возобновление предыдущего запуска</option>
+                <option value="fine_tune">Тонкая настройка лучших параметров</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                {optimizationConfig.mode === 'full' && 'Последовательно оптимизирует все группы: learning_rate → regularization → class_balance → augmentation → scheduler → triple_barrier'}
+                {optimizationConfig.mode === 'quick' && 'Оптимизирует только learning_rate и regularization (~60% влияния на качество)'}
+                {optimizationConfig.mode === 'group' && 'Оптимизирует только выбранную группу параметров'}
+                {optimizationConfig.mode === 'resume' && 'Продолжает с последней сохранённой позиции'}
+                {optimizationConfig.mode === 'fine_tune' && 'Сужает диапазон поиска вокруг лучших найденных значений'}
+              </p>
+            </div>
+
+            {/* Target Group (only for group mode) */}
+            {optimizationConfig.mode === 'group' && (
+              <div>
+                <Tooltip content="Группа параметров для оптимизации">
+                  <label className="flex items-center gap-2 text-sm font-medium text-gray-400 mb-2">
+                    Целевая группа
+                    <Info className="h-3 w-3" />
+                  </label>
+                </Tooltip>
+                <select
+                  value={optimizationConfig.target_group}
+                  onChange={(e) => setOptimizationConfig(prev => ({ ...prev, target_group: e.target.value }))}
+                  disabled={optimizationStatus.is_running}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-primary focus:border-transparent disabled:opacity-50"
+                >
+                  <option value="learning_rate">Learning Rate (~40% влияния)</option>
+                  <option value="regularization">Regularization (~25% влияния)</option>
+                  <option value="class_balance">Class Balance (~15% влияния)</option>
+                  <option value="augmentation">Augmentation (~10% влияния)</option>
+                  <option value="scheduler">Scheduler (~5% влияния)</option>
+                  <option value="triple_barrier">Triple Barrier (~5% влияния)</option>
+                </select>
+              </div>
+            )}
+
+            {/* Epochs per trial */}
+            <div>
+              <Tooltip content="Количество эпох для каждой пробы. Больше эпох = точнее оценка, но дольше (~12 мин/эпоха)">
+                <label className="flex items-center gap-2 text-sm font-medium text-gray-400 mb-2">
+                  Эпох на пробу
+                  <Info className="h-3 w-3" />
+                </label>
+              </Tooltip>
+              <div className="flex items-center gap-4">
+                <input
+                  type="range"
+                  min="2"
+                  max="10"
+                  value={optimizationConfig.epochs_per_trial}
+                  onChange={(e) => setOptimizationConfig(prev => ({ ...prev, epochs_per_trial: parseInt(e.target.value) }))}
+                  disabled={optimizationStatus.is_running}
+                  className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50"
+                />
+                <span className="text-white font-medium w-12 text-center">{optimizationConfig.epochs_per_trial}</span>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                Время на пробу: ~{optimizationConfig.epochs_per_trial * 12} минут
+              </p>
+            </div>
+
+            {/* Max trials per group */}
+            <div>
+              <Tooltip content="Максимальное количество проб для каждой группы параметров">
+                <label className="flex items-center gap-2 text-sm font-medium text-gray-400 mb-2">
+                  Максимум проб на группу
+                  <Info className="h-3 w-3" />
+                </label>
+              </Tooltip>
+              <div className="flex items-center gap-4">
+                <input
+                  type="range"
+                  min="5"
+                  max="30"
+                  value={optimizationConfig.max_trials_per_group}
+                  onChange={(e) => setOptimizationConfig(prev => ({ ...prev, max_trials_per_group: parseInt(e.target.value) }))}
+                  disabled={optimizationStatus.is_running}
+                  className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50"
+                />
+                <span className="text-white font-medium w-12 text-center">{optimizationConfig.max_trials_per_group}</span>
+              </div>
+            </div>
+
+            {/* Max total hours */}
+            <div>
+              <Tooltip content="Максимальное время работы оптимизации в часах">
+                <label className="flex items-center gap-2 text-sm font-medium text-gray-400 mb-2">
+                  Лимит времени (часы)
+                  <Info className="h-3 w-3" />
+                </label>
+              </Tooltip>
+              <div className="flex items-center gap-4">
+                <input
+                  type="range"
+                  min="1"
+                  max="72"
+                  value={optimizationConfig.max_total_hours}
+                  onChange={(e) => setOptimizationConfig(prev => ({ ...prev, max_total_hours: parseInt(e.target.value) }))}
+                  disabled={optimizationStatus.is_running}
+                  className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50"
+                />
+                <span className="text-white font-medium w-16 text-center">{optimizationConfig.max_total_hours}ч</span>
+              </div>
+            </div>
+
+            {/* Primary Metric */}
+            <div>
+              <Tooltip content="Основная метрика для оптимизации">
+                <label className="flex items-center gap-2 text-sm font-medium text-gray-400 mb-2">
+                  Целевая метрика
+                  <Info className="h-3 w-3" />
+                </label>
+              </Tooltip>
+              <select
+                value={optimizationConfig.primary_metric}
+                onChange={(e) => setOptimizationConfig(prev => ({ ...prev, primary_metric: e.target.value }))}
+                disabled={optimizationStatus.is_running}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-primary focus:border-transparent disabled:opacity-50"
+              >
+                <option value="val_f1">F1-Score (рекомендуется)</option>
+                <option value="val_accuracy">Accuracy</option>
+                <option value="val_precision">Precision</option>
+                <option value="val_recall">Recall</option>
+              </select>
+            </div>
+
+            {/* Advanced options */}
+            <div className="border-t border-gray-700 pt-4 mt-4">
+              <p className="text-sm font-medium text-gray-400 mb-3">Дополнительные опции</p>
+              <div className="space-y-3">
+                <Tooltip content="Раннее отсечение неудачных проб для экономии времени (~60% экономии)">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={optimizationConfig.enable_pruning}
+                      onChange={(e) => setOptimizationConfig(prev => ({ ...prev, enable_pruning: e.target.checked }))}
+                      disabled={optimizationStatus.is_running}
+                      className="w-4 h-4 text-primary bg-gray-800 border-gray-600 rounded focus:ring-primary disabled:opacity-50"
+                    />
+                    <span className="text-sm text-gray-300">Включить раннее отсечение (Pruning)</span>
+                    <Info className="h-3 w-3 text-gray-500" />
+                  </label>
+                </Tooltip>
+
+                <Tooltip content="Начать с рекомендованных значений вместо случайных">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={optimizationConfig.use_warm_start}
+                      onChange={(e) => setOptimizationConfig(prev => ({ ...prev, use_warm_start: e.target.checked }))}
+                      disabled={optimizationStatus.is_running}
+                      className="w-4 h-4 text-primary bg-gray-800 border-gray-600 rounded focus:ring-primary disabled:opacity-50"
+                    />
+                    <span className="text-sm text-gray-300">Тёплый старт (Warm Start)</span>
+                    <Info className="h-3 w-3 text-gray-500" />
+                  </label>
+                </Tooltip>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Best Parameters */}
+        <div className="bg-surface border border-gray-800 rounded-lg p-6">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <TrendingUp className="h-5 w-5 text-green-400" />
+              <h3 className="text-lg font-semibold">Лучшие найденные параметры</h3>
+            </div>
+            {bestParams && (
+              <button
+                onClick={handleApplyBestParams}
+                className="flex items-center gap-2 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg transition-colors"
+              >
+                <CheckCircle className="h-4 w-4" />
+                Применить
+              </button>
+            )}
+          </div>
+
+          {bestParams ? (
+            <div className="space-y-3">
+              {Object.entries(bestParams).map(([key, value]) => (
+                <div key={key} className="flex justify-between items-center py-2 border-b border-gray-700 last:border-0">
+                  <span className="text-gray-400 text-sm">{key}</span>
+                  <span className="text-white font-mono text-sm">
+                    {typeof value === 'number' ? value.toFixed(6) : String(value)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <Target className="h-12 w-12 text-gray-600 mx-auto mb-3" />
+              <p className="text-gray-400">Запустите оптимизацию для поиска лучших параметров</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Trial History */}
+      <div className="bg-surface border border-gray-800 rounded-lg p-6">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <Clock className="h-5 w-5 text-primary" />
+            <h3 className="text-lg font-semibold">История проб</h3>
+          </div>
+          <button
+            onClick={fetchOptimizationHistory}
+            className="flex items-center gap-2 text-gray-400 hover:text-white text-sm"
+          >
+            <RefreshCw className="h-4 w-4" />
+            Обновить
+          </button>
+        </div>
+
+        {optimizationHistory.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-gray-400 border-b border-gray-700">
+                  <th className="pb-3 pr-4">#</th>
+                  <th className="pb-3 pr-4">Группа</th>
+                  <th className="pb-3 pr-4">Статус</th>
+                  <th className="pb-3 pr-4">F1</th>
+                  <th className="pb-3 pr-4">Accuracy</th>
+                  <th className="pb-3 pr-4">Время (мин)</th>
+                  <th className="pb-3">Параметры</th>
+                </tr>
+              </thead>
+              <tbody>
+                {optimizationHistory.slice(0, 20).map((trial) => (
+                  <tr key={trial.trial_id} className="border-b border-gray-800 hover:bg-gray-800/50">
+                    <td className="py-3 pr-4 text-gray-400">{trial.trial_id}</td>
+                    <td className="py-3 pr-4">
+                      <span className="px-2 py-1 bg-blue-500/20 text-blue-400 text-xs rounded">
+                        {trial.group}
+                      </span>
+                    </td>
+                    <td className="py-3 pr-4">
+                      <span className={cn(
+                        'px-2 py-1 text-xs rounded',
+                        trial.status === 'COMPLETE' ? 'bg-green-500/20 text-green-400' :
+                        trial.status === 'PRUNED' ? 'bg-yellow-500/20 text-yellow-400' :
+                        'bg-red-500/20 text-red-400'
+                      )}>
+                        {trial.status}
+                      </span>
+                    </td>
+                    <td className="py-3 pr-4 font-mono">
+                      {trial.metrics?.val_f1 ? (trial.metrics.val_f1 * 100).toFixed(2) + '%' : '-'}
+                    </td>
+                    <td className="py-3 pr-4 font-mono">
+                      {trial.metrics?.val_accuracy ? (trial.metrics.val_accuracy * 100).toFixed(2) + '%' : '-'}
+                    </td>
+                    <td className="py-3 pr-4 text-gray-400">
+                      {trial.duration_minutes?.toFixed(1) || '-'}
+                    </td>
+                    <td className="py-3">
+                      <Tooltip content={JSON.stringify(trial.params, null, 2)}>
+                        <span className="text-gray-400 cursor-help flex items-center gap-1">
+                          <Info className="h-3 w-3" />
+                          {Object.keys(trial.params || {}).length} params
+                        </span>
+                      </Tooltip>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {optimizationHistory.length > 20 && (
+              <p className="text-center text-gray-400 text-sm mt-4">
+                Показаны последние 20 из {optimizationHistory.length} проб
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="text-center py-8">
+            <Activity className="h-12 w-12 text-gray-600 mx-auto mb-3" />
+            <p className="text-gray-400">Нет истории оптимизации</p>
+            <p className="text-gray-500 text-sm mt-1">Запустите оптимизацию для начала поиска</p>
+          </div>
+        )}
+      </div>
+
+      {/* Current Trial Details */}
+      {optimizationStatus.is_running && optimizationStatus.current_trial_params && (
+        <div className="bg-surface border border-blue-500/50 rounded-lg p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <RefreshCw className="h-5 w-5 text-blue-400 animate-spin" />
+            <h3 className="text-lg font-semibold">Текущая проба</h3>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {Object.entries(optimizationStatus.current_trial_params).map(([key, value]) => (
+              <div key={key} className="p-3 bg-gray-800 rounded-lg">
+                <p className="text-xs text-gray-400 mb-1">{key}</p>
+                <p className="text-white font-mono text-sm">
+                  {typeof value === 'number' ? value.toFixed(6) : String(value)}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  /**
+   * ============================================================
    * MAIN RENDER
    * ============================================================
    */
@@ -2640,7 +3330,8 @@ export function MLManagementPage() {
     { id: 'retraining', label: 'Auto-Retraining', icon: Zap },
     { id: 'mlflow', label: 'MLflow', icon: BarChart3 },
     { id: 'statistics', label: 'Statistics', icon: Gauge },
-    { id: 'layering', label: 'Layering Model', icon: Shield }
+    { id: 'layering', label: 'Layering Model', icon: Shield },
+    { id: 'optimization', label: 'Optimization', icon: Target }
   ];
 
   return (
@@ -2702,6 +3393,7 @@ export function MLManagementPage() {
         {activeTab === 'mlflow' && renderMLflowTab()}
         {activeTab === 'statistics' && renderStatisticsTab()}
         {activeTab === 'layering' && renderLayeringTab()}
+        {activeTab === 'optimization' && renderOptimizationTab()}
       </div>
     </div>
   );
