@@ -24,6 +24,7 @@ import asyncio
 import json
 import os
 import signal
+import traceback
 
 from backend.core.logger import get_logger
 
@@ -31,6 +32,11 @@ logger = get_logger(__name__)
 
 # Create router
 router = APIRouter(prefix="/api/hyperopt", tags=["Hyperparameter Optimization"])
+
+# Log API initialization
+logger.info("=" * 60)
+logger.info("Hyperparameter Optimization API initialized")
+logger.info("=" * 60)
 
 
 # ============================================================
@@ -213,17 +219,30 @@ async def _run_optimization(request: OptimizationRequest):
     global current_optimization
 
     try:
-        logger.info(f"Starting optimization: mode={request.mode}, study={request.study_name}")
+        logger.info("=" * 60)
+        logger.info("HYPEROPT: Starting background optimization task")
+        logger.info(f"HYPEROPT: Mode={request.mode}, Study={request.study_name}")
+        logger.info(f"HYPEROPT: Epochs/trial={request.epochs_per_trial}, Max trials/group={request.max_trials_per_group}")
+        logger.info(f"HYPEROPT: Max hours={request.max_total_hours}, Metric={request.primary_metric}")
+        logger.info("=" * 60)
 
-        # Импортируем оптимизатор
-        from backend.ml_engine.hyperparameter_optimizer import (
-            HyperparameterOptimizer,
-            OptimizationConfig,
-            OptimizationMode as OptimizerMode,
-            ParameterGroup as OptimizerParamGroup
-        )
+        # Импортируем оптимизатор с детальным логированием
+        logger.info("HYPEROPT: Importing hyperparameter_optimizer module...")
+        try:
+            from backend.ml_engine.hyperparameter_optimizer import (
+                HyperparameterOptimizer,
+                OptimizationConfig,
+                OptimizationMode as OptimizerMode,
+                ParameterGroup as OptimizerParamGroup
+            )
+            logger.info("HYPEROPT: Import successful")
+        except ImportError as ie:
+            logger.error(f"HYPEROPT: Import failed: {ie}")
+            logger.error(f"HYPEROPT: Traceback:\n{traceback.format_exc()}")
+            raise RuntimeError(f"Failed to import hyperparameter_optimizer: {ie}")
 
         # Создаём конфигурацию
+        logger.info("HYPEROPT: Creating OptimizationConfig...")
         config = OptimizationConfig(
             study_name=request.study_name,
             storage_path=str(HYPEROPT_DATA_PATH),
@@ -235,14 +254,18 @@ async def _run_optimization(request: OptimizationRequest):
             use_mlflow=request.use_mlflow,
             seed=request.seed
         )
+        logger.info(f"HYPEROPT: Config created: {config}")
 
         # Создаём оптимизатор
+        logger.info("HYPEROPT: Creating HyperparameterOptimizer instance...")
         optimizer = HyperparameterOptimizer(config=config)
+        logger.info("HYPEROPT: Optimizer created successfully")
 
         # Обновляем статус
         current_optimization["status"] = "running"
         current_optimization["started_at"] = datetime.now().isoformat()
         _save_state(current_optimization)
+        logger.info("HYPEROPT: State saved, status=running")
 
         # Определяем режим
         mode_map = {
@@ -252,6 +275,7 @@ async def _run_optimization(request: OptimizationRequest):
             OptimizationMode.FINE_TUNE: OptimizerMode.FINE_TUNE
         }
         opt_mode = mode_map.get(request.mode, OptimizerMode.FULL)
+        logger.info(f"HYPEROPT: Mapped mode: {request.mode} -> {opt_mode}")
 
         # Целевая группа
         target_group = None
@@ -265,12 +289,15 @@ async def _run_optimization(request: OptimizationRequest):
                 ParameterGroup.TRIPLE_BARRIER: OptimizerParamGroup.TRIPLE_BARRIER
             }
             target_group = group_map.get(request.target_group)
+            logger.info(f"HYPEROPT: Target group: {request.target_group} -> {target_group}")
 
         # Запускаем оптимизацию
+        logger.info("HYPEROPT: Starting optimizer.optimize()...")
         results = await optimizer.optimize(
             mode=opt_mode,
             target_group=target_group
         )
+        logger.info(f"HYPEROPT: Optimization finished, results keys: {results.keys() if results else 'None'}")
 
         # Обновляем статус
         current_optimization["status"] = "completed"
@@ -281,21 +308,32 @@ async def _run_optimization(request: OptimizationRequest):
         # Добавляем в историю
         optimization_history.append(current_optimization.copy())
 
-        logger.info(f"Optimization completed: best_value={results.get('best_value', 'N/A')}")
+        logger.info("=" * 60)
+        logger.info(f"HYPEROPT: Optimization COMPLETED successfully")
+        logger.info(f"HYPEROPT: Best value={results.get('best_value', 'N/A')}")
+        logger.info("=" * 60)
 
     except asyncio.CancelledError:
-        logger.info("Optimization cancelled by user")
-        current_optimization["status"] = "paused"
-        current_optimization["paused_at"] = datetime.now().isoformat()
-        _save_state(current_optimization)
+        logger.warning("HYPEROPT: Optimization CANCELLED by user")
+        if current_optimization:
+            current_optimization["status"] = "paused"
+            current_optimization["paused_at"] = datetime.now().isoformat()
+            _save_state(current_optimization)
         raise
 
     except Exception as e:
-        logger.error(f"Optimization failed: {e}", exc_info=True)
-        current_optimization["status"] = "failed"
-        current_optimization["error"] = str(e)
-        current_optimization["failed_at"] = datetime.now().isoformat()
-        _save_state(current_optimization)
+        logger.error("=" * 60)
+        logger.error(f"HYPEROPT: Optimization FAILED with error: {e}")
+        logger.error(f"HYPEROPT: Error type: {type(e).__name__}")
+        logger.error(f"HYPEROPT: Traceback:\n{traceback.format_exc()}")
+        logger.error("=" * 60)
+
+        if current_optimization:
+            current_optimization["status"] = "failed"
+            current_optimization["error"] = str(e)
+            current_optimization["error_traceback"] = traceback.format_exc()
+            current_optimization["failed_at"] = datetime.now().isoformat()
+            _save_state(current_optimization)
 
 
 # ============================================================
@@ -318,56 +356,85 @@ async def start_optimization(
     """
     global current_optimization, optimization_task
 
-    # Проверяем, не запущена ли уже оптимизация
-    if current_optimization and current_optimization.get("status") == "running":
-        raise HTTPException(
-            status_code=409,
-            detail="Оптимизация уже выполняется. Остановите текущую или дождитесь завершения."
+    logger.info("=" * 60)
+    logger.info("HYPEROPT API: /start endpoint called")
+    logger.info(f"HYPEROPT API: Request: mode={request.mode}, epochs={request.epochs_per_trial}")
+    logger.info("=" * 60)
+
+    try:
+        # Проверяем, не запущена ли уже оптимизация
+        if current_optimization and current_optimization.get("status") == "running":
+            logger.warning("HYPEROPT API: Optimization already running, rejecting request")
+            raise HTTPException(
+                status_code=409,
+                detail="Оптимизация уже выполняется. Остановите текущую или дождитесь завершения."
+            )
+
+        # Оценка времени
+        time_estimate = _estimate_time(
+            request.mode,
+            request.epochs_per_trial,
+            request.max_trials_per_group
         )
+        logger.info(f"HYPEROPT API: Time estimate: {time_estimate}")
 
-    # Оценка времени
-    time_estimate = _estimate_time(
-        request.mode,
-        request.epochs_per_trial,
-        request.max_trials_per_group
-    )
+        # Создаём job
+        job_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        logger.info(f"HYPEROPT API: Created job_id={job_id}")
 
-    # Создаём job
-    job_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    current_optimization = {
-        "job_id": job_id,
-        "status": "starting",
-        "mode": request.mode.value,
-        "target_group": request.target_group.value if request.target_group else None,
-        "config": request.model_dump(),
-        "time_estimate": time_estimate,
-        "data_paths": _get_data_paths(),
-        "created_at": datetime.now().isoformat(),
-        "progress": {
-            "current_group": None,
-            "current_trial": 0,
-            "total_trials_estimated": time_estimate["total_trials"],
-            "groups_completed": [],
-            "best_value": None,
-            "best_params": {}
+        current_optimization = {
+            "job_id": job_id,
+            "status": "starting",
+            "mode": request.mode.value,
+            "target_group": request.target_group.value if request.target_group else None,
+            "config": request.model_dump(),
+            "time_estimate": time_estimate,
+            "data_paths": _get_data_paths(),
+            "created_at": datetime.now().isoformat(),
+            "progress": {
+                "current_group": None,
+                "current_trial": 0,
+                "total_trials_estimated": time_estimate["total_trials"],
+                "groups_completed": [],
+                "best_value": None,
+                "best_params": {}
+            }
         }
-    }
 
-    _save_state(current_optimization)
+        # Создаём директорию для данных
+        HYPEROPT_DATA_PATH.mkdir(parents=True, exist_ok=True)
+        logger.info(f"HYPEROPT API: Data path ensured: {HYPEROPT_DATA_PATH}")
 
-    # Запускаем в background
-    optimization_task = asyncio.create_task(_run_optimization(request))
+        _save_state(current_optimization)
+        logger.info("HYPEROPT API: Initial state saved")
 
-    logger.info(f"Optimization started: job_id={job_id}, mode={request.mode}")
+        # Запускаем в background
+        logger.info("HYPEROPT API: Creating background task for optimization...")
+        optimization_task = asyncio.create_task(_run_optimization(request))
+        logger.info("HYPEROPT API: Background task created and started")
 
-    return {
-        "job_id": job_id,
-        "status": "started",
-        "message": f"Оптимизация запущена в режиме '{request.mode.value}'",
-        "time_estimate": time_estimate,
-        "data_paths": _get_data_paths()
-    }
+        logger.info(f"HYPEROPT API: Optimization started successfully: job_id={job_id}, mode={request.mode}")
+
+        return {
+            "success": True,
+            "job_id": job_id,
+            "status": "started",
+            "message": f"Оптимизация запущена в режиме '{request.mode.value}'",
+            "time_estimate": time_estimate,
+            "data_paths": _get_data_paths()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"HYPEROPT API: Failed to start optimization: {e}")
+        logger.error(f"HYPEROPT API: Traceback:\n{traceback.format_exc()}")
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "message": f"Ошибка запуска оптимизации: {e}"
+        }
 
 
 @router.post("/stop")
@@ -471,44 +538,85 @@ async def resume_optimization(
 
 
 @router.get("/status")
-async def get_optimization_status() -> OptimizationStatusResponse:
+async def get_optimization_status() -> Dict[str, Any]:
     """
     Получить текущий статус оптимизации.
+
+    Returns dict with fields expected by frontend:
+    - is_running, can_resume, current_mode, current_group
+    - trials_completed, total_trials, best_metric
+    - elapsed_time, estimated_remaining
+    - current_trial_params, results_path, data_source_path
     """
     global current_optimization
 
+    logger.debug("HYPEROPT API: /status endpoint called")
+
     is_running = (
         current_optimization is not None and
-        current_optimization.get("status") == "running"
+        current_optimization.get("status") in ["running", "starting", "resuming"]
     )
 
     can_resume = _can_resume()
 
-    # Оценка оставшегося времени
-    estimated_remaining = None
-    if is_running and current_optimization:
+    # Дефолтные значения
+    result = {
+        "is_running": is_running,
+        "can_resume": can_resume,
+        "current_mode": None,
+        "current_group": None,
+        "trials_completed": 0,
+        "total_trials": 0,
+        "best_metric": None,
+        "elapsed_time": None,
+        "estimated_remaining": None,
+        "current_trial_params": None,
+        "results_path": str(HYPEROPT_DATA_PATH),
+        "data_source_path": "data/feature_store/"
+    }
+
+    if current_optimization:
         progress = current_optimization.get("progress", {})
         time_estimate = current_optimization.get("time_estimate", {})
 
-        current_trial = progress.get("current_trial", 0)
-        total_trials = time_estimate.get("effective_trials", 0)
+        result["current_mode"] = current_optimization.get("mode")
+        result["current_group"] = progress.get("current_group")
+        result["trials_completed"] = progress.get("current_trial", 0)
+        result["total_trials"] = time_estimate.get("total_trials", 0)
+        result["best_metric"] = progress.get("best_value")
+        result["current_trial_params"] = progress.get("current_params")
 
-        if total_trials > 0 and current_trial > 0:
-            remaining_trials = total_trials - current_trial
-            minutes_per_trial = time_estimate.get("minutes_per_trial", 48)
-            remaining_minutes = remaining_trials * minutes_per_trial
+        # Если есть ошибка, добавляем её
+        if current_optimization.get("error"):
+            result["error"] = current_optimization.get("error")
+            result["error_traceback"] = current_optimization.get("error_traceback")
 
-            hours = int(remaining_minutes // 60)
-            minutes = int(remaining_minutes % 60)
-            estimated_remaining = f"{hours}ч {minutes}м"
+        # Расчёт времени
+        if current_optimization.get("started_at"):
+            try:
+                started = datetime.fromisoformat(current_optimization["started_at"])
+                elapsed = datetime.now() - started
+                hours = int(elapsed.total_seconds() // 3600)
+                minutes = int((elapsed.total_seconds() % 3600) // 60)
+                result["elapsed_time"] = f"{hours}:{minutes:02d}"
+            except Exception:
+                pass
 
-    return OptimizationStatusResponse(
-        is_running=is_running,
-        can_resume=can_resume,
-        current_job=current_optimization,
-        progress=current_optimization.get("progress") if current_optimization else None,
-        estimated_time_remaining=estimated_remaining
-    )
+        # Оценка оставшегося времени
+        if is_running:
+            current_trial = progress.get("current_trial", 0)
+            total_trials = time_estimate.get("effective_trials", 0)
+
+            if total_trials > 0 and current_trial > 0:
+                remaining_trials = total_trials - current_trial
+                minutes_per_trial = time_estimate.get("minutes_per_trial", 48)
+                remaining_minutes = remaining_trials * minutes_per_trial
+
+                hours = int(remaining_minutes // 60)
+                minutes = int(remaining_minutes % 60)
+                result["estimated_remaining"] = f"{hours}ч {minutes}м"
+
+    return result
 
 
 @router.get("/results")
@@ -561,31 +669,105 @@ async def get_optimization_results() -> OptimizationResultsResponse:
 async def get_best_params() -> Dict[str, Any]:
     """
     Получить лучшие найденные параметры.
-    """
-    best_params_path = HYPEROPT_DATA_PATH / "best_params.json"
 
+    Returns:
+        {success: bool, best_params: dict, best_value: float}
+    """
+    logger.debug("HYPEROPT API: /best-params endpoint called")
+
+    best_params = {}
+    best_value = None
+
+    # Пробуем загрузить из файла
+    best_params_path = HYPEROPT_DATA_PATH / "best_params.json"
     if best_params_path.exists():
         try:
             with open(best_params_path, 'r') as f:
-                return json.load(f)
+                data = json.load(f)
+                if isinstance(data, dict):
+                    best_params = data.get("params", data)
+                    best_value = data.get("value")
+                    logger.info(f"HYPEROPT API: Loaded best params from file: {len(best_params)} params")
         except Exception as e:
-            logger.warning(f"Failed to load best params: {e}")
+            logger.warning(f"HYPEROPT API: Failed to load best params from file: {e}")
 
     # Fallback на текущие результаты
-    if current_optimization and current_optimization.get("results"):
-        return current_optimization["results"].get("best_params", {})
+    if not best_params and current_optimization:
+        results = current_optimization.get("results", {})
+        if results:
+            best_params = results.get("best_params", {})
+            best_value = results.get("best_value")
+            logger.info(f"HYPEROPT API: Using best params from current optimization")
 
-    return {}
+        # Также проверяем progress
+        progress = current_optimization.get("progress", {})
+        if progress.get("best_params"):
+            best_params = progress.get("best_params", best_params)
+            best_value = progress.get("best_value", best_value)
+
+    if best_params:
+        return {
+            "success": True,
+            "best_params": best_params,
+            "best_value": best_value
+        }
+
+    return {
+        "success": False,
+        "best_params": None,
+        "message": "Нет сохранённых лучших параметров. Запустите оптимизацию."
+    }
 
 
 @router.get("/history")
-async def get_optimization_history() -> Dict[str, Any]:
+async def get_optimization_history(limit: int = 50) -> Dict[str, Any]:
     """
-    Получить историю оптимизаций.
+    Получить историю оптимизаций (trials).
+
+    Args:
+        limit: Максимум записей для возврата
+
+    Returns:
+        {trials: list, total: int}
     """
+    logger.debug(f"HYPEROPT API: /history endpoint called, limit={limit}")
+
+    trials = []
+
+    # Пробуем загрузить из файла истории
+    history_path = HYPEROPT_DATA_PATH / "trial_history.json"
+    if history_path.exists():
+        try:
+            with open(history_path, 'r') as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    trials = data
+                elif isinstance(data, dict) and "trials" in data:
+                    trials = data["trials"]
+            logger.info(f"HYPEROPT API: Loaded {len(trials)} trials from history file")
+        except Exception as e:
+            logger.warning(f"HYPEROPT API: Failed to load trial history: {e}")
+
+    # Также добавляем данные из текущей оптимизации
+    if current_optimization:
+        progress = current_optimization.get("progress", {})
+        current_trials = progress.get("trials", [])
+        if current_trials:
+            # Добавляем триалы из текущего запуска, избегая дубликатов
+            existing_ids = {t.get("trial_id") for t in trials}
+            for trial in current_trials:
+                if trial.get("trial_id") not in existing_ids:
+                    trials.append(trial)
+
+    # Сортируем по trial_id (новые сверху)
+    trials.sort(key=lambda x: x.get("trial_id", 0), reverse=True)
+
+    # Ограничиваем
+    limited_trials = trials[:limit]
+
     return {
-        "history": optimization_history[-10:],  # Последние 10
-        "total": len(optimization_history)
+        "trials": limited_trials,
+        "total": len(trials)
     }
 
 
