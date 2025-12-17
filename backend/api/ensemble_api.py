@@ -847,16 +847,14 @@ async def cancel_training(task_id: str):
 # HELPER FUNCTIONS
 # ============================================================================
 
-# Default data paths
-DEFAULT_DATA_PATH = Path("D:/PYTHON/Bot_ver3_stakan_new/data")
-FALLBACK_DATA_PATH = Path(__file__).parent.parent.parent / "data"
+# Default data paths - используем абсолютный путь из config
+from backend.config import get_project_data_path
+_PROJECT_DATA_PATH = Path(get_project_data_path())
 
 
 def _get_data_path() -> Path:
-    """Получить путь к данным (Windows или Linux)."""
-    if DEFAULT_DATA_PATH.exists():
-        return DEFAULT_DATA_PATH
-    return FALLBACK_DATA_PATH
+    """Получить путь к данным (абсолютный путь к project_root/data)."""
+    return _PROJECT_DATA_PATH
 
 
 def _generate_labels_from_prices(

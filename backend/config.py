@@ -4,10 +4,33 @@
 """
 
 import os
+from pathlib import Path
 from typing import List, Literal, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator
 from dotenv import load_dotenv
+
+# ============================================================================
+# PROJECT ROOT DATA PATH
+# ============================================================================
+# Все данные должны храниться в project_root/data/, а НЕ в backend/data/
+_CONFIG_FILE = Path(__file__).resolve()
+_PROJECT_ROOT = _CONFIG_FILE.parent.parent  # backend/config.py -> project_root
+_DATA_ROOT = _PROJECT_ROOT / "data"
+
+def get_project_data_path(subpath: str = "") -> str:
+    """
+    Возвращает абсолютный путь к директории данных в корне проекта.
+
+    Args:
+        subpath: Подпуть внутри data/ (например, "raw_lob", "ml_training")
+
+    Returns:
+        Абсолютный путь к project_root/data/{subpath}
+    """
+    if subpath:
+        return str(_DATA_ROOT / subpath)
+    return str(_DATA_ROOT)
 
 # from core.logger import get_logger
 
@@ -918,8 +941,8 @@ class Settings(BaseSettings):
     description="Максимум снимков в памяти на символ (memory limit)"
   )
   RAW_LOB_STORAGE_PATH: str = Field(
-    default=os.getenv("RAW_LOB_STORAGE_PATH", "data/raw_lob"),
-    description="Путь хранения сырых данных LOB"
+    default=os.getenv("RAW_LOB_STORAGE_PATH", get_project_data_path("raw_lob")),
+    description="Путь хранения сырых данных LOB (абсолютный путь к project_root/data/raw_lob)"
   )
   RAW_LOB_ADAPTIVE_INTERVAL: bool = Field(
     default=os.getenv("RAW_LOB_ADAPTIVE_INTERVAL", "true").lower() == "true",

@@ -20,8 +20,12 @@ import asyncio
 import sys
 
 from backend.core.logger import get_logger
+from backend.config import get_project_data_path
 
 logger = get_logger(__name__)
+
+# Пути к данным (абсолютные, от project_root)
+_LAYERING_DATA_DIR = Path(get_project_data_path("ml_training/layering"))
 
 # Create router
 router = APIRouter(prefix="/api/ml-management/layering", tags=["Layering ML"])
@@ -135,7 +139,7 @@ def load_data_statistics() -> Dict[str, Any]:
         Dict со статистикой данных
     """
     try:
-        stats_file = Path("data/ml_training/layering/statistics.json")
+        stats_file = _LAYERING_DATA_DIR / "statistics.json"
 
         if not stats_file.exists():
             return {
@@ -203,7 +207,7 @@ async def get_data_status() -> Dict[str, Any]:
         stats = load_data_statistics()
 
         # Count parquet files
-        data_dir = Path("data/ml_training/layering")
+        data_dir = _LAYERING_DATA_DIR
         if data_dir.exists():
             parquet_files = list(data_dir.glob("layering_data_*.parquet"))
             stats['files_count'] = len(parquet_files)
