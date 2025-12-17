@@ -25,6 +25,11 @@ import torch
 from torch.utils.data import DataLoader
 
 from backend.core.logger import get_logger
+from backend.api.websocket_manager import (
+    WebSocketManager,
+    get_websocket_manager,
+    set_websocket_manager
+)
 
 # Thread pool для обучения моделей (не блокирует FastAPI event loop)
 _training_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="model_training")
@@ -113,6 +118,22 @@ class PredictionResponse(BaseModel):
     model_predictions: Dict[str, Any]
 
 
+class PredictionRequest(BaseModel):
+    """Запрос на предсказание ensemble."""
+    features: Optional[List[List[float]]] = Field(
+        None,
+        description="Feature данные (seq_len, num_features) для CNN-LSTM и MPD"
+    )
+    raw_lob: Optional[List[List[List[float]]]] = Field(
+        None,
+        description="LOB данные (seq_len, num_levels, 4) для TLOB"
+    )
+    broadcast: bool = Field(
+        default=True,
+        description="Отправлять ли предсказание через WebSocket"
+    )
+
+
 # ============================================================================
 # GLOBAL ENSEMBLE INSTANCE
 # ============================================================================
@@ -125,185 +146,15 @@ _training_tasks: Dict[str, Dict[str, Any]] = {}
 
 
 # ============================================================================
-# WEBSOCKET CONNECTION MANAGER
+# WEBSOCKET CONNECTION MANAGER (SHARED)
 # ============================================================================
 
-class ConnectionManager:
-    """
-    Менеджер WebSocket подключений для real-time обновлений.
+# Используем shared WebSocket manager из websocket_manager.py
+# Это позволяет разным API модулям (ensemble, hyperopt) использовать один менеджер
 
-    Поддерживает:
-    - Множественные подключения клиентов
-    - Broadcast сообщений всем подключенным клиентам
-    - Подписка на конкретные события (training, predictions, status)
-    """
-
-    def __init__(self):
-        # Все активные подключения
-        self.active_connections: List[WebSocket] = []
-        # Подключения по типу подписки
-        self.subscriptions: Dict[str, Set[WebSocket]] = {
-            "training": set(),      # Обновления обучения
-            "predictions": set(),   # Предсказания ensemble
-            "status": set(),        # Изменения статуса моделей
-            "all": set()            # Все события
-        }
-
-    async def connect(self, websocket: WebSocket, subscription: str = "all"):
-        """Подключить нового клиента."""
-        await websocket.accept()
-        self.active_connections.append(websocket)
-        if subscription in self.subscriptions:
-            self.subscriptions[subscription].add(websocket)
-        self.subscriptions["all"].add(websocket)
-        logger.info(f"WebSocket client connected. Total: {len(self.active_connections)}")
-
-    def disconnect(self, websocket: WebSocket):
-        """Отключить клиента."""
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-        for subscription_set in self.subscriptions.values():
-            subscription_set.discard(websocket)
-        logger.info(f"WebSocket client disconnected. Total: {len(self.active_connections)}")
-
-    async def send_personal_message(self, message: Dict[str, Any], websocket: WebSocket):
-        """Отправить сообщение конкретному клиенту."""
-        try:
-            await websocket.send_json(message)
-        except Exception as e:
-            logger.warning(f"Failed to send personal message: {e}")
-            self.disconnect(websocket)
-
-    async def broadcast(self, message: Dict[str, Any], event_type: str = "all"):
-        """
-        Отправить сообщение всем подписанным клиентам.
-
-        Args:
-            message: Сообщение для отправки
-            event_type: Тип события (training, predictions, status, all)
-        """
-        # Определяем получателей
-        recipients: Set[WebSocket] = set()
-        if event_type in self.subscriptions:
-            recipients = self.subscriptions[event_type].copy()
-        recipients.update(self.subscriptions["all"])
-
-        # Добавляем метаданные
-        message_with_meta = {
-            "event_type": event_type,
-            "timestamp": datetime.now().isoformat(),
-            **message
-        }
-
-        # Отправляем всем получателям
-        disconnected = []
-        for websocket in recipients:
-            try:
-                await websocket.send_json(message_with_meta)
-            except Exception as e:
-                logger.warning(f"Failed to broadcast to client: {e}")
-                disconnected.append(websocket)
-
-        # Удаляем отключенных клиентов
-        for ws in disconnected:
-            self.disconnect(ws)
-
-    async def broadcast_training_progress(
-        self,
-        task_id: str,
-        model_type: str,
-        epoch: int,
-        total_epochs: int,
-        metrics: Dict[str, float],
-        status: str = "training"
-    ):
-        """
-        Broadcast прогресса обучения.
-
-        Args:
-            task_id: ID задачи обучения
-            model_type: Тип модели
-            epoch: Текущая эпоха
-            total_epochs: Всего эпох
-            metrics: Метрики обучения
-            status: Статус (training, completed, failed)
-        """
-        await self.broadcast(
-            {
-                "type": "training_progress",
-                "task_id": task_id,
-                "model_type": model_type,
-                "epoch": epoch,
-                "total_epochs": total_epochs,
-                "progress_pct": round((epoch / total_epochs) * 100, 1),
-                "metrics": metrics,
-                "status": status
-            },
-            event_type="training"
-        )
-
-    async def broadcast_prediction(
-        self,
-        direction: str,
-        confidence: float,
-        model_predictions: Dict[str, Any],
-        should_trade: bool
-    ):
-        """
-        Broadcast нового предсказания ensemble.
-
-        Args:
-            direction: Направление (BUY, SELL, HOLD)
-            confidence: Уверенность consensus
-            model_predictions: Предсказания отдельных моделей
-            should_trade: Рекомендация к сделке
-        """
-        await self.broadcast(
-            {
-                "type": "prediction",
-                "direction": direction,
-                "confidence": confidence,
-                "model_predictions": model_predictions,
-                "should_trade": should_trade
-            },
-            event_type="predictions"
-        )
-
-    async def broadcast_status_change(
-        self,
-        model_type: str,
-        change_type: str,
-        old_value: Any,
-        new_value: Any
-    ):
-        """
-        Broadcast изменения статуса модели.
-
-        Args:
-            model_type: Тип модели
-            change_type: Тип изменения (enabled, weight, performance)
-            old_value: Старое значение
-            new_value: Новое значение
-        """
-        await self.broadcast(
-            {
-                "type": "status_change",
-                "model_type": model_type,
-                "change_type": change_type,
-                "old_value": old_value,
-                "new_value": new_value
-            },
-            event_type="status"
-        )
-
-
-# Глобальный экземпляр менеджера подключений
-_ws_manager = ConnectionManager()
-
-
-def get_ws_manager() -> ConnectionManager:
+def get_ws_manager() -> WebSocketManager:
     """Получить экземпляр менеджера WebSocket."""
-    return _ws_manager
+    return get_websocket_manager()
 
 
 def get_ensemble() -> EnsembleConsensus:
@@ -389,6 +240,90 @@ async def get_models():
 
 
 # ============================================================================
+# PREDICTION ENDPOINT
+# ============================================================================
+
+@router.post("/predict", response_model=PredictionResponse)
+async def get_prediction(request: PredictionRequest):
+    """
+    Получить предсказание ensemble.
+
+    Отправляет данные всем активным моделям и возвращает
+    консенсусное решение на основе выбранной стратегии.
+
+    Args:
+        features: Feature данные для CNN-LSTM и MPD моделей
+        raw_lob: LOB данные для TLOB модели
+        broadcast: Отправлять ли результат через WebSocket
+
+    Returns:
+        PredictionResponse с направлением, уверенностью и деталями
+    """
+    ensemble = get_ensemble()
+
+    # Конвертируем входные данные в тензоры
+    features_tensor = None
+    raw_lob_tensor = None
+
+    if request.features is not None:
+        features_tensor = torch.tensor(request.features, dtype=torch.float32).unsqueeze(0)
+
+    if request.raw_lob is not None:
+        raw_lob_tensor = torch.tensor(request.raw_lob, dtype=torch.float32).unsqueeze(0)
+
+    if features_tensor is None and raw_lob_tensor is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Either 'features' or 'raw_lob' must be provided"
+        )
+
+    try:
+        # Получаем предсказание от ensemble
+        prediction = await ensemble.predict(
+            features=features_tensor,
+            raw_lob=raw_lob_tensor
+        )
+
+        # Формируем ответ
+        response_data = {
+            'direction': prediction.direction.name,
+            'confidence': prediction.confidence,
+            'meta_confidence': prediction.meta_confidence,
+            'expected_return': prediction.expected_return,
+            'should_trade': prediction.should_trade,
+            'consensus_type': prediction.consensus_type,
+            'agreement_ratio': prediction.agreement_ratio,
+            'model_predictions': {
+                model_type.value: {
+                    'direction': pred.direction.name,
+                    'confidence': pred.confidence,
+                    'probabilities': pred.probabilities.tolist() if hasattr(pred.probabilities, 'tolist') else pred.probabilities
+                }
+                for model_type, pred in prediction.model_predictions.items()
+            }
+        }
+
+        # WebSocket broadcast
+        if request.broadcast:
+            try:
+                ws_manager = get_ws_manager()
+                await ws_manager.broadcast_prediction(
+                    direction=response_data['direction'],
+                    confidence=response_data['confidence'],
+                    model_predictions=response_data['model_predictions'],
+                    should_trade=response_data['should_trade']
+                )
+            except Exception as e:
+                logger.debug(f"WebSocket broadcast error: {e}")
+
+        return PredictionResponse(**response_data)
+
+    except Exception as e:
+        logger.error(f"Prediction error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 # MODEL MANAGEMENT ENDPOINTS
 # ============================================================================
 
@@ -411,7 +346,23 @@ async def enable_model(request: ModelEnableUpdate):
             detail=f"Unknown model type: {request.model_type}"
         )
 
+    # Получаем старое значение для broadcast
+    stats = ensemble.get_stats()
+    old_enabled = stats['model_weights'].get(request.model_type, {}).get('enabled', False)
+
     ensemble.enable_model(model_type, request.enabled)
+
+    # WebSocket broadcast
+    try:
+        ws_manager = get_ws_manager()
+        await ws_manager.broadcast_status_change(
+            model_type=request.model_type,
+            change_type="enabled",
+            old_value=old_enabled,
+            new_value=request.enabled
+        )
+    except Exception as e:
+        logger.debug(f"WebSocket broadcast error: {e}")
 
     return {
         'success': True,
@@ -440,7 +391,23 @@ async def update_model_weight(request: ModelWeightUpdate):
             detail=f"Unknown model type: {request.model_type}"
         )
 
+    # Получаем старое значение для broadcast
+    stats = ensemble.get_stats()
+    old_weight = stats['model_weights'].get(request.model_type, {}).get('weight', 0.0)
+
     ensemble.set_model_weight(model_type, request.weight)
+
+    # WebSocket broadcast
+    try:
+        ws_manager = get_ws_manager()
+        await ws_manager.broadcast_status_change(
+            model_type=request.model_type,
+            change_type="weight",
+            old_value=old_weight,
+            new_value=request.weight
+        )
+    except Exception as e:
+        logger.debug(f"WebSocket broadcast error: {e}")
 
     return {
         'success': True,
@@ -460,6 +427,13 @@ async def update_all_weights(weights: Dict[str, float]):
     """
     ensemble = get_ensemble()
 
+    # Получаем старые веса для broadcast
+    stats = ensemble.get_stats()
+    old_weights = {
+        name: info.get('weight', 0.0)
+        for name, info in stats['model_weights'].items()
+    }
+
     updated = []
     errors = []
 
@@ -470,6 +444,19 @@ async def update_all_weights(weights: Dict[str, float]):
             updated.append(model_name)
         except ValueError as e:
             errors.append({'model': model_name, 'error': str(e)})
+
+    # WebSocket broadcast для каждой обновленной модели
+    try:
+        ws_manager = get_ws_manager()
+        for model_name in updated:
+            await ws_manager.broadcast_status_change(
+                model_type=model_name,
+                change_type="weight",
+                old_value=old_weights.get(model_name, 0.0),
+                new_value=weights[model_name]
+            )
+    except Exception as e:
+        logger.debug(f"WebSocket broadcast error: {e}")
 
     return {
         'success': len(errors) == 0,
@@ -513,6 +500,10 @@ async def update_strategy(request: StrategyUpdate):
     """
     ensemble = get_ensemble()
 
+    # Получаем старую стратегию для broadcast
+    old_config = ensemble.get_config()
+    old_strategy = old_config.get('consensus_strategy', 'unknown')
+
     try:
         strategy = ConsensusStrategy(request.strategy)
     except ValueError:
@@ -522,6 +513,20 @@ async def update_strategy(request: StrategyUpdate):
         )
 
     ensemble.set_strategy(strategy)
+
+    # WebSocket broadcast
+    try:
+        ws_manager = get_ws_manager()
+        await ws_manager.broadcast(
+            {
+                "type": "strategy_changed",
+                "old_strategy": old_strategy,
+                "new_strategy": request.strategy
+            },
+            event_type="status"
+        )
+    except Exception as e:
+        logger.debug(f"WebSocket broadcast error: {e}")
 
     return {
         'success': True,
@@ -550,17 +555,52 @@ async def update_ensemble_config(config: EnsembleConfigUpdate):
     """
     ensemble = get_ensemble()
 
+    # Сохраняем старую конфигурацию для broadcast
+    old_config = ensemble.get_config()
+    changed_fields = {}
+
     if config.min_confidence_for_trade is not None:
+        changed_fields['min_confidence_for_trade'] = {
+            'old': old_config.get('min_confidence_for_trade'),
+            'new': config.min_confidence_for_trade
+        }
         ensemble.config.min_confidence_for_trade = config.min_confidence_for_trade
 
     if config.unanimous_threshold is not None:
+        changed_fields['unanimous_threshold'] = {
+            'old': old_config.get('unanimous_threshold'),
+            'new': config.unanimous_threshold
+        }
         ensemble.config.unanimous_threshold = config.unanimous_threshold
 
     if config.conflict_resolution is not None:
+        changed_fields['conflict_resolution'] = {
+            'old': old_config.get('conflict_resolution'),
+            'new': config.conflict_resolution
+        }
         ensemble.config.conflict_resolution = config.conflict_resolution
 
     if config.enable_adaptive_weights is not None:
+        changed_fields['enable_adaptive_weights'] = {
+            'old': old_config.get('enable_adaptive_weights'),
+            'new': config.enable_adaptive_weights
+        }
         ensemble.config.enable_adaptive_weights = config.enable_adaptive_weights
+
+    # WebSocket broadcast
+    if changed_fields:
+        try:
+            ws_manager = get_ws_manager()
+            await ws_manager.broadcast(
+                {
+                    "type": "config_updated",
+                    "changed_fields": changed_fields,
+                    "full_config": ensemble.get_config()
+                },
+                event_type="status"
+            )
+        except Exception as e:
+            logger.debug(f"WebSocket broadcast error: {e}")
 
     return {
         'success': True,
@@ -611,6 +651,10 @@ async def update_performance(update: PerformanceUpdate):
     """
     ensemble = get_ensemble()
 
+    # Получаем старый performance score
+    stats = ensemble.get_stats()
+    old_score = stats['model_weights'].get(update.model_type, {}).get('performance_score', 1.0)
+
     try:
         model_type = ModelType(update.model_type)
         actual = Direction(update.actual_direction)
@@ -625,10 +669,35 @@ async def update_performance(update: PerformanceUpdate):
         profit_loss=update.profit_loss
     )
 
+    # Получаем новый score после обновления
+    new_stats = ensemble.get_stats()
+    new_score = new_stats['model_weights'].get(update.model_type, {}).get('performance_score', 1.0)
+
+    is_correct = actual == predicted
+
+    # WebSocket broadcast
+    try:
+        ws_manager = get_ws_manager()
+        await ws_manager.broadcast(
+            {
+                "type": "performance_updated",
+                "model_type": update.model_type,
+                "was_correct": is_correct,
+                "profit_loss": update.profit_loss,
+                "old_score": old_score,
+                "new_score": new_score,
+                "actual_direction": update.actual_direction,
+                "predicted_direction": update.predicted_direction
+            },
+            event_type="status"
+        )
+    except Exception as e:
+        logger.debug(f"WebSocket broadcast error: {e}")
+
     return {
         'success': True,
         'model_type': update.model_type,
-        'correct': actual == predicted
+        'correct': is_correct
     }
 
 
