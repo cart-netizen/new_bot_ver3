@@ -843,6 +843,74 @@ async def cancel_training(task_id: str):
     return {'success': True, 'message': f"Task {task_id} cancelled"}
 
 
+@router.get("/training/available-symbols")
+async def get_available_symbols():
+    """
+    Получить список доступных символов из собранных данных.
+
+    Проверяет наличие данных в:
+    - Feature Store (для CNN-LSTM, MPD)
+    - Raw LOB (для TLOB)
+
+    Returns:
+        Dict с доступными символами и preset группами
+    """
+    data_path = _get_data_path()
+
+    # Символы из Feature Store (LSTM/MPD)
+    feature_store_symbols = set()
+    feature_store_path = data_path / "feature_store" / "offline" / "training_features"
+
+    if feature_store_path.exists():
+        for partition in feature_store_path.iterdir():
+            if partition.is_dir() and partition.name.startswith("date="):
+                for pq_file in partition.glob("*.parquet"):
+                    try:
+                        df = pd.read_parquet(pq_file, columns=['symbol'])
+                        feature_store_symbols.update(df['symbol'].unique())
+                    except Exception:
+                        pass
+
+    # Символы из Raw LOB (TLOB)
+    raw_lob_symbols = set()
+    raw_lob_path = data_path / "raw_lob"
+
+    if raw_lob_path.exists():
+        for symbol_dir in raw_lob_path.iterdir():
+            if symbol_dir.is_dir() and not symbol_dir.name.startswith('.'):
+                # Проверяем есть ли данные
+                parquet_files = list(symbol_dir.glob("*.parquet")) + list(symbol_dir.rglob("date=*/*.parquet"))
+                if parquet_files:
+                    raw_lob_symbols.add(symbol_dir.name)
+
+    # Preset группы
+    preset_groups = {
+        'major': ['BTCUSDT', 'ETHUSDT'],
+        'l1_chains': ['SOLUSDT', 'AVAXUSDT', 'NEARUSDT', 'APTUSDT', 'SUIUSDT', 'SEIUSDT'],
+        'l2_defi': ['ARBUSDT', 'OPUSDT', 'MATICUSDT', 'LINKUSDT', 'AAVEUSDT', 'UNIUSDT'],
+        'meme': ['DOGEUSDT', 'SHIBUSDT', 'PEPEUSDT', 'FLOKIUSDT', 'BONKUSDT', 'WIFUSDT'],
+        'ai_gaming': ['FETUSDT', 'AGIXUSDT', 'RENDERUSDT', 'AXSUSDT', 'SANDUSDT', 'MANAUSDT'],
+    }
+
+    # Фильтруем preset группы - только символы с данными
+    all_available = feature_store_symbols | raw_lob_symbols
+    filtered_groups = {}
+    for group_name, group_symbols in preset_groups.items():
+        available_in_group = [s for s in group_symbols if s in all_available]
+        if available_in_group:
+            filtered_groups[group_name] = available_in_group
+
+    return {
+        'feature_store_symbols': sorted(list(feature_store_symbols)),
+        'raw_lob_symbols': sorted(list(raw_lob_symbols)),
+        'all_symbols': sorted(list(all_available)),
+        'preset_groups': filtered_groups,
+        'total_feature_store': len(feature_store_symbols),
+        'total_raw_lob': len(raw_lob_symbols),
+        'total_unique': len(all_available)
+    }
+
+
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
@@ -961,7 +1029,10 @@ def _load_lob_data_from_parquet(
 
     logger.info(f"Total LOB snapshots for {symbol}: {len(combined_df)}")
 
-    # ===== ПРЕОБРАЗОВАНИЕ В TENSOR =====
+    # ===== ИЗВЛЕЧЕНИЕ MID PRICES ДЛЯ НОРМАЛИЗАЦИИ =====
+    mid_prices = combined_df['mid_price'].values
+
+    # ===== ПРЕОБРАЗОВАНИЕ В TENSOR С НОРМАЛИЗАЦИЕЙ =====
     n_samples = len(combined_df)
     lob_data = np.zeros((n_samples, num_levels, 4), dtype=np.float32)
 
@@ -972,13 +1043,24 @@ def _load_lob_data_from_parquet(
         ask_vol_col = f'ask_volume_{i}'
 
         if bid_price_col in combined_df.columns:
-            lob_data[:, i, 0] = combined_df[bid_price_col].values
-            lob_data[:, i, 1] = combined_df[bid_vol_col].values
-            lob_data[:, i, 2] = combined_df[ask_price_col].values
-            lob_data[:, i, 3] = combined_df[ask_vol_col].values
+            # Сырые данные
+            bid_prices = combined_df[bid_price_col].values
+            bid_volumes = combined_df[bid_vol_col].values
+            ask_prices = combined_df[ask_price_col].values
+            ask_volumes = combined_df[ask_vol_col].values
 
-    # ===== ИЗВЛЕЧЕНИЕ LABELS =====
-    mid_prices = combined_df['mid_price'].values
+            # ===== НОРМАЛИЗАЦИЯ ДЛЯ MULTI-SYMBOL ОБУЧЕНИЯ =====
+            # Цены: относительно mid_price в basis points (универсально для всех символов)
+            # Это позволяет обучать на BTC ($100k) и SOL ($200) одновременно
+            safe_mid = np.where(mid_prices > 0, mid_prices, 1.0)
+            lob_data[:, i, 0] = (bid_prices - mid_prices) / safe_mid * 10000  # basis points
+            lob_data[:, i, 2] = (ask_prices - mid_prices) / safe_mid * 10000  # basis points
+
+            # Объёмы: log-нормализация (сжимает большие объёмы, универсально)
+            lob_data[:, i, 1] = np.log1p(bid_volumes)
+            lob_data[:, i, 3] = np.log1p(ask_volumes)
+
+    logger.info(f"  LOB data normalized: prices in basis points, volumes log-transformed")
 
     # Используем synchronized labels если есть
     if 'future_direction_60s' in combined_df.columns:
