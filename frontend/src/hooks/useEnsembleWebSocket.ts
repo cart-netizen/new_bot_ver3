@@ -107,7 +107,17 @@ export function useEnsembleWebSocket(options: UseEnsembleWebSocketOptions = {}) 
     onError,
   ]);
 
+  // Сохраняем subscriptions в ref чтобы избежать пересоздания connect
+  const subscriptionsRef = useRef(subscriptions);
+  subscriptionsRef.current = subscriptions;
+
   const connect = useCallback(() => {
+    // Проверяем, не подключены ли уже
+    if (ensembleWsService.isConnected()) {
+      console.log('[useEnsembleWebSocket] Already connected, skipping');
+      return;
+    }
+
     ensembleWsService.connect(
       {
         onTrainingProgress: (data) => handlersRef.current.onTrainingProgress?.(data),
@@ -127,9 +137,9 @@ export function useEnsembleWebSocket(options: UseEnsembleWebSocketOptions = {}) 
         },
         onError: (error) => handlersRef.current.onError?.(error),
       },
-      subscriptions
+      subscriptionsRef.current
     );
-  }, [subscriptions]);
+  }, []); // Убираем зависимость от subscriptions
 
   const disconnect = useCallback(() => {
     ensembleWsService.disconnect();
@@ -153,18 +163,21 @@ export function useEnsembleWebSocket(options: UseEnsembleWebSocketOptions = {}) 
   }, []);
 
   // Авто-подключение при монтировании
+  // Используем ref чтобы избежать перезапуска при изменении connect/disconnect
+  const autoConnectRef = useRef(autoConnect);
+  autoConnectRef.current = autoConnect;
+
   useEffect(() => {
-    if (autoConnect) {
+    if (autoConnectRef.current) {
       connect();
     }
 
     return () => {
-      // Отключаемся при размонтировании только если авто-подключение было включено
-      if (autoConnect) {
-        disconnect();
-      }
+      // Отключаемся только при реальном размонтировании компонента
+      // НЕ при React Strict Mode double-invoke
+      // ensembleWsService сам обрабатывает reconnect
     };
-  }, [autoConnect, connect, disconnect]);
+  }, []); // Пустые зависимости - только mount/unmount
 
   return {
     connect,
