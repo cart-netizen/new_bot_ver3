@@ -997,27 +997,71 @@ def _load_feature_data_from_parquet(
         Tuple (features, labels) или (None, None) если данных нет
     """
     data_path = _get_data_path()
-
-    # Проверяем несколько возможных путей
-    possible_paths = [
-        data_path / "feature_store" / symbol,
-        data_path / "ml_training" / symbol,
-        data_path / "features" / symbol,
-    ]
-
     features_df = None
-    for path in possible_paths:
-        if path.exists():
-            parquet_files = sorted(path.glob("*.parquet"))
-            if parquet_files:
-                logger.info(f"Found feature data in {path}")
+
+    # ===== 1. Пробуем загрузить из Feature Store (offline/training_features) =====
+    feature_store_path = data_path / "feature_store" / "offline" / "training_features"
+    if feature_store_path.exists():
+        logger.info(f"Checking Feature Store: {feature_store_path}")
+
+        # Вычисляем диапазон дат
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+
+        parquet_files = []
+        for partition_dir in feature_store_path.iterdir():
+            if not partition_dir.is_dir():
+                continue
+
+            # Извлекаем дату из имени партиции (date=YYYY-MM-DD)
+            if partition_dir.name.startswith("date="):
+                partition_date = partition_dir.name.split("=")[1]
                 try:
-                    all_dfs = [pd.read_parquet(f) for f in parquet_files]
-                    features_df = pd.concat(all_dfs, ignore_index=True)
-                    break
-                except Exception as e:
-                    logger.warning(f"Error loading from {path}: {e}")
+                    part_dt = datetime.strptime(partition_date, "%Y-%m-%d")
+                    # Фильтруем по диапазону дат
+                    if start_date.date() <= part_dt.date() <= end_date.date():
+                        parquet_files.extend(list(partition_dir.glob("*.parquet")))
+                except ValueError:
                     continue
+
+        if parquet_files:
+            logger.info(f"Found {len(parquet_files)} parquet files in Feature Store")
+            try:
+                all_dfs = [pd.read_parquet(f) for f in parquet_files]
+                features_df = pd.concat(all_dfs, ignore_index=True)
+
+                # Фильтруем по symbol если есть колонка
+                if 'symbol' in features_df.columns:
+                    features_df = features_df[features_df['symbol'] == symbol]
+                    logger.info(f"Filtered for {symbol}: {len(features_df)} samples")
+
+                if features_df.empty:
+                    logger.warning(f"No data for {symbol} in Feature Store")
+                    features_df = None
+            except Exception as e:
+                logger.warning(f"Error loading from Feature Store: {e}")
+                features_df = None
+
+    # ===== 2. Fallback: старые пути =====
+    if features_df is None or features_df.empty:
+        possible_paths = [
+            data_path / "feature_store" / symbol,
+            data_path / "ml_training" / symbol,
+            data_path / "features" / symbol,
+        ]
+
+        for path in possible_paths:
+            if path.exists():
+                parquet_files = sorted(path.glob("*.parquet"))
+                if parquet_files:
+                    logger.info(f"Found feature data in {path}")
+                    try:
+                        all_dfs = [pd.read_parquet(f) for f in parquet_files]
+                        features_df = pd.concat(all_dfs, ignore_index=True)
+                        break
+                    except Exception as e:
+                        logger.warning(f"Error loading from {path}: {e}")
+                        continue
 
     if features_df is None or features_df.empty:
         logger.warning(f"No feature data found for {symbol}")
@@ -1313,8 +1357,8 @@ async def _run_training(
             config = ModelConfigV2(input_features=train_seq.shape[2])
             model = create_model_v2(config)
         elif model_type == "mpd_transformer":
-            from backend.ml_engine.models.mpd_transformer import create_mpd_transformer, MPDConfig
-            config = MPDConfig(input_features=train_seq.shape[2])
+            from backend.ml_engine.models.mpd_transformer import create_mpd_transformer, MPDTransformerConfig
+            config = MPDTransformerConfig(input_features=train_seq.shape[2])
             model = create_mpd_transformer(config)
         elif model_type == "tlob":
             from backend.ml_engine.models.tlob_transformer import create_tlob_transformer, TLOBConfig
