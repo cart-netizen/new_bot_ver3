@@ -500,6 +500,13 @@ export function MLManagementPage() {
     data_path: 'D:\\PYTHON\\Bot_ver3_stakan_new\\data'
   });
 
+  // Available symbols from API (for MPD/TLOB multi-symbol training)
+  const [availableSymbols, setAvailableSymbols] = useState<string[]>([]);
+  const [symbolGroups, setSymbolGroups] = useState<{[key: string]: string[]}>({});
+  const [loadingSymbols, setLoadingSymbols] = useState(false);
+  const [showMpdSymbolSelector, setShowMpdSymbolSelector] = useState(false);
+  const [showTlobSymbolSelector, setShowTlobSymbolSelector] = useState(false);
+
   // Hyperparameter Optimization state
   const [optimizationStatus, setOptimizationStatus] = useState<{
     is_running: boolean;
@@ -892,6 +899,64 @@ export function MLManagementPage() {
     }
   };
 
+  // Fetch available symbols for MPD/TLOB training
+  const fetchAvailableSymbols = async () => {
+    try {
+      setLoadingSymbols(true);
+      const response = await fetch('/api/training/available-symbols');
+      const data = await response.json();
+      if (data.success) {
+        setAvailableSymbols(data.symbols || []);
+        setSymbolGroups(data.groups || {});
+      }
+    } catch (err) {
+      console.error('Failed to fetch available symbols:', err);
+    } finally {
+      setLoadingSymbols(false);
+    }
+  };
+
+  // Toggle symbol selection helper
+  const toggleSymbol = (
+    symbols: string[],
+    symbol: string,
+    setParams: (params: any) => void,
+    currentParams: any
+  ) => {
+    const newSymbols = symbols.includes(symbol)
+      ? symbols.filter(s => s !== symbol)
+      : [...symbols, symbol];
+    setParams({ ...currentParams, symbols: newSymbols });
+  };
+
+  // Select symbol group helper
+  const selectSymbolGroup = (
+    groupName: string,
+    setParams: (params: any) => void,
+    currentParams: any
+  ) => {
+    const groupSymbols = symbolGroups[groupName] || [];
+    if (groupSymbols.length > 0) {
+      setParams({ ...currentParams, symbols: groupSymbols });
+    }
+  };
+
+  // Select all symbols
+  const selectAllSymbols = (
+    setParams: (params: any) => void,
+    currentParams: any
+  ) => {
+    setParams({ ...currentParams, symbols: [...availableSymbols] });
+  };
+
+  // Clear all symbols
+  const clearAllSymbols = (
+    setParams: (params: any) => void,
+    currentParams: any
+  ) => {
+    setParams({ ...currentParams, symbols: [] });
+  };
+
   // Start optimization
   const handleStartOptimization = async () => {
     const modeDescriptions: Record<string, string> = {
@@ -1022,6 +1087,7 @@ export function MLManagementPage() {
     fetchTrainingStatus();
     fetchModels();
     fetchRetrainingStatus();
+    fetchAvailableSymbols();
   }, []);
 
   // Fetch data when tab changes
@@ -3830,32 +3896,116 @@ export function MLManagementPage() {
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-2">Symbol</label>
-              <select
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
-                value={mpdTrainingParams.symbols[0]}
-                onChange={e => setMpdTrainingParams({ ...mpdTrainingParams, symbols: [e.target.value] })}
+          {/* Symbol Selection */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="block text-sm font-medium text-gray-400">
+                Symbols ({mpdTrainingParams.symbols.length} selected)
+              </label>
+              <button
+                onClick={() => setShowMpdSymbolSelector(!showMpdSymbolSelector)}
+                className="text-sm text-primary hover:text-primary/80"
                 disabled={mpdTrainingStatus.is_training}
               >
-                <option value="BTCUSDT">BTCUSDT</option>
-                <option value="ETHUSDT">ETHUSDT</option>
-              </select>
+                {showMpdSymbolSelector ? 'Hide' : 'Show'} Selector
+              </button>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-2">Days of Data</label>
-              <input
-                type="number"
-                min="1"
-                max="365"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
-                value={mpdTrainingParams.days}
-                onChange={e => setMpdTrainingParams({ ...mpdTrainingParams, days: parseInt(e.target.value) })}
-                disabled={mpdTrainingStatus.is_training}
-              />
+            {/* Selected symbols preview */}
+            <div className="flex flex-wrap gap-1 min-h-[36px] bg-gray-800 border border-gray-700 rounded-lg px-3 py-2">
+              {mpdTrainingParams.symbols.length === 0 ? (
+                <span className="text-gray-500 text-sm">No symbols selected</span>
+              ) : mpdTrainingParams.symbols.length <= 5 ? (
+                mpdTrainingParams.symbols.map(s => (
+                  <span key={s} className="px-2 py-0.5 bg-primary/20 text-primary text-xs rounded">
+                    {s.replace('USDT', '')}
+                  </span>
+                ))
+              ) : (
+                <span className="text-gray-400 text-sm">
+                  {mpdTrainingParams.symbols.slice(0, 3).map(s => s.replace('USDT', '')).join(', ')}
+                  ... +{mpdTrainingParams.symbols.length - 3} more
+                </span>
+              )}
             </div>
+
+            {/* Symbol selector panel */}
+            {showMpdSymbolSelector && (
+              <div className="bg-gray-900 border border-gray-700 rounded-lg p-4 space-y-4">
+                {/* Preset Groups */}
+                <div className="flex flex-wrap gap-2">
+                  <span className="text-xs text-gray-500 mr-2">Presets:</span>
+                  {Object.keys(symbolGroups).map(group => (
+                    <button
+                      key={group}
+                      onClick={() => selectSymbolGroup(group, setMpdTrainingParams, mpdTrainingParams)}
+                      className="px-2 py-1 text-xs bg-gray-800 hover:bg-gray-700 rounded border border-gray-600 text-gray-300"
+                      disabled={mpdTrainingStatus.is_training}
+                    >
+                      {group.replace('_', ' ')} ({symbolGroups[group]?.length || 0})
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => selectAllSymbols(setMpdTrainingParams, mpdTrainingParams)}
+                    className="px-2 py-1 text-xs bg-green-900/50 hover:bg-green-900 rounded border border-green-700 text-green-400"
+                    disabled={mpdTrainingStatus.is_training}
+                  >
+                    All ({availableSymbols.length})
+                  </button>
+                  <button
+                    onClick={() => clearAllSymbols(setMpdTrainingParams, mpdTrainingParams)}
+                    className="px-2 py-1 text-xs bg-red-900/50 hover:bg-red-900 rounded border border-red-700 text-red-400"
+                    disabled={mpdTrainingStatus.is_training}
+                  >
+                    Clear
+                  </button>
+                </div>
+
+                {/* Symbol checkboxes */}
+                <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-1 max-h-48 overflow-y-auto">
+                  {loadingSymbols ? (
+                    <span className="text-gray-500 col-span-full">Loading symbols...</span>
+                  ) : availableSymbols.length === 0 ? (
+                    <span className="text-gray-500 col-span-full">No data available. Collect data first.</span>
+                  ) : (
+                    availableSymbols.map(symbol => (
+                      <label
+                        key={symbol}
+                        className={cn(
+                          "flex items-center gap-1 px-2 py-1 rounded cursor-pointer text-xs",
+                          mpdTrainingParams.symbols.includes(symbol)
+                            ? "bg-primary/20 text-primary"
+                            : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={mpdTrainingParams.symbols.includes(symbol)}
+                          onChange={() => toggleSymbol(mpdTrainingParams.symbols, symbol, setMpdTrainingParams, mpdTrainingParams)}
+                          className="sr-only"
+                          disabled={mpdTrainingStatus.is_training}
+                        />
+                        {symbol.replace('USDT', '')}
+                      </label>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Days of Data */}
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">Days of Data</label>
+            <input
+              type="number"
+              min="1"
+              max="365"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
+              value={mpdTrainingParams.days}
+              onChange={e => setMpdTrainingParams({ ...mpdTrainingParams, days: parseInt(e.target.value) })}
+              disabled={mpdTrainingStatus.is_training}
+            />
           </div>
         </div>
       </div>
@@ -4167,32 +4317,124 @@ export function MLManagementPage() {
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-2">Symbol</label>
-              <select
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
-                value={tlobTrainingParams.symbols[0]}
-                onChange={e => setTlobTrainingParams({ ...tlobTrainingParams, symbols: [e.target.value] })}
+          {/* Symbol Selection */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="block text-sm font-medium text-gray-400">
+                Symbols ({tlobTrainingParams.symbols.length} selected)
+                <span className="ml-2 text-xs text-green-400">[Normalized for multi-symbol]</span>
+              </label>
+              <button
+                onClick={() => setShowTlobSymbolSelector(!showTlobSymbolSelector)}
+                className="text-sm text-primary hover:text-primary/80"
                 disabled={tlobTrainingStatus.is_training}
               >
-                <option value="BTCUSDT">BTCUSDT</option>
-                <option value="ETHUSDT">ETHUSDT</option>
-              </select>
+                {showTlobSymbolSelector ? 'Hide' : 'Show'} Selector
+              </button>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-2">Days of Data</label>
-              <input
-                type="number"
-                min="1"
-                max="365"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
-                value={tlobTrainingParams.days}
-                onChange={e => setTlobTrainingParams({ ...tlobTrainingParams, days: parseInt(e.target.value) })}
-                disabled={tlobTrainingStatus.is_training}
-              />
+            {/* Selected symbols preview */}
+            <div className="flex flex-wrap gap-1 min-h-[36px] bg-gray-800 border border-gray-700 rounded-lg px-3 py-2">
+              {tlobTrainingParams.symbols.length === 0 ? (
+                <span className="text-gray-500 text-sm">No symbols selected</span>
+              ) : tlobTrainingParams.symbols.length <= 5 ? (
+                tlobTrainingParams.symbols.map(s => (
+                  <span key={s} className="px-2 py-0.5 bg-primary/20 text-primary text-xs rounded">
+                    {s.replace('USDT', '')}
+                  </span>
+                ))
+              ) : (
+                <span className="text-gray-400 text-sm">
+                  {tlobTrainingParams.symbols.slice(0, 3).map(s => s.replace('USDT', '')).join(', ')}
+                  ... +{tlobTrainingParams.symbols.length - 3} more
+                </span>
+              )}
             </div>
+
+            {/* Symbol selector panel */}
+            {showTlobSymbolSelector && (
+              <div className="bg-gray-900 border border-gray-700 rounded-lg p-4 space-y-4">
+                {/* Info about normalization */}
+                <div className="text-xs text-gray-500 bg-gray-800 p-2 rounded">
+                  <Info className="inline h-3 w-3 mr-1" />
+                  TLOB uses normalized data: prices in basis points (relative to mid-price), volumes log-transformed.
+                  This enables training on multiple symbols with different price scales.
+                </div>
+
+                {/* Preset Groups */}
+                <div className="flex flex-wrap gap-2">
+                  <span className="text-xs text-gray-500 mr-2">Presets:</span>
+                  {Object.keys(symbolGroups).map(group => (
+                    <button
+                      key={group}
+                      onClick={() => selectSymbolGroup(group, setTlobTrainingParams, tlobTrainingParams)}
+                      className="px-2 py-1 text-xs bg-gray-800 hover:bg-gray-700 rounded border border-gray-600 text-gray-300"
+                      disabled={tlobTrainingStatus.is_training}
+                    >
+                      {group.replace('_', ' ')} ({symbolGroups[group]?.length || 0})
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => selectAllSymbols(setTlobTrainingParams, tlobTrainingParams)}
+                    className="px-2 py-1 text-xs bg-green-900/50 hover:bg-green-900 rounded border border-green-700 text-green-400"
+                    disabled={tlobTrainingStatus.is_training}
+                  >
+                    All ({availableSymbols.length})
+                  </button>
+                  <button
+                    onClick={() => clearAllSymbols(setTlobTrainingParams, tlobTrainingParams)}
+                    className="px-2 py-1 text-xs bg-red-900/50 hover:bg-red-900 rounded border border-red-700 text-red-400"
+                    disabled={tlobTrainingStatus.is_training}
+                  >
+                    Clear
+                  </button>
+                </div>
+
+                {/* Symbol checkboxes */}
+                <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-1 max-h-48 overflow-y-auto">
+                  {loadingSymbols ? (
+                    <span className="text-gray-500 col-span-full">Loading symbols...</span>
+                  ) : availableSymbols.length === 0 ? (
+                    <span className="text-gray-500 col-span-full">No data available. Collect Raw LOB data first.</span>
+                  ) : (
+                    availableSymbols.map(symbol => (
+                      <label
+                        key={symbol}
+                        className={cn(
+                          "flex items-center gap-1 px-2 py-1 rounded cursor-pointer text-xs",
+                          tlobTrainingParams.symbols.includes(symbol)
+                            ? "bg-primary/20 text-primary"
+                            : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={tlobTrainingParams.symbols.includes(symbol)}
+                          onChange={() => toggleSymbol(tlobTrainingParams.symbols, symbol, setTlobTrainingParams, tlobTrainingParams)}
+                          className="sr-only"
+                          disabled={tlobTrainingStatus.is_training}
+                        />
+                        {symbol.replace('USDT', '')}
+                      </label>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Days of Data */}
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-2">Days of Data</label>
+            <input
+              type="number"
+              min="1"
+              max="365"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary"
+              value={tlobTrainingParams.days}
+              onChange={e => setTlobTrainingParams({ ...tlobTrainingParams, days: parseInt(e.target.value) })}
+              disabled={tlobTrainingStatus.is_training}
+            />
           </div>
         </div>
       </div>
