@@ -1,6 +1,6 @@
 // frontend/src/pages/MLManagementPage.tsx
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Brain,
   Rocket,
@@ -23,9 +23,14 @@ import {
   Gauge,
   Shield,
   Target,
-  AlertTriangle
+  AlertTriangle,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 import { cn } from '../utils/helpers';
+import { useEnsembleWebSocket } from '../hooks/useEnsembleWebSocket';
+import { TrainingProgress } from '../services/ensemble-websocket.service';
+import { EnsembleRealTimeStatus } from '../components/ensemble/EnsembleRealTimeStatus';
 
 /**
  * ============================================================
@@ -106,6 +111,10 @@ interface TrainingStatus {
       total_epochs: number;
       current_loss: number;
       best_val_accuracy: number;
+      train_loss?: number;
+      val_loss?: number;
+      train_acc?: number;
+      val_acc?: number;
     };
   };
   last_completed?: {
@@ -317,6 +326,110 @@ export function MLManagementPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pollingInterval, setPollingInterval] = useState<number | null>(null);
+
+  // WebSocket state for real-time training updates
+  const [wsConnected, setWsConnected] = useState(false);
+
+  // WebSocket handler for CNN-LSTM training progress
+  const handleTrainingProgress = useCallback((data: TrainingProgress) => {
+    // Only handle CNN-LSTM training updates
+    if (data.model_type === 'cnn_lstm') {
+      console.log('[CNN-LSTM Training] WebSocket update:', data);
+
+      if (data.status === 'started') {
+        setTrainingStatus(prev => ({
+          ...prev,
+          is_training: true,
+          current_job: {
+            job_id: data.task_id,
+            status: 'running',
+            started_at: new Date().toISOString(),
+            progress: {
+              current_epoch: 0,
+              total_epochs: data.total_epochs,
+              current_loss: 0,
+              best_val_accuracy: 0,
+              train_loss: 0,
+              val_loss: 0,
+              train_acc: 0,
+              val_acc: 0
+            }
+          }
+        }));
+      } else if (data.status === 'training') {
+        setTrainingStatus(prev => ({
+          ...prev,
+          is_training: true,
+          current_job: prev.current_job ? {
+            ...prev.current_job,
+            progress: {
+              current_epoch: data.epoch,
+              total_epochs: data.total_epochs,
+              current_loss: data.metrics.val_loss || 0,
+              best_val_accuracy: data.metrics.val_acc || data.metrics.best_val_accuracy || 0,
+              train_loss: data.metrics.train_loss,
+              val_loss: data.metrics.val_loss,
+              train_acc: data.metrics.train_acc,
+              val_acc: data.metrics.val_acc
+            }
+          } : prev.current_job
+        }));
+      } else if (data.status === 'completed') {
+        setTrainingStatus(prev => ({
+          ...prev,
+          is_training: false,
+          last_completed: {
+            job_id: data.task_id,
+            status: 'completed',
+            completed_at: new Date().toISOString(),
+            result: {
+              success: true,
+              test_metrics: {
+                accuracy: data.metrics.test_accuracy || data.metrics.best_val_accuracy || 0,
+                precision: 0,
+                recall: 0,
+                f1: 0
+              },
+              promoted_to_production: data.metrics.promoted_to_production || false
+            }
+          }
+        }));
+        // Refresh training status from server to get full details
+        fetchTrainingStatus();
+      } else if (data.status === 'failed') {
+        setTrainingStatus(prev => ({
+          ...prev,
+          is_training: false,
+          last_completed: {
+            job_id: data.task_id,
+            status: 'failed',
+            completed_at: new Date().toISOString(),
+            result: {
+              success: false
+            }
+          }
+        }));
+        if (data.metrics.error) {
+          setError(String(data.metrics.error));
+        }
+      }
+    }
+  }, []);
+
+  // WebSocket connection
+  const { isConnected } = useEnsembleWebSocket({
+    subscriptions: ['training'],
+    autoConnect: true,
+    onConnect: () => {
+      console.log('[MLManagement] WebSocket connected');
+      setWsConnected(true);
+    },
+    onDisconnect: () => {
+      console.log('[MLManagement] WebSocket disconnected');
+      setWsConnected(false);
+    },
+    onTrainingProgress: handleTrainingProgress
+  });
 
   // Layering model state
   const [layeringStatus, setLayeringStatus] = useState<any>(null);
@@ -954,18 +1067,34 @@ export function MLManagementPage() {
     <div className="space-y-6">
       {/* Training Status */}
       <div className="bg-surface border border-gray-800 rounded-lg p-6">
-        <div className="flex items-center gap-3 mb-6">
-          <Activity className="h-6 w-6 text-primary" />
-          <h2 className="text-xl font-semibold">Training Status</h2>
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <Activity className="h-6 w-6 text-primary" />
+            <h2 className="text-xl font-semibold">Training Status</h2>
+          </div>
+          {/* WebSocket Connection Status */}
+          <div className="flex items-center gap-2">
+            {wsConnected ? (
+              <>
+                <Wifi className="w-4 h-4 text-green-500" />
+                <span className="text-xs text-green-500">Real-time</span>
+              </>
+            ) : (
+              <>
+                <WifiOff className="w-4 h-4 text-gray-500" />
+                <span className="text-xs text-gray-500">Polling</span>
+              </>
+            )}
+          </div>
         </div>
 
         {!trainingStatus.is_training ? (
           <div className="text-center py-8">
             <p className="text-gray-400 mb-2">No training in progress</p>
             {trainingStatus.last_completed && (
-              <div className="mt-4 p-4 bg-gray-800 rounded-lg inline-block text-left">
-                <p className="text-sm text-gray-400 mb-2">Last Training:</p>
-                <div className="space-y-1 text-sm">
+              <div className="mt-4 p-4 bg-gray-800 rounded-lg inline-block text-left max-w-md">
+                <p className="text-sm text-gray-400 mb-3">Last Training Result:</p>
+                <div className="space-y-2 text-sm">
                   <p className="text-white">
                     <span className="text-gray-400">Job ID:</span>{' '}
                     <span className="font-mono">{trainingStatus.last_completed.job_id}</span>
@@ -973,21 +1102,64 @@ export function MLManagementPage() {
                   <p className="text-white">
                     <span className="text-gray-400">Status:</span>{' '}
                     {trainingStatus.last_completed.status === 'completed' ? (
-                      <span className="text-green-400">✓ Completed</span>
+                      <span className="text-green-400 flex items-center gap-1 inline-flex">
+                        <CheckCircle className="w-4 h-4" /> Completed
+                      </span>
                     ) : (
-                      <span className="text-red-400">✗ Failed</span>
+                      <span className="text-red-400 flex items-center gap-1 inline-flex">
+                        <XCircle className="w-4 h-4" /> Failed
+                      </span>
                     )}
                   </p>
-                  {trainingStatus.last_completed.result?.test_metrics && (
+                  {trainingStatus.last_completed.completed_at && (
                     <p className="text-white">
-                      <span className="text-gray-400">Accuracy:</span>{' '}
-                      <span className="text-green-400">
-                        {trainingStatus.last_completed.result.test_metrics.accuracy.toFixed(4)}
-                      </span>
+                      <span className="text-gray-400">Completed at:</span>{' '}
+                      <span>{new Date(trainingStatus.last_completed.completed_at).toLocaleString()}</span>
                     </p>
                   )}
+                  {trainingStatus.last_completed.result?.test_metrics && (
+                    <div className="mt-3 p-3 bg-gray-700 rounded-lg">
+                      <p className="text-gray-400 text-xs mb-2">Final Metrics:</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <span className="text-gray-400">Accuracy:</span>{' '}
+                          <span className="text-green-400 font-semibold">
+                            {(trainingStatus.last_completed.result.test_metrics.accuracy * 100).toFixed(2)}%
+                          </span>
+                        </div>
+                        {trainingStatus.last_completed.result.test_metrics.precision > 0 && (
+                          <div>
+                            <span className="text-gray-400">Precision:</span>{' '}
+                            <span className="text-blue-400">
+                              {(trainingStatus.last_completed.result.test_metrics.precision * 100).toFixed(2)}%
+                            </span>
+                          </div>
+                        )}
+                        {trainingStatus.last_completed.result.test_metrics.recall > 0 && (
+                          <div>
+                            <span className="text-gray-400">Recall:</span>{' '}
+                            <span className="text-blue-400">
+                              {(trainingStatus.last_completed.result.test_metrics.recall * 100).toFixed(2)}%
+                            </span>
+                          </div>
+                        )}
+                        {trainingStatus.last_completed.result.test_metrics.f1 > 0 && (
+                          <div>
+                            <span className="text-gray-400">F1:</span>{' '}
+                            <span className="text-blue-400">
+                              {(trainingStatus.last_completed.result.test_metrics.f1 * 100).toFixed(2)}%
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   {trainingStatus.last_completed.result?.promoted_to_production && (
-                    <p className="text-green-400 font-semibold mt-2">🚀 Promoted to Production</p>
+                    <div className="mt-3 p-2 bg-green-500/20 border border-green-500/30 rounded-lg">
+                      <p className="text-green-400 font-semibold flex items-center gap-2">
+                        <Rocket className="w-4 h-4" /> Promoted to Production
+                      </p>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1000,7 +1172,8 @@ export function MLManagementPage() {
                 <p className="text-sm text-gray-400">Job ID</p>
                 <p className="font-mono text-white">{trainingStatus.current_job?.job_id}</p>
               </div>
-              <span className="px-3 py-1 bg-primary/20 text-primary rounded-full text-sm animate-pulse">
+              <span className="px-3 py-1 bg-primary/20 text-primary rounded-full text-sm animate-pulse flex items-center gap-2">
+                <RefreshCw className="w-4 h-4 animate-spin" />
                 Training...
               </span>
             </div>
@@ -1011,7 +1184,7 @@ export function MLManagementPage() {
                   Epoch {trainingStatus.current_job?.progress.current_epoch} /{' '}
                   {trainingStatus.current_job?.progress.total_epochs}
                 </span>
-                <span className="text-white">
+                <span className="text-white font-semibold">
                   {trainingStatus.current_job &&
                     Math.round(
                       (trainingStatus.current_job.progress.current_epoch /
@@ -1037,18 +1210,47 @@ export function MLManagementPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            {/* Training Metrics Grid */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               <div className="p-3 bg-gray-800 rounded-lg">
-                <p className="text-sm text-gray-400 mb-1">Current Loss</p>
+                <p className="text-xs text-gray-400 mb-1">Train Loss</p>
                 <p className="text-lg font-semibold text-white">
-                  {trainingStatus.current_job?.progress.current_loss.toFixed(4) || 'N/A'}
+                  {trainingStatus.current_job?.progress.train_loss?.toFixed(4) || 'N/A'}
                 </p>
               </div>
               <div className="p-3 bg-gray-800 rounded-lg">
-                <p className="text-sm text-gray-400 mb-1">Best Val Accuracy</p>
-                <p className="text-lg font-semibold text-green-400">
-                  {trainingStatus.current_job?.progress.best_val_accuracy.toFixed(4) || 'N/A'}
+                <p className="text-xs text-gray-400 mb-1">Val Loss</p>
+                <p className="text-lg font-semibold text-white">
+                  {trainingStatus.current_job?.progress.val_loss?.toFixed(4) || 'N/A'}
                 </p>
+              </div>
+              <div className="p-3 bg-gray-800 rounded-lg">
+                <p className="text-xs text-gray-400 mb-1">Train Acc</p>
+                <p className="text-lg font-semibold text-blue-400">
+                  {trainingStatus.current_job?.progress.train_acc
+                    ? `${(trainingStatus.current_job.progress.train_acc * 100).toFixed(1)}%`
+                    : 'N/A'}
+                </p>
+              </div>
+              <div className="p-3 bg-gray-800 rounded-lg">
+                <p className="text-xs text-gray-400 mb-1">Val Acc</p>
+                <p className="text-lg font-semibold text-green-400">
+                  {trainingStatus.current_job?.progress.val_acc
+                    ? `${(trainingStatus.current_job.progress.val_acc * 100).toFixed(1)}%`
+                    : 'N/A'}
+                </p>
+              </div>
+            </div>
+
+            {/* Best Metrics */}
+            <div className="p-3 bg-primary/10 border border-primary/30 rounded-lg">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-400">Best Val Accuracy</span>
+                <span className="text-lg font-bold text-primary">
+                  {trainingStatus.current_job?.progress.best_val_accuracy
+                    ? `${(trainingStatus.current_job.progress.best_val_accuracy * 100).toFixed(2)}%`
+                    : 'N/A'}
+                </span>
               </div>
             </div>
           </div>
@@ -4212,17 +4414,34 @@ export function MLManagementPage() {
         </div>
       </div>
 
-      {/* Tab Content */}
-      <div>
-        {activeTab === 'training' && renderTrainingTab()}
-        {activeTab === 'mpd_training' && renderMPDTrainingTab()}
-        {activeTab === 'tlob_training' && renderTLOBTrainingTab()}
-        {activeTab === 'models' && renderModelsTab()}
-        {activeTab === 'retraining' && renderRetrainingTab()}
-        {activeTab === 'mlflow' && renderMLflowTab()}
-        {activeTab === 'statistics' && renderStatisticsTab()}
-        {activeTab === 'layering' && renderLayeringTab()}
-        {activeTab === 'optimization' && renderOptimizationTab()}
+      {/* Tab Content with Sidebar for Training Tabs */}
+      <div className={cn(
+        'grid gap-6',
+        ['training', 'mpd_training', 'tlob_training'].includes(activeTab)
+          ? 'lg:grid-cols-[1fr,350px]'
+          : 'grid-cols-1'
+      )}>
+        {/* Main Content */}
+        <div>
+          {activeTab === 'training' && renderTrainingTab()}
+          {activeTab === 'mpd_training' && renderMPDTrainingTab()}
+          {activeTab === 'tlob_training' && renderTLOBTrainingTab()}
+          {activeTab === 'models' && renderModelsTab()}
+          {activeTab === 'retraining' && renderRetrainingTab()}
+          {activeTab === 'mlflow' && renderMLflowTab()}
+          {activeTab === 'statistics' && renderStatisticsTab()}
+          {activeTab === 'layering' && renderLayeringTab()}
+          {activeTab === 'optimization' && renderOptimizationTab()}
+        </div>
+
+        {/* Real-Time Status Sidebar (only on training tabs) */}
+        {['training', 'mpd_training', 'tlob_training'].includes(activeTab) && (
+          <div className="hidden lg:block">
+            <div className="sticky top-6">
+              <EnsembleRealTimeStatus />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
