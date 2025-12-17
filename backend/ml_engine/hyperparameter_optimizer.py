@@ -630,14 +630,25 @@ class HyperparameterOptimizer:
             logger.info("HYPEROPT: Loading data from Feature Store...")
             feature_store = get_feature_store()
 
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=data_config.feature_store_date_range_days)
-
+            # Сначала пробуем загрузить ВСЕ доступные данные (без фильтра по датам)
+            # Это надежнее, чем hardcoded 30-дневный диапазон
             features_df = feature_store.read_offline_features(
                 feature_group=data_config.feature_store_group,
-                start_date=start_date.strftime("%Y-%m-%d"),
-                end_date=end_date.strftime("%Y-%m-%d")
+                start_date=None,  # Загружаем все данные
+                end_date=None
             )
+
+            # Если нет данных без фильтра, пробуем с расширенным диапазоном
+            if features_df.empty:
+                logger.warning("HYPEROPT: No data without date filter, trying 90-day range...")
+                end_date = datetime.now()
+                start_date = end_date - timedelta(days=90)  # 90 дней вместо 30
+
+                features_df = feature_store.read_offline_features(
+                    feature_group=data_config.feature_store_group,
+                    start_date=start_date.strftime("%Y-%m-%d"),
+                    end_date=end_date.strftime("%Y-%m-%d")
+                )
 
             if features_df.empty:
                 logger.error("HYPEROPT: No data found in Feature Store!")
