@@ -17,12 +17,16 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
 import asyncio
+import concurrent.futures
 import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
 from backend.core.logger import get_logger
+
+# Thread pool для обучения моделей (не блокирует FastAPI event loop)
+_training_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="model_training")
 from backend.ml_engine.ensemble import (
     EnsembleConsensus,
     EnsembleConfig,
@@ -478,12 +482,12 @@ async def get_performance_stats():
 # ============================================================================
 
 @router.post("/training/start")
-async def start_training(
-    request: TrainingRequest,
-    background_tasks: BackgroundTasks
-):
+async def start_training(request: TrainingRequest):
     """
     Запустить обучение модели в фоновом режиме.
+
+    Обучение выполняется в отдельном потоке (ThreadPoolExecutor),
+    не блокируя основной event loop FastAPI.
     """
     task_id = f"{request.model_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
@@ -508,21 +512,38 @@ async def start_training(
         'error': None
     }
 
-    # Запускаем в фоне
-    background_tasks.add_task(
-        _run_training,
-        task_id=task_id,
-        model_type=request.model_type,
-        epochs=request.epochs,
-        learning_rate=request.learning_rate,
-        symbols=request.symbols,
-        days=request.days
-    )
+    # Запускаем в отдельном потоке через ThreadPoolExecutor
+    # Это не блокирует FastAPI event loop
+    loop = asyncio.get_event_loop()
+
+    def run_training_sync():
+        """Wrapper для запуска async функции в отдельном потоке."""
+        # Создаем новый event loop для этого потока
+        new_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(new_loop)
+        try:
+            return new_loop.run_until_complete(
+                _run_training(
+                    task_id=task_id,
+                    model_type=request.model_type,
+                    epochs=request.epochs,
+                    learning_rate=request.learning_rate,
+                    symbols=request.symbols,
+                    days=request.days
+                )
+            )
+        finally:
+            new_loop.close()
+
+    # Запускаем в thread pool (fire-and-forget)
+    _training_executor.submit(run_training_sync)
+
+    logger.info(f"Training task {task_id} submitted to ThreadPoolExecutor")
 
     return {
         'success': True,
         'task_id': task_id,
-        'message': f"Training started for {request.model_type}"
+        'message': f"Training started for {request.model_type} in separate thread"
     }
 
 
