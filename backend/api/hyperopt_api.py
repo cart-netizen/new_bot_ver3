@@ -323,6 +323,15 @@ async def _run_optimization(request: OptimizationRequest):
             # Create new event loop for this thread
             new_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(new_loop)
+
+            # CRITICAL: Apply nest_asyncio to allow nested run_until_complete calls
+            # This is needed because Optuna's objective function is sync but calls async training
+            try:
+                import nest_asyncio
+                nest_asyncio.apply(new_loop)
+            except ImportError:
+                logger.warning("nest_asyncio not installed - hyperopt may fail with 'event loop already running'")
+
             try:
                 return new_loop.run_until_complete(
                     optimizer.optimize(mode=opt_mode, target_group=target_group)
