@@ -41,6 +41,11 @@ logger = get_logger(__name__)
 # ENUMS & CONSTANTS
 # ============================================================================
 
+# Project root models directory (not backend/models, but project_root/models)
+_PROJECT_ROOT = Path(__file__).parent.parent.parent.parent  # backend/ml_engine/training -> project_root
+_DEFAULT_MODELS_DIR = str(_PROJECT_ROOT / "models")
+
+
 class ModelArchitecture(Enum):
     """Поддерживаемые архитектуры."""
     CNN_LSTM = "cnn_lstm"
@@ -88,7 +93,7 @@ class MultiModelTrainerConfig:
 
     # === Checkpointing ===
     save_every_n_epochs: int = 10
-    checkpoint_dir: str = "models"
+    checkpoint_dir: str = _DEFAULT_MODELS_DIR  # Абсолютный путь к project_root/models
 
     # === Device ===
     device: str = "auto"

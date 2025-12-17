@@ -23,6 +23,10 @@ from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Project root models directory
+_PROJECT_ROOT = Path(__file__).parent.parent.parent.parent  # backend/ml_engine/integration -> project_root
+_DEFAULT_MODELS_DIR = str(_PROJECT_ROOT / "models")
+
 
 # ============================================================================
 # OPTIMIZED HYPERPARAMETERS
@@ -154,12 +158,12 @@ def create_optimized_model_config():
     )
 
 
-def create_optimized_trainer_config(checkpoint_dir: str = "models"):
+def create_optimized_trainer_config(checkpoint_dir: str = _DEFAULT_MODELS_DIR):
     """
     Создать оптимизированную конфигурацию trainer.
 
     Args:
-        checkpoint_dir: Директория для checkpoints
+        checkpoint_dir: Директория для checkpoints (default: project_root/models)
 
     Returns:
         TrainerConfigV2 с оптимизированными параметрами
