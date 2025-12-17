@@ -1680,16 +1680,20 @@ async def websocket_endpoint(websocket: WebSocket):
     }
     """
     ws_manager = get_ws_manager()
+    logger.info("[Ensemble WS] New connection attempt")
     await ws_manager.connect(websocket)
+    logger.info("[Ensemble WS] Connection accepted, waiting for messages...")
 
     try:
         while True:
             # Получаем сообщения от клиента
             data = await websocket.receive_text()
+            logger.debug(f"[Ensemble WS] Received: {data[:100]}...")
 
             try:
                 message = json.loads(data)
                 action = message.get("action")
+                logger.info(f"[Ensemble WS] Action: {action}")
 
                 if action == "subscribe":
                     # Подписка на события
@@ -1774,9 +1778,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 )
 
     except WebSocketDisconnect:
+        logger.info("[Ensemble WS] Client disconnected normally")
         ws_manager.disconnect(websocket)
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        logger.error(f"[Ensemble WS] Error in WebSocket handler: {e}", exc_info=True)
         ws_manager.disconnect(websocket)
 
 
