@@ -726,7 +726,7 @@ async def list_models(
 
         # Get all models
         models = []
-        for name in ["hybrid_cnn_lstm"]:  # Add more model names as needed
+        for name in ["hybrid_cnn_lstm", "mpd_transformer", "tlob_transformer"]:
             try:
                 # list_models returns List[ModelInfo]
                 model_infos = await registry.list_models(name)
