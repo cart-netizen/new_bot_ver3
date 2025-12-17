@@ -5480,10 +5480,9 @@ async def websocket_endpoint(websocket: WebSocket):
   try:
     await handle_websocket_messages(websocket)
   except asyncio.CancelledError:
-    # Graceful shutdown
+    # Graceful shutdown - НЕ re-raise, чтобы избежать Python 3.10 asyncio bug
+    # (IndexError: pop from an empty deque)
     logger.info("WebSocket endpoint получил CancelledError (shutdown)")
-    # handle_websocket_messages уже выполнит cleanup, просто логируем
-    raise  # Re-raise для корректной обработки asyncio
   except WebSocketDisconnect:
     logger.info("WebSocket клиент отключен")
   except Exception as e:

@@ -2034,6 +2034,10 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         logger.info("[Ensemble WS] Client disconnected normally")
         ws_manager.disconnect(websocket)
+    except asyncio.CancelledError:
+        # Graceful shutdown - не логируем как ошибку
+        logger.info("[Ensemble WS] Connection cancelled (shutdown)")
+        ws_manager.disconnect(websocket)
     except Exception as e:
         logger.error(f"[Ensemble WS] Error in WebSocket handler: {e}", exc_info=True)
         ws_manager.disconnect(websocket)
