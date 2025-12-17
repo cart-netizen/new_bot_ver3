@@ -1108,10 +1108,30 @@ def _load_feature_data_from_parquet(
 
     # Извлекаем или генерируем labels
     if 'future_direction_60s' in features_df.columns:
-        labels = features_df['future_direction_60s'].values.astype(np.int64)
+        raw_labels = features_df['future_direction_60s'].values
+
+        # КРИТИЧНО: Обрабатываем NaN ДО преобразования в int
+        # NaN в float при astype(int64) становится некорректным числом!
+        valid_mask = ~pd.isna(raw_labels)
+        if not valid_mask.all():
+            nan_count = (~valid_mask).sum()
+            logger.warning(f"Found {nan_count} NaN labels, filtering them out")
+            features = features[valid_mask]
+            raw_labels = raw_labels[valid_mask]
+
+        # Теперь безопасно преобразуем в int
+        labels = raw_labels.astype(np.int64)
+
         # Маппинг {-1, 0, 1} -> {0, 1, 2}
         label_mapping = {-1: 0, 0: 1, 1: 2}
-        labels = np.array([label_mapping.get(l, l) for l in labels], dtype=np.int64)
+        labels = np.array([label_mapping.get(int(l), 1) for l in labels], dtype=np.int64)
+
+        # Финальная проверка - все метки должны быть в [0, 2]
+        invalid_labels = (labels < 0) | (labels > 2)
+        if invalid_labels.any():
+            logger.warning(f"Found {invalid_labels.sum()} invalid labels, setting to HOLD(1)")
+            labels[invalid_labels] = 1
+
     elif 'mid_price' in features_df.columns:
         mid_prices = features_df['mid_price'].values
         labels = _generate_labels_from_prices(mid_prices)
@@ -1119,13 +1139,11 @@ def _load_feature_data_from_parquet(
         logger.warning("No labels or mid_price found, generating random labels")
         labels = np.random.randint(0, 3, size=len(features))
 
-    # Обработка NaN
+    # Обработка NaN в features
     if np.isnan(features).any():
         features = np.nan_to_num(features, nan=0.0)
-    if np.isnan(labels).any():
-        valid_mask = ~np.isnan(labels)
-        features = features[valid_mask]
-        labels = labels[valid_mask].astype(np.int64)
+
+    logger.info(f"Labels distribution: 0(SELL)={np.sum(labels==0)}, 1(HOLD)={np.sum(labels==1)}, 2(BUY)={np.sum(labels==2)}")
 
     return features, labels
 
