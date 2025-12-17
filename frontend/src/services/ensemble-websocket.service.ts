@@ -164,8 +164,9 @@ export class EnsembleWebSocketService {
   private handlers: EnsembleMessageHandlers = {};
   private subscriptions: EnsembleEventType[] = ['all'];
   private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
+  private maxReconnectAttempts = Infinity;  // Бесконечные попытки
   private reconnectDelay = 1000;
+  private maxReconnectDelay = 30000;  // Максимум 30 секунд между попытками
   private isConnecting = false;
   private shouldReconnect = true;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
@@ -236,10 +237,14 @@ export class EnsembleWebSocketService {
 
         handlers.onDisconnect?.();
 
-        // Автоматическое переподключение
-        if (this.shouldReconnect && this.reconnectAttempts < this.maxReconnectAttempts) {
+        // Автоматическое переподключение (бесконечные попытки с ограниченным delay)
+        if (this.shouldReconnect) {
           this.reconnectAttempts++;
-          const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
+          // Экспоненциальный backoff с ограничением
+          const delay = Math.min(
+            this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1),
+            this.maxReconnectDelay
+          );
 
           console.log(`[Ensemble WS] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
 

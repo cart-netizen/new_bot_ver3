@@ -74,11 +74,13 @@ export class WebSocketService {
   private ws: WebSocket | null = null;
   private handlers: MessageHandlers = {};
   private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
+  private maxReconnectAttempts = Infinity;  // Бесконечные попытки
   private reconnectDelay = 1000;
+  private maxReconnectDelay = 30000;  // Максимум 30 секунд между попытками
   private isConnecting = false;
   private shouldReconnect = true;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
+  private lastToken: string = '';
 
   /**
    * Подключение к WebSocket серверу.
@@ -92,6 +94,7 @@ export class WebSocketService {
     this.isConnecting = true;
     this.handlers = handlers;
     this.shouldReconnect = true;
+    this.lastToken = token;  // Сохраняем токен для reconnect
 
     console.log('[WS] Connecting to:', APP_CONFIG.wsUrl);
 
@@ -133,15 +136,19 @@ export class WebSocketService {
 
         handlers.onDisconnect?.();
 
-        // Автоматическое переподключение
-        if (this.shouldReconnect && this.reconnectAttempts < this.maxReconnectAttempts) {
+        // Автоматическое переподключение (бесконечные попытки с ограниченным delay)
+        if (this.shouldReconnect) {
           this.reconnectAttempts++;
-          const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
+          // Экспоненциальный backoff с ограничением
+          const delay = Math.min(
+            this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1),
+            this.maxReconnectDelay
+          );
 
           console.log(`[WS] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
 
           setTimeout(() => {
-            this.connect(token, handlers);
+            this.connect(this.lastToken, handlers);
           }, delay);
         }
       };
