@@ -587,10 +587,22 @@ class ModelRegistry:
 # Singleton instance
 _registry_instance: Optional[ModelRegistry] = None
 
+# Project root models directory (not backend/models, but project_root/models)
+_PROJECT_ROOT = Path(__file__).parent.parent.parent.parent  # backend/ml_engine/inference -> project_root
+_DEFAULT_MODELS_DIR = _PROJECT_ROOT / "models"
 
-def get_model_registry(registry_dir: str = "models") -> ModelRegistry:
-    """Получить singleton instance Model Registry"""
+
+def get_model_registry(registry_dir: Optional[str] = None) -> ModelRegistry:
+    """Получить singleton instance Model Registry
+
+    Args:
+        registry_dir: Путь к директории моделей. По умолчанию используется
+                     project_root/models/ (НЕ backend/models/)
+    """
     global _registry_instance
     if _registry_instance is None:
+        if registry_dir is None:
+            registry_dir = str(_DEFAULT_MODELS_DIR)
         _registry_instance = ModelRegistry(registry_dir)
+        logger.info(f"Model Registry initialized at: {_registry_instance.registry_dir.resolve()}")
     return _registry_instance

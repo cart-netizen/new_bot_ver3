@@ -35,6 +35,10 @@ from backend.ml_engine.training.class_balancing import ClassBalancingConfig, Cla
 
 logger = get_logger(__name__)
 
+# Project root models directory
+_PROJECT_ROOT = Path(__file__).parent.parent.parent.parent  # backend/ml_engine/training -> project_root
+_DEFAULT_MODELS_DIR = str(_PROJECT_ROOT / "models")
+
 
 @dataclass
 class TrainerConfig:
@@ -60,7 +64,7 @@ class TrainerConfig:
   lr_factor: float = 0.5
 
   # Checkpoint
-  checkpoint_dir: str = "models"
+  checkpoint_dir: str = _DEFAULT_MODELS_DIR  # Абсолютный путь к project_root/models
   save_best_only: bool = True
 
   # Device
@@ -76,7 +80,7 @@ class TrainerConfig:
       weight_decay: float = 1e-5,
       grad_clip_value: float = 1.0,
       early_stopping_patience: int = 20,
-      checkpoint_dir: str = "models",
+      checkpoint_dir: str = _DEFAULT_MODELS_DIR,
       device: str = "cuda" if torch.cuda.is_available() else "cpu",
 
       # ===== НОВОЕ: CLASS BALANCING =====
@@ -810,12 +814,11 @@ if __name__ == "__main__":
   # Создаем модель
   model = create_model()
 
-  # Конфигурация trainer
+  # Конфигурация trainer (checkpoint_dir по умолчанию = project_root/models)
   trainer_config = TrainerConfig(
     epochs=50,
     learning_rate=0.001,
-    early_stopping_patience=10,
-    checkpoint_dir="models"
+    early_stopping_patience=10
   )
 
   # Создаем trainer

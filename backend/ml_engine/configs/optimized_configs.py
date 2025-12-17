@@ -22,7 +22,12 @@ ML модели на финансовых данных с учётом:
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Dict, Any
 from enum import Enum
+from pathlib import Path
 import torch
+
+# Project root models directory
+_PROJECT_ROOT = Path(__file__).parent.parent.parent.parent  # backend/ml_engine/configs -> project_root
+_DEFAULT_MODELS_DIR = str(_PROJECT_ROOT / "models")
 
 
 class LRSchedulerType(str, Enum):
@@ -226,7 +231,7 @@ class OptimizedTrainerConfig:
     use_gradient_checkpointing: bool = False  # Enable only if OOM
 
     # === Checkpoint ===
-    checkpoint_dir: str = "models"
+    checkpoint_dir: str = _DEFAULT_MODELS_DIR  # Абсолютный путь к project_root/models
     save_best_only: bool = True
     save_every_n_epochs: int = 10
     

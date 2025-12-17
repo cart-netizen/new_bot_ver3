@@ -41,6 +41,10 @@ from sklearn.metrics import (
 
 from backend.core.logger import get_logger
 
+# Project root models directory
+_PROJECT_ROOT = Path(__file__).parent.parent.parent.parent  # backend/ml_engine/training -> project_root
+_DEFAULT_MODELS_DIR = str(_PROJECT_ROOT / "models")
+
 # Локальные импорты (будут созданы)
 # from backend.ml_engine.configs.optimized_configs import (
 #     OptimizedTrainerConfig,
@@ -123,7 +127,7 @@ class TrainerConfigV2:
     use_mixed_precision: bool = False  # ВРЕМЕННО ОТКЛЮЧЕНО из-за NaN loss (RTX 3060 поддерживает!)
 
     # === Checkpoint ===
-    checkpoint_dir: str = "models"
+    checkpoint_dir: str = _DEFAULT_MODELS_DIR  # Абсолютный путь к project_root/models
     save_best_only: bool = True
     save_every_n_epochs: int = 10
 

@@ -34,6 +34,10 @@ from backend.ml_engine.models.hybrid_cnn_lstm_v2 import (
 
 logger = get_logger(__name__)
 
+# Project root models directory
+_PROJECT_ROOT = Path(__file__).parent.parent.parent.parent  # backend/ml_engine/inference -> project_root
+_DEFAULT_MODELS_DIR = str(_PROJECT_ROOT / "models")
+
 
 # ==================== API MODELS ====================
 
@@ -110,12 +114,12 @@ class ModelRegistry:
   - Статистика использования
   """
 
-  def __init__(self, checkpoint_dir: str = "models"):
+  def __init__(self, checkpoint_dir: str = _DEFAULT_MODELS_DIR):
     """
     Инициализация реестра.
 
     Args:
-        checkpoint_dir: Директория с checkpoint файлами
+        checkpoint_dir: Директория с checkpoint файлами (default: project_root/models)
     """
     self.checkpoint_dir = Path(checkpoint_dir)
     self.models: Dict[str, HybridCNNLSTM] = {}
@@ -296,7 +300,7 @@ class MLModelServer:
   - Мониторинг производительности
   """
 
-  def __init__(self, checkpoint_dir: str = "models"):
+  def __init__(self, checkpoint_dir: str = _DEFAULT_MODELS_DIR):
     """Инициализация сервера."""
     self.registry = ModelRegistry(checkpoint_dir)
     self.start_time = time.time()
