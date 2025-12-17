@@ -815,11 +815,11 @@ class MultiModelTrainer:
                 'metrics': metrics
             }, model_path)
 
-            # Register
+            # Register (model_path должен быть Path, не str)
             model_info = await registry.register_model(
                 name=model_name,
                 version=timestamp,
-                model_path=str(model_path),
+                model_path=model_path,  # Path object, не str!
                 model_type=architecture.value,
                 description=f"Trained {model_name} model",
                 metrics=metrics,
