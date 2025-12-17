@@ -11,13 +11,14 @@ Ensemble API - управление мультимодельным ensemble.
 Путь: backend/api/ensemble_api.py
 """
 
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Set
 from datetime import datetime, timedelta
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 import asyncio
 import concurrent.futures
+import json
 import numpy as np
 import pandas as pd
 import torch
@@ -121,6 +122,188 @@ _ensemble_instance: Optional[EnsembleConsensus] = None
 
 # Training tasks
 _training_tasks: Dict[str, Dict[str, Any]] = {}
+
+
+# ============================================================================
+# WEBSOCKET CONNECTION MANAGER
+# ============================================================================
+
+class ConnectionManager:
+    """
+    Менеджер WebSocket подключений для real-time обновлений.
+
+    Поддерживает:
+    - Множественные подключения клиентов
+    - Broadcast сообщений всем подключенным клиентам
+    - Подписка на конкретные события (training, predictions, status)
+    """
+
+    def __init__(self):
+        # Все активные подключения
+        self.active_connections: List[WebSocket] = []
+        # Подключения по типу подписки
+        self.subscriptions: Dict[str, Set[WebSocket]] = {
+            "training": set(),      # Обновления обучения
+            "predictions": set(),   # Предсказания ensemble
+            "status": set(),        # Изменения статуса моделей
+            "all": set()            # Все события
+        }
+
+    async def connect(self, websocket: WebSocket, subscription: str = "all"):
+        """Подключить нового клиента."""
+        await websocket.accept()
+        self.active_connections.append(websocket)
+        if subscription in self.subscriptions:
+            self.subscriptions[subscription].add(websocket)
+        self.subscriptions["all"].add(websocket)
+        logger.info(f"WebSocket client connected. Total: {len(self.active_connections)}")
+
+    def disconnect(self, websocket: WebSocket):
+        """Отключить клиента."""
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+        for subscription_set in self.subscriptions.values():
+            subscription_set.discard(websocket)
+        logger.info(f"WebSocket client disconnected. Total: {len(self.active_connections)}")
+
+    async def send_personal_message(self, message: Dict[str, Any], websocket: WebSocket):
+        """Отправить сообщение конкретному клиенту."""
+        try:
+            await websocket.send_json(message)
+        except Exception as e:
+            logger.warning(f"Failed to send personal message: {e}")
+            self.disconnect(websocket)
+
+    async def broadcast(self, message: Dict[str, Any], event_type: str = "all"):
+        """
+        Отправить сообщение всем подписанным клиентам.
+
+        Args:
+            message: Сообщение для отправки
+            event_type: Тип события (training, predictions, status, all)
+        """
+        # Определяем получателей
+        recipients: Set[WebSocket] = set()
+        if event_type in self.subscriptions:
+            recipients = self.subscriptions[event_type].copy()
+        recipients.update(self.subscriptions["all"])
+
+        # Добавляем метаданные
+        message_with_meta = {
+            "event_type": event_type,
+            "timestamp": datetime.now().isoformat(),
+            **message
+        }
+
+        # Отправляем всем получателям
+        disconnected = []
+        for websocket in recipients:
+            try:
+                await websocket.send_json(message_with_meta)
+            except Exception as e:
+                logger.warning(f"Failed to broadcast to client: {e}")
+                disconnected.append(websocket)
+
+        # Удаляем отключенных клиентов
+        for ws in disconnected:
+            self.disconnect(ws)
+
+    async def broadcast_training_progress(
+        self,
+        task_id: str,
+        model_type: str,
+        epoch: int,
+        total_epochs: int,
+        metrics: Dict[str, float],
+        status: str = "training"
+    ):
+        """
+        Broadcast прогресса обучения.
+
+        Args:
+            task_id: ID задачи обучения
+            model_type: Тип модели
+            epoch: Текущая эпоха
+            total_epochs: Всего эпох
+            metrics: Метрики обучения
+            status: Статус (training, completed, failed)
+        """
+        await self.broadcast(
+            {
+                "type": "training_progress",
+                "task_id": task_id,
+                "model_type": model_type,
+                "epoch": epoch,
+                "total_epochs": total_epochs,
+                "progress_pct": round((epoch / total_epochs) * 100, 1),
+                "metrics": metrics,
+                "status": status
+            },
+            event_type="training"
+        )
+
+    async def broadcast_prediction(
+        self,
+        direction: str,
+        confidence: float,
+        model_predictions: Dict[str, Any],
+        should_trade: bool
+    ):
+        """
+        Broadcast нового предсказания ensemble.
+
+        Args:
+            direction: Направление (BUY, SELL, HOLD)
+            confidence: Уверенность consensus
+            model_predictions: Предсказания отдельных моделей
+            should_trade: Рекомендация к сделке
+        """
+        await self.broadcast(
+            {
+                "type": "prediction",
+                "direction": direction,
+                "confidence": confidence,
+                "model_predictions": model_predictions,
+                "should_trade": should_trade
+            },
+            event_type="predictions"
+        )
+
+    async def broadcast_status_change(
+        self,
+        model_type: str,
+        change_type: str,
+        old_value: Any,
+        new_value: Any
+    ):
+        """
+        Broadcast изменения статуса модели.
+
+        Args:
+            model_type: Тип модели
+            change_type: Тип изменения (enabled, weight, performance)
+            old_value: Старое значение
+            new_value: Новое значение
+        """
+        await self.broadcast(
+            {
+                "type": "status_change",
+                "model_type": model_type,
+                "change_type": change_type,
+                "old_value": old_value,
+                "new_value": new_value
+            },
+            event_type="status"
+        )
+
+
+# Глобальный экземпляр менеджера подключений
+_ws_manager = ConnectionManager()
+
+
+def get_ws_manager() -> ConnectionManager:
+    """Получить экземпляр менеджера WebSocket."""
+    return _ws_manager
 
 
 def get_ensemble() -> EnsembleConsensus:
@@ -924,6 +1107,20 @@ async def _run_training(
         logger.info(f"  Symbols: {symbols}")
         logger.info(f"  Days: {days}")
 
+        # ========== WEBSOCKET: TRAINING STARTED ==========
+        try:
+            ws_manager = get_ws_manager()
+            await ws_manager.broadcast_training_progress(
+                task_id=task_id,
+                model_type=model_type,
+                epoch=0,
+                total_epochs=epochs,
+                metrics={"status": "started"},
+                status="started"
+            )
+        except Exception as ws_error:
+            logger.debug(f"WebSocket broadcast error: {ws_error}")
+
         # Get architecture
         if model_type == "cnn_lstm":
             architecture = ModelArchitecture.CNN_LSTM
@@ -1167,6 +1364,22 @@ async def _run_training(
                     f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}"
                 )
 
+            # ========== WEBSOCKET BROADCAST ==========
+            # Отправляем прогресс обучения через WebSocket
+            try:
+                ws_manager = get_ws_manager()
+                await ws_manager.broadcast_training_progress(
+                    task_id=task_id,
+                    model_type=model_type,
+                    epoch=epoch + 1,
+                    total_epochs=epochs,
+                    metrics=task['metrics'],
+                    status="training"
+                )
+            except Exception as ws_error:
+                # Не прерываем обучение из-за ошибки WebSocket
+                logger.debug(f"WebSocket broadcast error: {ws_error}")
+
             # Небольшая задержка для асинхронности
             await asyncio.sleep(0.01)
 
@@ -1199,6 +1412,20 @@ async def _run_training(
             logger.info(f"{'=' * 60}")
             logger.info(f"Best Accuracy: {best_accuracy:.4f}")
             logger.info(f"Best Val Loss: {best_val_loss:.4f}")
+
+            # ========== WEBSOCKET: TRAINING COMPLETED ==========
+            try:
+                ws_manager = get_ws_manager()
+                await ws_manager.broadcast_training_progress(
+                    task_id=task_id,
+                    model_type=model_type,
+                    epoch=epochs,
+                    total_epochs=epochs,
+                    metrics=metrics,
+                    status="completed"
+                )
+            except Exception as ws_error:
+                logger.debug(f"WebSocket broadcast error: {ws_error}")
 
             # ==================== РЕГИСТРАЦИЯ МОДЕЛИ ====================
             task['progress'] = 95
@@ -1239,6 +1466,20 @@ async def _run_training(
         logger.error(f"Training failed for {model_type}: {e}")
         logger.error(traceback.format_exc())
 
+        # ========== WEBSOCKET: TRAINING FAILED ==========
+        try:
+            ws_manager = get_ws_manager()
+            await ws_manager.broadcast_training_progress(
+                task_id=task_id,
+                model_type=model_type,
+                epoch=task.get('current_epoch', 0),
+                total_epochs=epochs,
+                metrics={"error": str(e)},
+                status="failed"
+            )
+        except Exception:
+            pass  # Игнорируем ошибки WebSocket при неудачном обучении
+
 
 def _get_model_display_name(model_type: str) -> str:
     """Получить отображаемое имя модели."""
@@ -1264,8 +1505,143 @@ def _get_model_description(model_type: str) -> str:
 # WEBSOCKET FOR REAL-TIME UPDATES
 # ============================================================================
 
-# WebSocket endpoint for real-time ensemble updates
-# (can be added if needed for frontend)
+@router.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint для real-time обновлений ensemble.
+
+    Подключение: ws://host:port/api/ensemble/ws
+
+    После подключения клиент может отправить JSON с подпиской:
+    {"action": "subscribe", "events": ["training", "predictions", "status"]}
+
+    Получаемые события:
+    - training: Прогресс обучения моделей
+    - predictions: Новые предсказания ensemble
+    - status: Изменения статуса/весов моделей
+
+    Формат сообщений (server -> client):
+    {
+        "event_type": "training|predictions|status",
+        "timestamp": "2024-01-01T00:00:00",
+        "type": "training_progress|prediction|status_change",
+        ... event-specific data
+    }
+    """
+    ws_manager = get_ws_manager()
+    await ws_manager.connect(websocket)
+
+    try:
+        while True:
+            # Получаем сообщения от клиента
+            data = await websocket.receive_text()
+
+            try:
+                message = json.loads(data)
+                action = message.get("action")
+
+                if action == "subscribe":
+                    # Подписка на события
+                    events = message.get("events", ["all"])
+                    for event_type in events:
+                        if event_type in ws_manager.subscriptions:
+                            ws_manager.subscriptions[event_type].add(websocket)
+
+                    await ws_manager.send_personal_message(
+                        {
+                            "type": "subscription_confirmed",
+                            "events": events
+                        },
+                        websocket
+                    )
+
+                elif action == "unsubscribe":
+                    # Отписка от событий
+                    events = message.get("events", [])
+                    for event_type in events:
+                        if event_type in ws_manager.subscriptions:
+                            ws_manager.subscriptions[event_type].discard(websocket)
+
+                    await ws_manager.send_personal_message(
+                        {
+                            "type": "unsubscription_confirmed",
+                            "events": events
+                        },
+                        websocket
+                    )
+
+                elif action == "ping":
+                    # Heartbeat
+                    await ws_manager.send_personal_message(
+                        {"type": "pong", "timestamp": datetime.now().isoformat()},
+                        websocket
+                    )
+
+                elif action == "get_status":
+                    # Запрос текущего статуса
+                    ensemble = get_ensemble()
+                    stats = ensemble.get_stats()
+                    training_status = {
+                        tid: {
+                            "model_type": t["model_type"],
+                            "status": t["status"],
+                            "progress": t["progress"],
+                            "current_epoch": t.get("current_epoch", 0),
+                            "epochs": t.get("epochs", 0)
+                        }
+                        for tid, t in _training_tasks.items()
+                        if t["status"] == "running"
+                    }
+
+                    await ws_manager.send_personal_message(
+                        {
+                            "type": "current_status",
+                            "models": stats["model_weights"],
+                            "active_training": training_status,
+                            "total_predictions": stats["total_predictions"]
+                        },
+                        websocket
+                    )
+
+                else:
+                    # Неизвестное действие
+                    await ws_manager.send_personal_message(
+                        {
+                            "type": "error",
+                            "message": f"Unknown action: {action}"
+                        },
+                        websocket
+                    )
+
+            except json.JSONDecodeError:
+                await ws_manager.send_personal_message(
+                    {
+                        "type": "error",
+                        "message": "Invalid JSON format"
+                    },
+                    websocket
+                )
+
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        ws_manager.disconnect(websocket)
+
+
+@router.get("/ws/stats")
+async def get_websocket_stats():
+    """
+    Получить статистику WebSocket подключений.
+    """
+    ws_manager = get_ws_manager()
+    return {
+        "total_connections": len(ws_manager.active_connections),
+        "subscriptions": {
+            event_type: len(subscribers)
+            for event_type, subscribers in ws_manager.subscriptions.items()
+        }
+    }
 
 
 # ============================================================================
