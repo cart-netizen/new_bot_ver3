@@ -223,6 +223,7 @@ async def handle_websocket_messages(websocket: WebSocket):
 
   except asyncio.CancelledError:
     # Graceful shutdown при отмене задачи
+    # НЕ re-raise - это вызывает Python 3.10 asyncio bug (IndexError: pop from an empty deque)
     logger.info("WebSocket задача получила CancelledError, завершаем gracefully...")
     # Закрываем соединение
     try:
@@ -231,8 +232,6 @@ async def handle_websocket_messages(websocket: WebSocket):
       pass  # Игнорируем ошибки при закрытии
     # Удаляем из менеджера
     manager.disconnect(websocket)
-    # Важно: re-raise CancelledError для корректной обработки asyncio
-    raise
   except WebSocketDisconnect:
     logger.info("WebSocket клиент отключился")
     manager.disconnect(websocket)
