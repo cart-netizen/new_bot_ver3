@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader
+from sklearn.metrics import precision_score, recall_score, f1_score
 
 from backend.core.logger import get_logger
 from backend.api.websocket_manager import (
@@ -1561,15 +1562,51 @@ async def _run_training(
             task['completed_at'] = datetime.now().isoformat()
             task['progress'] = 100
 
+            # Calculate precision, recall, f1 on validation set
+            model.eval()
+            all_preds = []
+            all_labels = []
+
+            with torch.no_grad():
+                for batch in val_loader:
+                    if model_type == "tlob":
+                        inputs = batch['lob_data'].to(device)
+                    else:
+                        inputs = batch['features'].to(device)
+                    labels_batch = batch['label'].to(device)
+
+                    outputs = model(inputs)
+                    if isinstance(outputs, dict):
+                        logits = outputs.get('direction_logits', outputs.get('logits'))
+                    else:
+                        logits = outputs
+
+                    _, predicted = logits.max(1)
+                    all_preds.extend(predicted.cpu().numpy())
+                    all_labels.extend(labels_batch.cpu().numpy())
+
+            all_preds = np.array(all_preds)
+            all_labels = np.array(all_labels)
+
+            # Calculate precision, recall, f1 (weighted average for multi-class)
+            precision = precision_score(all_labels, all_preds, average='weighted', zero_division=0)
+            recall = recall_score(all_labels, all_preds, average='weighted', zero_division=0)
+            f1 = f1_score(all_labels, all_preds, average='weighted', zero_division=0)
+
             # Final metrics
             metrics = {
                 'accuracy': round(best_accuracy, 4),
+                'precision': round(precision, 4),
+                'recall': round(recall, 4),
+                'f1': round(f1, 4),
                 'val_loss': round(best_val_loss, 4),
                 'train_samples': len(train_seq),
                 'val_samples': len(val_seq),
                 'epochs_completed': len(metrics_history)
             }
             task['final_metrics'] = metrics
+
+            logger.info(f"Final metrics: Accuracy={best_accuracy:.4f}, Precision={precision:.4f}, Recall={recall:.4f}, F1={f1:.4f}")
 
             training_params = {
                 'learning_rate': learning_rate,
