@@ -1526,7 +1526,7 @@ async def _run_training(
                 'best_accuracy': round(best_accuracy, 4)
             }
 
-            if (epoch + 1) % 10 == 0 or epoch == 0:
+            if (epoch + 1) % 5 == 0 or epoch == 0 or epoch == epochs - 1:
                 logger.info(
                     f"Epoch {epoch + 1}/{epochs} - "
                     f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, "
