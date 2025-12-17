@@ -73,7 +73,9 @@ class DataConfig:
     # DataLoader параметры
     batch_size: int = 64
     shuffle: bool = True
-    num_workers: int = 4  # Оптимально для 12GB GPU (8 может вызвать OOM)
+    # num_workers=0 для Windows (shared memory limit error 1455)
+    # На Linux можно увеличить до 4
+    num_workers: int = 0
 
     # Feature Store integration
     use_feature_store: bool = True  # Try Feature Store first
