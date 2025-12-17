@@ -21,7 +21,7 @@ import subprocess
 from fastapi import WebSocket, WebSocketDisconnect
 
 # from analysis_loop_ml_data_collection import ml_data_collection_loop
-from backend.config import settings
+from backend.config import settings, get_project_data_path
 from backend.core.dynamic_symbols import DynamicSymbolsManager
 from backend.core.logger import get_logger, setup_logging
 from backend.core.exceptions import log_exception, OrderBookSyncError, OrderBookError
@@ -417,7 +417,7 @@ class BotController:
       # ===== ML DATA COLLECTOR (LSTM/MPD Features) =====
       if settings.ML_DATA_COLLECTION_ENABLED:
         self.ml_data_collector = MLDataCollector(
-          storage_path="../data/ml_training",
+          storage_path=get_project_data_path("ml_training"),  # Абсолютный путь к project_root/data/
           max_samples_per_file=60,   # OPTIMIZED: 100 → 60 для реального цикла ~3 сек (сохранение каждые ~15 мин)
           collection_interval=5,     # OPTIMIZED: 10 → 5 для более частого сбора (4 семпла/мин)
           # auto_save_interval_seconds = 300  # Автосохранение каждые 5 минут для защиты от переполнения памяти
@@ -1051,7 +1051,8 @@ class BotController:
 
         # Enable in both ONLY_TRAINING and full mode
         data_collection_enabled = True  # Always collect data
-        data_collector_path = "data/ml_training/layering"
+        # ВАЖНО: Используем абсолютный путь к project_root/data/
+        data_collector_path = get_project_data_path("ml_training/layering")
 
         self.layering_data_collector = LayeringDataCollector(
           data_dir=data_collector_path,
