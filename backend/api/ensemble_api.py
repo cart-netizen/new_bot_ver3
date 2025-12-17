@@ -1008,7 +1008,10 @@ def _load_feature_data_from_parquet(
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days)
 
-        parquet_files = []
+        # Собираем все партиции
+        all_partition_files = []
+        filtered_files = []
+
         for partition_dir in feature_store_path.iterdir():
             if not partition_dir.is_dir():
                 continue
@@ -1016,13 +1019,23 @@ def _load_feature_data_from_parquet(
             # Извлекаем дату из имени партиции (date=YYYY-MM-DD)
             if partition_dir.name.startswith("date="):
                 partition_date = partition_dir.name.split("=")[1]
+                partition_parquets = list(partition_dir.glob("*.parquet"))
+                all_partition_files.extend(partition_parquets)
+
                 try:
                     part_dt = datetime.strptime(partition_date, "%Y-%m-%d")
                     # Фильтруем по диапазону дат
                     if start_date.date() <= part_dt.date() <= end_date.date():
-                        parquet_files.extend(list(partition_dir.glob("*.parquet")))
+                        filtered_files.extend(partition_parquets)
                 except ValueError:
                     continue
+
+        # Используем отфильтрованные файлы, или все если фильтр пустой
+        parquet_files = filtered_files if filtered_files else all_partition_files
+
+        if not filtered_files and all_partition_files:
+            logger.info(f"No files in date range ({start_date.date()} to {end_date.date()}), "
+                       f"loading all {len(all_partition_files)} available files")
 
         if parquet_files:
             logger.info(f"Found {len(parquet_files)} parquet files in Feature Store")
