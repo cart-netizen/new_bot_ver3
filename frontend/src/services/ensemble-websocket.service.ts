@@ -176,7 +176,7 @@ export class EnsembleWebSocketService {
   private getWsUrl(): string {
     // Преобразуем HTTP URL в WebSocket URL
     const baseUrl = APP_CONFIG.apiUrl.replace(/^http/, 'ws');
-    return `${baseUrl}/ensemble/ws`;
+    return `${baseUrl}/api/ensemble/ws`;
   }
 
   /**
