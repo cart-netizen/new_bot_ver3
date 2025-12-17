@@ -68,7 +68,11 @@ from backend.ml_engine.features import (
   MultiSymbolFeaturePipeline,
   FeatureVector, Candle
 )
-from backend.ml_engine.data_collection import MLDataCollector  # НОВОЕ
+from backend.ml_engine.data_collection import (
+    MLDataCollector,          # Features для LSTM/MPD
+    RawLOBCollectorV2,        # Raw LOB для TLOB Transformer
+    RawLOBConfigV2,
+)
 
 # Фаза 2: Adaptive Consensus
 from backend.strategies.adaptive import (
@@ -232,6 +236,7 @@ class BotController:
     # ==================== ML КОМПОНЕНТЫ ====================
     self.ml_feature_pipeline: Optional[MultiSymbolFeaturePipeline] = None
     self.ml_data_collector: Optional[MLDataCollector] = None
+    self.raw_lob_collector: Optional[RawLOBCollectorV2] = None  # TLOB Transformer
     self.latest_features: Dict[str, FeatureVector] = {}
 
     # ==================== ФАЗА 1: EXTENDED STRATEGY MANAGER ====================
@@ -409,7 +414,7 @@ class BotController:
         logger.info("✓ Dynamic Symbols Manager инициализирован")
 
 
-      # ===== ML DATA COLLECTOR =====
+      # ===== ML DATA COLLECTOR (LSTM/MPD Features) =====
       if settings.ML_DATA_COLLECTION_ENABLED:
         self.ml_data_collector = MLDataCollector(
           storage_path="../data/ml_training",
@@ -427,6 +432,31 @@ class BotController:
       else:
         self.ml_data_collector = None
         logger.info("⚠️  ML Data Collection ОТКЛЮЧЕН (настройка ML_DATA_COLLECTION_ENABLED=false)")
+
+      # ===== RAW LOB COLLECTOR (TLOB Transformer) =====
+      if settings.RAW_LOB_COLLECTION_ENABLED:
+        raw_lob_config = RawLOBConfigV2(
+          num_levels=settings.RAW_LOB_NUM_LEVELS,
+          max_snapshots_per_symbol=settings.RAW_LOB_MAX_SNAPSHOTS_IN_MEMORY,
+          max_total_memory_mb=150.0,  # Жесткий лимит памяти
+          save_interval_seconds=settings.RAW_LOB_SAVE_INTERVAL_SECONDS,
+          storage_path=settings.RAW_LOB_STORAGE_PATH,
+          adaptive_collection=settings.RAW_LOB_ADAPTIVE_INTERVAL,
+          adaptive_skip_threshold_sec=20.0,  # Пропускать при очень медленных циклах
+          min_snapshot_interval_ms=5000,     # Минимум 5 сек между снимками
+          enabled=True
+        )
+        self.raw_lob_collector = RawLOBCollectorV2(raw_lob_config)
+        await self.raw_lob_collector.initialize()
+        logger.info(
+          f"✓ Raw LOB Collector инициализирован: "
+          f"levels={settings.RAW_LOB_NUM_LEVELS}, "
+          f"max_per_symbol={settings.RAW_LOB_MAX_SNAPSHOTS_IN_MEMORY}, "
+          f"path={settings.RAW_LOB_STORAGE_PATH}"
+        )
+      else:
+        self.raw_lob_collector = None
+        logger.info("⚠️  Raw LOB Collection ОТКЛЮЧЕН (настройка RAW_LOB_COLLECTION_ENABLED=false)")
 
       # ========== ЭТАП 5: STRATEGY MANAGER (ФАЗА 1) ==========
       logger.info("🎯 [5/10] Инициализация ExtendedStrategyManager (Фаза 1)...")
@@ -1932,6 +1962,7 @@ class BotController:
     has_ml_validator = self.ml_validator is not None
     has_ml_feature_pipeline = self.ml_feature_pipeline is not None
     has_ml_data_collector = self.ml_data_collector is not None
+    has_raw_lob_collector = self.raw_lob_collector is not None  # TLOB Transformer
     has_sr_detector = self.sr_detector is not None
     has_spoofing_detector = hasattr(self, 'spoofing_detector') and self.spoofing_detector
     has_layering_detector = hasattr(self, 'layering_detector') and self.layering_detector
@@ -1944,7 +1975,8 @@ class BotController:
     logger.info(f"   ├─ Integrated Engine: {'✅' if has_integrated_engine else '❌'}")
     logger.info(f"   ├─ ML Validator: {'✅' if has_ml_validator else '❌'}")
     logger.info(f"   ├─ ML Feature Pipeline: {'✅' if has_ml_feature_pipeline else '❌'}")
-    logger.info(f"   ├─ ML Data Collector: {'✅' if has_ml_data_collector else '❌'}")
+    logger.info(f"   ├─ ML Data Collector (LSTM): {'✅' if has_ml_data_collector else '❌'}")
+    logger.info(f"   ├─ Raw LOB Collector (TLOB): {'✅' if has_raw_lob_collector else '❌'}")
     logger.info(f"   ├─ S/R Detector: {'✅' if has_sr_detector else '❌'}")
     logger.info(f"   ├─ Spoofing Detector: {'✅' if has_spoofing_detector else '❌'}")
     logger.info(f"   ├─ Layering Detector: {'✅' if has_layering_detector else '❌'}")
@@ -2998,6 +3030,27 @@ class BotController:
                 logger.error(f"[{symbol}] Ошибка ML Data Collection: {e}")
 
             # ============================================================
+            # ШАГ 12.1: RAW LOB COLLECTION (для TLOB Transformer)
+            # ============================================================
+            # Собираем КАЖДЫЙ orderbook_snapshot (с адаптивным throttling)
+            # В отличие от ML features, raw LOB нужен для каждого символа
+
+            if has_raw_lob_collector and orderbook_snapshot:
+              try:
+                # Передаем cycle_time для адаптивного сбора
+                collected = await self.raw_lob_collector.collect(
+                  snapshot=orderbook_snapshot,
+                  cycle_time=last_cycle_time  # Адаптивная логика на основе cycle time
+                )
+                if collected:
+                  if 'raw_lob_collected' not in self.stats:
+                    self.stats['raw_lob_collected'] = 0
+                  self.stats['raw_lob_collected'] += 1
+
+              except Exception as e:
+                logger.debug(f"[{symbol}] Ошибка Raw LOB Collection: {e}")
+
+            # ============================================================
             # ШАГ 13: REAL-TIME BROADCASTING (опционально)
             # ============================================================
 
@@ -3098,6 +3151,17 @@ class BotController:
 
         # НОВОЕ: Обновляем время цикла для адаптивного ML сбора
         last_cycle_time = cycle_elapsed
+
+        # ============================================================
+        # ПЕРИОДИЧЕСКОЕ СОХРАНЕНИЕ RAW LOB БУФЕРОВ
+        # ============================================================
+        if has_raw_lob_collector:
+          try:
+            saved_files = await self.raw_lob_collector.maybe_save_buffers()
+            if saved_files > 0:
+              logger.info(f"📁 Raw LOB: сохранено {saved_files} файлов")
+          except Exception as e:
+            logger.error(f"Ошибка сохранения Raw LOB буферов: {e}")
 
         try:
           analysis_interval = float(settings.ANALYSIS_INTERVAL)
@@ -3263,6 +3327,17 @@ class BotController:
         await self.ml_data_collector.finalize()
         logger.info("✓ ML Data Collector финализирован")
 
+      # ===== НОВОЕ: Финализация Raw LOB Collector =====
+      if self.raw_lob_collector:
+        lob_stats = self.raw_lob_collector.get_statistics()
+        await self.raw_lob_collector.finalize()
+        logger.info(
+          f"✓ Raw LOB Collector финализирован: "
+          f"collected={lob_stats.get('total_collected', 0)}, "
+          f"saved={lob_stats.get('total_saved', 0)}, "
+          f"files={lob_stats.get('files_written', 0)}"
+        )
+
       # ===== MEMORY FIX: Агрессивная очистка памяти при остановке =====
       logger.info("🧹 Агрессивная очистка памяти при остановке...")
 
@@ -3300,6 +3375,9 @@ class BotController:
         if self.ml_data_collector:
           del self.ml_data_collector
           self.ml_data_collector = None
+        if self.raw_lob_collector:
+          del self.raw_lob_collector
+          self.raw_lob_collector = None
         if self.ml_feature_pipeline:
           del self.ml_feature_pipeline
           self.ml_feature_pipeline = None
@@ -4068,6 +4146,20 @@ class BotController:
                 f"batch={stat['current_batch']}, "  # ← НЕ 'batches_saved'
                 f"buffer={stat['buffer_size']}/{self.ml_data_collector.max_samples_per_file}"
               )
+
+        # ===== RAW LOB COLLECTOR STATS =====
+        if self.raw_lob_collector:
+          lob_stats = self.raw_lob_collector.get_statistics()
+          logger.info(
+            f"Raw LOB Stats | "
+            f"collected={lob_stats.get('total_collected', 0):,}, "
+            f"saved={lob_stats.get('total_saved', 0):,}, "
+            f"files={lob_stats.get('files_written', 0)}, "
+            f"in_memory={lob_stats.get('total_in_memory', 0)}, "
+            f"memory={lob_stats.get('estimated_memory_mb', 0):.1f}MB, "
+            f"skipped_dup={lob_stats.get('total_skipped_duplicate', 0)}, "
+            f"skipped_interval={lob_stats.get('total_skipped_interval', 0)}"
+          )
 
       except asyncio.CancelledError:
         logger.info("ML stats loop остановлен (CancelledError)")

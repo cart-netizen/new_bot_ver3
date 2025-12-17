@@ -900,6 +900,32 @@ class Settings(BaseSettings):
     description="Включить сбор данных для обучения ML модели (может влиять на производительность)"
   )
 
+  # ==================== RAW LOB Collection (TLOB Transformer) ====================
+  RAW_LOB_COLLECTION_ENABLED: bool = Field(
+    default=os.getenv("RAW_LOB_COLLECTION_ENABLED", "true").lower() == "true",
+    description="Включить сбор сырых данных стакана для обучения TLOB Transformer"
+  )
+  RAW_LOB_NUM_LEVELS: int = Field(
+    default=int(os.getenv("RAW_LOB_NUM_LEVELS", "20")),
+    description="Количество уровней стакана для сохранения (bid + ask)"
+  )
+  RAW_LOB_SAVE_INTERVAL_SECONDS: int = Field(
+    default=int(os.getenv("RAW_LOB_SAVE_INTERVAL_SECONDS", "300")),
+    description="Интервал автосохранения буфера на диск (секунды)"
+  )
+  RAW_LOB_MAX_SNAPSHOTS_IN_MEMORY: int = Field(
+    default=int(os.getenv("RAW_LOB_MAX_SNAPSHOTS_IN_MEMORY", "2000")),
+    description="Максимум снимков в памяти на символ (memory limit)"
+  )
+  RAW_LOB_STORAGE_PATH: str = Field(
+    default=os.getenv("RAW_LOB_STORAGE_PATH", "data/raw_lob"),
+    description="Путь хранения сырых данных LOB"
+  )
+  RAW_LOB_ADAPTIVE_INTERVAL: bool = Field(
+    default=os.getenv("RAW_LOB_ADAPTIVE_INTERVAL", "true").lower() == "true",
+    description="Адаптивный интервал сбора на основе cycle time"
+  )
+
   ML_MIN_CONFIDENCE_THRESHOLD: float = Field(
     default=float(os.getenv("ML_MIN_CONFIDENCE_THRESHOLD", "0.70")),
     description="Минимальная уверенность ML для входа"
