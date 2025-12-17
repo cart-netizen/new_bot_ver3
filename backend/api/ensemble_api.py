@@ -903,6 +903,11 @@ def _load_lob_data_from_parquet(
     """
     Загружает данные LOB из Parquet файлов.
 
+    Порядок загрузки:
+    1. Сначала пробуем загрузить labeled данные из raw_lob_labeled/
+    2. Если нет - запускаем preprocessing для синхронизации labels
+    3. Если preprocessing не сработал - генерируем labels из цен (fallback)
+
     Args:
         symbol: Торговая пара
         days: Количество дней данных
@@ -912,53 +917,53 @@ def _load_lob_data_from_parquet(
         Tuple (lob_data, labels, mid_prices) или (None, None, None) если данных нет
     """
     data_path = _get_data_path()
+    cutoff_date = datetime.now() - timedelta(days=days)
+
+    # ===== 1. ПОПЫТКА ЗАГРУЗКИ LABELED ДАННЫХ =====
+    labeled_path = data_path / "raw_lob_labeled" / symbol
     raw_lob_path = data_path / "raw_lob" / symbol
 
-    if not raw_lob_path.exists():
-        logger.warning(f"LOB data path not found: {raw_lob_path}")
-        return None, None, None
+    combined_df = None
 
-    # Находим parquet файлы за указанный период
-    cutoff_date = datetime.now() - timedelta(days=days)
-    parquet_files = sorted(raw_lob_path.glob("*.parquet"))
+    if labeled_path.exists():
+        logger.info(f"Checking labeled LOB data: {labeled_path}")
+        combined_df = _load_lob_parquet_files(labeled_path, cutoff_date, days)
 
-    if not parquet_files:
-        logger.warning(f"No parquet files found in {raw_lob_path}")
-        return None, None, None
+        if combined_df is not None and 'future_direction_60s' in combined_df.columns:
+            logger.info(f"✓ Loaded {len(combined_df)} LABELED LOB snapshots for {symbol}")
+        else:
+            combined_df = None  # Нет labels - пробуем другой путь
 
-    logger.info(f"Found {len(parquet_files)} parquet files for {symbol}")
+    # ===== 2. АВТОМАТИЧЕСКИЙ PREPROCESSING =====
+    if combined_df is None and raw_lob_path.exists():
+        logger.info(f"No labeled data found, attempting auto-preprocessing for {symbol}...")
 
-    all_data = []
-    for pq_file in parquet_files:
         try:
-            # Извлекаем дату из имени файла (SYMBOL_YYYYMMDD_HHMMSS.parquet)
-            parts = pq_file.stem.split('_')
-            if len(parts) >= 2:
-                file_date_str = parts[1]
-                try:
-                    file_date = datetime.strptime(file_date_str, "%Y%m%d")
-                    if file_date < cutoff_date:
-                        continue
-                except ValueError:
-                    pass  # Если не удалось распарсить дату, загружаем файл
+            # Запускаем синхронизацию labels
+            _run_tlob_label_preprocessing(symbol, days)
 
-            df = pd.read_parquet(pq_file)
-            all_data.append(df)
+            # Пробуем загрузить снова
+            if labeled_path.exists():
+                combined_df = _load_lob_parquet_files(labeled_path, cutoff_date, days)
+
+                if combined_df is not None and 'future_direction_60s' in combined_df.columns:
+                    logger.info(f"✓ Auto-preprocessed {len(combined_df)} LOB snapshots for {symbol}")
+
         except Exception as e:
-            logger.warning(f"Error loading {pq_file}: {e}")
-            continue
+            logger.warning(f"Auto-preprocessing failed for {symbol}: {e}")
 
-    if not all_data:
-        logger.warning(f"No valid data loaded for {symbol}")
+    # ===== 3. FALLBACK: ЗАГРУЗКА RAW + ГЕНЕРАЦИЯ LABELS =====
+    if combined_df is None and raw_lob_path.exists():
+        logger.warning(f"Loading raw LOB with generated labels (fallback) for {symbol}")
+        combined_df = _load_lob_parquet_files(raw_lob_path, cutoff_date, days)
+
+    if combined_df is None or combined_df.empty:
+        logger.warning(f"No LOB data available for {symbol}")
         return None, None, None
 
-    # Объединяем все данные
-    combined_df = pd.concat(all_data, ignore_index=True)
-    combined_df = combined_df.sort_values('timestamp').reset_index(drop=True)
+    logger.info(f"Total LOB snapshots for {symbol}: {len(combined_df)}")
 
-    logger.info(f"Loaded {len(combined_df)} LOB snapshots for {symbol}")
-
-    # Преобразуем в LOB tensor (N, num_levels, 4)
+    # ===== ПРЕОБРАЗОВАНИЕ В TENSOR =====
     n_samples = len(combined_df)
     lob_data = np.zeros((n_samples, num_levels, 4), dtype=np.float32)
 
@@ -974,13 +979,120 @@ def _load_lob_data_from_parquet(
             lob_data[:, i, 2] = combined_df[ask_price_col].values
             lob_data[:, i, 3] = combined_df[ask_vol_col].values
 
-    # Извлекаем mid_prices для генерации labels
+    # ===== ИЗВЛЕЧЕНИЕ LABELS =====
     mid_prices = combined_df['mid_price'].values
 
-    # Генерируем labels
-    labels = _generate_labels_from_prices(mid_prices, horizon=60, threshold_pct=0.0005)
+    # Используем synchronized labels если есть
+    if 'future_direction_60s' in combined_df.columns:
+        labels = combined_df['future_direction_60s'].values.astype(np.int64)
+        # Конвертируем -1,0,1 → 0,1,2 если нужно
+        if labels.min() < 0:
+            labels = labels + 1
+        logger.info(f"  Using synchronized labels: {np.bincount(labels)}")
+    else:
+        # Fallback: генерируем labels из цен
+        labels = _generate_labels_from_prices(mid_prices, horizon=60, threshold_pct=0.0005)
+        logger.info(f"  Using generated labels: {np.bincount(labels)}")
 
     return lob_data, labels, mid_prices
+
+
+def _load_lob_parquet_files(
+    lob_path: Path,
+    cutoff_date: datetime,
+    days: int
+) -> Optional[pd.DataFrame]:
+    """
+    Загружает parquet файлы из указанной директории.
+
+    Поддерживает структуры:
+    - {symbol}/*.parquet
+    - {symbol}/date=YYYY-MM-DD/*.parquet
+    """
+    all_data = []
+
+    # Ищем файлы в корне и партициях
+    parquet_files = list(lob_path.glob("*.parquet")) + list(lob_path.rglob("date=*/*.parquet"))
+
+    if not parquet_files:
+        return None
+
+    for pq_file in parquet_files:
+        try:
+            # Проверяем дату файла
+            parts = pq_file.stem.split('_')
+            if len(parts) >= 2:
+                try:
+                    file_date = datetime.strptime(parts[1], "%Y%m%d")
+                    if file_date < cutoff_date:
+                        continue
+                except ValueError:
+                    pass
+
+            df = pd.read_parquet(pq_file)
+            all_data.append(df)
+
+        except Exception as e:
+            logger.warning(f"Error loading {pq_file}: {e}")
+            continue
+
+    if not all_data:
+        return None
+
+    combined = pd.concat(all_data, ignore_index=True)
+    combined = combined.sort_values('timestamp').reset_index(drop=True)
+    combined = combined.drop_duplicates(subset=['timestamp'], keep='first')
+
+    return combined
+
+
+def _run_tlob_label_preprocessing(symbol: str, days: int) -> bool:
+    """
+    Запускает синхронизацию labels для TLOB.
+
+    Использует TLOBLabelProcessor для merge raw LOB с LSTM labels.
+    """
+    try:
+        # Импортируем процессор
+        import sys
+        from pathlib import Path as PathLib
+
+        # Добавляем путь к проекту
+        project_root = PathLib(__file__).parent.parent.parent
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+
+        # Импортируем процессор
+        from preprocessing_add_tlob_labels import TLOBLabelProcessor, TLOBLabelConfig
+
+        # Вычисляем даты
+        end_date = datetime.now().strftime("%Y-%m-%d")
+        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+        # Конфигурация
+        config = TLOBLabelConfig(
+            lstm_feature_store_path=str(_get_data_path() / "feature_store" / "offline" / "training_features"),
+            raw_lob_path=str(_get_data_path() / "raw_lob"),
+            output_path=str(_get_data_path() / "raw_lob_labeled"),
+            timestamp_tolerance_ms=2000
+        )
+
+        # Обработка
+        processor = TLOBLabelProcessor(config)
+        stats = processor.process(
+            start_date=start_date,
+            end_date=end_date,
+            symbols=[symbol]
+        )
+
+        return stats.get('total_merged', 0) > 0
+
+    except ImportError as e:
+        logger.warning(f"TLOBLabelProcessor not available: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Label preprocessing failed: {e}")
+        return False
 
 
 def _load_feature_data_from_parquet(
