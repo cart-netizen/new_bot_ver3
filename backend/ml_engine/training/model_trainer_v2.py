@@ -123,7 +123,7 @@ class TrainerConfigV2:
     use_mixed_precision: bool = False  # ВРЕМЕННО ОТКЛЮЧЕНО из-за NaN loss (RTX 3060 поддерживает!)
 
     # === Checkpoint ===
-    checkpoint_dir: str = "checkpoints/models"
+    checkpoint_dir: str = "models"
     save_best_only: bool = True
     save_every_n_epochs: int = 10
 

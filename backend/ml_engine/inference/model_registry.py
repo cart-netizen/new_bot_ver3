@@ -136,10 +136,13 @@ class ModelRegistry:
         model_dir = self.registry_dir / name / version
         model_dir.mkdir(parents=True, exist_ok=True)
 
-        # Скопировать файлы модели
+        # Скопировать файлы модели (пропустить если уже в нужном месте)
         target_model_path = model_dir / "model.pt"
-        shutil.copy2(model_path, target_model_path)
-        logger.info(f"Copied model to {target_model_path}")
+        if model_path.resolve() != target_model_path.resolve():
+            shutil.copy2(model_path, target_model_path)
+            logger.info(f"Copied model to {target_model_path}")
+        else:
+            logger.info(f"Model already at {target_model_path}")
 
         target_onnx_path = None
         if onnx_path and onnx_path.exists():

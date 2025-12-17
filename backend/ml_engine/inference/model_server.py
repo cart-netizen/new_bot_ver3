@@ -110,7 +110,7 @@ class ModelRegistry:
   - Статистика использования
   """
 
-  def __init__(self, checkpoint_dir: str = "checkpoints/models"):
+  def __init__(self, checkpoint_dir: str = "models"):
     """
     Инициализация реестра.
 
@@ -296,7 +296,7 @@ class MLModelServer:
   - Мониторинг производительности
   """
 
-  def __init__(self, checkpoint_dir: str = "checkpoints/models"):
+  def __init__(self, checkpoint_dir: str = "models"):
     """Инициализация сервера."""
     self.registry = ModelRegistry(checkpoint_dir)
     self.start_time = time.time()

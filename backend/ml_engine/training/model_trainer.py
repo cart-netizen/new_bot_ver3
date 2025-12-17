@@ -60,7 +60,7 @@ class TrainerConfig:
   lr_factor: float = 0.5
 
   # Checkpoint
-  checkpoint_dir: str = "checkpoints/models"
+  checkpoint_dir: str = "models"
   save_best_only: bool = True
 
   # Device
@@ -76,7 +76,7 @@ class TrainerConfig:
       weight_decay: float = 1e-5,
       grad_clip_value: float = 1.0,
       early_stopping_patience: int = 20,
-      checkpoint_dir: str = "checkpoints/models",
+      checkpoint_dir: str = "models",
       device: str = "cuda" if torch.cuda.is_available() else "cpu",
 
       # ===== НОВОЕ: CLASS BALANCING =====
@@ -815,7 +815,7 @@ if __name__ == "__main__":
     epochs=50,
     learning_rate=0.001,
     early_stopping_patience=10,
-    checkpoint_dir="checkpoints/models"
+    checkpoint_dir="models"
   )
 
   # Создаем trainer
