@@ -27,6 +27,7 @@ import signal
 import traceback
 
 from backend.core.logger import get_logger
+from backend.api.websocket_manager import get_websocket_manager
 
 logger = get_logger(__name__)
 
@@ -273,6 +274,18 @@ async def _run_optimization(request: OptimizationRequest):
         _save_state(current_optimization)
         logger.info("HYPEROPT: State saved, status=running")
 
+        # WebSocket broadcast: started
+        try:
+            ws_manager = get_websocket_manager()
+            await ws_manager.broadcast_hyperopt_started(
+                job_id=current_optimization.get("job_id", "unknown"),
+                mode=request.mode.value,
+                total_trials_estimate=request.max_trials_per_group * 6,  # 6 groups
+                time_estimate=current_optimization.get("time_estimate", {})
+            )
+        except Exception as ws_error:
+            logger.debug(f"WebSocket broadcast error: {ws_error}")
+
         # Определяем режим
         mode_map = {
             OptimizationMode.FULL: OptimizerMode.FULL,
@@ -337,6 +350,21 @@ async def _run_optimization(request: OptimizationRequest):
         logger.info(f"HYPEROPT: Best value={results.get('best_value', 'N/A')}")
         logger.info("=" * 60)
 
+        # WebSocket broadcast: completed
+        try:
+            ws_manager = get_websocket_manager()
+            started_at = datetime.fromisoformat(current_optimization.get("started_at", datetime.now().isoformat()))
+            elapsed = str(datetime.now() - started_at)
+            await ws_manager.broadcast_hyperopt_completed(
+                job_id=current_optimization.get("job_id", "unknown"),
+                best_params=results.get("best_params", {}),
+                best_value=results.get("best_value", 0.0),
+                total_trials=results.get("total_trials", 0),
+                elapsed_time=elapsed
+            )
+        except Exception as ws_error:
+            logger.debug(f"WebSocket broadcast error: {ws_error}")
+
     except asyncio.CancelledError:
         logger.warning("HYPEROPT: Optimization CANCELLED by user")
         if current_optimization:
@@ -358,6 +386,17 @@ async def _run_optimization(request: OptimizationRequest):
             current_optimization["error_traceback"] = traceback.format_exc()
             current_optimization["failed_at"] = datetime.now().isoformat()
             _save_state(current_optimization)
+
+            # WebSocket broadcast: failed
+            try:
+                ws_manager = get_websocket_manager()
+                await ws_manager.broadcast_hyperopt_failed(
+                    job_id=current_optimization.get("job_id", "unknown"),
+                    error=str(e),
+                    error_type=type(e).__name__
+                )
+            except Exception:
+                pass  # Ignore WebSocket errors during failure handling
 
 
 # ============================================================
