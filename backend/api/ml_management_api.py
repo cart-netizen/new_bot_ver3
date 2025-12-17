@@ -19,8 +19,10 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 from pathlib import Path
 import asyncio
+import concurrent.futures
 
 from backend.core.logger import get_logger
+from backend.api.websocket_manager import get_websocket_manager
 from backend.ml_engine.training_orchestrator import get_training_orchestrator
 # UPDATED: Используем оптимизированные v2 версии
 from backend.ml_engine.models.hybrid_cnn_lstm_v2 import ModelConfigV2 as ModelConfig
@@ -85,6 +87,12 @@ logger = get_logger(__name__)
 
 # Create router
 router = APIRouter(prefix="/api/ml-management", tags=["ML Management"])
+
+# Thread pool для обучения моделей (не блокирует FastAPI event loop)
+_training_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix="cnn_lstm_training"
+)
 
 
 # ============================================================
@@ -243,18 +251,43 @@ async def start_training(
             "current_epoch": 0,
             "total_epochs": request.epochs,
             "current_loss": 0,
-            "best_val_accuracy": 0
+            "best_val_accuracy": 0,
+            "train_loss": 0,
+            "val_loss": 0,
+            "train_acc": 0,
+            "val_acc": 0
         }
     }
 
-    # Start training in background
-    background_tasks.add_task(
-        _run_training_job,
-        job_id=job_id,
-        request=request
-    )
+    # Start training in separate thread (не блокирует FastAPI event loop)
+    def run_training_sync():
+        """Синхронная обёртка для запуска async обучения в thread pool."""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(
+                _run_training_job(job_id=job_id, request=request)
+            )
+        finally:
+            loop.close()
 
-    logger.info(f"Training job started: {job_id}")
+    _training_executor.submit(run_training_sync)
+
+    logger.info(f"Training job started in thread pool: {job_id}")
+
+    # WebSocket broadcast: training started
+    try:
+        ws_manager = get_websocket_manager()
+        await ws_manager.broadcast_training_progress(
+            task_id=job_id,
+            model_type="cnn_lstm",
+            epoch=0,
+            total_epochs=request.epochs,
+            metrics={"status": "started"},
+            status="started"
+        )
+    except Exception as e:
+        logger.debug(f"WebSocket broadcast error: {e}")
 
     return {
         "job_id": job_id,
@@ -557,6 +590,39 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
             "result": result
         })
 
+        # Update progress with final metrics
+        if result.get("test_metrics"):
+            current_training_job["progress"].update({
+                "current_epoch": request.epochs,
+                "best_val_accuracy": result.get("test_metrics", {}).get("accuracy", 0),
+                "train_loss": result.get("final_metrics", {}).get("final_train_loss", 0),
+                "val_loss": result.get("final_metrics", {}).get("final_val_loss", 0),
+                "train_acc": result.get("final_metrics", {}).get("final_train_accuracy", 0),
+                "val_acc": result.get("final_metrics", {}).get("final_val_accuracy", 0)
+            })
+
+        # WebSocket broadcast: training completed
+        try:
+            ws_manager = get_websocket_manager()
+            await ws_manager.broadcast_training_progress(
+                task_id=job_id,
+                model_type="cnn_lstm",
+                epoch=request.epochs,
+                total_epochs=request.epochs,
+                metrics={
+                    "train_loss": current_training_job["progress"].get("train_loss", 0),
+                    "val_loss": current_training_job["progress"].get("val_loss", 0),
+                    "train_acc": current_training_job["progress"].get("train_acc", 0),
+                    "val_acc": current_training_job["progress"].get("val_acc", 0),
+                    "best_val_accuracy": current_training_job["progress"].get("best_val_accuracy", 0),
+                    "test_accuracy": result.get("test_metrics", {}).get("accuracy", 0),
+                    "promoted_to_production": result.get("promoted_to_production", False)
+                },
+                status="completed" if result["success"] else "failed"
+            )
+        except Exception as ws_error:
+            logger.debug(f"WebSocket broadcast error: {ws_error}")
+
         # Add to history
         training_history.append(current_training_job.copy())
 
@@ -601,6 +667,20 @@ async def _run_training_job(job_id: str, request: TrainingRequest):
             "error": user_friendly_message,
             "raw_error": error_message
         })
+
+        # WebSocket broadcast: training failed
+        try:
+            ws_manager = get_websocket_manager()
+            await ws_manager.broadcast_training_progress(
+                task_id=job_id,
+                model_type="cnn_lstm",
+                epoch=current_training_job["progress"].get("current_epoch", 0),
+                total_epochs=request.epochs,
+                metrics={"error": user_friendly_message},
+                status="failed"
+            )
+        except Exception:
+            pass  # Игнорируем ошибки WebSocket при неудачном обучении
 
         training_history.append(current_training_job.copy())
 
