@@ -682,7 +682,7 @@ class MultiModelTrainer:
         try:
             # Import MLflow tracker
             from backend.ml_engine.mlflow_integration.mlflow_tracker import MLflowTracker
-            from backend.core.config import settings
+            from backend.config import settings  # Правильный путь
 
             # Initialize tracker
             tracker = MLflowTracker(
@@ -764,11 +764,11 @@ class MultiModelTrainer:
 
             return model_version
 
-        except ImportError:
-            logger.warning("MLflow not available, skipping registration")
+        except ImportError as e:
+            logger.warning(f"MLflow not available: {e}")
             return None
         except Exception as e:
-            logger.error(f"Failed to register model in MLflow: {e}")
+            logger.error(f"MLflow registration failed: {e}")
             return None
 
     async def register_model_registry(
