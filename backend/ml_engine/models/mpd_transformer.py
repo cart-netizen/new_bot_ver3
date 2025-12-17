@@ -120,13 +120,13 @@ class PatchEmbedding(nn.Module):
         Returns:
             (batch, num_patches, embed_dim)
         """
-        B, T, F = x.shape
+        B, T, feat_dim = x.shape
 
         # Padding по features если нужно
-        if F % self.patch_size_feature != 0:
-            pad_size = self.patch_size_feature - (F % self.patch_size_feature)
+        if feat_dim % self.patch_size_feature != 0:
+            pad_size = self.patch_size_feature - (feat_dim % self.patch_size_feature)
             x = F.pad(x, (0, pad_size), mode='constant', value=0)
-            F = F + pad_size
+            feat_dim = feat_dim + pad_size
 
         # Padding по времени если нужно
         if T % self.patch_size_time != 0:
@@ -135,9 +135,9 @@ class PatchEmbedding(nn.Module):
             T = T + pad_size
 
         # Reshape в патчи
-        # (B, T, F) -> (B, T/pt, pt, F/pf, pf) -> (B, T/pt, F/pf, pt, pf)
+        # (B, T, feat_dim) -> (B, T/pt, pt, feat_dim/pf, pf) -> (B, T/pt, feat_dim/pf, pt, pf)
         num_patches_t = T // self.patch_size_time
-        num_patches_f = F // self.patch_size_feature
+        num_patches_f = feat_dim // self.patch_size_feature
 
         x = x.reshape(
             B,
