@@ -710,13 +710,15 @@ async def _run_training_job(job_id: str, request: TrainingRequest, main_loop: as
 
 @router.get("/models")
 async def list_models(
-    stage: Optional[str] = None
+    stage: Optional[str] = None,
+    include_mlflow: bool = True
 ) -> ModelListResponse:
     """
     Список всех моделей
 
     Args:
         stage: Фильтр по stage (production, staging, etc.)
+        include_mlflow: Включать модели из MLflow (default: True)
 
     Returns:
         Список моделей
@@ -724,8 +726,10 @@ async def list_models(
     try:
         registry = get_model_registry()
 
-        # Get all models
+        # Get all models from local registry
         models = []
+        model_keys = set()  # Для избежания дубликатов
+
         for name in ["hybrid_cnn_lstm", "mpd_transformer", "tlob_transformer"]:
             try:
                 # list_models returns List[ModelInfo]
@@ -737,13 +741,17 @@ async def list_models(
                     stage_value = metadata.stage.value if hasattr(metadata.stage, "value") else str(metadata.stage)
                     stage_lower = stage_value.lower()
 
+                    model_key = f"{metadata.name}_{metadata.version}"
+                    model_keys.add(model_key)
+
                     model_data = {
                         "name": metadata.name,
                         "version": metadata.version,
                         "stage": stage_lower,
                         "created_at": metadata.created_at.isoformat() if hasattr(metadata.created_at, "isoformat") else str(metadata.created_at),
                         "description": metadata.description or "",
-                        "metrics": metadata.metrics or {}
+                        "metrics": metadata.metrics or {},
+                        "source": "local"
                     }
 
                     # Filter by stage if specified
@@ -753,6 +761,43 @@ async def list_models(
             except Exception as e:
                 logger.warning(f"Failed to get versions for model {name}: {e}")
                 # Continue to next model
+
+        # Also include models from MLflow if requested
+        if include_mlflow:
+            try:
+                mlflow_tracker = get_mlflow_tracker()
+                for name in ["hybrid_cnn_lstm", "mpd_transformer", "tlob_transformer"]:
+                    try:
+                        mlflow_versions = mlflow_tracker.get_model_versions(name)
+                        for mv in mlflow_versions:
+                            model_key = f"{name}_{mv.get('version', 'unknown')}"
+                            if model_key not in model_keys:
+                                # Convert MLflow timestamp to datetime string
+                                created_ts = mv.get('created_at', 0)
+                                if isinstance(created_ts, (int, float)):
+                                    from datetime import datetime as dt
+                                    created_at = dt.fromtimestamp(created_ts / 1000).isoformat()
+                                else:
+                                    created_at = str(created_ts)
+
+                                mlflow_stage = mv.get('stage', 'None').lower()
+
+                                # Filter by stage if specified
+                                if stage is None or mlflow_stage == stage.lower():
+                                    models.append({
+                                        "name": name,
+                                        "version": str(mv.get('version', 'unknown')),
+                                        "stage": mlflow_stage,
+                                        "created_at": created_at,
+                                        "description": mv.get('description', ''),
+                                        "metrics": {},
+                                        "source": "mlflow"
+                                    })
+                                    model_keys.add(model_key)
+                    except Exception as e:
+                        logger.debug(f"Failed to get MLflow versions for {name}: {e}")
+            except Exception as e:
+                logger.debug(f"MLflow not available for model listing: {e}")
 
         return ModelListResponse(
             models=models,

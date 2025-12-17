@@ -216,13 +216,20 @@ export const useEnsembleStore = create<EnsembleStore>((set, get) => ({
     const { task_id, model_type, epoch, total_epochs, metrics, status } = data;
     const progressPct = total_epochs > 0 ? (epoch / total_epochs) * 100 : 0;
 
+    // Преобразование статусов бэкенда в фронтенд статусы
+    // 'started', 'training', 'loading_data' -> 'running'
+    const normalizedStatus =
+      ['started', 'training', 'loading_data', 'running'].includes(status)
+        ? 'running'
+        : status;
+
     set((state) => ({
       trainingTasks: {
         ...state.trainingTasks,
         [task_id]: {
           taskId: task_id,
           modelType: model_type,
-          status: status === 'started' ? 'running' : status,
+          status: normalizedStatus as TrainingTask['status'],
           progress: progressPct,
           currentEpoch: epoch,
           totalEpochs: total_epochs,

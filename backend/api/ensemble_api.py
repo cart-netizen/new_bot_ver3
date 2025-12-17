@@ -1266,13 +1266,14 @@ async def _run_training(
             LOBDataset
         )
 
-        logger.info(f"=" * 60)
+        logger.info("=" * 60)
         logger.info(f"НАЧАЛО ОБУЧЕНИЯ: {model_type}")
-        logger.info(f"=" * 60)
+        logger.info("=" * 60)
         logger.info(f"  Epochs: {epochs}")
         logger.info(f"  Learning rate: {learning_rate}")
         logger.info(f"  Symbols: {symbols}")
         logger.info(f"  Days: {days}")
+        print(f"\n{'='*60}\nНАЧАЛО ОБУЧЕНИЯ: {model_type}\n{'='*60}", flush=True)  # Debug print
 
         # ========== WEBSOCKET: TRAINING STARTED (через main event loop) ==========
         try:
