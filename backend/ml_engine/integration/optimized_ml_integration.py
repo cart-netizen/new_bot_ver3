@@ -154,7 +154,7 @@ def create_optimized_model_config():
     )
 
 
-def create_optimized_trainer_config(checkpoint_dir: str = "checkpoints/models"):
+def create_optimized_trainer_config(checkpoint_dir: str = "models"):
     """
     Создать оптимизированную конфигурацию trainer.
 

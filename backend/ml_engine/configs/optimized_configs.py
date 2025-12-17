@@ -226,7 +226,7 @@ class OptimizedTrainerConfig:
     use_gradient_checkpointing: bool = False  # Enable only if OOM
 
     # === Checkpoint ===
-    checkpoint_dir: str = "checkpoints/models"
+    checkpoint_dir: str = "models"
     save_best_only: bool = True
     save_every_n_epochs: int = 10
     

@@ -88,7 +88,7 @@ class MultiModelTrainerConfig:
 
     # === Checkpointing ===
     save_every_n_epochs: int = 10
-    checkpoint_dir: str = "checkpoints/models"
+    checkpoint_dir: str = "models"
 
     # === Device ===
     device: str = "auto"
@@ -725,14 +725,19 @@ class MultiModelTrainer:
             # Log metrics
             tracker.log_metrics(metrics)
 
-            # Save model artifact
-            model_path = self.checkpoint_dir / f"{model_name}_{timestamp}.pt"
+            # Save model artifact to registry structure: models/{model_name}/{version}/model.pt
+            model_dir = self.checkpoint_dir / model_name / timestamp
+            model_dir.mkdir(parents=True, exist_ok=True)
+            model_path = model_dir / "model.pt"
+
             torch.save({
                 'model_state_dict': model.state_dict(),
                 'architecture': architecture.value,
                 'config': self.config.__dict__,
                 'metrics': metrics
             }, model_path)
+
+            logger.info(f"Model saved to {model_path}")
 
             # Log model to MLflow
             model_uri = tracker.log_model(
@@ -793,8 +798,8 @@ class MultiModelTrainer:
         try:
             from backend.ml_engine.inference.model_registry import ModelRegistry
 
-            # Initialize registry
-            registry = ModelRegistry()
+            # Initialize registry with same directory as checkpoint_dir
+            registry = ModelRegistry(registry_dir=str(self.checkpoint_dir))
 
             # Model name mapping
             model_names = {
@@ -806,8 +811,11 @@ class MultiModelTrainer:
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-            # Save model
-            model_path = self.checkpoint_dir / f"{model_name}_{timestamp}.pt"
+            # Save model directly to registry structure: models/{model_name}/{version}/model.pt
+            model_dir = self.checkpoint_dir / model_name / timestamp
+            model_dir.mkdir(parents=True, exist_ok=True)
+            model_path = model_dir / "model.pt"
+
             torch.save({
                 'model_state_dict': model.state_dict(),
                 'architecture': architecture.value,
@@ -815,7 +823,9 @@ class MultiModelTrainer:
                 'metrics': metrics
             }, model_path)
 
-            # Register (model_path должен быть Path, не str)
+            logger.info(f"Model saved to {model_path}")
+
+            # Register (model already in correct location)
             model_info = await registry.register_model(
                 name=model_name,
                 version=timestamp,
