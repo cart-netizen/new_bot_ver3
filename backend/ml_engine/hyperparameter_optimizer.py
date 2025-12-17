@@ -698,7 +698,8 @@ class HyperparameterOptimizer:
         self,
         mode: OptimizationMode = OptimizationMode.FULL,
         target_group: Optional[ParameterGroup] = None,
-        resume_from: Optional[str] = None
+        resume_from: Optional[str] = None,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None
     ) -> Dict[str, Any]:
         """
         Запустить оптимизацию.
@@ -707,6 +708,7 @@ class HyperparameterOptimizer:
             mode: Режим оптимизации
             target_group: Целевая группа (для mode=GROUP)
             resume_from: Путь к study для продолжения
+            progress_callback: Callback для обновления прогресса (вызывается после каждого trial)
 
         Returns:
             Словарь с результатами:
@@ -716,6 +718,8 @@ class HyperparameterOptimizer:
             - total_time: общее время
         """
         self.start_time = datetime.now()
+        self._progress_callback = progress_callback
+        self._total_trials_completed = 0
 
         logger.info(f"\n{'='*80}")
         logger.info(f"HYPERPARAMETER OPTIMIZATION STARTED")
@@ -878,7 +882,28 @@ class HyperparameterOptimizer:
         )
 
         def convergence_callback(study: optuna.Study, trial: optuna.trial.FrozenTrial):
-            """Callback для проверки конвергенции."""
+            """Callback для проверки конвергенции и отправки прогресса."""
+            # Обновляем счётчик trials
+            self._total_trials_completed += 1
+
+            # Отправляем прогресс через callback
+            if self._progress_callback:
+                try:
+                    best_trial = study.best_trial if study.best_trial else None
+                    self._progress_callback({
+                        "current_group": group.value,
+                        "current_trial": self._total_trials_completed,
+                        "trial_in_group": trial.number + 1,
+                        "trials_in_group": self.config.max_trials_per_group,
+                        "trial_value": trial.value if trial.value is not None else None,
+                        "trial_state": trial.state.name,
+                        "best_value": best_trial.value if best_trial else None,
+                        "best_params": best_trial.params if best_trial else {},
+                        "current_params": trial.params
+                    })
+                except Exception as e:
+                    logger.debug(f"Progress callback error: {e}")
+
             if trial.state == optuna.trial.TrialState.COMPLETE:
                 convergence_tracker.update(trial.value)
 

@@ -315,7 +315,25 @@ async def _run_optimization(request: OptimizationRequest):
         logger.info("HYPEROPT: Starting optimizer.optimize() in thread pool...")
 
         import concurrent.futures
+        import threading
         loop = asyncio.get_event_loop()
+
+        # Lock для потокобезопасного обновления current_optimization
+        progress_lock = threading.Lock()
+
+        def progress_callback(progress_data: dict):
+            """Callback для обновления прогресса из optimizer."""
+            nonlocal current_optimization
+            with progress_lock:
+                if current_optimization:
+                    current_optimization["progress"]["current_group"] = progress_data.get("current_group")
+                    current_optimization["progress"]["current_trial"] = progress_data.get("current_trial", 0)
+                    current_optimization["progress"]["best_value"] = progress_data.get("best_value")
+                    current_optimization["progress"]["best_params"] = progress_data.get("best_params", {})
+                    current_optimization["progress"]["current_params"] = progress_data.get("current_params", {})
+                    # Сохраняем состояние периодически (каждые 5 trials)
+                    if progress_data.get("current_trial", 0) % 5 == 0:
+                        _save_state(current_optimization)
 
         def run_sync_optimization():
             """Wrapper to run async optimization in sync context."""
@@ -334,7 +352,11 @@ async def _run_optimization(request: OptimizationRequest):
 
             try:
                 return new_loop.run_until_complete(
-                    optimizer.optimize(mode=opt_mode, target_group=target_group)
+                    optimizer.optimize(
+                        mode=opt_mode,
+                        target_group=target_group,
+                        progress_callback=progress_callback
+                    )
                 )
             finally:
                 new_loop.close()
