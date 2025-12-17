@@ -1088,14 +1088,20 @@ def _load_feature_data_from_parquet(
     features_df = features_df.sort_values('timestamp').reset_index(drop=True)
     logger.info(f"Loaded {len(features_df)} feature samples for {symbol}")
 
-    # Определяем feature columns (исключаем служебные)
+    # Определяем feature columns (исключаем служебные и нечисловые)
     exclude_cols = {'timestamp', 'symbol', 'label', 'future_direction_60s',
-                    'future_direction_30s', 'future_direction_15s', 'mid_price'}
-    feature_cols = [c for c in features_df.columns if c not in exclude_cols]
+                    'future_direction_30s', 'future_direction_15s', 'mid_price',
+                    'direction', 'signal', 'side', 'action'}  # Строковые колонки
+
+    # Только числовые колонки (исключаем object, string, category)
+    numeric_cols = features_df.select_dtypes(include=[np.number]).columns.tolist()
+    feature_cols = [c for c in numeric_cols if c not in exclude_cols]
 
     if not feature_cols:
-        logger.warning("No feature columns found in data")
+        logger.warning("No numeric feature columns found in data")
         return None, None
+
+    logger.info(f"Using {len(feature_cols)} numeric feature columns")
 
     # Извлекаем features
     features = features_df[feature_cols].values.astype(np.float32)
