@@ -766,7 +766,8 @@ async def start_training(request: TrainingRequest):
 
     # Запускаем в отдельном потоке через ThreadPoolExecutor
     # Это не блокирует FastAPI event loop
-    loop = asyncio.get_event_loop()
+    # Сохраняем ссылку на main event loop для WebSocket broadcasts
+    main_loop = asyncio.get_event_loop()
 
     def run_training_sync():
         """Wrapper для запуска async функции в отдельном потоке."""
@@ -781,7 +782,8 @@ async def start_training(request: TrainingRequest):
                     epochs=request.epochs,
                     learning_rate=request.learning_rate,
                     symbols=request.symbols,
-                    days=request.days
+                    days=request.days,
+                    main_loop=main_loop  # Передаём main event loop
                 )
             )
         finally:
@@ -1141,7 +1143,8 @@ async def _run_training(
     epochs: int,
     learning_rate: float,
     symbols: List[str],
-    days: int
+    days: int,
+    main_loop: asyncio.AbstractEventLoop = None
 ):
     """
     Фоновая функция обучения с реальной загрузкой данных.
@@ -1153,10 +1156,24 @@ async def _run_training(
     4. Train/Val split
     5. Обучение модели
     6. Регистрация в MLflow и реестре
+
+    Args:
+        main_loop: Main FastAPI event loop для WebSocket broadcasts
     """
     task = _training_tasks[task_id]
     task['status'] = 'running'
     task['started_at'] = datetime.now().isoformat()
+
+    def broadcast_to_main_loop(coro):
+        """Отправляет coroutine в main event loop для WebSocket broadcast."""
+        if main_loop and main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(coro, main_loop)
+        else:
+            # Fallback - выполняем в текущем loop (может не работать для WebSocket)
+            try:
+                asyncio.create_task(coro)
+            except RuntimeError:
+                pass  # Игнорируем если loop не running
 
     try:
         # Import here to avoid circular imports
@@ -1176,16 +1193,18 @@ async def _run_training(
         logger.info(f"  Symbols: {symbols}")
         logger.info(f"  Days: {days}")
 
-        # ========== WEBSOCKET: TRAINING STARTED ==========
+        # ========== WEBSOCKET: TRAINING STARTED (через main event loop) ==========
         try:
             ws_manager = get_ws_manager()
-            await ws_manager.broadcast_training_progress(
-                task_id=task_id,
-                model_type=model_type,
-                epoch=0,
-                total_epochs=epochs,
-                metrics={"status": "started"},
-                status="started"
+            broadcast_to_main_loop(
+                ws_manager.broadcast_training_progress(
+                    task_id=task_id,
+                    model_type=model_type,
+                    epoch=0,
+                    total_epochs=epochs,
+                    metrics={"status": "started"},
+                    status="started"
+                )
             )
         except Exception as ws_error:
             logger.debug(f"WebSocket broadcast error: {ws_error}")
@@ -1433,17 +1452,19 @@ async def _run_training(
                     f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}"
                 )
 
-            # ========== WEBSOCKET BROADCAST ==========
+            # ========== WEBSOCKET BROADCAST (через main event loop) ==========
             # Отправляем прогресс обучения через WebSocket
             try:
                 ws_manager = get_ws_manager()
-                await ws_manager.broadcast_training_progress(
-                    task_id=task_id,
-                    model_type=model_type,
-                    epoch=epoch + 1,
-                    total_epochs=epochs,
-                    metrics=task['metrics'],
-                    status="training"
+                broadcast_to_main_loop(
+                    ws_manager.broadcast_training_progress(
+                        task_id=task_id,
+                        model_type=model_type,
+                        epoch=epoch + 1,
+                        total_epochs=epochs,
+                        metrics=task['metrics'],
+                        status="training"
+                    )
                 )
             except Exception as ws_error:
                 # Не прерываем обучение из-за ошибки WebSocket
@@ -1482,16 +1503,18 @@ async def _run_training(
             logger.info(f"Best Accuracy: {best_accuracy:.4f}")
             logger.info(f"Best Val Loss: {best_val_loss:.4f}")
 
-            # ========== WEBSOCKET: TRAINING COMPLETED ==========
+            # ========== WEBSOCKET: TRAINING COMPLETED (через main event loop) ==========
             try:
                 ws_manager = get_ws_manager()
-                await ws_manager.broadcast_training_progress(
-                    task_id=task_id,
-                    model_type=model_type,
-                    epoch=epochs,
-                    total_epochs=epochs,
-                    metrics=metrics,
-                    status="completed"
+                broadcast_to_main_loop(
+                    ws_manager.broadcast_training_progress(
+                        task_id=task_id,
+                        model_type=model_type,
+                        epoch=epochs,
+                        total_epochs=epochs,
+                        metrics=metrics,
+                        status="completed"
+                    )
                 )
             except Exception as ws_error:
                 logger.debug(f"WebSocket broadcast error: {ws_error}")
@@ -1535,16 +1558,18 @@ async def _run_training(
         logger.error(f"Training failed for {model_type}: {e}")
         logger.error(traceback.format_exc())
 
-        # ========== WEBSOCKET: TRAINING FAILED ==========
+        # ========== WEBSOCKET: TRAINING FAILED (через main event loop) ==========
         try:
             ws_manager = get_ws_manager()
-            await ws_manager.broadcast_training_progress(
-                task_id=task_id,
-                model_type=model_type,
-                epoch=task.get('current_epoch', 0),
-                total_epochs=epochs,
-                metrics={"error": str(e)},
-                status="failed"
+            broadcast_to_main_loop(
+                ws_manager.broadcast_training_progress(
+                    task_id=task_id,
+                    model_type=model_type,
+                    epoch=task.get('current_epoch', 0),
+                    total_epochs=epochs,
+                    metrics={"error": str(e)},
+                    status="failed"
+                )
             )
         except Exception:
             pass  # Игнорируем ошибки WebSocket при неудачном обучении
