@@ -280,12 +280,12 @@ class OptimizedBalancingConfig:
     """
 
     # === Основной метод ===
-    method: ClassBalancingMethod = ClassBalancingMethod.FOCAL_LOSS  # Focal Loss + Class Weights
+    method: ClassBalancingMethod = ClassBalancingMethod.FOCAL_LOSS  # Focal Loss + Oversampling
 
     # === Class Weights ===
-    # CRITICAL: Нужно ВМЕСТЕ с Focal Loss для предотвращения mode collapse!
-    # Focal Loss фокусируется на hard examples, Class Weights балансируют классы
-    use_class_weights: bool = True  # ВКЛЮЧЕНО - обязательно вместе с Focal Loss!
+    # DISABLED when using oversampling - they cause double compensation!
+    # Oversampling already balances data physically
+    use_class_weights: bool = False  # DISABLED: oversampling is primary balancing method
     class_weight_method: str = "balanced"  # balanced, sqrt, log
     
     # Custom веса (если не auto)
@@ -300,7 +300,7 @@ class OptimizedBalancingConfig:
 
     # === Resampling параметры ===
     use_oversampling: bool = True   # ENABLED: Physical data balancing for stability
-    oversample_ratio: float = 0.8   # Balance minority to 80% of majority
+    oversample_ratio: float = 1.0   # Full balance (100% = equal classes)
     
     use_undersampling: bool = False  # Не рекомендуется при малом датасете
     undersample_ratio: float = 0.8
