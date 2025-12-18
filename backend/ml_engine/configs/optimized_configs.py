@@ -295,12 +295,12 @@ class OptimizedBalancingConfig:
     
     # === Focal Loss параметры ===
     use_focal_loss: bool = True
-    focal_gamma: float = 2.0  # 2.0 оптимально (2.5 слишком агрессивно, вызывает инверсию)
+    focal_gamma: float = 1.5  # Reduced from 2.0 - less aggressive with oversampling
     focal_alpha: Optional[List[float]] = None  # Auto-compute if None
-    
-    # === Resampling параметры (НОВОЕ) ===
-    use_oversampling: bool = False  # ОТКЛЮЧЕНО - используем только Focal Loss
-    oversample_ratio: float = 0.5  # Увеличить minority до 50% от majority
+
+    # === Resampling параметры ===
+    use_oversampling: bool = True   # ENABLED: Physical data balancing for stability
+    oversample_ratio: float = 0.8   # Balance minority to 80% of majority
     
     use_undersampling: bool = False  # Не рекомендуется при малом датасете
     undersample_ratio: float = 0.8

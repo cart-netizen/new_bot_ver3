@@ -119,11 +119,11 @@ class TrainerConfigV2:
     return_loss_weight: float = 0.3
 
     # === Class Balancing ===
-    # CRITICAL FIX: BOTH must be True to prevent mode collapse
-    # Focal Loss alone is not enough for imbalanced data (53% HOLD vs 23% SELL/BUY)
+    # CRITICAL FIX: Use class_weights + focal_loss + oversampling for stability
+    # Pure class weights can cause oscillation between classes
     use_class_weights: bool = True  # Provides base balancing through loss weighting
-    use_focal_loss: bool = True     # RESTORED: Focuses on hard examples
-    focal_gamma: float = 2.0        # Lower gamma when using class_weights (prevents overcompensation)
+    use_focal_loss: bool = True     # Focuses on hard examples
+    focal_gamma: float = 1.5        # Reduced from 2.0 - less aggressive with oversampling
     
     # === Mixed Precision ===
     use_mixed_precision: bool = False  # ВРЕМЕННО ОТКЛЮЧЕНО из-за NaN loss (RTX 3060 поддерживает!)
