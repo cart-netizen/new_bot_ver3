@@ -504,12 +504,14 @@ class HyperparameterOptimizer:
     def __init__(
         self,
         config: Optional[OptimizationConfig] = None,
-        search_spaces: Optional[Dict[str, ParameterSearchSpace]] = None
+        search_spaces: Optional[Dict[str, ParameterSearchSpace]] = None,
+        stop_event: Optional["threading.Event"] = None  # For graceful shutdown
     ):
         """
         Args:
             config: Конфигурация оптимизации
             search_spaces: Пространства поиска (если None - используются дефолтные)
+            stop_event: Threading event for graceful shutdown (checked in callbacks)
         """
         if not OPTUNA_AVAILABLE:
             raise ImportError(
@@ -519,6 +521,11 @@ class HyperparameterOptimizer:
 
         self.config = config or OptimizationConfig()
         self.search_spaces = search_spaces or get_default_search_spaces()
+
+        # CRITICAL: Stop event for graceful shutdown
+        # This is checked in Optuna callbacks to stop optimization when user requests
+        import threading
+        self._stop_event = stop_event or threading.Event()
 
         # Фиксированные параметры (уже оптимизированные группы)
         self.fixed_params: Dict[str, Any] = {}
@@ -555,7 +562,8 @@ class HyperparameterOptimizer:
             f"  • Epochs per trial: {self.config.epochs_per_trial}\n"
             f"  • Max trials per group: {self.config.max_trials_per_group}\n"
             f"  • Primary metric: {self.config.primary_metric}\n"
-            f"  • MLflow: {self.config.use_mlflow and self.mlflow_tracker is not None}"
+            f"  • MLflow: {self.config.use_mlflow and self.mlflow_tracker is not None}\n"
+            f"  • Stop event: {'provided' if stop_event else 'internal'}"
         )
 
     # ========================================================================
@@ -762,6 +770,11 @@ class HyperparameterOptimizer:
     async def _optimize_full(self):
         """Полная оптимизация всех групп последовательно."""
         for group in OPTIMIZATION_ORDER:
+            # CRITICAL: Check stop event between groups
+            if self._stop_event.is_set():
+                logger.info(f"HYPEROPT: Stop event detected between groups, stopping at {group.value}")
+                break
+
             # Проверяем время
             if self._check_time_limit():
                 logger.warning(f"Time limit reached, stopping at group {group.value}")
@@ -876,15 +889,31 @@ class HyperparameterOptimizer:
                     logger.info(f"Convergence reached at trial {trial.number}")
                     study.stop()
 
+        def stop_event_callback(study: optuna.Study, trial: optuna.trial.FrozenTrial):
+            """
+            CRITICAL: Callback to check for stop requests from API.
+
+            This is called after each trial completes. If the stop_event is set
+            (by the /stop endpoint), we call study.stop() to gracefully terminate
+            the optimization.
+            """
+            if self._stop_event.is_set():
+                logger.info("=" * 60)
+                logger.info(f"HYPEROPT: STOP EVENT detected after trial {trial.number}")
+                logger.info("HYPEROPT: Stopping optimization gracefully...")
+                logger.info("=" * 60)
+                study.stop()
+
         group_start_time = time.time()
 
         # Запускаем оптимизацию
+        # CRITICAL: stop_event_callback MUST be in callbacks list for graceful shutdown
         try:
             study.optimize(
                 objective,
                 n_trials=self.config.max_trials_per_group,
                 timeout=self.config.max_total_time_hours * 3600 / len(OPTIMIZATION_ORDER),
-                callbacks=[convergence_callback],
+                callbacks=[convergence_callback, stop_event_callback],  # Added stop_event_callback!
                 show_progress_bar=self.config.verbose
             )
         except Exception as e:

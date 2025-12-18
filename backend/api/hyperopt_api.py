@@ -25,6 +25,7 @@ import json
 import os
 import signal
 import traceback
+import threading  # Added for stop flag
 
 from backend.core.logger import get_logger
 from backend.api.websocket_manager import get_websocket_manager
@@ -133,6 +134,11 @@ current_optimization: Optional[Dict[str, Any]] = None
 optimization_task: Optional[asyncio.Task] = None
 optimization_history: List[Dict[str, Any]] = []
 
+# CRITICAL: Stop flag for graceful shutdown
+# asyncio.Task.cancel() does NOT stop threads in ThreadPoolExecutor!
+# This Event is checked by the optimizer to stop training
+stop_event: threading.Event = threading.Event()
+
 # Paths - use absolute paths based on project root
 HYPEROPT_DATA_PATH = PROJECT_ROOT / "data" / "hyperopt"
 HYPEROPT_RESULTS_PATH = HYPEROPT_DATA_PATH / "results.json"
@@ -223,7 +229,7 @@ def _estimate_time(
 
 async def _run_optimization(request: OptimizationRequest):
     """Background task для выполнения оптимизации."""
-    global current_optimization
+    global current_optimization, stop_event
 
     try:
         logger.info("=" * 60)
@@ -264,9 +270,10 @@ async def _run_optimization(request: OptimizationRequest):
         logger.info(f"HYPEROPT: Config created: {config}")
 
         # Создаём оптимизатор
+        # CRITICAL: Pass stop_event so optimizer can check for stop requests
         logger.info("HYPEROPT: Creating HyperparameterOptimizer instance...")
-        optimizer = HyperparameterOptimizer(config=config)
-        logger.info("HYPEROPT: Optimizer created successfully")
+        optimizer = HyperparameterOptimizer(config=config, stop_event=stop_event)
+        logger.info("HYPEROPT: Optimizer created successfully (with stop_event)")
 
         # Обновляем статус
         current_optimization["status"] = "running"
@@ -417,12 +424,16 @@ async def start_optimization(
     Returns:
         Job ID и информация о запуске
     """
-    global current_optimization, optimization_task
+    global current_optimization, optimization_task, stop_event
 
     logger.info("=" * 60)
     logger.info("HYPEROPT API: /start endpoint called")
     logger.info(f"HYPEROPT API: Request: mode={request.mode}, epochs={request.epochs_per_trial}")
     logger.info("=" * 60)
+
+    # CRITICAL: Clear the stop flag before starting new optimization
+    stop_event.clear()
+    logger.info("HYPEROPT API: Stop flag CLEARED")
 
     try:
         # Проверяем, не запущена ли уже оптимизация
@@ -507,31 +518,44 @@ async def stop_optimization() -> Dict[str, Any]:
 
     Состояние сохраняется и можно продолжить позже через /resume.
     """
-    global current_optimization, optimization_task
+    global current_optimization, optimization_task, stop_event
 
-    if not current_optimization or current_optimization.get("status") != "running":
+    if not current_optimization or current_optimization.get("status") not in ["running", "starting", "resuming"]:
         raise HTTPException(
             status_code=400,
             detail="Нет активной оптимизации для остановки"
         )
 
+    logger.info("=" * 60)
+    logger.info("HYPEROPT API: STOP requested by user")
+    logger.info("=" * 60)
+
+    # CRITICAL: Set the stop flag FIRST
+    # This is checked by the optimizer in its callback
+    stop_event.set()
+    logger.info("HYPEROPT API: Stop flag SET - optimizer will stop after current trial")
+
+    # Also cancel the asyncio task (for cleanup)
     if optimization_task:
         optimization_task.cancel()
         try:
-            await optimization_task
-        except asyncio.CancelledError:
+            # Wait briefly for cancellation, but don't block forever
+            await asyncio.wait_for(asyncio.shield(optimization_task), timeout=5.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
             pass
+        except Exception as e:
+            logger.warning(f"Error during task cancellation: {e}")
 
     current_optimization["status"] = "paused"
     current_optimization["paused_at"] = datetime.now().isoformat()
     _save_state(current_optimization)
 
-    logger.info(f"Optimization stopped: job_id={current_optimization.get('job_id')}")
+    logger.info(f"HYPEROPT API: Optimization stopped: job_id={current_optimization.get('job_id')}")
 
     return {
         "success": True,
         "status": "paused",
-        "message": "Оптимизация приостановлена. Используйте /resume для продолжения.",
+        "message": "Остановка запрошена. Оптимизация остановится после текущего trial.",
         "can_resume": True,
         "progress": current_optimization.get("progress", {})
     }
