@@ -613,10 +613,11 @@ class HyperparameterOptimizer:
             )
 
             balancing_config = ClassBalancingConfig(
-                use_class_weights=True,   # CRITICAL: Together with Focal Loss!
+                use_class_weights=True,   # Class weights for loss balancing
                 use_focal_loss=True,
-                focal_gamma=2.0,          # 2.0 optimal (2.5 too aggressive)
-                use_oversampling=False,
+                focal_gamma=1.5,          # Reduced from 2.0 - less aggressive with oversampling
+                use_oversampling=True,    # ENABLED: Physical data balancing for stability
+                oversample_ratio=0.8,     # Balance minority to 80% of majority
                 use_undersampling=False
             )
 
