@@ -227,13 +227,19 @@ def _estimate_time(
 # Background Task
 # ============================================================
 
-async def _run_optimization(request: OptimizationRequest):
-    """Background task для выполнения оптимизации."""
+async def _run_optimization(request: OptimizationRequest, is_resume: bool = False):
+    """
+    Background task для выполнения оптимизации.
+
+    Args:
+        request: Конфигурация оптимизации
+        is_resume: True если это возобновление после паузы
+    """
     global current_optimization, stop_event
 
     try:
         logger.info("=" * 60)
-        logger.info("HYPEROPT: Starting background optimization task")
+        logger.info(f"HYPEROPT: Starting background optimization task {'(RESUME)' if is_resume else ''}")
         logger.info(f"HYPEROPT: Mode={request.mode}, Study={request.study_name}")
         logger.info(f"HYPEROPT: Epochs/trial={request.epochs_per_trial}, Max trials/group={request.max_trials_per_group}")
         logger.info(f"HYPEROPT: Max hours={request.max_total_hours}, Metric={request.primary_metric}")
@@ -294,14 +300,19 @@ async def _run_optimization(request: OptimizationRequest):
             logger.debug(f"WebSocket broadcast error: {ws_error}")
 
         # Определяем режим
-        mode_map = {
-            OptimizationMode.FULL: OptimizerMode.FULL,
-            OptimizationMode.QUICK: OptimizerMode.QUICK,
-            OptimizationMode.GROUP: OptimizerMode.GROUP,
-            OptimizationMode.FINE_TUNE: OptimizerMode.FINE_TUNE
-        }
-        opt_mode = mode_map.get(request.mode, OptimizerMode.FULL)
-        logger.info(f"HYPEROPT: Mapped mode: {request.mode} -> {opt_mode}")
+        # CRITICAL: If resuming, use RESUME mode to restore previous state
+        if is_resume:
+            opt_mode = OptimizerMode.RESUME
+            logger.info(f"HYPEROPT: Using RESUME mode to restore previous progress")
+        else:
+            mode_map = {
+                OptimizationMode.FULL: OptimizerMode.FULL,
+                OptimizationMode.QUICK: OptimizerMode.QUICK,
+                OptimizationMode.GROUP: OptimizerMode.GROUP,
+                OptimizationMode.FINE_TUNE: OptimizerMode.FINE_TUNE
+            }
+            opt_mode = mode_map.get(request.mode, OptimizerMode.FULL)
+            logger.info(f"HYPEROPT: Mapped mode: {request.mode} -> {opt_mode}")
 
         # Целевая группа
         target_group = None
@@ -316,6 +327,9 @@ async def _run_optimization(request: OptimizationRequest):
             }
             target_group = group_map.get(request.target_group)
             logger.info(f"HYPEROPT: Target group: {request.target_group} -> {target_group}")
+
+        # Resume path for RESUME mode
+        resume_from = str(HYPEROPT_DATA_PATH) if is_resume else None
 
         # CRITICAL: Run optimization in a thread pool to avoid blocking event loop
         # This allows FastAPI to respond to status requests while training runs
@@ -332,7 +346,11 @@ async def _run_optimization(request: OptimizationRequest):
             asyncio.set_event_loop(new_loop)
             try:
                 return new_loop.run_until_complete(
-                    optimizer.optimize(mode=opt_mode, target_group=target_group)
+                    optimizer.optimize(
+                        mode=opt_mode,
+                        target_group=target_group,
+                        resume_from=resume_from  # Pass resume path for RESUME mode
+                    )
                 )
             finally:
                 new_loop.close()
@@ -568,13 +586,18 @@ async def resume_optimization(
     """
     Продолжить приостановленную оптимизацию.
     """
-    global current_optimization, optimization_task
+    global current_optimization, optimization_task, stop_event
 
     if current_optimization and current_optimization.get("status") == "running":
         raise HTTPException(
             status_code=409,
             detail="Оптимизация уже выполняется"
         )
+
+    # CRITICAL: Clear the stop flag before resuming
+    # Without this, the optimizer would immediately see the stop flag!
+    stop_event.clear()
+    logger.info("HYPEROPT API: Stop flag CLEARED for resume")
 
     # Загружаем сохранённое состояние
     saved_state = _load_state()
@@ -610,10 +633,14 @@ async def resume_optimization(
     current_optimization["status"] = "resuming"
     current_optimization["resumed_at"] = datetime.now().isoformat()
 
-    # Запускаем с флагом resume
-    optimization_task = asyncio.create_task(_run_optimization(request))
+    # CRITICAL: Pass is_resume=True to restore previous progress
+    # This will:
+    # 1. Use RESUME mode in optimizer
+    # 2. Load fixed_params, best_params, best_value from results.json
+    # 3. Skip already completed groups
+    optimization_task = asyncio.create_task(_run_optimization(request, is_resume=True))
 
-    logger.info(f"Optimization resumed: job_id={saved_state.get('job_id')}")
+    logger.info(f"HYPEROPT API: Optimization RESUMED: job_id={saved_state.get('job_id')}")
 
     return {
         "success": True,

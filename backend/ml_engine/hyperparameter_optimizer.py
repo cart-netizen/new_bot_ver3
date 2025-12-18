@@ -863,12 +863,22 @@ class HyperparameterOptimizer:
             load_if_exists=True
         )
 
-        # Добавляем baseline trial (дефолтные значения)
+        # Check if study already has trials (resume case)
+        existing_trials = len(study.trials)
+        completed_trials = len([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE])
+
+        if existing_trials > 0:
+            logger.info(f"HYPEROPT: Resuming group '{group.value}' - found {existing_trials} existing trials ({completed_trials} completed)")
+            if completed_trials >= self.config.max_trials_per_group:
+                logger.info(f"HYPEROPT: Group '{group.value}' already completed ({completed_trials}/{self.config.max_trials_per_group} trials), skipping optimization")
+
+        # Добавляем baseline trial (дефолтные значения) - only if no trials exist
         if len(study.trials) == 0:
             baseline_params = {
                 name: space.default for name, space in group_params.items()
             }
             study.enqueue_trial(baseline_params)
+            logger.info(f"HYPEROPT: Enqueued baseline trial for group '{group.value}'")
 
         # Создаём objective function
         objective = self._create_objective(group_params)
