@@ -547,7 +547,36 @@ class ModelTrainerV2:
             if (epoch + 1) % self.config.save_every_n_epochs == 0:
                 self._save_checkpoint(epoch + 1, val_loss, val_metrics, f"epoch_{epoch + 1}")
             
-            # Early Stopping
+            # ================================================================
+            # MODE COLLAPSE EARLY STOPPING
+            # ================================================================
+            # Stop training immediately if mode collapse is detected
+            mode_collapse_severity = val_metrics.get('mode_collapse_severity', 'none')
+            if mode_collapse_severity in ['total', 'severe']:
+                tqdm.write(
+                    f"\n🛑 [MODE COLLAPSE STOP] Training stopped at epoch {epoch + 1}. "
+                    f"Severity: {mode_collapse_severity}. "
+                    f"Majority class: {val_metrics.get('majority_class_pct', 0):.1%}"
+                )
+                tqdm.write(
+                    f"   Macro F1: {val_metrics['f1']:.4f} (this is the true metric)"
+                )
+                # Mark this in history for later analysis
+                self.history[-1] = EpochMetrics(
+                    epoch=epoch + 1,
+                    train_loss=train_loss,
+                    val_loss=val_loss,
+                    train_accuracy=train_acc,
+                    val_accuracy=val_metrics['accuracy'],
+                    val_precision=val_metrics['precision'],
+                    val_recall=val_metrics['recall'],
+                    val_f1=val_metrics['f1'],  # This is now macro F1
+                    learning_rate=current_lr,
+                    epoch_time=epoch_time
+                )
+                break
+
+            # Regular Early Stopping
             stop_metric = val_loss if self.config.early_stopping_metric == "val_loss" else val_metrics['f1']
             if self.early_stopping(stop_metric):
                 tqdm.write(
@@ -566,9 +595,12 @@ class ModelTrainerV2:
         tqdm.write("=" * 80 + "\n")
         
         # Тестирование (если есть test_loader)
+        test_results = None
         if test_loader is not None:
-            self._test_model(test_loader)
-        
+            test_results = self._test_model(test_loader)
+            # Store test results for hyperopt logger
+            self.test_results = test_results
+
         return self.history
     
     def _train_epoch(
@@ -769,9 +801,20 @@ class ModelTrainerV2:
 
         # Вычисляем метрики
         accuracy = accuracy_score(all_labels, all_predictions)
-        precision, recall, f1, _ = precision_recall_fscore_support(
+
+        # CRITICAL FIX: Use MACRO average instead of WEIGHTED for F1
+        # Weighted F1 rewards mode collapse to majority class!
+        # Macro F1 gives equal weight to all classes, penalizing mode collapse
+        precision_weighted, recall_weighted, f1_weighted, _ = precision_recall_fscore_support(
             all_labels, all_predictions,
             average='weighted',
+            zero_division=0
+        )
+
+        # MACRO F1 - this is what we optimize for
+        precision_macro, recall_macro, f1_macro, _ = precision_recall_fscore_support(
+            all_labels, all_predictions,
+            average='macro',
             zero_division=0
         )
 
@@ -787,71 +830,143 @@ class ModelTrainerV2:
         most_common_class, most_common_count = pred_dist.most_common(1)[0]
         majority_pct = most_common_count / total_preds
 
-        # If >90% predictions are same class, warn about mode collapse
-        if majority_pct > 0.90:
+        # Determine mode collapse severity
+        mode_collapse_severity = "none"
+        if majority_pct >= 0.99:
+            mode_collapse_severity = "total"
+        elif majority_pct >= 0.90:
+            mode_collapse_severity = "severe"
+        elif majority_pct >= 0.75:
+            mode_collapse_severity = "mild"
+
+        # Log warnings based on severity
+        if mode_collapse_severity == "total":
             tqdm.write(
-                f"  ⚠️ MODE COLLAPSE WARNING: {majority_pct:.1%} predictions are class {most_common_class}! "
+                f"  🔴 TOTAL MODE COLLAPSE: {majority_pct:.1%} predictions are class {most_common_class}! "
                 f"Distribution: {dict(pred_dist)}"
             )
-        elif majority_pct > 0.75:
             tqdm.write(
-                f"  ⚡ Prediction imbalance: {majority_pct:.1%} are class {most_common_class}. "
+                f"     Weighted F1={f1_weighted:.4f} (misleading!), Macro F1={f1_macro:.4f} (true quality)"
+            )
+        elif mode_collapse_severity == "severe":
+            tqdm.write(
+                f"  🟠 SEVERE MODE COLLAPSE: {majority_pct:.1%} predictions are class {most_common_class}! "
+                f"Distribution: {dict(pred_dist)}"
+            )
+        elif mode_collapse_severity == "mild":
+            tqdm.write(
+                f"  🟡 Prediction imbalance: {majority_pct:.1%} are class {most_common_class}. "
                 f"Distribution: {dict(pred_dist)}"
             )
 
+        # Return MACRO F1 as the primary metric (penalizes mode collapse)
         metrics = {
             'accuracy': accuracy,
-            'precision': precision,
-            'recall': recall,
-            'f1': f1
+            'precision': precision_macro,  # Changed to macro
+            'recall': recall_macro,        # Changed to macro
+            'f1': f1_macro,                # Changed to macro - CRITICAL!
+            # Also store weighted for reference
+            'f1_weighted': f1_weighted,
+            'precision_weighted': precision_weighted,
+            'recall_weighted': recall_weighted,
+            # Mode collapse info
+            'mode_collapse_severity': mode_collapse_severity,
+            'majority_class_pct': majority_pct
         }
 
         return avg_loss, metrics
     
-    def _test_model(self, test_loader: DataLoader):
-        """Тестирование модели."""
+    def _test_model(self, test_loader: DataLoader) -> Dict[str, Any]:
+        """
+        Тестирование модели с расширенной диагностикой.
+
+        Returns:
+            Dict with all test metrics for logging
+        """
+        from collections import Counter
+
         tqdm.write("\n" + "=" * 80)
         tqdm.write("ТЕСТИРОВАНИЕ МОДЕЛИ")
         tqdm.write("=" * 80)
-        
+
         self.model.eval()
-        
+
         all_predictions = []
         all_labels = []
         all_confidences = []
-        
+
         with torch.no_grad():
             for batch in tqdm(test_loader, desc="Testing", disable=not self.config.use_tqdm):
                 sequences = batch['sequence'].to(self.device)
                 labels = batch['label'].to(self.device)
-                
+
                 outputs = self.model(sequences)
-                
+
                 predictions = torch.argmax(
                     outputs['direction_logits'], dim=-1
                 ).cpu().numpy()
                 confidences = outputs['confidence'].squeeze(-1).cpu().numpy()
-                
+
                 all_predictions.extend(predictions)
                 all_labels.extend(labels.cpu().numpy())
                 all_confidences.extend(confidences)
-        
-        # Метрики
-        accuracy = accuracy_score(all_labels, all_predictions)
-        precision, recall, f1, _ = precision_recall_fscore_support(
+
+        # Mode collapse detection
+        pred_dist = Counter(all_predictions)
+        label_dist = Counter(all_labels)
+        total_preds = len(all_predictions)
+
+        most_common_class, most_common_count = pred_dist.most_common(1)[0]
+        majority_pct = most_common_count / total_preds
+
+        # Determine mode collapse severity
+        if majority_pct >= 0.99:
+            mode_collapse_severity = "total"
+        elif majority_pct >= 0.90:
+            mode_collapse_severity = "severe"
+        elif majority_pct >= 0.75:
+            mode_collapse_severity = "mild"
+        else:
+            mode_collapse_severity = "none"
+
+        # MACRO metrics (true quality measure)
+        precision_macro, recall_macro, f1_macro, _ = precision_recall_fscore_support(
+            all_labels, all_predictions,
+            average='macro',
+            zero_division=0
+        )
+
+        # WEIGHTED metrics (for reference)
+        precision_weighted, recall_weighted, f1_weighted, _ = precision_recall_fscore_support(
             all_labels, all_predictions,
             average='weighted',
             zero_division=0
         )
 
-        tqdm.write(f"Test Results:")
+        accuracy = accuracy_score(all_labels, all_predictions)
+
+        tqdm.write(f"Test Results (MACRO - true quality):")
         tqdm.write(f"  • Accuracy: {accuracy:.4f}")
-        tqdm.write(f"  • Precision: {precision:.4f}")
-        tqdm.write(f"  • Recall: {recall:.4f}")
-        tqdm.write(f"  • F1 Score: {f1:.4f}")
+        tqdm.write(f"  • Precision (macro): {precision_macro:.4f}")
+        tqdm.write(f"  • Recall (macro): {recall_macro:.4f}")
+        tqdm.write(f"  • F1 Score (macro): {f1_macro:.4f}")
+
+        if mode_collapse_severity != "none":
+            tqdm.write(f"\n⚠️ MODE COLLAPSE DETECTED ({mode_collapse_severity}):")
+            tqdm.write(f"  • {majority_pct:.1%} predictions are class {most_common_class}")
+            tqdm.write(f"  • F1 (weighted): {f1_weighted:.4f} <- MISLEADING!")
+            tqdm.write(f"  • F1 (macro): {f1_macro:.4f} <- TRUE QUALITY")
+        else:
+            tqdm.write(f"\nWeighted metrics (for reference):")
+            tqdm.write(f"  • F1 (weighted): {f1_weighted:.4f}")
+
+        # Class distribution
+        class_names = ['SELL', 'HOLD', 'BUY']
+        tqdm.write(f"\nClass Distribution:")
+        tqdm.write(f"  Labels:      {dict((class_names[k], v) for k, v in sorted(label_dist.items()))}")
+        tqdm.write(f"  Predictions: {dict((class_names[k], v) for k, v in sorted(pred_dist.items()))}")
 
         # Classification report
-        class_names = ['SELL', 'HOLD', 'BUY']  # 0=SELL, 1=HOLD, 2=BUY
         report = classification_report(
             all_labels, all_predictions,
             target_names=class_names,
@@ -861,17 +976,42 @@ class ModelTrainerV2:
 
         # Confusion matrix
         cm = confusion_matrix(all_labels, all_predictions)
-        tqdm.write(f"\nConfusion Matrix:\n{cm}")
+        tqdm.write(f"\nConfusion Matrix:")
+        tqdm.write(f"           SELL  HOLD   BUY")
+        for i, row in enumerate(cm):
+            tqdm.write(f"  {class_names[i]:>6}  {row[0]:>5}  {row[1]:>5}  {row[2]:>5}")
 
         # Confidence analysis
         all_confidences = np.array(all_confidences)
         correct_mask = np.array(all_predictions) == np.array(all_labels)
 
+        mean_conf_correct = all_confidences[correct_mask].mean() if correct_mask.any() else 0.0
+        mean_conf_incorrect = all_confidences[~correct_mask].mean() if (~correct_mask).any() else 0.0
+
         tqdm.write(f"\nConfidence Analysis:")
-        tqdm.write(f"  • Mean confidence (correct): {all_confidences[correct_mask].mean():.4f}")
-        tqdm.write(f"  • Mean confidence (incorrect): {all_confidences[~correct_mask].mean():.4f}")
+        tqdm.write(f"  • Mean confidence (correct): {mean_conf_correct:.4f}")
+        tqdm.write(f"  • Mean confidence (incorrect): {mean_conf_incorrect:.4f}")
 
         tqdm.write("=" * 80 + "\n")
+
+        # Return results for logging
+        return {
+            'accuracy': accuracy,
+            'precision': precision_macro,
+            'recall': recall_macro,
+            'f1': f1_macro,
+            'precision_weighted': precision_weighted,
+            'recall_weighted': recall_weighted,
+            'f1_weighted': f1_weighted,
+            'mode_collapse_severity': mode_collapse_severity,
+            'majority_class_pct': majority_pct,
+            'confusion_matrix': cm.tolist(),
+            'mean_confidence_correct': mean_conf_correct,
+            'mean_confidence_incorrect': mean_conf_incorrect,
+            'all_predictions': all_predictions,
+            'all_labels': all_labels,
+            'all_confidences': all_confidences.tolist()
+        }
     
     def _save_checkpoint(
         self,
