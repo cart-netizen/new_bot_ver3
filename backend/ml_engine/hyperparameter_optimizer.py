@@ -556,6 +556,16 @@ class HyperparameterOptimizer:
         self._cached_test_loader = None
         self._data_loaded = False
 
+        # Initialize hyperopt logger for structured logging
+        try:
+            from backend.ml_engine.hyperopt_logger import get_hyperopt_logger, reset_hyperopt_logger
+            reset_hyperopt_logger()  # Start fresh session
+            self.hyperopt_logger = get_hyperopt_logger(str(self.config.storage_path))
+            logger.info(f"HyperoptLogger initialized at: {self.config.storage_path}")
+        except Exception as e:
+            logger.warning(f"Failed to initialize HyperoptLogger: {e}")
+            self.hyperopt_logger = None
+
         logger.info(
             f"HyperparameterOptimizer initialized:\n"
             f"  • Study: {self.config.study_name}\n"
@@ -563,7 +573,8 @@ class HyperparameterOptimizer:
             f"  • Max trials per group: {self.config.max_trials_per_group}\n"
             f"  • Primary metric: {self.config.primary_metric}\n"
             f"  • MLflow: {self.config.use_mlflow and self.mlflow_tracker is not None}\n"
-            f"  • Stop event: {'provided' if stop_event else 'internal'}"
+            f"  • Stop event: {'provided' if stop_event else 'internal'}\n"
+            f"  • Structured logging: {'enabled' if self.hyperopt_logger else 'disabled'}"
         )
 
     # ========================================================================
@@ -836,6 +847,23 @@ class HyperparameterOptimizer:
                 total_time_seconds=0
             )
 
+        # Log group start
+        if self.hyperopt_logger:
+            search_space_info = {
+                name: {
+                    'type': space.param_type,
+                    'low': space.low,
+                    'high': space.high,
+                    'default': space.default
+                }
+                for name, space in group_params.items()
+            }
+            self.hyperopt_logger.log_group_start(
+                group=group.value,
+                fixed_params=self.fixed_params,
+                search_space=search_space_info
+            )
+
         # Создаём Optuna study
         study_name = f"{self.config.study_name}_{group.value}"
         storage_path = Path(self.config.storage_path) / f"{study_name}.db"
@@ -971,6 +999,15 @@ class HyperparameterOptimizer:
             logger.warning(f"Failed to get best trial for group {group}: {e}. Using default params.")
             best_params = {name: space.default for name, space in group_params.items()}
             best_value = self.best_value
+
+        # Log group end
+        if self.hyperopt_logger:
+            self.hyperopt_logger.log_group_end(
+                group=group.value,
+                best_params=best_params,
+                best_value=best_value,
+                total_trials=len(study.trials)
+            )
 
         return GroupOptimizationResult(
             group=group,
@@ -1156,13 +1193,14 @@ class HyperparameterOptimizer:
             )
 
             # Get best metrics from history
+            # CRITICAL: Now using MACRO F1 which properly penalizes mode collapse
             if history:
                 best_epoch = max(history, key=lambda x: x.val_f1 if hasattr(x, 'val_f1') else 0)
                 metrics = {
-                    "val_f1": getattr(best_epoch, 'val_f1', 0),
+                    "val_f1": getattr(best_epoch, 'val_f1', 0),  # Now MACRO F1!
                     "val_accuracy": getattr(best_epoch, 'val_accuracy', 0),
-                    "val_precision": getattr(best_epoch, 'val_precision', 0),
-                    "val_recall": getattr(best_epoch, 'val_recall', 0),
+                    "val_precision": getattr(best_epoch, 'val_precision', 0),  # Now MACRO
+                    "val_recall": getattr(best_epoch, 'val_recall', 0),  # Now MACRO
                     "val_loss": getattr(best_epoch, 'val_loss', float('inf')),
                     "epochs_completed": len(history)
                 }
@@ -1177,44 +1215,73 @@ class HyperparameterOptimizer:
                 }
 
             # ================================================================
-            # MODE COLLAPSE DETECTION
+            # MODE COLLAPSE DETECTION (IMPROVED)
             # ================================================================
-            # Check if model collapsed to predicting only one class
-            # This happens when F1 ≈ accuracy and precision is low
-            # Example: accuracy=0.53, f1=0.37 means model predicts only majority class
+            # Now we use test_results from trainer which has accurate mode collapse info
+            test_results = getattr(trainer, 'test_results', None)
 
-            val_f1 = metrics.get("val_f1", 0)
-            val_precision = metrics.get("val_precision", 0)
-            val_recall = metrics.get("val_recall", 0)
-
-            # Mode collapse indicators:
-            # 1. Very low precision (< 0.35) - model not learning minority classes
-            # 2. F1 close to simple majority baseline (0.33-0.40 for 3 classes)
-            # 3. Recall = accuracy (model outputs same class for all samples)
-
+            mode_collapse_severity = "none"
             is_mode_collapse = False
             collapse_reason = ""
 
-            if val_precision < 0.35:
-                is_mode_collapse = True
-                collapse_reason = f"Very low precision ({val_precision:.3f} < 0.35)"
-            elif val_f1 < 0.40 and val_precision < 0.40:
-                is_mode_collapse = True
-                collapse_reason = f"Baseline-level F1 ({val_f1:.3f}) with low precision ({val_precision:.3f})"
+            if test_results:
+                mode_collapse_severity = test_results.get('mode_collapse_severity', 'none')
+                is_mode_collapse = mode_collapse_severity in ['total', 'severe', 'mild']
+                majority_pct = test_results.get('majority_class_pct', 0)
 
+                # Use test F1 (MACRO) as ground truth
+                test_f1 = test_results.get('f1', 0)
+
+                if is_mode_collapse:
+                    collapse_reason = f"Mode collapse ({mode_collapse_severity}): {majority_pct:.1%} same class"
+
+                # Add test metrics to output
+                metrics["test_f1"] = test_f1
+                metrics["test_accuracy"] = test_results.get('accuracy', 0)
+                metrics["test_precision"] = test_results.get('precision', 0)
+                metrics["test_recall"] = test_results.get('recall', 0)
+            else:
+                # Fallback: Check val metrics for mode collapse indicators
+                val_f1 = metrics.get("val_f1", 0)
+                val_precision = metrics.get("val_precision", 0)
+
+                # MACRO F1 < 0.35 is a strong indicator of mode collapse
+                # (random baseline for 3 classes is ~0.33)
+                if val_f1 < 0.35:
+                    is_mode_collapse = True
+                    mode_collapse_severity = "severe"
+                    collapse_reason = f"Very low MACRO F1 ({val_f1:.3f} < 0.35)"
+                elif val_precision < 0.35:
+                    is_mode_collapse = True
+                    mode_collapse_severity = "mild"
+                    collapse_reason = f"Low MACRO precision ({val_precision:.3f} < 0.35)"
+
+            # Apply penalty based on severity
             if is_mode_collapse:
+                val_f1 = metrics.get("val_f1", 0)
+
+                # Severity-based penalty
+                if mode_collapse_severity == "total":
+                    penalty = 0.1  # 90% penalty - near zero
+                elif mode_collapse_severity == "severe":
+                    penalty = 0.3  # 70% penalty
+                else:  # mild
+                    penalty = 0.6  # 40% penalty
+
                 logger.warning(
                     f"⚠️ MODE COLLAPSE DETECTED in trial {trial.number}!\n"
+                    f"   Severity: {mode_collapse_severity}\n"
                     f"   Reason: {collapse_reason}\n"
-                    f"   Metrics: F1={val_f1:.4f}, Prec={val_precision:.4f}, Recall={val_recall:.4f}\n"
-                    f"   This trial will be penalized."
+                    f"   Val F1 (MACRO): {val_f1:.4f} → {val_f1 * penalty:.4f} (after {(1-penalty)*100:.0f}% penalty)\n"
+                    f"   This trial will be heavily penalized."
                 )
-                # Penalize the metrics to discourage similar parameter combinations
-                # Don't set to 0 (causes issues), but significantly reduce
-                metrics["val_f1"] = val_f1 * 0.5  # 50% penalty
+
+                metrics["val_f1"] = val_f1 * penalty
                 metrics["mode_collapse"] = True
+                metrics["mode_collapse_severity"] = mode_collapse_severity
             else:
                 metrics["mode_collapse"] = False
+                metrics["mode_collapse_severity"] = "none"
 
             # Clean up GPU memory after each trial
             del model
@@ -1369,6 +1436,10 @@ class HyperparameterOptimizer:
             json.dump(self.best_params, f, indent=2, default=str)
 
         logger.info(f"Results saved to: {results_path}")
+
+        # Log final summary to hyperopt logger
+        if self.hyperopt_logger:
+            self.hyperopt_logger.log_final_summary(results)
 
         # Логируем в MLflow
         if self.mlflow_tracker:
