@@ -499,38 +499,116 @@ class FeatureQualityAnalyzer:
 
 async def analyze_training_data():
     """Run analysis on training data from feature store."""
-    from backend.ml_engine.feature_store.feature_store import get_feature_store
-    from backend.ml_engine.feature_store.feature_schema import DEFAULT_SCHEMA
+    print("=" * 60)
+    print("FEATURE QUALITY ANALYZER")
+    print("=" * 60)
 
-    logger.info("Loading data from Feature Store...")
+    try:
+        from backend.ml_engine.feature_store.feature_store import get_feature_store
+        from backend.ml_engine.feature_store.feature_schema import DEFAULT_SCHEMA
 
-    feature_store = get_feature_store()
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=30)
+        print("\n[1/4] Loading data from Feature Store...")
 
-    features_df = feature_store.read_offline_features(
-        feature_group="training_features",
-        start_date=start_date.strftime("%Y-%m-%d"),
-        end_date=end_date.strftime("%Y-%m-%d")
-    )
+        feature_store = get_feature_store()
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=30)
 
-    if features_df.empty:
-        logger.error("No data found in Feature Store!")
+        print(f"  Date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+
+        features_df = feature_store.read_offline_features(
+            feature_group="training_features",
+            start_date=start_date.strftime("%Y-%m-%d"),
+            end_date=end_date.strftime("%Y-%m-%d")
+        )
+
+        if features_df is None or features_df.empty:
+            print("\n❌ ERROR: No data found in Feature Store!")
+            print("  Make sure you have data in data/feature_store/training_features/")
+            print("  Or run preprocessing first to generate training features.")
+            return None
+
+        print(f"  ✓ Loaded {len(features_df):,} samples")
+        print(f"  ✓ Columns: {len(features_df.columns)}")
+
+        # Check if label column exists
+        label_col = DEFAULT_SCHEMA.label_column
+        if label_col not in features_df.columns:
+            print(f"\n❌ ERROR: Label column '{label_col}' not found!")
+            print(f"  Available columns: {list(features_df.columns)[:20]}...")
+            print("  You may need to run preprocessing to add labels.")
+            return None
+
+        print(f"  ✓ Label column: {label_col}")
+
+        # Run analysis
+        print("\n[2/4] Running feature analysis...")
+        analyzer = FeatureQualityAnalyzer()
+
+        feature_columns = DEFAULT_SCHEMA.get_all_feature_columns()
+        # Filter to only existing columns
+        existing_features = [c for c in feature_columns if c in features_df.columns]
+        print(f"  Features to analyze: {len(existing_features)}/{len(feature_columns)}")
+
+        if len(existing_features) == 0:
+            print("\n❌ ERROR: No feature columns found in data!")
+            print(f"  Expected: {feature_columns[:10]}...")
+            print(f"  Found: {list(features_df.columns)[:10]}...")
+            return None
+
+        results = analyzer.analyze(
+            features_df=features_df,
+            feature_columns=existing_features,
+            label_column=label_col
+        )
+
+        # Print summary
+        print("\n" + "=" * 60)
+        print("ANALYSIS RESULTS")
+        print("=" * 60)
+
+        score = results.get("quality_score", {})
+        print(f"\n📊 OVERALL QUALITY SCORE: {score.get('overall', 0):.1f}/100")
+        print(f"   {score.get('assessment', 'Unknown')}")
+
+        print("\n📈 Score Breakdown:")
+        for component, value in score.get("breakdown", {}).items():
+            bar = "█" * int(value) + "░" * (25 - int(value))
+            print(f"   {component.capitalize():15} {bar} {value:.1f}/25")
+
+        # Class distribution
+        dist = results.get("class_distribution", {})
+        print(f"\n📦 Class Distribution:")
+        for cls, info in dist.get("distribution", {}).items():
+            print(f"   {cls}: {info['count']:,} ({info['percentage']:.1f}%)")
+        print(f"   Imbalance ratio: {dist.get('imbalance_ratio', 0):.2f}")
+
+        # Top features
+        print(f"\n🔝 Top 5 Correlated Features:")
+        for i, item in enumerate(results.get("correlations", {}).get("top_correlated", [])[:5], 1):
+            print(f"   {i}. {item['feature']}: {item['pearson']:.4f}")
+
+        print(f"\n📁 Reports saved to: {analyzer.output_dir}")
+        print(f"   - {analyzer.report_path.name}")
+        print(f"   - {analyzer.json_path.name}")
+
+        print("\n" + "=" * 60)
+
+        return results
+
+    except Exception as e:
+        print(f"\n❌ ERROR: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         return None
-
-    logger.info(f"Loaded {len(features_df):,} samples")
-
-    # Run analysis
-    analyzer = FeatureQualityAnalyzer()
-    results = analyzer.analyze(
-        features_df=features_df,
-        feature_columns=DEFAULT_SCHEMA.get_all_feature_columns(),
-        label_column=DEFAULT_SCHEMA.label_column
-    )
-
-    return results
 
 
 if __name__ == "__main__":
     import asyncio
-    asyncio.run(analyze_training_data())
+    print("Starting Feature Quality Analyzer...")
+    result = asyncio.run(analyze_training_data())
+    if result is None:
+        print("\nAnalysis failed or no data available.")
+        exit(1)
+    else:
+        print("\nAnalysis completed successfully!")
+        exit(0)
