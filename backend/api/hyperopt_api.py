@@ -336,7 +336,25 @@ async def _run_optimization(request: OptimizationRequest, is_resume: bool = Fals
         logger.info("HYPEROPT: Starting optimizer.optimize() in thread pool...")
 
         import concurrent.futures
+        import threading
         loop = asyncio.get_event_loop()
+
+        # Lock для потокобезопасного обновления current_optimization
+        progress_lock = threading.Lock()
+
+        def progress_callback(progress_data: dict):
+            """Callback для обновления прогресса из optimizer."""
+            global current_optimization
+            with progress_lock:
+                if current_optimization:
+                    current_optimization["progress"]["current_group"] = progress_data.get("current_group")
+                    current_optimization["progress"]["current_trial"] = progress_data.get("current_trial", 0)
+                    current_optimization["progress"]["best_value"] = progress_data.get("best_value")
+                    current_optimization["progress"]["best_params"] = progress_data.get("best_params", {})
+                    current_optimization["progress"]["current_params"] = progress_data.get("current_params", {})
+                    # Сохраняем состояние периодически (каждые 5 trials)
+                    if progress_data.get("current_trial", 0) % 5 == 0:
+                        _save_state(current_optimization)
 
         def run_sync_optimization():
             """Wrapper to run async optimization in sync context."""
@@ -344,12 +362,22 @@ async def _run_optimization(request: OptimizationRequest, is_resume: bool = Fals
             # Create new event loop for this thread
             new_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(new_loop)
+
+            # CRITICAL: Apply nest_asyncio to allow nested run_until_complete calls
+            # This is needed because Optuna's objective function is sync but calls async training
+            try:
+                import nest_asyncio
+                nest_asyncio.apply(new_loop)
+            except ImportError:
+                logger.warning("nest_asyncio not installed - hyperopt may fail with 'event loop already running'")
+
             try:
                 return new_loop.run_until_complete(
                     optimizer.optimize(
                         mode=opt_mode,
                         target_group=target_group,
-                        resume_from=resume_from  # Pass resume path for RESUME mode
+                        resume_from=resume_from,
+                        progress_callback=progress_callback# Pass resume path for RESUME mode
                     )
                 )
             finally:
