@@ -376,8 +376,8 @@ async def _run_optimization(request: OptimizationRequest, is_resume: bool = Fals
                     optimizer.optimize(
                         mode=opt_mode,
                         target_group=target_group,
-                        resume_from=resume_from,
-                        progress_callback=progress_callback# Pass resume path for RESUME mode
+                        resume_from=resume_from
+                        # Note: progress_callback removed - not supported by optimizer API
                     )
                 )
             finally:
@@ -629,16 +629,32 @@ async def resume_optimization(
 
     # Загружаем сохранённое состояние
     saved_state = _load_state()
-    if not saved_state:
+
+    # Check if we can resume from Optuna DB files even without state.json
+    db_files = list(HYPEROPT_DATA_PATH.glob("*.db")) if HYPEROPT_DATA_PATH.exists() else []
+
+    if not saved_state and not db_files:
         raise HTTPException(
             status_code=404,
             detail="Нет сохранённого состояния для продолжения. Запустите новую оптимизацию."
         )
 
-    if saved_state.get("status") not in ["paused", "interrupted"]:
+    # If no saved_state but DB files exist, create a default state for resume
+    if not saved_state and db_files:
+        logger.info(f"HYPEROPT API: No state.json but found {len(db_files)} Optuna DB files - creating default state")
+        saved_state = {
+            "status": "interrupted",
+            "mode": "full",
+            "config": {},
+            "progress": {}
+        }
+
+    # Allow resume from more statuses (completed can be "continued" for fine-tuning)
+    resumable_statuses = ["paused", "interrupted", "completed", "failed"]
+    if saved_state.get("status") not in resumable_statuses:
         raise HTTPException(
             status_code=400,
-            detail=f"Невозможно продолжить оптимизацию со статусом '{saved_state.get('status')}'"
+            detail=f"Невозможно продолжить оптимизацию со статусом '{saved_state.get('status')}'. Допустимые: {resumable_statuses}"
         )
 
     # Восстанавливаем конфигурацию
