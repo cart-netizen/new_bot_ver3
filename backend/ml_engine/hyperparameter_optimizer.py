@@ -261,12 +261,12 @@ def get_default_search_spaces() -> Dict[str, ParameterSearchSpace]:
         "focal_gamma": ParameterSearchSpace(
             name="focal_gamma",
             param_type="float",
-            low=0.0,
-            high=5.0,
+            low=0.5,  # CHANGED: 0.0 means no focusing, at least 0.5
+            high=3.0,  # CHANGED: Reduced from 5.0 - too aggressive with class_weights
             step=0.5,
-            default=2.5,
+            default=2.0,  # CHANGED: Reduced from 2.5 - works better with class_weights
             group=ParameterGroup.REGULARIZATION,
-            importance=0.6
+            importance=0.7  # Increased - critical for mode collapse prevention
         ),
 
         # === ГРУППА 3: Class Balancing ===
@@ -280,9 +280,9 @@ def get_default_search_spaces() -> Dict[str, ParameterSearchSpace]:
         "use_class_weights": ParameterSearchSpace(
             name="use_class_weights",
             param_type="bool",
-            default=False,
+            default=True,  # FIXED: Must be True to prevent mode collapse with imbalanced data
             group=ParameterGroup.CLASS_BALANCE,
-            importance=0.5
+            importance=0.7  # Increased importance - critical for imbalanced data
         ),
         "use_oversampling": ParameterSearchSpace(
             name="use_oversampling",
@@ -1050,6 +1050,8 @@ class HyperparameterOptimizer:
         logger.info(f"HYPEROPT: Trial {trial.number} - using cached DataLoaders (NO reload)")
 
         # Create trainer config
+        # CRITICAL FIX: Always use BOTH class_weights AND focal_loss for imbalanced data
+        # This prevents mode collapse (model predicting only majority class)
         trainer_config = TrainerConfigV2(
             epochs=params.get("epochs", self.config.epochs_per_trial),
             learning_rate=params.get("learning_rate", 5e-5),
@@ -1060,9 +1062,10 @@ class HyperparameterOptimizer:
             scheduler_T_mult=params.get("scheduler_T_mult", 2),
             use_augmentation=params.get("use_augmentation", True),
             gaussian_noise_std=params.get("gaussian_noise_std", 0.01),
+            # CRITICAL: Both focal_loss AND class_weights must be enabled
             use_focal_loss=params.get("use_focal_loss", True),
-            focal_gamma=params.get("focal_gamma", 2.5),
-            use_class_weights=params.get("use_class_weights", False),
+            focal_gamma=params.get("focal_gamma", 2.0),  # Reduced from 2.5 - less aggressive with class_weights
+            use_class_weights=params.get("use_class_weights", True),  # FIXED: Was False, causing mode collapse
             early_stopping_patience=max(3, self.config.epochs_per_trial // 2),
             verbose=False,  # Less logs
             use_tqdm=False
@@ -1132,6 +1135,46 @@ class HyperparameterOptimizer:
                     "val_loss": float('inf'),
                     "epochs_completed": 0
                 }
+
+            # ================================================================
+            # MODE COLLAPSE DETECTION
+            # ================================================================
+            # Check if model collapsed to predicting only one class
+            # This happens when F1 ≈ accuracy and precision is low
+            # Example: accuracy=0.53, f1=0.37 means model predicts only majority class
+
+            val_f1 = metrics.get("val_f1", 0)
+            val_precision = metrics.get("val_precision", 0)
+            val_recall = metrics.get("val_recall", 0)
+
+            # Mode collapse indicators:
+            # 1. Very low precision (< 0.35) - model not learning minority classes
+            # 2. F1 close to simple majority baseline (0.33-0.40 for 3 classes)
+            # 3. Recall = accuracy (model outputs same class for all samples)
+
+            is_mode_collapse = False
+            collapse_reason = ""
+
+            if val_precision < 0.35:
+                is_mode_collapse = True
+                collapse_reason = f"Very low precision ({val_precision:.3f} < 0.35)"
+            elif val_f1 < 0.40 and val_precision < 0.40:
+                is_mode_collapse = True
+                collapse_reason = f"Baseline-level F1 ({val_f1:.3f}) with low precision ({val_precision:.3f})"
+
+            if is_mode_collapse:
+                logger.warning(
+                    f"⚠️ MODE COLLAPSE DETECTED in trial {trial.number}!\n"
+                    f"   Reason: {collapse_reason}\n"
+                    f"   Metrics: F1={val_f1:.4f}, Prec={val_precision:.4f}, Recall={val_recall:.4f}\n"
+                    f"   This trial will be penalized."
+                )
+                # Penalize the metrics to discourage similar parameter combinations
+                # Don't set to 0 (causes issues), but significantly reduce
+                metrics["val_f1"] = val_f1 * 0.5  # 50% penalty
+                metrics["mode_collapse"] = True
+            else:
+                metrics["mode_collapse"] = False
 
             # Clean up GPU memory after each trial
             del model

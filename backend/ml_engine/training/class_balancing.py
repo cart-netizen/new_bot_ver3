@@ -35,16 +35,17 @@ def _log(msg: str, prefix: str = "Balancing"):
 class ClassBalancingConfig:
   """Конфигурация балансировки классов."""
   # Методы балансировки
-  # ВАЖНО: Используем ТОЛЬКО Focal Loss для избежания перекомпенсации
-  use_class_weights: bool = False  # Отключено - конфликтует с Focal Loss
-  use_focal_loss: bool = True  # Основной метод балансировки
-  use_oversampling: bool = False  # Отключено - вызывает overfitting
+  # CRITICAL FIX: Both class_weights AND focal_loss must be True to prevent mode collapse
+  # Focal Loss alone is NOT enough for imbalanced data (e.g., 53% HOLD vs 23% SELL/BUY)
+  use_class_weights: bool = True   # FIXED: Provides base balancing through loss weighting
+  use_focal_loss: bool = True      # Focuses on hard examples
+  use_oversampling: bool = False   # Optional - can cause overfitting
   use_undersampling: bool = False
   use_smote: bool = False
 
   # Параметры Focal Loss
-  focal_alpha: Optional[float] = 0.25  # Вес для класса 1
-  focal_gamma: float = 2.0  # Focusing parameter
+  focal_alpha: Optional[float] = None  # CHANGED: None = use class_weights, 0.25 = fixed alpha
+  focal_gamma: float = 2.0  # Focusing parameter (reduced from 2.5 when using class_weights)
 
   # Параметры Oversampling
   oversample_strategy: str = "auto"  # "auto", "minority", "all"

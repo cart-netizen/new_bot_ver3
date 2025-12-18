@@ -104,24 +104,26 @@ class TrainerConfigV2:
     scheduler_factor: float = 0.5
     
     # === Label Smoothing ===
-    label_smoothing: float = 0.0  # ВРЕМЕННО ОТКЛЮЧЕНО для диагностики
-    
+    label_smoothing: float = 0.1  # Restored: helps with overconfidence
+
     # === Data Augmentation ===
-    use_augmentation: bool = False  # ВРЕМЕННО ОТКЛЮЧЕНО для диагностики
-    mixup_alpha: float = 0.0  # Было 0.2
-    mixup_prob: float = 0.0  # Было 0.5
+    use_augmentation: bool = True  # Restored: helps with generalization
+    mixup_alpha: float = 0.2  # Restored
+    mixup_prob: float = 0.3  # Reduced from 0.5 for stability
     gaussian_noise_std: float = 0.01
     time_mask_ratio: float = 0.1
-    
+
     # === Multi-task Loss Weights ===
     direction_loss_weight: float = 1.0
     confidence_loss_weight: float = 0.5
     return_loss_weight: float = 0.3
-    
+
     # === Class Balancing ===
-    use_class_weights: bool = True
-    use_focal_loss: bool = False  # ВРЕМЕННО ОТКЛЮЧЕНО: слишком агрессивный
-    focal_gamma: float = 2.0  # Уменьшено с 2.5
+    # CRITICAL FIX: BOTH must be True to prevent mode collapse
+    # Focal Loss alone is not enough for imbalanced data (53% HOLD vs 23% SELL/BUY)
+    use_class_weights: bool = True  # Provides base balancing through loss weighting
+    use_focal_loss: bool = True     # RESTORED: Focuses on hard examples
+    focal_gamma: float = 2.0        # Lower gamma when using class_weights (prevents overcompensation)
     
     # === Mixed Precision ===
     use_mixed_precision: bool = False  # ВРЕМЕННО ОТКЛЮЧЕНО из-за NaN loss (RTX 3060 поддерживает!)
@@ -764,7 +766,7 @@ class ModelTrainerV2:
                     )
         
         avg_loss = total_loss / len(val_loader)
-        
+
         # Вычисляем метрики
         accuracy = accuracy_score(all_labels, all_predictions)
         precision, recall, f1, _ = precision_recall_fscore_support(
@@ -772,14 +774,38 @@ class ModelTrainerV2:
             average='weighted',
             zero_division=0
         )
-        
+
+        # ================================================================
+        # MODE COLLAPSE EARLY WARNING
+        # ================================================================
+        # Check prediction distribution to detect mode collapse
+        from collections import Counter
+        pred_dist = Counter(all_predictions)
+        total_preds = len(all_predictions)
+
+        # Calculate what percentage of predictions are the majority class
+        most_common_class, most_common_count = pred_dist.most_common(1)[0]
+        majority_pct = most_common_count / total_preds
+
+        # If >90% predictions are same class, warn about mode collapse
+        if majority_pct > 0.90:
+            tqdm.write(
+                f"  ⚠️ MODE COLLAPSE WARNING: {majority_pct:.1%} predictions are class {most_common_class}! "
+                f"Distribution: {dict(pred_dist)}"
+            )
+        elif majority_pct > 0.75:
+            tqdm.write(
+                f"  ⚡ Prediction imbalance: {majority_pct:.1%} are class {most_common_class}. "
+                f"Distribution: {dict(pred_dist)}"
+            )
+
         metrics = {
             'accuracy': accuracy,
             'precision': precision,
             'recall': recall,
             'f1': f1
         }
-        
+
         return avg_loss, metrics
     
     def _test_model(self, test_loader: DataLoader):
