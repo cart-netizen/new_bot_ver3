@@ -55,12 +55,13 @@ class ParquetFutureLabelProcessor:
 
     def _deduplicate_parquet_files(self):
         """
-        CRITICAL: Дедупликация parquet файлов ПЕРЕД чтением.
+        Показывает статистику parquet файлов.
 
-        Если в одной партиции несколько файлов, оставляем только самый новый.
-        Это предотвращает накопление дубликатов.
+        ВАЖНО: НЕ удаляем файлы до чтения! Каждый файл содержит уникальные данные,
+        собранные в разное время. Настоящая дедупликация происходит после загрузки
+        через drop_duplicates(subset=['symbol', 'timestamp']).
         """
-        print("\n🔍 Проверка и дедупликация parquet файлов...")
+        print("\n🔍 Проверка parquet файлов...")
 
         feature_store_dir = PROJECT_ROOT / "data" / "feature_store" / "offline" / self.feature_store_group
 
@@ -68,34 +69,22 @@ class ParquetFutureLabelProcessor:
             print(f"  Директория не существует: {feature_store_dir}")
             return
 
-        total_deleted = 0
+        total_files = 0
+        total_partitions = 0
 
         # Проходим по всем партициям (date=YYYY-MM-DD)
         for partition_dir in feature_store_dir.iterdir():
             if not partition_dir.is_dir() or not partition_dir.name.startswith("date="):
                 continue
 
-            # Находим все parquet файлы в партиции
+            # Считаем parquet файлы в партиции
             parquet_files = list(partition_dir.glob("*.parquet"))
+            if parquet_files:
+                total_partitions += 1
+                total_files += len(parquet_files)
 
-            if len(parquet_files) <= 1:
-                continue  # Нет дубликатов
-
-            # Сортируем по времени модификации (новые первые)
-            parquet_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
-
-            # Оставляем только самый новый, удаляем остальные
-            for old_file in parquet_files[1:]:
-                try:
-                    old_file.unlink()
-                    total_deleted += 1
-                except Exception as e:
-                    print(f"  ⚠️ Не удалось удалить {old_file.name}: {e}")
-
-        if total_deleted > 0:
-            print(f"  ✓ Удалено {total_deleted} дубликатов parquet файлов")
-        else:
-            print(f"  ✓ Дубликатов не найдено")
+        print(f"  ✓ Найдено {total_files} parquet файлов в {total_partitions} партициях")
+        print(f"  ℹ️  Дедупликация произойдёт после загрузки данных по (symbol, timestamp)")
 
     def process_all_data(self):
         """Обработка всех данных из Feature Store."""
