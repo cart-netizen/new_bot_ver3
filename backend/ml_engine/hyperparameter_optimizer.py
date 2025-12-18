@@ -613,9 +613,9 @@ class HyperparameterOptimizer:
             )
 
             balancing_config = ClassBalancingConfig(
-                use_class_weights=False,
+                use_class_weights=True,   # CRITICAL: Together with Focal Loss!
                 use_focal_loss=True,
-                focal_gamma=2.5,
+                focal_gamma=2.0,          # 2.0 optimal (2.5 too aggressive)
                 use_oversampling=False,
                 use_undersampling=False
             )

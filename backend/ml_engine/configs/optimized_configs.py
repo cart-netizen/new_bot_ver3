@@ -278,12 +278,14 @@ class OptimizedBalancingConfig:
     2. Добавлен oversampling для minority классов
     3. Оптимизированы веса классов
     """
-    
+
     # === Основной метод ===
-    method: ClassBalancingMethod = ClassBalancingMethod.FOCAL_LOSS  # Только Focal Loss
-    
+    method: ClassBalancingMethod = ClassBalancingMethod.FOCAL_LOSS  # Focal Loss + Class Weights
+
     # === Class Weights ===
-    use_class_weights: bool = False  # ОТКЛЮЧЕНО - используем только Focal Loss
+    # CRITICAL: Нужно ВМЕСТЕ с Focal Loss для предотвращения mode collapse!
+    # Focal Loss фокусируется на hard examples, Class Weights балансируют классы
+    use_class_weights: bool = True  # ВКЛЮЧЕНО - обязательно вместе с Focal Loss!
     class_weight_method: str = "balanced"  # balanced, sqrt, log
     
     # Custom веса (если не auto)
@@ -291,9 +293,9 @@ class OptimizedBalancingConfig:
     # Веса: обратно пропорциональны частоте
     custom_class_weights: Optional[Dict[int, float]] = None
     
-    # === Focal Loss параметры (УЛУЧШЕНЫ) ===
+    # === Focal Loss параметры ===
     use_focal_loss: bool = True
-    focal_gamma: float = 2.5  # Было: 2.0 (больше фокуса на hard examples)
+    focal_gamma: float = 2.0  # 2.0 оптимально (2.5 слишком агрессивно, вызывает инверсию)
     focal_alpha: Optional[List[float]] = None  # Auto-compute if None
     
     # === Resampling параметры (НОВОЕ) ===

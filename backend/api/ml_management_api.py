@@ -124,10 +124,10 @@ class TrainingRequest(BaseModel):
     use_augmentation: bool = Field(default=True, description="Enable data augmentation")
     gaussian_noise_std: float = Field(default=0.01, ge=0, le=0.1, description="Gaussian noise std (v2: 0.01)")
 
-    # Class Balancing - ТОЛЬКО Focal Loss по умолчанию (избежание перекомпенсации)
-    use_focal_loss: bool = Field(default=True, description="Use Focal Loss (recommended)")
-    focal_gamma: float = Field(default=2.5, ge=0, le=5, description="Focal Loss gamma (2.5 = strong focus on hard examples)")
-    use_class_weights: bool = Field(default=False, description="Use class weights (disable if using Focal Loss)")
+    # Class Balancing - Focal Loss + Class Weights ВМЕСТЕ для предотвращения mode collapse
+    use_focal_loss: bool = Field(default=True, description="Use Focal Loss (required for class balancing)")
+    focal_gamma: float = Field(default=2.0, ge=0, le=5, description="Focal Loss gamma (2.0 optimal, 2.5 too aggressive)")
+    use_class_weights: bool = Field(default=True, description="Use class weights (REQUIRED together with Focal Loss!)")
     use_oversampling: bool = Field(default=False, description="Use oversampling (disable to avoid over-compensation)")
     oversample_ratio: float = Field(default=0.5, ge=0, le=1, description="Oversample ratio")
     use_undersampling: bool = Field(default=False, description="Use undersampling (not recommended)")
