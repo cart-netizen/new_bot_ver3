@@ -344,7 +344,7 @@ async def _run_optimization(request: OptimizationRequest, is_resume: bool = Fals
 
         def progress_callback(progress_data: dict):
             """Callback для обновления прогресса из optimizer."""
-            nonlocal current_optimization
+            global current_optimization
             with progress_lock:
                 if current_optimization:
                     current_optimization["progress"]["current_group"] = progress_data.get("current_group")
