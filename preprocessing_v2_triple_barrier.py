@@ -154,17 +154,23 @@ def add_lagged_features(df: pd.DataFrame) -> pd.DataFrame:
     available_features = [f for f in features_to_lag if f in df.columns]
     print(f"   Фичи для лаггинга: {len(available_features)}/{len(features_to_lag)}")
 
+    # Удаляем существующие lagged колонки (если запуск на уже обработанных данных)
+    existing_lag_cols = [c for c in df.columns if '_lag' in c]
+    if existing_lag_cols:
+        print(f"   ⚠️ Удаляем {len(existing_lag_cols)} существующих lagged колонок")
+        df = df.drop(columns=existing_lag_cols)
+
     new_columns = {}
 
     for feature in available_features:
         for lag in LAGS:
             col_name = f"{feature}_lag{lag}"
-            new_columns[col_name] = df[feature].shift(lag)
+            new_columns[col_name] = df[feature].shift(lag).values  # .values для избежания проблем с индексами
 
     # Добавляем все новые колонки за раз (эффективнее)
     if new_columns:
-        new_df = pd.DataFrame(new_columns, index=df.index)
-        df = pd.concat([df, new_df], axis=1)
+        for col_name, values in new_columns.items():
+            df[col_name] = values
 
     n_new_features = len(new_columns)
     print(f"   ✓ Добавлено {n_new_features} lagged features")
@@ -186,69 +192,90 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     print("\n🔧 Добавление Derived Features...")
 
-    derived = {}
+    # Список derived фич, которые будем создавать
+    derived_feature_names = [
+        'imbalance_5_change', 'imbalance_5_change_pct', 'imbalance_5_momentum',
+        'imbalance_ratio_5_10', 'imbalance_vol_adjusted', 'spread_change',
+        'spread_momentum', 'imbalance_volume_weighted', 'rsi_diff', 'rsi_14_momentum',
+        'composite_signal', 'smart_money_momentum', 'smart_money_acceleration',
+        'trade_quote_ratio', 'volatility_regime'
+    ]
+
+    # Удаляем существующие derived колонки (если запуск на уже обработанных данных)
+    existing_derived_cols = [c for c in df.columns if c in derived_feature_names]
+    if existing_derived_cols:
+        print(f"   ⚠️ Удаляем {len(existing_derived_cols)} существующих derived колонок")
+        df = df.drop(columns=existing_derived_cols)
+
+    added_count = 0
 
     # 1. Изменения imbalance (momentum of imbalance)
     if 'imbalance_5' in df.columns:
-        derived['imbalance_5_change'] = df['imbalance_5'].diff()
-        derived['imbalance_5_change_pct'] = df['imbalance_5'].pct_change()
+        df['imbalance_5_change'] = df['imbalance_5'].diff().values
+        df['imbalance_5_change_pct'] = df['imbalance_5'].pct_change().values
+        added_count += 2
 
         if 'imbalance_5_lag4' in df.columns:
             # Изменение за 1 минуту
-            derived['imbalance_5_momentum'] = df['imbalance_5'] - df['imbalance_5_lag4']
+            df['imbalance_5_momentum'] = (df['imbalance_5'].values - df['imbalance_5_lag4'].values)
+            added_count += 1
 
     # 2. Ratio фичи
     if 'imbalance_5' in df.columns and 'imbalance_10' in df.columns:
         # Отношение короткого к длинному imbalance
-        derived['imbalance_ratio_5_10'] = df['imbalance_5'] / (df['imbalance_10'] + 1e-10)
+        df['imbalance_ratio_5_10'] = (df['imbalance_5'].values / (df['imbalance_10'].values + 1e-10))
+        added_count += 1
 
     # 3. Volatility-adjusted imbalance
     if 'imbalance_5' in df.columns and 'orderbook_volatility' in df.columns:
-        derived['imbalance_vol_adjusted'] = df['imbalance_5'] / (df['orderbook_volatility'] + 1e-10)
+        df['imbalance_vol_adjusted'] = (df['imbalance_5'].values / (df['orderbook_volatility'].values + 1e-10))
+        added_count += 1
 
     # 4. Spread momentum
     if 'bid_ask_spread_rel' in df.columns:
-        derived['spread_change'] = df['bid_ask_spread_rel'].diff()
-        derived['spread_momentum'] = df['bid_ask_spread_rel'].diff().rolling(4).mean()
+        df['spread_change'] = df['bid_ask_spread_rel'].diff().values
+        df['spread_momentum'] = df['bid_ask_spread_rel'].diff().rolling(4).mean().values
+        added_count += 2
 
     # 5. Volume-weighted imbalance
     if 'imbalance_5' in df.columns and 'volume' in df.columns:
-        derived['imbalance_volume_weighted'] = df['imbalance_5'] * np.log1p(df['volume'])
+        df['imbalance_volume_weighted'] = (df['imbalance_5'].values * np.log1p(df['volume'].values))
+        added_count += 1
 
     # 6. RSI momentum
     if 'rsi_14' in df.columns and 'rsi_28' in df.columns:
-        derived['rsi_diff'] = df['rsi_14'] - df['rsi_28']
-        derived['rsi_14_momentum'] = df['rsi_14'].diff(4)
+        df['rsi_diff'] = (df['rsi_14'].values - df['rsi_28'].values)
+        df['rsi_14_momentum'] = df['rsi_14'].diff(4).values
+        added_count += 2
 
     # 7. Composite signals
     if all(f in df.columns for f in ['imbalance_5', 'depth_imbalance_ratio', 'volume_delta_5']):
         # Комбинированный сигнал из top-3 коррелированных фич
-        derived['composite_signal'] = (
-            df['imbalance_5'].rank(pct=True) * 0.4 +
-            df['depth_imbalance_ratio'].rank(pct=True) * 0.4 +
-            df['volume_delta_5'].rank(pct=True) * 0.2
+        df['composite_signal'] = (
+            df['imbalance_5'].rank(pct=True).values * 0.4 +
+            df['depth_imbalance_ratio'].rank(pct=True).values * 0.4 +
+            df['volume_delta_5'].rank(pct=True).values * 0.2
         )
+        added_count += 1
 
     # 8. Orderbook pressure change
     if 'smart_money_index' in df.columns:
-        derived['smart_money_momentum'] = df['smart_money_index'].diff()
-        derived['smart_money_acceleration'] = df['smart_money_index'].diff().diff()
+        df['smart_money_momentum'] = df['smart_money_index'].diff().values
+        df['smart_money_acceleration'] = df['smart_money_index'].diff().diff().values
+        added_count += 2
 
     # 9. Trade intensity ratio
     if 'trade_arrival_rate' in df.columns and 'quote_intensity' in df.columns:
-        derived['trade_quote_ratio'] = df['trade_arrival_rate'] / (df['quote_intensity'] + 1e-10)
+        df['trade_quote_ratio'] = (df['trade_arrival_rate'].values / (df['quote_intensity'].values + 1e-10))
+        added_count += 1
 
     # 10. Volatility regime
     if 'orderbook_volatility' in df.columns:
-        vol_ma = df['orderbook_volatility'].rolling(20).mean()
-        derived['volatility_regime'] = df['orderbook_volatility'] / (vol_ma + 1e-10)
+        vol_ma = df['orderbook_volatility'].rolling(20).mean().values
+        df['volatility_regime'] = (df['orderbook_volatility'].values / (vol_ma + 1e-10))
+        added_count += 1
 
-    # Добавляем все производные фичи
-    if derived:
-        derived_df = pd.DataFrame(derived, index=df.index)
-        df = pd.concat([df, derived_df], axis=1)
-
-    print(f"   ✓ Добавлено {len(derived)} derived features")
+    print(f"   ✓ Добавлено {added_count} derived features")
 
     return df
 
