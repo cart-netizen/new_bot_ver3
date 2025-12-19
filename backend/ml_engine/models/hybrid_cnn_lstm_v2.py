@@ -43,7 +43,9 @@ class ModelConfigV2:
     Совместима с базовой ModelConfig, но добавляет новые параметры.
     """
     # === Input параметры ===
-    input_features: int = 110
+    # input_features: только для документации, модель адаптируется динамически
+    # После preprocessing_v2: 112 base + 60 lagged + 15 derived = 187 features
+    input_features: int = 187
     sequence_length: int = 60
     
     # === CNN параметры ===

@@ -26,7 +26,7 @@ from backend.ml_engine.training.data_loader import DataConfig
 async def train(
     epochs: int = 50,
     batch_size: int = 64,
-    learning_rate: float = 0.001,
+    learning_rate: float = 5e-5,  # Синхронизировано с TrainerConfigV2 (было 0.001)
     early_stopping_patience: int = 20,
     export_onnx: bool = True,
     auto_promote: bool = True
@@ -137,8 +137,8 @@ Examples:
     parser.add_argument(
         "--lr",
         type=float,
-        default=0.001,
-        help="Learning rate (default: 0.001)"
+        default=5e-5,
+        help="Learning rate (default: 5e-5, optimized for V2 trainer)"
     )
 
     parser.add_argument(

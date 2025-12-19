@@ -54,7 +54,7 @@ class FeatureQualityAnalyzer:
         self,
         features_df: pd.DataFrame,
         feature_columns: List[str],
-        label_column: str = "future_direction_60s",
+        label_column: str = "future_direction_300s",  # Синхронизировано с DEFAULT_SCHEMA
         top_n: int = 20
     ) -> Dict[str, Any]:
         """
