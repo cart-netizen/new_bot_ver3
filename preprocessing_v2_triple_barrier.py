@@ -57,6 +57,11 @@ class LabelingConfig:
     # Если движение < min_movement_pct -> HOLD
     min_movement_pct: float = 0.05  # 0.05%
 
+    # === НОВОЕ: Режим фиксированного процента ===
+    # Если True - игнорирует ATR и использует fixed_threshold_pct для всех символов
+    # Это обеспечивает одинаковое распределение классов для всех активов
+    use_fixed_pct: bool = False
+
     def __post_init__(self):
         if self.horizons is None:
             # Горизонты: 1 мин, 3 мин, 5 мин
@@ -286,10 +291,16 @@ def apply_triple_barrier_label(
     movement = (future_price - current_price) / current_price
     movement_pct = abs(movement) * 100
 
-    # Определяем порог на основе ATR или fixed threshold
-    if atr is not None and atr > 0 and not np.isnan(atr):
+    # Определяем порог
+    if config.use_fixed_pct:
+        # Режим фиксированного процента - одинаковый для всех символов
+        threshold = config.fixed_threshold_pct / 100
+    elif atr is not None and atr > 0 and not np.isnan(atr):
+        # Режим ATR - адаптивный к волатильности символа
+        # threshold = (ATR / price) * multiplier = relative_volatility * multiplier
         threshold = (atr / current_price) * config.tp_multiplier
     else:
+        # Fallback
         threshold = config.fixed_threshold_pct / 100
 
     # Минимальный порог
@@ -339,9 +350,15 @@ class TripleBarrierPreprocessor:
         print(f"Период: {self.start_date or 'начало'} → {self.end_date or 'конец'}")
         print(f"\nПараметры Triple Barrier:")
         print(f"  • Горизонты: {self.config.horizons} секунд")
-        print(f"  • TP множитель: {self.config.tp_multiplier}x ATR")
-        print(f"  • SL множитель: {self.config.sl_multiplier}x ATR")
-        print(f"  • Fixed threshold: {self.config.fixed_threshold_pct}%")
+
+        if self.config.use_fixed_pct:
+            print(f"  • РЕЖИМ: ФИКСИРОВАННЫЙ ПРОЦЕНТ")
+            print(f"  • Порог: {self.config.fixed_threshold_pct}% для ВСЕХ символов")
+        else:
+            print(f"  • РЕЖИМ: АДАПТИВНЫЙ ATR")
+            print(f"  • TP множитель: {self.config.tp_multiplier}x ATR")
+            print(f"  • SL множитель: {self.config.sl_multiplier}x ATR")
+
         print(f"  • Min movement: {self.config.min_movement_pct}%")
         print("=" * 80)
 
@@ -612,15 +629,27 @@ def main():
         default=0.05,
         help='Минимальное движение в %% (default: 0.05)'
     )
+    parser.add_argument(
+        '--fixed-pct',
+        type=float,
+        default=None,
+        help='Использовать фиксированный %% порог для ВСЕХ символов (игнорирует ATR). '
+             'Например: --fixed-pct 0.1 = 0.1%% порог'
+    )
 
     args = parser.parse_args()
 
     # Создаем конфигурацию
+    use_fixed = args.fixed_pct is not None
+    fixed_threshold = args.fixed_pct if use_fixed else 0.15
+
     config = LabelingConfig(
         horizons=[60, 180, 300],  # 1, 3, 5 минут
         tp_multiplier=args.tp_mult,
         sl_multiplier=args.sl_mult,
-        min_movement_pct=args.min_movement
+        min_movement_pct=args.min_movement,
+        use_fixed_pct=use_fixed,
+        fixed_threshold_pct=fixed_threshold
     )
 
     # Создаем процессор
