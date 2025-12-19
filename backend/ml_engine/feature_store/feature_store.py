@@ -333,7 +333,13 @@ class FeatureStore:
             dfs = []
             for file_path in parquet_files:
                 df = pd.read_parquet(file_path, columns=columns)
-                dfs.append(df)
+                # Skip empty DataFrames to avoid FutureWarning on concat
+                if not df.empty:
+                    dfs.append(df)
+
+            if not dfs:
+                logger.warning(f"All parquet files were empty: group={feature_group}")
+                return pd.DataFrame()
 
             result = pd.concat(dfs, ignore_index=True)
 

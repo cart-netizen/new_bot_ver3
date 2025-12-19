@@ -359,39 +359,6 @@ class Settings(BaseSettings):
     print(f"✓ WEIGHT_OPTIMIZATION_METHOD: {v}")
     return v
 
-  @field_validator("CONSENSUS_MODE", mode="before")
-  @classmethod
-  def validate_consensus_mode(cls, v):
-      """
-      Валидация и очистка CONSENSUS_MODE.
-      Удаляет комментарии и проверяет допустимые значения.
-      """
-      if not v:
-          print("⚠️ CONSENSUS_MODE не задан, используется значение по умолчанию: weighted")
-          return "weighted"
-
-      # Очистка от комментариев
-      original_value = v
-      v = clean_env_value(str(v))
-
-      if v != original_value:
-          print(f"⚠️ CONSENSUS_MODE содержал комментарий: '{original_value}' -> '{v}'")
-
-      # Проверка допустимых значений
-      valid_modes = ["weighted", "majority", "unanimous"]
-      if v not in valid_modes:
-          error_msg = (
-              f"❌ Неизвестный CONSENSUS_MODE: '{v}'. "
-              f"Допустимые значения: {', '.join(valid_modes)}"
-          )
-          print(error_msg)
-          raise ValueError(
-              f"Invalid CONSENSUS_MODE: '{v}'. "
-              f"Must be one of: {', '.join(valid_modes)}"
-          )
-
-      print(f"✓ CONSENSUS_MODE: {v}")
-      return v
 
   # ===== LEVERAGE CONFIGURATION =====
   DEFAULT_LEVERAGE: int = Field(
