@@ -526,9 +526,10 @@ class TripleBarrierPreprocessor:
             if horizon == 300:  # Основной горизонт для статистики
                 self.stats['total_samples'] += n
                 self.stats['labeled_samples'] += labeled_count
-                self.stats['label_distribution'] = {
-                    'SELL': sell, 'HOLD': hold, 'BUY': buy
-                }
+                # Накапливаем распределение по всем символам (а не перезаписываем!)
+                self.stats['label_distribution']['SELL'] = self.stats['label_distribution'].get('SELL', 0) + sell
+                self.stats['label_distribution']['HOLD'] = self.stats['label_distribution'].get('HOLD', 0) + hold
+                self.stats['label_distribution']['BUY'] = self.stats['label_distribution'].get('BUY', 0) + buy
 
         return df
 
