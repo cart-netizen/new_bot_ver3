@@ -30,14 +30,28 @@ class FeatureStoreSchema:
     symbol_column: str = 'symbol'
 
     # ===== LABEL COLUMNS =====
-    label_column: str = 'future_direction_60s'  # 0=DOWN, 1=NEUTRAL, 2=UP
-    return_column: str = 'future_return_60s'     # Expected return
+    # Changed to 300s (5 min) horizon for better predictability
+    label_column: str = 'future_direction_300s'  # 0=DOWN, 1=NEUTRAL, 2=UP
+    return_column: str = 'future_movement_300s'  # Price movement percentage
+
+    # Alternative horizons (for multi-horizon training)
+    label_column_60s: str = 'future_direction_60s'
+    label_column_180s: str = 'future_direction_180s'
+    label_column_300s: str = 'future_direction_300s'
 
     # ===== FEATURE COLUMNS =====
     # Будут генерироваться в __post_init__
     orderbook_features: List[str] = field(default_factory=list)
     candle_features: List[str] = field(default_factory=list)
     indicator_features: List[str] = field(default_factory=list)
+
+    # ===== EXTENDED FEATURES (V2) =====
+    # Lagged и derived фичи добавляются preprocessing_v2
+    lagged_features: List[str] = field(default_factory=list)
+    derived_features: List[str] = field(default_factory=list)
+
+    # Флаг использования расширенных фич
+    use_extended_features: bool = True
 
     def __post_init__(self):
         """Generate feature lists if not provided"""
@@ -50,15 +64,20 @@ class FeatureStoreSchema:
         if not self.indicator_features:
             self.indicator_features = self._generate_indicator_features()
 
-        # Validate total count
-        total = len(self.orderbook_features) + len(self.candle_features) + len(self.indicator_features)
-        if total != 112:
-            logger.warning(
-                f"Feature count mismatch: expected 112, got {total} "
-                f"(orderbook={len(self.orderbook_features)}, "
-                f"candle={len(self.candle_features)}, "
-                f"indicator={len(self.indicator_features)})"
-            )
+        if not self.lagged_features:
+            self.lagged_features = self._generate_lagged_features()
+
+        if not self.derived_features:
+            self.derived_features = self._generate_derived_features()
+
+        # Log feature counts
+        base_total = len(self.orderbook_features) + len(self.candle_features) + len(self.indicator_features)
+        extended_total = len(self.lagged_features) + len(self.derived_features)
+
+        logger.info(
+            f"Feature schema: base={base_total}, extended={extended_total}, "
+            f"total={base_total + extended_total}"
+        )
 
     def _generate_orderbook_features(self) -> List[str]:
         """
@@ -250,13 +269,109 @@ class FeatureStoreSchema:
         assert len(features) == 37, f"Indicator features: expected 37, got {len(features)}"
         return features
 
-    def get_all_feature_columns(self) -> List[str]:
+    def _generate_lagged_features(self) -> List[str]:
         """
-        Get list of all 112 feature columns
+        Generate lagged feature names.
+
+        Лаги для top-коррелированных и top-сепарирующих фич.
+        Каждая фича получает лаги: 1, 2, 4, 8 (при 15s интервале: 15s, 30s, 1m, 2m)
+
+        Total: 15 base features × 4 lags = 60 lagged features
+        """
+        # Top-корреляция + top-сепарабельность фичи
+        base_features = [
+            'imbalance_5',
+            'depth_imbalance_ratio',
+            'imbalance_10',
+            'volume_delta_5',
+            'gap_size',
+            'momentum_10',
+            'update_frequency',
+            'quote_intensity',
+            'rsi_28',
+            'roc',
+            'orderbook_volatility',
+            'bid_ask_spread_rel',
+            'effective_spread',
+            'trade_arrival_rate',
+            'smart_money_index',
+        ]
+
+        lags = [1, 2, 4, 8]
+        features = []
+
+        for feat in base_features:
+            for lag in lags:
+                features.append(f"{feat}_lag{lag}")
+
+        return features
+
+    def _generate_derived_features(self) -> List[str]:
+        """
+        Generate derived feature names.
+
+        Производные фичи на основе top-корреляций:
+        - Momentum/change фичи
+        - Ratio фичи
+        - Volatility-adjusted фичи
+        - Composite signals
+
+        Total: ~15 derived features
+        """
+        return [
+            # Imbalance derivatives
+            'imbalance_5_change',
+            'imbalance_5_change_pct',
+            'imbalance_5_momentum',
+            'imbalance_ratio_5_10',
+            'imbalance_vol_adjusted',
+            'imbalance_volume_weighted',
+
+            # Spread derivatives
+            'spread_change',
+            'spread_momentum',
+
+            # RSI derivatives
+            'rsi_diff',
+            'rsi_14_momentum',
+
+            # Composite signals
+            'composite_signal',
+
+            # Orderbook pressure
+            'smart_money_momentum',
+            'smart_money_acceleration',
+            'trade_quote_ratio',
+            'volatility_regime',
+        ]
+
+    def get_all_feature_columns(self, include_extended: bool = None) -> List[str]:
+        """
+        Get list of all feature columns.
+
+        Args:
+            include_extended: Include lagged/derived features.
+                              If None, uses self.use_extended_features
 
         Returns:
             List of all feature column names in order
         """
+        base_features = (
+            self.orderbook_features +
+            self.candle_features +
+            self.indicator_features
+        )
+
+        if include_extended is None:
+            include_extended = self.use_extended_features
+
+        if include_extended:
+            return base_features + self.lagged_features + self.derived_features
+        else:
+            return base_features
+
+    def get_base_feature_columns(self) -> List[str]:
+        """Get only base 112 features (without lagged/derived)."""
         return (
             self.orderbook_features +
             self.candle_features +
@@ -283,7 +398,21 @@ class FeatureStoreSchema:
         Returns:
             List of optional column names
         """
-        return [self.return_column]
+        return [
+            self.return_column,
+            # Alternative horizons
+            'future_direction_60s',
+            'future_movement_60s',
+            'future_direction_180s',
+            'future_movement_180s',
+            # Legacy columns
+            'future_direction_10s',
+            'future_movement_10s',
+            'future_direction_30s',
+            'future_movement_30s',
+            # Current mid price (used in preprocessing)
+            'current_mid_price',
+        ]
 
     def validate_dataframe(self, df: pd.DataFrame, strict: bool = True) -> bool:
         """
@@ -346,18 +475,27 @@ class FeatureStoreSchema:
 
         return df[keep_cols]
 
-    def get_feature_groups(self) -> dict:
+    def get_feature_groups(self, include_extended: bool = True) -> dict:
         """
         Get feature groups for analysis
+
+        Args:
+            include_extended: Include lagged/derived feature groups
 
         Returns:
             Dict mapping group name to feature list
         """
-        return {
+        groups = {
             'orderbook': self.orderbook_features,
             'candle': self.candle_features,
             'indicator': self.indicator_features,
         }
+
+        if include_extended:
+            groups['lagged'] = self.lagged_features
+            groups['derived'] = self.derived_features
+
+        return groups
 
     def summary(self) -> str:
         """
@@ -366,16 +504,26 @@ class FeatureStoreSchema:
         Returns:
             Formatted summary string
         """
+        base_count = len(self.get_base_feature_columns())
+        extended_count = len(self.lagged_features) + len(self.derived_features)
+        total_count = base_count + extended_count
+
         lines = [
-            "Feature Store Schema Summary",
+            "Feature Store Schema Summary (V2)",
             "=" * 60,
-            f"Total features: {len(self.get_all_feature_columns())}",
+            f"Base features: {base_count}",
             f"  • OrderBook: {len(self.orderbook_features)}",
             f"  • Candle: {len(self.candle_features)}",
             f"  • Indicator: {len(self.indicator_features)}",
             "",
+            f"Extended features: {extended_count}",
+            f"  • Lagged: {len(self.lagged_features)}",
+            f"  • Derived: {len(self.derived_features)}",
+            "",
+            f"TOTAL FEATURES: {total_count}",
+            "",
             f"Meta columns: {self.timestamp_column}, {self.symbol_column}",
-            f"Label column: {self.label_column}",
+            f"Label column: {self.label_column} (5 min horizon)",
             f"Return column: {self.return_column}",
             "=" * 60,
         ]
