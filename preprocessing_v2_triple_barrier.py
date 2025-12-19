@@ -19,7 +19,7 @@ import sys
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 from datetime import datetime
 from dataclasses import dataclass
 
@@ -57,15 +57,38 @@ class LabelingConfig:
     # Если движение < min_movement_pct -> HOLD
     min_movement_pct: float = 0.05  # 0.05%
 
-    # === НОВОЕ: Режим фиксированного процента ===
+    # === Режим фиксированного процента ===
     # Если True - игнорирует ATR и использует fixed_threshold_pct для всех символов
-    # Это обеспечивает одинаковое распределение классов для всех активов
     use_fixed_pct: bool = False
+
+    # === Масштабирование порога по горизонту (√T scaling) ===
+    # Если True - порог увеличивается с горизонтом по правилу √(horizon/base_horizon)
+    # Это учитывает, что волатильность растёт пропорционально √T
+    use_horizon_scaling: bool = True
+    base_horizon: int = 60  # Базовый горизонт для scaling (секунды)
+
+    # === Фильтрация "плоских" символов ===
+    # Символы, где HOLD > max_hold_pct во всех горизонтах, исключаются
+    max_hold_pct: float = 85.0  # Максимальный % HOLD для включения символа
 
     def __post_init__(self):
         if self.horizons is None:
             # Горизонты: 1 мин, 3 мин, 5 мин
             self.horizons = [60, 180, 300]
+
+    def get_scaled_threshold(self, horizon: int) -> float:
+        """
+        Возвращает порог с учётом масштабирования по горизонту.
+
+        По теории случайных блужданий: σ(T) = σ(1) × √T
+        Поэтому порог для большего горизонта должен быть больше.
+        """
+        if not self.use_horizon_scaling:
+            return self.fixed_threshold_pct
+
+        # √T scaling: threshold(T) = threshold(base) × √(T/base)
+        scale_factor = np.sqrt(horizon / self.base_horizon)
+        return self.fixed_threshold_pct * scale_factor
 
 
 # Конфигурация по умолчанию - оптимизирована для уменьшения HOLD
@@ -271,7 +294,8 @@ def apply_triple_barrier_label(
     current_price: float,
     future_price: float,
     atr: float,
-    config: LabelingConfig
+    config: LabelingConfig,
+    horizon: int = 60
 ) -> Tuple[int, float]:
     """
     Применяет Triple Barrier логику для определения label.
@@ -281,6 +305,7 @@ def apply_triple_barrier_label(
         future_price: Будущая цена
         atr: Average True Range на момент входа
         config: Конфигурация labeling
+        horizon: Горизонт предсказания в секундах (для scaling)
 
     Returns:
         (label, movement) где label: 0=SELL, 1=HOLD, 2=BUY
@@ -293,15 +318,17 @@ def apply_triple_barrier_label(
 
     # Определяем порог
     if config.use_fixed_pct:
-        # Режим фиксированного процента - одинаковый для всех символов
-        threshold = config.fixed_threshold_pct / 100
+        # Режим фиксированного процента с horizon scaling
+        threshold_pct = config.get_scaled_threshold(horizon)
+        threshold = threshold_pct / 100
     elif atr is not None and atr > 0 and not np.isnan(atr):
         # Режим ATR - адаптивный к волатильности символа
         # threshold = (ATR / price) * multiplier = relative_volatility * multiplier
         threshold = (atr / current_price) * config.tp_multiplier
     else:
-        # Fallback
-        threshold = config.fixed_threshold_pct / 100
+        # Fallback с horizon scaling
+        threshold_pct = config.get_scaled_threshold(horizon)
+        threshold = threshold_pct / 100
 
     # Минимальный порог
     min_threshold = config.min_movement_pct / 100
@@ -353,13 +380,21 @@ class TripleBarrierPreprocessor:
 
         if self.config.use_fixed_pct:
             print(f"  • РЕЖИМ: ФИКСИРОВАННЫЙ ПРОЦЕНТ")
-            print(f"  • Порог: {self.config.fixed_threshold_pct}% для ВСЕХ символов")
+            if self.config.use_horizon_scaling:
+                print(f"  • Базовый порог: {self.config.fixed_threshold_pct}% (для {self.config.base_horizon}s)")
+                print(f"  • √T Scaling: ВКЛЮЧЁН")
+                for h in self.config.horizons:
+                    scaled = self.config.get_scaled_threshold(h)
+                    print(f"    - {h}s → {scaled:.3f}%")
+            else:
+                print(f"  • Порог: {self.config.fixed_threshold_pct}% для ВСЕХ горизонтов")
         else:
             print(f"  • РЕЖИМ: АДАПТИВНЫЙ ATR")
             print(f"  • TP множитель: {self.config.tp_multiplier}x ATR")
             print(f"  • SL множитель: {self.config.sl_multiplier}x ATR")
 
         print(f"  • Min movement: {self.config.min_movement_pct}%")
+        print(f"  • Фильтр плоских символов: HOLD > {self.config.max_hold_pct}%")
         print("=" * 80)
 
         # Загрузка данных
@@ -389,6 +424,7 @@ class TripleBarrierPreprocessor:
         # Обработка по символам
         symbols = df['symbol'].unique()
         all_processed = []
+        skipped_symbols = []  # Символы с высоким HOLD
 
         for symbol in symbols:
             print(f"\n{'─' * 70}")
@@ -396,10 +432,41 @@ class TripleBarrierPreprocessor:
             print(f"{'─' * 70}")
 
             symbol_df = df[df['symbol'] == symbol].copy()
-            processed_df = self._process_symbol(symbol, symbol_df)
-            all_processed.append(processed_df)
+            processed_df, hold_pct_by_horizon = self._process_symbol(symbol, symbol_df)
+
+            # Проверяем, является ли символ "плоским" (HOLD > max_hold_pct во ВСЕХ горизонтах)
+            is_flat = all(
+                hold_pct > self.config.max_hold_pct
+                for hold_pct in hold_pct_by_horizon.values()
+            )
+
+            if is_flat:
+                min_hold = min(hold_pct_by_horizon.values())
+                print(f"\n   ⚠️ ПРОПУЩЕН: HOLD > {self.config.max_hold_pct}% во всех горизонтах "
+                      f"(min HOLD = {min_hold:.1f}%)")
+                skipped_symbols.append((symbol, len(symbol_df), hold_pct_by_horizon))
+                self.stats['skipped_symbols'] = self.stats.get('skipped_symbols', [])
+                self.stats['skipped_symbols'].append(symbol)
+            else:
+                all_processed.append(processed_df)
+
+        # Выводим сводку по пропущенным символам
+        if skipped_symbols:
+            print(f"\n{'=' * 70}")
+            print(f"⚠️ ПРОПУЩЕНО {len(skipped_symbols)} символов с HOLD > {self.config.max_hold_pct}%:")
+            total_skipped = 0
+            for sym, count, hold_stats in skipped_symbols:
+                holds_str = ", ".join([f"{h}s:{p:.0f}%" for h, p in hold_stats.items()])
+                print(f"   • {sym}: {count:,} семплов ({holds_str})")
+                total_skipped += count
+            print(f"   Всего пропущено: {total_skipped:,} семплов")
+            print(f"{'=' * 70}")
 
         # Объединяем результаты
+        if not all_processed:
+            print("\n❌ Нет данных после фильтрации!")
+            return
+
         final_df = pd.concat(all_processed, ignore_index=True)
 
         # Добавляем lagged features
@@ -450,8 +517,13 @@ class TripleBarrierPreprocessor:
         print("   ✓ Timestamps нормализованы")
         return df
 
-    def _process_symbol(self, symbol: str, df: pd.DataFrame) -> pd.DataFrame:
-        """Обработка данных для одного символа."""
+    def _process_symbol(self, symbol: str, df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[int, float]]:
+        """
+        Обработка данных для одного символа.
+
+        Returns:
+            (DataFrame с метками, словарь {horizon: hold_pct})
+        """
         df = df.sort_values('timestamp').reset_index(drop=True)
         n = len(df)
         print(f"   Семплов: {n:,}")
@@ -470,12 +542,20 @@ class TripleBarrierPreprocessor:
         # Создаем индекс timestamp -> row для быстрого поиска
         timestamp_to_idx = dict(zip(df['timestamp'], range(n)))
 
+        # Статистика HOLD% по горизонтам для фильтрации
+        hold_pct_by_horizon = {}
+
         # Обрабатываем каждый горизонт
         for horizon in self.config.horizons:
             label_col = f'future_direction_{horizon}s'
             movement_col = f'future_movement_{horizon}s'
 
-            print(f"\n   Горизонт {horizon}s:")
+            # Показываем scaled threshold если включён scaling
+            if self.config.use_fixed_pct and self.config.use_horizon_scaling:
+                scaled_thresh = self.config.get_scaled_threshold(horizon)
+                print(f"\n   Горизонт {horizon}s (порог: {scaled_thresh:.3f}%):")
+            else:
+                print(f"\n   Горизонт {horizon}s:")
 
             labels = np.full(n, 1, dtype=np.int32)  # Default = HOLD
             movements = np.full(n, 0.0, dtype=np.float64)
@@ -504,7 +584,7 @@ class TripleBarrierPreprocessor:
 
                 if future_price is not None and not pd.isna(future_price):
                     label, movement = apply_triple_barrier_label(
-                        current_price, future_price, current_atr, self.config
+                        current_price, future_price, current_atr, self.config, horizon
                     )
                     labels[idx] = label
                     movements[idx] = movement
@@ -517,10 +597,14 @@ class TripleBarrierPreprocessor:
             sell = (labels == 0).sum()
             hold = (labels == 1).sum()
             buy = (labels == 2).sum()
+            hold_pct = 100 * hold / n if n > 0 else 0
+
+            # Сохраняем HOLD% для фильтрации
+            hold_pct_by_horizon[horizon] = hold_pct
 
             print(f"      Labeled: {labeled_count:,}/{n:,} ({100*labeled_count/n:.1f}%)")
             print(f"      Distribution: SELL={sell:,} ({100*sell/n:.1f}%) | "
-                  f"HOLD={hold:,} ({100*hold/n:.1f}%) | BUY={buy:,} ({100*buy/n:.1f}%)")
+                  f"HOLD={hold:,} ({hold_pct:.1f}%) | BUY={buy:,} ({100*buy/n:.1f}%)")
 
             # Обновляем общую статистику
             if horizon == 300:  # Основной горизонт для статистики
@@ -531,7 +615,7 @@ class TripleBarrierPreprocessor:
                 self.stats['label_distribution']['HOLD'] = self.stats['label_distribution'].get('HOLD', 0) + hold
                 self.stats['label_distribution']['BUY'] = self.stats['label_distribution'].get('BUY', 0) + buy
 
-        return df
+        return df, hold_pct_by_horizon
 
     def _cleanup_old_files(self, df: pd.DataFrame):
         """Удаляет старые parquet файлы перед записью новых."""
@@ -563,7 +647,12 @@ class TripleBarrierPreprocessor:
         print("📊 ИТОГИ PREPROCESSING V2")
         print("=" * 80)
 
-        print(f"\n✓ Всего семплов: {self.stats['total_samples']:,}")
+        # Информация о пропущенных символах
+        skipped = self.stats.get('skipped_symbols', [])
+        if skipped:
+            print(f"\n🚫 Пропущено символов (HOLD > {self.config.max_hold_pct}%): {len(skipped)}")
+
+        print(f"\n✓ Всего семплов (после фильтрации): {self.stats['total_samples']:,}")
         print(f"✓ Размечено: {self.stats['labeled_samples']:,}")
 
         dist = self.stats.get('label_distribution', {})
@@ -579,7 +668,7 @@ class TripleBarrierPreprocessor:
             hold_pct = 100 * dist.get('HOLD', 0) / total if total > 0 else 0
             if hold_pct > 60:
                 print(f"\n⚠️ WARNING: HOLD class = {hold_pct:.1f}%")
-                print("   Рассмотрите увеличение tp_multiplier/sl_multiplier")
+                print("   Рассмотрите уменьшение --fixed-pct или включение --no-scaling")
             elif hold_pct > 40:
                 print(f"\n✓ HOLD class = {hold_pct:.1f}% - приемлемо")
             else:
@@ -635,7 +724,20 @@ def main():
         type=float,
         default=None,
         help='Использовать фиксированный %% порог для ВСЕХ символов (игнорирует ATR). '
-             'Например: --fixed-pct 0.1 = 0.1%% порог'
+             'Например: --fixed-pct 0.1 = 0.1%% порог (базовый для 60s)'
+    )
+    parser.add_argument(
+        '--no-scaling',
+        action='store_true',
+        help='Отключить √T scaling порогов по горизонтам. '
+             'По умолчанию порог масштабируется: 180s=×√3, 300s=×√5'
+    )
+    parser.add_argument(
+        '--max-hold',
+        type=float,
+        default=85.0,
+        help='Максимальный %% HOLD для включения символа (default: 85). '
+             'Символы с HOLD > max-hold во ВСЕХ горизонтах будут пропущены'
     )
 
     args = parser.parse_args()
@@ -650,7 +752,9 @@ def main():
         sl_multiplier=args.sl_mult,
         min_movement_pct=args.min_movement,
         use_fixed_pct=use_fixed,
-        fixed_threshold_pct=fixed_threshold
+        fixed_threshold_pct=fixed_threshold,
+        use_horizon_scaling=not args.no_scaling,
+        max_hold_pct=args.max_hold
     )
 
     # Создаем процессор
