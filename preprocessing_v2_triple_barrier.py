@@ -183,7 +183,7 @@ def add_lagged_features(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
     # затем backward fill для оставшихся NaN
     lag_cols_added = list(new_columns.keys())
     if lag_cols_added:
-        df[lag_cols_added] = df[lag_cols_added].fillna(method='bfill')
+        df[lag_cols_added] = df[lag_cols_added].bfill()
 
     n_new_features = len(new_columns)
     if verbose:
@@ -298,7 +298,7 @@ def add_derived_features(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame
     # Заполняем NaN в derived features (bfill для начала серии)
     existing_derived = [c for c in derived_feature_names if c in df.columns]
     if existing_derived:
-        df[existing_derived] = df[existing_derived].fillna(method='bfill')
+        df[existing_derived] = df[existing_derived].bfill()
         # Если остались NaN (напр. все значения NaN), заполняем 0
         df[existing_derived] = df[existing_derived].fillna(0)
 
