@@ -133,31 +133,38 @@ TOP_SEPARATING_FEATURES = [
 LAGS = [1, 2, 4, 8]  # ~15s, 30s, 1min, 2min назад
 
 
-def add_lagged_features(df: pd.DataFrame) -> pd.DataFrame:
+def add_lagged_features(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
     """
     Добавляет lagged версии top-корреляционных фич.
 
     Это помогает модели видеть динамику изменений.
 
+    ВАЖНО: Эта функция должна вызываться для каждого символа ОТДЕЛЬНО,
+    чтобы shift() не смешивал данные разных символов!
+
     Args:
         df: DataFrame с фичами
+        verbose: Выводить ли информацию о процессе
 
     Returns:
         DataFrame с добавленными lagged фичами
     """
-    print("\n📊 Добавление Lagged Features...")
+    if verbose:
+        print("\n📊 Добавление Lagged Features...")
 
     # Комбинируем списки уникальных фич для лаггинга
     features_to_lag = list(set(TOP_CORRELATED_FEATURES + TOP_SEPARATING_FEATURES))
 
     # Проверяем какие фичи есть в данных
     available_features = [f for f in features_to_lag if f in df.columns]
-    print(f"   Фичи для лаггинга: {len(available_features)}/{len(features_to_lag)}")
+    if verbose:
+        print(f"   Фичи для лаггинга: {len(available_features)}/{len(features_to_lag)}")
 
     # Удаляем существующие lagged колонки (если запуск на уже обработанных данных)
     existing_lag_cols = [c for c in df.columns if '_lag' in c]
     if existing_lag_cols:
-        print(f"   ⚠️ Удаляем {len(existing_lag_cols)} существующих lagged колонок")
+        if verbose:
+            print(f"   ⚠️ Удаляем {len(existing_lag_cols)} существующих lagged колонок")
         df = df.drop(columns=existing_lag_cols)
 
     new_columns = {}
@@ -173,24 +180,30 @@ def add_lagged_features(df: pd.DataFrame) -> pd.DataFrame:
             df[col_name] = values
 
     n_new_features = len(new_columns)
-    print(f"   ✓ Добавлено {n_new_features} lagged features")
+    if verbose:
+        print(f"   ✓ Добавлено {n_new_features} lagged features")
 
     return df
 
 
-def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
+def add_derived_features(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
     """
     Добавляет производные фичи на основе top-корреляций.
 
     Создает комбинации фич, которые могут иметь лучшую предсказательную силу.
 
+    ВАЖНО: Эта функция должна вызываться для каждого символа ОТДЕЛЬНО,
+    чтобы diff() и rolling() не смешивали данные разных символов!
+
     Args:
         df: DataFrame с фичами
+        verbose: Выводить ли информацию о процессе
 
     Returns:
         DataFrame с добавленными derived фичами
     """
-    print("\n🔧 Добавление Derived Features...")
+    if verbose:
+        print("\n🔧 Добавление Derived Features...")
 
     # Список derived фич, которые будем создавать
     derived_feature_names = [
@@ -204,7 +217,8 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     # Удаляем существующие derived колонки (если запуск на уже обработанных данных)
     existing_derived_cols = [c for c in df.columns if c in derived_feature_names]
     if existing_derived_cols:
-        print(f"   ⚠️ Удаляем {len(existing_derived_cols)} существующих derived колонок")
+        if verbose:
+            print(f"   ⚠️ Удаляем {len(existing_derived_cols)} существующих derived колонок")
         df = df.drop(columns=existing_derived_cols)
 
     added_count = 0
@@ -275,7 +289,8 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
         df['volatility_regime'] = (df['orderbook_volatility'].values / (vol_ma + 1e-10))
         added_count += 1
 
-    print(f"   ✓ Добавлено {added_count} derived features")
+    if verbose:
+        print(f"   ✓ Добавлено {added_count} derived features")
 
     return df
 
@@ -475,6 +490,10 @@ class TripleBarrierPreprocessor:
                 self.stats['skipped_symbols'] = self.stats.get('skipped_symbols', [])
                 self.stats['skipped_symbols'].append(symbol)
             else:
+                # ВАЖНО: Добавляем lagged/derived features ДО объединения символов,
+                # чтобы shift() работал только внутри одного символа
+                processed_df = add_lagged_features(processed_df, verbose=False)
+                processed_df = add_derived_features(processed_df, verbose=False)
                 all_processed.append(processed_df)
 
         # Выводим сводку по пропущенным символам
@@ -496,11 +515,19 @@ class TripleBarrierPreprocessor:
 
         final_df = pd.concat(all_processed, ignore_index=True)
 
-        # Добавляем lagged features
-        final_df = add_lagged_features(final_df)
-
-        # Добавляем derived features
-        final_df = add_derived_features(final_df)
+        # Lagged и derived features уже добавлены для каждого символа отдельно
+        # Это критически важно: shift() должен работать только внутри символа!
+        n_lag_cols = len([c for c in final_df.columns if '_lag' in c])
+        n_derived_cols = len([c for c in final_df.columns if c in [
+            'imbalance_5_change', 'imbalance_5_change_pct', 'imbalance_5_momentum',
+            'imbalance_ratio_5_10', 'imbalance_vol_adjusted', 'spread_change',
+            'spread_momentum', 'imbalance_volume_weighted', 'rsi_diff', 'rsi_14_momentum',
+            'composite_signal', 'smart_money_momentum', 'smart_money_acceleration',
+            'trade_quote_ratio', 'volatility_regime'
+        ]])
+        print(f"\n📊 Добавлено Lagged/Derived Features (per-symbol):")
+        print(f"   ✓ {n_lag_cols} lagged features")
+        print(f"   ✓ {n_derived_cols} derived features")
 
         # Сохранение
         print(f"\n{'=' * 70}")
