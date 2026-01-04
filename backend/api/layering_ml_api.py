@@ -24,6 +24,9 @@ from backend.config import get_project_data_path
 
 logger = get_logger(__name__)
 
+# Project root directory (where main.py and scripts are located)
+_PROJECT_ROOT = Path(__file__).parent.parent.parent
+
 # Пути к данным (абсолютные, от project_root)
 _LAYERING_DATA_DIR = Path(get_project_data_path("ml_training/layering"))
 
@@ -43,20 +46,23 @@ def run_script_sync(script_path: str, timeout: int = 300) -> Dict[str, Any]:
     that's running the backend (includes virtual environment if active).
 
     Args:
-        script_path: Путь к скрипту
+        script_path: Путь к скрипту (относительный от project root)
         timeout: Таймаут в секундах
 
     Returns:
         Dict с output, error, return_code
     """
     try:
+        # Resolve script path relative to project root
+        full_script_path = _PROJECT_ROOT / script_path
+
         # Use sys.executable to ensure we use the same Python (with venv)
         result = subprocess.run(
-            [sys.executable, script_path],
+            [sys.executable, str(full_script_path)],
             capture_output=True,
             text=True,
             timeout=timeout,
-            cwd=Path(__file__).parent.parent.parent  # Project root
+            cwd=_PROJECT_ROOT
         )
 
         return {
@@ -250,10 +256,10 @@ async def check_data_status(background_tasks: BackgroundTasks) -> Dict[str, Any]
         # Run check script
         script_path = "check_layering_data_status.py"
 
-        if not Path(script_path).exists():
+        if not (_PROJECT_ROOT / script_path).exists():
             raise HTTPException(
                 status_code=404,
-                detail=f"Check script not found: {script_path}"
+                detail=f"Check script not found: {script_path} (looked in {_PROJECT_ROOT})"
             )
 
         result = await run_script_async(script_path, timeout=60)
@@ -321,7 +327,7 @@ async def train_layering_model(
 
             # Run labeling script
             label_script = "label_layering_data.py"
-            if Path(label_script).exists():
+            if (_PROJECT_ROOT / label_script).exists():
                 label_result = await run_script_async(label_script, timeout=120)
 
                 if label_result['success']:
@@ -369,10 +375,10 @@ async def train_layering_model(
         else:
             script_path = "train_layering_model_debug.py"
 
-        if not Path(script_path).exists():
+        if not (_PROJECT_ROOT / script_path).exists():
             raise HTTPException(
                 status_code=404,
-                detail=f"Training script not found: {script_path}"
+                detail=f"Training script not found: {script_path} (looked in {_PROJECT_ROOT})"
             )
 
         logger.info(f"Starting layering model training with script: {script_path}")
@@ -458,10 +464,10 @@ async def analyze_data(background_tasks: BackgroundTasks) -> Dict[str, Any]:
     try:
         script_path = "analyze_layering_ml_data.py"
 
-        if not Path(script_path).exists():
+        if not (_PROJECT_ROOT / script_path).exists():
             raise HTTPException(
                 status_code=404,
-                detail=f"Analysis script not found: {script_path}"
+                detail=f"Analysis script not found: {script_path} (looked in {_PROJECT_ROOT})"
             )
 
         result = await run_script_async(script_path, timeout=120)
