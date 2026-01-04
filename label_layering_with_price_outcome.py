@@ -243,7 +243,7 @@ def match_and_label(
         closest_idx = (matches['timestamp'] - ts).abs().idxmin()
         closest = matches.loc[closest_idx]
 
-        # Get movement value
+        # Get movement value (stored as %, convert to bps: 1% = 100 bps)
         movement = closest.get(movement_col)
         if pd.isna(movement):
             movement = closest.get(fallback_col)
@@ -252,11 +252,16 @@ def match_and_label(
             no_match_count += 1
             continue
 
-        matched_count += 1
-        abs_movement = abs(movement)
+        # CRITICAL: Convert from % to basis points (bps)
+        # future_movement is stored as percentage (0.01 = 1%)
+        # We need basis points: 1% = 100 bps
+        movement_bps = movement * 100  # Convert % to bps
 
-        # Store movement
-        layering_df.at[idx, 'outcome_movement_bps'] = movement
+        matched_count += 1
+        abs_movement = abs(movement_bps)
+
+        # Store movement in bps
+        layering_df.at[idx, 'outcome_movement_bps'] = movement_bps
 
         # Apply labeling thresholds
         if abs_movement >= config.MIN_MOVEMENT_FOR_TRUE:
