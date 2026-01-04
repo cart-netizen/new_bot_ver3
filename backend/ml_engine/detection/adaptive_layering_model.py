@@ -178,7 +178,7 @@ class AdaptiveLayeringModel:
 
     # Define feature names (v2.0 - no detector_confidence or component scores!)
     self.feature_names = [
-      # Pattern behavioral features
+      # Pattern behavioral features (raw)
       'cancellation_rate',           # Key indicator: how many orders canceled
       'spoofing_execution_ratio',    # Key indicator: how many orders executed
       'placement_duration',          # How long orders were active
@@ -204,6 +204,18 @@ class AdaptiveLayeringModel:
 
       # Execution metrics
       'aggressive_ratio',            # Ratio of aggressive orders
+
+      # === DERIVED FEATURES (computed at prediction time) ===
+      'cancel_execute_ratio',        # cancellation_rate / execution_ratio
+      'volume_per_order',            # total_volume / total_orders
+      'order_placement_speed',       # total_orders / placement_duration
+      'layer_density',               # layer_count / price_spread
+      'impact_efficiency',           # price_change / volume
+      'hour_sin',                    # sin(hour) for cyclical encoding
+      'hour_cos',                    # cos(hour) for cyclical encoding
+      'is_weekend',                  # 1 if weekend, 0 otherwise
+      'volatility_adjusted_impact',  # price_change / volatility
+      'liquidity_utilization',       # volume / liquidity
     ]
 
     # NOTE: Removed these to avoid data leakage:
@@ -430,9 +442,62 @@ class AdaptiveLayeringModel:
     return feature_df
 
   def _prepare_single_sample(self, features: Dict) -> np.ndarray:
-    """Prepare single sample for prediction."""
-    sample = []
+    """Prepare single sample for prediction with derived features."""
+    # First, compute derived features (same as in training)
+    features = dict(features)  # Copy to avoid modifying original
 
+    # === COMPUTE DERIVED FEATURES ===
+    cancellation_rate = features.get('cancellation_rate', 0.5)
+    execution_ratio = features.get('spoofing_execution_ratio', 0.5)
+    total_volume = features.get('total_volume_usdt', 0.0)
+    total_orders = features.get('total_orders', 1)
+    placement_duration = features.get('placement_duration', 30.0)
+    layer_count = features.get('layer_count', 1)
+    price_spread = features.get('price_spread_bps', 0.1)
+    price_change = features.get('price_change_bps', 0.0)
+    volatility = features.get('volatility_24h', 1.0)
+    liquidity = features.get('liquidity_score', 0.5)
+    hour_utc = features.get('hour_utc', 12)
+    day_of_week = features.get('day_of_week', 3)
+
+    # 1. Cancel-Execute Ratio
+    features['cancel_execute_ratio'] = min(
+      cancellation_rate / (execution_ratio + 0.01), 100.0
+    )
+
+    # 2. Volume per Order
+    features['volume_per_order'] = total_volume / (total_orders + 1)
+
+    # 3. Order placement speed
+    features['order_placement_speed'] = total_orders / (placement_duration + 0.1)
+
+    # 4. Layer Density
+    features['layer_density'] = layer_count / (price_spread + 0.1)
+
+    # 5. Impact Efficiency
+    features['impact_efficiency'] = min(
+      abs(price_change) / (total_volume / 10000 + 0.1), 100.0
+    )
+
+    # 6. Cyclical hour encoding
+    features['hour_sin'] = np.sin(2 * np.pi * hour_utc / 24)
+    features['hour_cos'] = np.cos(2 * np.pi * hour_utc / 24)
+
+    # 7. Is weekend
+    features['is_weekend'] = 1 if day_of_week >= 5 else 0
+
+    # 8. Volatility-adjusted impact
+    features['volatility_adjusted_impact'] = min(
+      abs(price_change) / (volatility + 0.1), 100.0
+    )
+
+    # 9. Liquidity utilization
+    features['liquidity_utilization'] = min(
+      total_volume / (liquidity * 100000 + 1), 100.0
+    )
+
+    # Now build the sample vector
+    sample = []
     for feature_name in self.feature_names:
       value = features.get(feature_name, 0.0)
       # Handle None values
