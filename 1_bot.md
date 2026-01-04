@@ -1,4 +1,15 @@
+Запуск
+python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+Разница:
+Команда	Что делает
+backend.api.app:app	Только REST API (пустой сервер)
+backend.main:app	Полный бот + API + WebSocket + торговля
+
+Фронт cd frontend
+npm run dev
+
 Техническое задание: Торговый бот для Bybit
+
 Оглавление
 
 Обзор проекта
