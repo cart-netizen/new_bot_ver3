@@ -254,6 +254,7 @@ def prepare_features(df: pd.DataFrame) -> tuple:
 def find_optimal_threshold(y_true, y_pred_proba) -> tuple:
     """
     Find optimal classification threshold using F1 score.
+    Returns Python float types for JSON serialization.
     """
     precisions, recalls, thresholds = precision_recall_curve(y_true, y_pred_proba)
 
@@ -265,11 +266,12 @@ def find_optimal_threshold(y_true, y_pred_proba) -> tuple:
     best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
     best_f1 = f1_scores[best_idx]
 
-    return best_threshold, best_f1
+    # Convert to Python float for JSON serialization
+    return float(best_threshold), float(best_f1)
 
 
 def calculate_metrics(y_true, y_pred, y_pred_proba) -> dict:
-    """Calculate comprehensive metrics."""
+    """Calculate comprehensive metrics. All values converted to Python types for JSON serialization."""
     accuracy = accuracy_score(y_true, y_pred)
     precision = precision_score(y_true, y_pred, zero_division=0)
     recall = recall_score(y_true, y_pred, zero_division=0)
@@ -283,12 +285,13 @@ def calculate_metrics(y_true, y_pred, y_pred_proba) -> dict:
     cm = confusion_matrix(y_true, y_pred)
     tn, fp, fn, tp = cm.ravel() if cm.size == 4 else (0, 0, 0, 0)
 
+    # Convert all numpy types to Python native types for JSON serialization
     return {
-        'accuracy': accuracy,
-        'precision': precision,
-        'recall': recall,
-        'f1_score': f1,
-        'roc_auc': roc_auc,
+        'accuracy': float(accuracy),
+        'precision': float(precision),
+        'recall': float(recall),
+        'f1_score': float(f1),
+        'roc_auc': float(roc_auc),
         'confusion_matrix': cm.tolist(),
         'true_negatives': int(tn),
         'false_positives': int(fp),
@@ -317,7 +320,7 @@ def train_and_evaluate_model(model, X_train, X_test, y_train, y_test, model_name
     # Recalculate with optimal threshold
     y_pred_optimal = (y_pred_proba >= optimal_threshold).astype(int)
     metrics_optimal = calculate_metrics(y_test, y_pred_optimal, y_pred_proba)
-    metrics_optimal['optimal_threshold'] = optimal_threshold
+    metrics_optimal['optimal_threshold'] = float(optimal_threshold)
 
     print(f"  Default (0.5):  Accuracy={metrics['accuracy']:.3f}, Precision={metrics['precision']:.3f}, "
           f"Recall={metrics['recall']:.3f}, F1={metrics['f1_score']:.3f}, AUC={metrics['roc_auc']:.3f}")
@@ -525,7 +528,8 @@ def main():
     else:
         importance = np.zeros(len(feature_names))
 
-    feature_importance = dict(zip(feature_names, importance))
+    # Convert numpy types to Python types for JSON serialization
+    feature_importance = {k: float(v) for k, v in zip(feature_names, importance)}
     feature_importance = dict(sorted(feature_importance.items(), key=lambda x: x[1], reverse=True))
 
     print("\nTop 15 Most Important Features:")
@@ -554,26 +558,27 @@ def main():
     optimal_threshold = best_result['optimal_threshold']
     final_metrics = best_result['metrics_optimal']
 
+    # Ensure all numeric values are Python native types for JSON serialization
     model_package = {
         'version': '2.0.0',
         'trained_at': datetime.now().isoformat(),
-        'training_samples': len(labeled_df),
+        'training_samples': int(len(labeled_df)),
         'feature_names': feature_names,
         'feature_importance': feature_importance,
         'classifier': best_model,
         'scaler': scaler,
-        'optimal_threshold': optimal_threshold,
+        'optimal_threshold': float(optimal_threshold),
         'metrics': final_metrics,
         'model_type': best_result['model_name'],
         'class_balance': {
-            'true_count': true_count,
-            'false_count': false_count,
-            'imbalance_ratio': imbalance_ratio
+            'true_count': int(true_count),
+            'false_count': int(false_count),
+            'imbalance_ratio': float(imbalance_ratio)
         },
         'cv_scores': {
             'mean': float(cv_scores.mean()),
             'std': float(cv_scores.std()),
-            'scores': cv_scores.tolist()
+            'scores': [float(s) for s in cv_scores]
         },
         'excluded_features': EXCLUDED_FEATURES,
         'training_notes': 'v2.0 - No detector_confidence, improved feature engineering'
