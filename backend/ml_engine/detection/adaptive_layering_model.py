@@ -176,39 +176,40 @@ class AdaptiveLayeringModel:
     # Feature scaler
     self.scaler = StandardScaler()
 
-    # Define feature names
+    # Define feature names (v2.0 - no detector_confidence or component scores!)
     self.feature_names = [
-      # Pattern features
-      'total_volume_btc',
-      'total_volume_usdt',
-      'placement_duration',
-      'cancellation_rate',
-      'spoofing_execution_ratio',
-      'layer_count',
-      'total_orders',
-      'avg_order_size',
-      'price_spread_bps',
+      # Pattern behavioral features
+      'cancellation_rate',           # Key indicator: how many orders canceled
+      'spoofing_execution_ratio',    # Key indicator: how many orders executed
+      'placement_duration',          # How long orders were active
+      'layer_count',                 # Number of price layers
+      'total_orders',                # Total orders in pattern
+      'avg_order_size',              # Average order size
+      'price_spread_bps',            # Price spread of layers
+
+      # Volume features (keep only one to avoid multicollinearity)
+      'total_volume_usdt',           # Total volume in USD
 
       # Market context
-      'volatility_24h',
-      'volume_24h',
-      'liquidity_score',
-      'spread_bps',
-      'hour_utc',
-      'day_of_week',
+      'volatility_24h',              # Market volatility
+      'liquidity_score',             # Market liquidity
+      'spread_bps',                  # Current spread
+      'hour_utc',                    # Time of day
+      'day_of_week',                 # Day of week
 
       # Price impact
-      'price_change_bps',
-      'expected_impact_bps',
-      'impact_ratio',
+      'price_change_bps',            # Actual price change
+      'expected_impact_bps',         # Expected impact
+      'impact_ratio',                # Ratio of actual to expected
 
-      # Component scores
-      'volume_score',
-      'timing_score',
-      'cancellation_score',
-      'execution_correlation_score',
-      'price_impact_score'
+      # Execution metrics
+      'aggressive_ratio',            # Ratio of aggressive orders
     ]
+
+    # NOTE: Removed these to avoid data leakage:
+    # - detector_confidence (this is what we're trying to predict!)
+    # - volume_score, timing_score, cancellation_score, etc. (components of detector_confidence)
+    # - total_volume_btc (multicollinear with total_volume_usdt)
 
   def train(
       self,
@@ -388,7 +389,7 @@ class AdaptiveLayeringModel:
     )
 
   def _prepare_features(self, df: pd.DataFrame) -> pd.DataFrame:
-    """Prepare feature matrix from DataFrame."""
+    """Prepare feature matrix from DataFrame with proper NaN handling."""
     # Select and order features
     feature_df = pd.DataFrame()
 
@@ -399,8 +400,32 @@ class AdaptiveLayeringModel:
         # Fill missing features with 0
         feature_df[feature_name] = 0.0
 
-    # Handle NaN values
+    # === PROPER NaN HANDLING (not just zeros!) ===
+    # For rate/ratio features: use median
+    rate_features = [f for f in feature_df.columns if 'rate' in f or 'ratio' in f]
+    for f in rate_features:
+      if feature_df[f].isna().any():
+        feature_df[f] = feature_df[f].fillna(feature_df[f].median())
+
+    # For count features: use 0
+    count_features = ['layer_count', 'total_orders']
+    for f in count_features:
+      if f in feature_df.columns:
+        feature_df[f] = feature_df[f].fillna(0)
+
+    # For other numeric features: use median
+    for f in feature_df.columns:
+      if feature_df[f].isna().any():
+        median_val = feature_df[f].median()
+        if pd.isna(median_val):
+          median_val = 0.0
+        feature_df[f] = feature_df[f].fillna(median_val)
+
+    # Final safety: fill any remaining NaN with 0
     feature_df = feature_df.fillna(0.0)
+
+    # Replace infinities
+    feature_df = feature_df.replace([np.inf, -np.inf], 0)
 
     return feature_df
 

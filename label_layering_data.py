@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """
-Automatic Labeling for Collected Layering ML Data
+Improved Automatic Labeling for Collected Layering ML Data
+
+FIXED: Removed circular dependency on detector_confidence!
 
 This script labels unlabeled layering ML data by analyzing:
-1. Pattern confidence scores from detector
-2. Market impact metrics (price_change, impact_ratio)
-3. Execution correlation (aggressive_ratio, spoofing_execution_ratio)
+1. OUTCOME-BASED metrics (price movement after pattern)
+2. BEHAVIORAL metrics (cancellation rate, execution ratio)
+3. MARKET IMPACT metrics (price_change_bps, impact_ratio)
 
-Labeling criteria:
-- TRUE POSITIVE: High confidence + significant market impact + low execution
-- FALSE POSITIVE: Low confidence + minimal impact + high execution rate
+Labeling Strategy:
+- TRUE POSITIVE: Orders were canceled (not filled) + price moved as expected
+- FALSE POSITIVE: Orders were filled OR price didn't move OR low cancellation
+
+Key principle: Label based on WHAT HAPPENED, not detector confidence!
 
 Run: python label_layering_data.py
 """
@@ -17,21 +21,25 @@ Run: python label_layering_data.py
 import sys
 from pathlib import Path
 import warnings
+import json
+from datetime import datetime
 
 # Check dependencies before importing
 try:
     import pandas as pd
+    import numpy as np
 except ImportError:
     print("=" * 80)
-    print("❌ ERROR: Required dependencies not installed")
+    print("ERROR: Required dependencies not installed")
     print("=" * 80)
     print()
     print("The following packages are required:")
     print("  - pandas")
     print("  - pyarrow")
+    print("  - numpy")
     print()
     print("Install with:")
-    print("  pip install pandas pyarrow")
+    print("  pip install pandas pyarrow numpy")
     print()
     print("=" * 80)
     sys.exit(1)
@@ -49,26 +57,71 @@ from backend.core.logger import get_logger
 logger = get_logger(__name__)
 
 
-def label_data_automatic():
-    """
-    Automatically label collected data based on pattern characteristics.
+# ============================================================
+# LABELING CONFIGURATION
+# ============================================================
 
-    Uses detector confidence, market impact, and execution metrics to determine
-    if a pattern is a true layering attempt or false positive.
+class LabelingConfig:
+    """
+    Configuration for labeling criteria.
+
+    Key insight: Real layering has these characteristics:
+    1. Orders are placed but NOT executed (high cancellation)
+    2. Price moves in the direction the manipulator wants
+    3. Orders are canceled quickly after achieving the goal
+    """
+
+    # === BEHAVIORAL CRITERIA ===
+    # Cancellation rate: real layering has HIGH cancellation (orders are fake)
+    MIN_CANCELLATION_FOR_TRUE = 0.65  # At least 65% orders canceled
+    MAX_CANCELLATION_FOR_FALSE = 0.40  # Less than 40% = likely real orders
+
+    # Execution ratio: real layering has LOW execution (orders shouldn't be filled)
+    MAX_EXECUTION_FOR_TRUE = 0.35  # Less than 35% executed
+    MIN_EXECUTION_FOR_FALSE = 0.50  # More than 50% executed = not layering
+
+    # === PRICE IMPACT CRITERIA ===
+    # Real layering causes price movement
+    MIN_PRICE_CHANGE_BPS_FOR_TRUE = 3.0  # At least 3 bps price movement
+
+    # Impact ratio: expected vs actual impact
+    MIN_IMPACT_RATIO_FOR_TRUE = 0.3  # Price moved at least 30% of expected
+
+    # === TIMING CRITERIA ===
+    # Real layering: orders placed and canceled quickly
+    MAX_DURATION_FOR_TRUE = 60.0  # Seconds - fast patterns more likely real
+    MIN_DURATION_FOR_FALSE = 120.0  # Very slow patterns less likely manipulation
+
+    # === VOLUME CRITERIA ===
+    # Minimum volume to be considered significant
+    MIN_VOLUME_USDT = 5000  # At least $5k volume
+
+    # === CONFIDENCE THRESHOLDS ===
+    # How confident we are in the label
+    HIGH_CONFIDENCE = 0.9
+    MEDIUM_CONFIDENCE = 0.7
+    LOW_CONFIDENCE = 0.5
+
+
+def label_data_improved():
+    """
+    Improved automatic labeling based on OUTCOMES, not detector confidence.
+
+    This removes the circular dependency where we were labeling based on
+    the same detector output we're trying to improve.
     """
 
     # Load data
-    # Use relative path from project root
     data_dir = Path(__file__).parent / "data" / "ml_training" / "layering"
 
     if not data_dir.exists():
-        print(f"❌ Data directory not found: {data_dir}")
+        print(f"Data directory not found: {data_dir}")
         return
 
     parquet_files = sorted(data_dir.glob("layering_data_*.parquet"))
 
     if not parquet_files:
-        print(f"❌ No parquet files found in {data_dir}")
+        print(f"No parquet files found in {data_dir}")
         return
 
     print(f"Found {len(parquet_files)} data files")
@@ -85,102 +138,206 @@ def label_data_automatic():
             print(f"Error loading {filepath.name}: {e}")
 
     if not dfs:
-        print("❌ No valid data loaded")
+        print("No valid data loaded")
         return
 
     # Combine all data
-    import warnings
     with warnings.catch_warnings():
         warnings.filterwarnings('ignore', category=FutureWarning, module='pandas')
         combined_df = pd.concat(dfs, ignore_index=True)
 
-    print(f"✓ Loaded {len(combined_df)} total samples")
+    print(f"Loaded {len(combined_df):,} total samples")
 
-    # Count unlabeled
-    unlabeled = combined_df['is_true_layering'].isna()
-    unlabeled_count = unlabeled.sum()
+    # Show available columns for debugging
+    print(f"\nAvailable columns: {len(combined_df.columns)}")
 
-    print(f"\n📊 Status:")
-    print(f"   Total samples: {len(combined_df)}")
-    print(f"   Unlabeled: {unlabeled_count}")
-    print(f"   Already labeled: {len(combined_df) - unlabeled_count}")
+    # Count current state
+    already_labeled = combined_df['is_true_layering'].notna().sum()
+    unlabeled_count = len(combined_df) - already_labeled
 
-    if unlabeled_count == 0:
-        print("\n✓ All data is already labeled!")
-        return
+    print(f"\nCurrent Status:")
+    print(f"   Total samples: {len(combined_df):,}")
+    print(f"   Already labeled: {already_labeled:,}")
+    print(f"   Unlabeled: {unlabeled_count:,}")
 
-    print(f"\n🏷️  Starting automatic labeling...")
+    # Re-label ALL data with improved logic (optional: only unlabeled)
+    # For now, let's re-label everything to fix the circular dependency
+    print(f"\n{'='*80}")
+    print("IMPROVED LABELING (outcome-based, no detector_confidence dependency)")
+    print(f"{'='*80}")
 
-    # Get unlabeled data
-    to_label = combined_df[unlabeled].copy()
+    config = LabelingConfig()
 
-    # === LABELING LOGIC ===
-    # Based on detector confidence, market impact, and execution metrics
+    # Create working copy
+    df = combined_df.copy()
 
-    # Criteria for TRUE POSITIVE (real layering):
-    # 1. High detector confidence (>= 0.7)
-    # 2. Low execution rate (< 0.3) - fake orders were not executed
-    # 3. Significant market impact OR high cancellation rate
+    # Fill NaN with safe defaults for comparison
+    df['cancellation_rate'] = df['cancellation_rate'].fillna(0.5)
+    df['spoofing_execution_ratio'] = df['spoofing_execution_ratio'].fillna(0.5)
+    df['price_change_bps'] = df['price_change_bps'].fillna(0.0)
+    df['impact_ratio'] = df['impact_ratio'].fillna(0.0)
+    df['placement_duration'] = df['placement_duration'].fillna(30.0)
+    df['total_volume_usdt'] = df['total_volume_usdt'].fillna(0.0)
 
-    true_positive_mask = (
-        (to_label['detector_confidence'] >= 0.7) &  # High confidence
-        (
-            (to_label['spoofing_execution_ratio'].fillna(1.0) < 0.3) |  # Low execution
-            (to_label['cancellation_rate'] > 0.7)  # High cancellations
-        )
+    # Also check for outcome fields
+    if 'price_moved_as_expected' in df.columns:
+        df['price_moved_as_expected'] = df['price_moved_as_expected'].fillna(False)
+    else:
+        df['price_moved_as_expected'] = False
+
+    if 'manipulation_successful' in df.columns:
+        df['manipulation_successful'] = df['manipulation_successful'].fillna(False)
+    else:
+        df['manipulation_successful'] = False
+
+    # ================================================================
+    # STEP 1: Strong TRUE POSITIVE indicators
+    # ================================================================
+    print("\nStep 1: Identifying TRUE POSITIVES...")
+
+    # High confidence TRUE: Clear behavioral + outcome signals
+    strong_true_mask = (
+        # HIGH cancellation (orders were fake)
+        (df['cancellation_rate'] >= config.MIN_CANCELLATION_FOR_TRUE) &
+        # LOW execution (orders weren't meant to be filled)
+        (df['spoofing_execution_ratio'] <= config.MAX_EXECUTION_FOR_TRUE) &
+        # Significant volume
+        (df['total_volume_usdt'] >= config.MIN_VOLUME_USDT) &
+        # Price actually moved
+        (np.abs(df['price_change_bps']) >= config.MIN_PRICE_CHANGE_BPS_FOR_TRUE)
     )
 
-    # Criteria for FALSE POSITIVE (not real layering):
-    # 1. Low detector confidence (< 0.5)
-    # OR
-    # 2. High execution rate (> 0.6) - orders were actually filled
-    # OR
-    # 3. Low cancellation rate + low detector confidence
-
-    false_positive_mask = (
-        (to_label['detector_confidence'] < 0.5) |
-        (to_label['spoofing_execution_ratio'].fillna(0.0) > 0.6) |
-        (
-            (to_label['cancellation_rate'] < 0.5) &
-            (to_label['detector_confidence'] < 0.6)
-        )
+    # Medium confidence TRUE: Good behavioral signals
+    medium_true_mask = (
+        # Good cancellation rate
+        (df['cancellation_rate'] >= 0.55) &
+        # Reasonable execution ratio
+        (df['spoofing_execution_ratio'] <= 0.45) &
+        # Fast pattern (typical for manipulation)
+        (df['placement_duration'] <= config.MAX_DURATION_FOR_TRUE) &
+        # Not already matched
+        ~strong_true_mask
     )
 
-    # Apply labels
-    to_label.loc[true_positive_mask, 'is_true_layering'] = True
-    to_label.loc[false_positive_mask & ~true_positive_mask, 'is_true_layering'] = False
-    to_label.loc[true_positive_mask | false_positive_mask, 'label_source'] = 'automatic_heuristic'
-    to_label.loc[true_positive_mask | false_positive_mask, 'label_confidence'] = 0.8
+    # Outcome-based TRUE: If we have explicit outcome data
+    outcome_true_mask = (
+        (df['price_moved_as_expected'] == True) |
+        (df['manipulation_successful'] == True)
+    ) & ~strong_true_mask & ~medium_true_mask
 
-    # Count labeled
-    newly_labeled_true = true_positive_mask.sum()
-    newly_labeled_false = (false_positive_mask & ~true_positive_mask).sum()
-    still_unlabeled = unlabeled_count - newly_labeled_true - newly_labeled_false
+    # ================================================================
+    # STEP 2: Strong FALSE POSITIVE indicators
+    # ================================================================
+    print("Step 2: Identifying FALSE POSITIVES...")
 
-    print(f"\n📈 Labeling Results:")
-    print(f"   ✅ Labeled as TRUE (real layering): {newly_labeled_true}")
-    print(f"   ❌ Labeled as FALSE (false positive): {newly_labeled_false}")
-    print(f"   ⚪ Remain unlabeled (uncertain): {still_unlabeled}")
-    print(f"   📊 Labeling rate: {((newly_labeled_true + newly_labeled_false) / unlabeled_count * 100):.1f}%")
+    # High confidence FALSE: Clear signs of legitimate trading
+    strong_false_mask = (
+        # LOW cancellation (orders were actually filled)
+        (df['cancellation_rate'] <= config.MAX_CANCELLATION_FOR_FALSE) &
+        # HIGH execution (real orders being executed)
+        (df['spoofing_execution_ratio'] >= config.MIN_EXECUTION_FOR_FALSE)
+    )
 
-    if newly_labeled_true + newly_labeled_false == 0:
-        print("\n⚠️  No samples could be labeled with current criteria")
-        print("   Consider adjusting thresholds or manual labeling")
-        return
+    # Medium confidence FALSE: Indicators of non-manipulation
+    medium_false_mask = (
+        # Moderate-low cancellation
+        (df['cancellation_rate'] <= 0.50) &
+        # Slow pattern (less typical for manipulation)
+        (df['placement_duration'] >= config.MIN_DURATION_FOR_FALSE) &
+        # Not already matched
+        ~strong_false_mask
+    )
 
-    # Update combined dataframe
-    combined_df.loc[unlabeled, 'is_true_layering'] = to_label['is_true_layering']
-    combined_df.loc[unlabeled, 'label_source'] = to_label['label_source']
-    combined_df.loc[unlabeled, 'label_confidence'] = to_label['label_confidence']
+    # Volume-based FALSE: Very small volume unlikely to be manipulation
+    volume_false_mask = (
+        (df['total_volume_usdt'] < config.MIN_VOLUME_USDT * 0.5) &
+        ~strong_false_mask & ~medium_false_mask
+    )
 
-    # Save back to files
-    print(f"\n💾 Saving labeled data...")
+    # ================================================================
+    # STEP 3: Apply labels
+    # ================================================================
+    print("Step 3: Applying labels...")
+
+    # Initialize new label columns
+    df['is_true_layering_new'] = None
+    df['label_source_new'] = 'unknown'
+    df['label_confidence_new'] = 0.0
+
+    # Apply TRUE labels (order matters - higher confidence first)
+    df.loc[strong_true_mask, 'is_true_layering_new'] = True
+    df.loc[strong_true_mask, 'label_source_new'] = 'automatic_behavioral_strong'
+    df.loc[strong_true_mask, 'label_confidence_new'] = config.HIGH_CONFIDENCE
+
+    df.loc[medium_true_mask, 'is_true_layering_new'] = True
+    df.loc[medium_true_mask, 'label_source_new'] = 'automatic_behavioral_medium'
+    df.loc[medium_true_mask, 'label_confidence_new'] = config.MEDIUM_CONFIDENCE
+
+    df.loc[outcome_true_mask, 'is_true_layering_new'] = True
+    df.loc[outcome_true_mask, 'label_source_new'] = 'automatic_outcome'
+    df.loc[outcome_true_mask, 'label_confidence_new'] = config.HIGH_CONFIDENCE
+
+    # Apply FALSE labels
+    df.loc[strong_false_mask, 'is_true_layering_new'] = False
+    df.loc[strong_false_mask, 'label_source_new'] = 'automatic_behavioral_strong'
+    df.loc[strong_false_mask, 'label_confidence_new'] = config.HIGH_CONFIDENCE
+
+    df.loc[medium_false_mask, 'is_true_layering_new'] = False
+    df.loc[medium_false_mask, 'label_source_new'] = 'automatic_behavioral_medium'
+    df.loc[medium_false_mask, 'label_confidence_new'] = config.MEDIUM_CONFIDENCE
+
+    df.loc[volume_false_mask, 'is_true_layering_new'] = False
+    df.loc[volume_false_mask, 'label_source_new'] = 'automatic_volume_filter'
+    df.loc[volume_false_mask, 'label_confidence_new'] = config.LOW_CONFIDENCE
+
+    # ================================================================
+    # STEP 4: Statistics
+    # ================================================================
+    total_samples = len(df)
+    labeled_true = (df['is_true_layering_new'] == True).sum()
+    labeled_false = (df['is_true_layering_new'] == False).sum()
+    still_unlabeled = df['is_true_layering_new'].isna().sum()
+
+    print(f"\n{'='*80}")
+    print("LABELING RESULTS")
+    print(f"{'='*80}")
+    print(f"\nTotal samples: {total_samples:,}")
+    print(f"\nLabeled:")
+    print(f"   TRUE (real layering):    {labeled_true:>10,} ({labeled_true/total_samples*100:>5.1f}%)")
+    print(f"   FALSE (false positive):  {labeled_false:>10,} ({labeled_false/total_samples*100:>5.1f}%)")
+    print(f"   Unlabeled (uncertain):   {still_unlabeled:>10,} ({still_unlabeled/total_samples*100:>5.1f}%)")
+
+    if labeled_true + labeled_false > 0:
+        class_balance = labeled_true / (labeled_true + labeled_false)
+        print(f"\nClass balance: {class_balance*100:.1f}% TRUE / {(1-class_balance)*100:.1f}% FALSE")
+
+    # Breakdown by confidence
+    print(f"\nBreakdown by label source:")
+    for source in df['label_source_new'].unique():
+        if source != 'unknown':
+            count = (df['label_source_new'] == source).sum()
+            print(f"   {source}: {count:,}")
+
+    # ================================================================
+    # STEP 5: Update original columns
+    # ================================================================
+    df['is_true_layering'] = df['is_true_layering_new']
+    df['label_source'] = df['label_source_new']
+    df['label_confidence'] = df['label_confidence_new']
+
+    # Drop temp columns
+    df = df.drop(columns=['is_true_layering_new', 'label_source_new', 'label_confidence_new'])
+
+    # ================================================================
+    # STEP 6: Save to files
+    # ================================================================
+    print(f"\nSaving labeled data...")
 
     # Group by original file (approximate based on timestamp)
-    combined_df['file_group'] = pd.to_datetime(combined_df['timestamp'], unit='ms').dt.strftime('%Y%m%d_%H')
+    df['file_group'] = pd.to_datetime(df['timestamp'], unit='ms').dt.strftime('%Y%m%d_%H')
 
     saved_count = 0
-    for file_group, group_df in combined_df.groupby('file_group'):
+    for file_group, group_df in df.groupby('file_group'):
         # Find matching file or create new one
         matching_files = [f for f in parquet_files if file_group[:8] in f.name]
 
@@ -196,60 +353,52 @@ def label_data_automatic():
         except Exception as e:
             print(f"Error saving {output_file.name}: {e}")
 
-    print(f"✓ Saved to {saved_count} files")
+    print(f"Saved to {saved_count} files")
 
-    # Final statistics
-    final_labeled = combined_df['is_true_layering'].notna().sum()
-    final_true = (combined_df['is_true_layering'] == True).sum()
-    final_false = (combined_df['is_true_layering'] == False).sum()
-
-    print(f"\n{'=' * 80}")
-    print(f"✅ LABELING COMPLETE")
-    print(f"{'=' * 80}")
-    print(f"Total samples: {len(combined_df)}")
-    print(f"Labeled: {final_labeled} ({final_labeled / len(combined_df) * 100:.1f}%)")
-    print(f"  - True positives: {final_true}")
-    print(f"  - False positives: {final_false}")
-    print(f"  - Class balance: {final_true / final_labeled * 100:.1f}% / {final_false / final_labeled * 100:.1f}%")
-    print(f"Unlabeled: {len(combined_df) - final_labeled}")
-    print(f"{'=' * 80}")
-
-    # Update statistics.json for frontend
+    # Update statistics.json
     try:
-        import json
-        from datetime import datetime
-
         stats_file = data_dir / "statistics.json"
+        final_labeled = labeled_true + labeled_false
         stats = {
-            "total_collected": len(combined_df),
+            "total_collected": total_samples,
             "total_labeled": int(final_labeled),
-            "total_saved": len(combined_df),
+            "total_saved": total_samples,
             "last_updated": datetime.now().isoformat(),
+            "labeling_method": "outcome_based_v2",
+            "class_balance": {
+                "true_count": int(labeled_true),
+                "false_count": int(labeled_false),
+                "balance_ratio": float(labeled_true / final_labeled) if final_labeled > 0 else 0.0
+            },
             "exists": True
         }
 
         with open(stats_file, 'w') as f:
             json.dump(stats, f, indent=2)
 
-        print(f"\n✓ Updated statistics.json ({final_labeled} labeled samples)")
+        print(f"\nUpdated statistics.json")
     except Exception as e:
-        print(f"\n⚠️  Warning: Could not update statistics.json: {e}")
+        print(f"\nWarning: Could not update statistics.json: {e}")
 
-    print(f"\n📚 Ready for training!")
-    print(f"   Run: python train_layering_model_improved.py")
+    print(f"\n{'='*80}")
+    print("LABELING COMPLETE")
+    print(f"{'='*80}")
+    print(f"\nNext step: Run training with improved features:")
+    print(f"   python train_layering_model_improved.py")
 
 
 if __name__ == "__main__":
     print("=" * 80)
-    print("🏷️  LAYERING ML DATA AUTO-LABELING")
+    print("IMPROVED LAYERING DATA LABELING")
+    print("(Outcome-based, no detector_confidence dependency)")
     print("=" * 80)
     print()
 
     try:
-        label_data_automatic()
+        label_data_improved()
     except KeyboardInterrupt:
-        print("\n\n⚠️  Interrupted by user")
+        print("\n\nInterrupted by user")
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f"\nError: {e}")
         import traceback
         traceback.print_exc()
