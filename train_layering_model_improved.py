@@ -97,6 +97,7 @@ except ImportError as e:
 # ============================================================
 
 # Core features (no detector_confidence to avoid data leakage!)
+# NOTE: Temporal features (hour_utc, day_of_week) removed - they add noise, not signal
 CORE_FEATURES = [
     # Pattern behavioral features
     'cancellation_rate',           # Key indicator: how many orders canceled
@@ -114,8 +115,6 @@ CORE_FEATURES = [
     'volatility_24h',              # Market volatility
     'liquidity_score',             # Market liquidity
     'spread_bps',                  # Current spread
-    'hour_utc',                    # Time of day
-    'day_of_week',                 # Day of week
 
     # Price impact
     'price_change_bps',            # Actual price change
@@ -126,7 +125,7 @@ CORE_FEATURES = [
     'aggressive_ratio',            # Ratio of aggressive orders
 ]
 
-# Features to EXCLUDE (to avoid data leakage and multicollinearity)
+# Features to EXCLUDE (to avoid data leakage, multicollinearity, and noise)
 EXCLUDED_FEATURES = [
     'detector_confidence',          # DATA LEAKAGE - this is what we're trying to predict!
     'volume_score',                 # Component of detector_confidence
@@ -136,6 +135,8 @@ EXCLUDED_FEATURES = [
     'price_impact_score',           # Component of detector_confidence
     'total_volume_btc',             # Multicollinear with total_volume_usdt
     'volume_24h',                   # Often missing, less relevant
+    'hour_utc',                     # Temporal noise - not relevant for layering detection
+    'day_of_week',                  # Temporal noise - not relevant for layering detection
 ]
 
 
@@ -179,22 +180,25 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         np.abs(df['price_change_bps']) / (df['total_volume_usdt'] / 10000 + 0.1)
     ).clip(0, 100)
 
-    # 6. Time-based features (cyclical encoding for hour)
-    df['hour_sin'] = np.sin(2 * np.pi * df['hour_utc'] / 24)
-    df['hour_cos'] = np.cos(2 * np.pi * df['hour_utc'] / 24)
-
-    # 7. Is weekend (trading patterns differ)
-    df['is_weekend'] = (df['day_of_week'] >= 5).astype(int)
-
-    # 8. Volatility-adjusted impact
+    # 6. Volatility-adjusted impact
     df['volatility_adjusted_impact'] = (
         np.abs(df['price_change_bps']) / (df['volatility_24h'] + 0.1)
     ).clip(0, 100)
 
-    # 9. Liquidity utilization (volume relative to liquidity)
+    # 7. Liquidity utilization (volume relative to liquidity)
     df['liquidity_utilization'] = (
         df['total_volume_usdt'] / (df['liquidity_score'] * 100000 + 1)
     ).clip(0, 100)
+
+    # 8. Spread utilization (how much of spread is used)
+    df['spread_utilization'] = (
+        df['price_spread_bps'] / (df['spread_bps'] + 0.1)
+    ).clip(0, 100)
+
+    # 9. Order intensity (orders per layer)
+    df['order_intensity'] = (
+        df['total_orders'] / (df['layer_count'] + 1)
+    )
 
     return df
 

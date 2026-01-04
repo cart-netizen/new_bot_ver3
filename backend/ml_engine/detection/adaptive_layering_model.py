@@ -177,6 +177,8 @@ class AdaptiveLayeringModel:
     self.scaler = StandardScaler()
 
     # Define feature names (v2.0 - no detector_confidence or component scores!)
+    # NOTE: Temporal features (hour_utc, day_of_week, hour_sin, hour_cos, is_weekend) removed
+    # They add noise rather than signal for layering detection
     self.feature_names = [
       # Pattern behavioral features (raw)
       'cancellation_rate',           # Key indicator: how many orders canceled
@@ -194,8 +196,6 @@ class AdaptiveLayeringModel:
       'volatility_24h',              # Market volatility
       'liquidity_score',             # Market liquidity
       'spread_bps',                  # Current spread
-      'hour_utc',                    # Time of day
-      'day_of_week',                 # Day of week
 
       # Price impact
       'price_change_bps',            # Actual price change
@@ -211,11 +211,10 @@ class AdaptiveLayeringModel:
       'order_placement_speed',       # total_orders / placement_duration
       'layer_density',               # layer_count / price_spread
       'impact_efficiency',           # price_change / volume
-      'hour_sin',                    # sin(hour) for cyclical encoding
-      'hour_cos',                    # cos(hour) for cyclical encoding
-      'is_weekend',                  # 1 if weekend, 0 otherwise
       'volatility_adjusted_impact',  # price_change / volatility
       'liquidity_utilization',       # volume / liquidity
+      'spread_utilization',          # price_spread / market_spread
+      'order_intensity',             # orders per layer
     ]
 
     # NOTE: Removed these to avoid data leakage:
@@ -457,8 +456,7 @@ class AdaptiveLayeringModel:
     price_change = features.get('price_change_bps', 0.0)
     volatility = features.get('volatility_24h', 1.0)
     liquidity = features.get('liquidity_score', 0.5)
-    hour_utc = features.get('hour_utc', 12)
-    day_of_week = features.get('day_of_week', 3)
+    spread_bps = features.get('spread_bps', 0.1)
 
     # 1. Cancel-Execute Ratio
     features['cancel_execute_ratio'] = min(
@@ -479,22 +477,23 @@ class AdaptiveLayeringModel:
       abs(price_change) / (total_volume / 10000 + 0.1), 100.0
     )
 
-    # 6. Cyclical hour encoding
-    features['hour_sin'] = np.sin(2 * np.pi * hour_utc / 24)
-    features['hour_cos'] = np.cos(2 * np.pi * hour_utc / 24)
-
-    # 7. Is weekend
-    features['is_weekend'] = 1 if day_of_week >= 5 else 0
-
-    # 8. Volatility-adjusted impact
+    # 6. Volatility-adjusted impact
     features['volatility_adjusted_impact'] = min(
       abs(price_change) / (volatility + 0.1), 100.0
     )
 
-    # 9. Liquidity utilization
+    # 7. Liquidity utilization
     features['liquidity_utilization'] = min(
       total_volume / (liquidity * 100000 + 1), 100.0
     )
+
+    # 8. Spread utilization
+    features['spread_utilization'] = min(
+      price_spread / (spread_bps + 0.1), 100.0
+    )
+
+    # 9. Order intensity (orders per layer)
+    features['order_intensity'] = total_orders / (layer_count + 1)
 
     # Now build the sample vector
     sample = []
