@@ -412,58 +412,77 @@ def main():
 
     models_results = []
 
-    # 1. Random Forest (baseline)
+    # 1. Random Forest (baseline) - OPTIMIZED
     rf_model = RandomForestClassifier(
-        n_estimators=200,
-        max_depth=15,
-        min_samples_split=5,
-        min_samples_leaf=2,
+        n_estimators=300,           # More trees
+        max_depth=12,               # Reasonable depth
+        min_samples_split=10,       # Prevent overfitting
+        min_samples_leaf=5,         # Minimum samples in leaf
+        max_features='sqrt',        # Standard for classification
         class_weight='balanced',
+        bootstrap=True,
+        oob_score=True,             # Out-of-bag score
         random_state=42,
         n_jobs=-1
     )
     rf_result = train_and_evaluate_model(rf_model, X_train_scaled, X_test_scaled, y_train, y_test, "RandomForest")
     models_results.append(rf_result)
 
-    # 2. Gradient Boosting
+    # 2. Gradient Boosting - OPTIMIZED
     gb_model = GradientBoostingClassifier(
         n_estimators=200,
-        max_depth=5,
-        learning_rate=0.1,
-        min_samples_split=5,
+        max_depth=6,                # Slightly deeper
+        learning_rate=0.05,         # Lower LR
+        min_samples_split=10,
+        min_samples_leaf=5,
+        subsample=0.8,              # Stochastic gradient boosting
+        max_features='sqrt',
         random_state=42
     )
     gb_result = train_and_evaluate_model(gb_model, X_train_scaled, X_test_scaled, y_train, y_test, "GradientBoosting")
     models_results.append(gb_result)
 
-    # 3. XGBoost (if available)
+    # 3. XGBoost (if available) - OPTIMIZED
     if HAS_XGBOOST:
         # Calculate scale_pos_weight for imbalanced data
         scale_pos_weight = false_count / true_count if true_count > 0 else 1.0
 
         xgb_model = xgb.XGBClassifier(
-            n_estimators=200,
-            max_depth=6,
-            learning_rate=0.1,
+            n_estimators=300,           # More trees
+            max_depth=8,                # Deeper trees for complex patterns
+            learning_rate=0.05,         # Lower LR with more trees
             scale_pos_weight=scale_pos_weight,
+            min_child_weight=3,         # Regularization
+            subsample=0.8,              # Row sampling for robustness
+            colsample_bytree=0.8,       # Column sampling
+            gamma=0.1,                  # Minimum loss reduction
+            reg_alpha=0.1,              # L1 regularization
+            reg_lambda=1.0,             # L2 regularization
             use_label_encoder=False,
-            eval_metric='logloss',
+            eval_metric='auc',          # Optimize for AUC
             random_state=42,
             n_jobs=-1
         )
         xgb_result = train_and_evaluate_model(xgb_model, X_train_scaled, X_test_scaled, y_train, y_test, "XGBoost")
         models_results.append(xgb_result)
 
-    # 4. LightGBM (if available)
+    # 4. LightGBM (if available) - OPTIMIZED
     if HAS_LIGHTGBM:
         lgb_model = lgb.LGBMClassifier(
-            n_estimators=200,
-            max_depth=6,
-            learning_rate=0.1,
+            n_estimators=300,           # More trees
+            max_depth=8,                # Deeper trees
+            learning_rate=0.05,         # Lower LR with more trees
+            num_leaves=63,              # 2^max_depth - 1
             class_weight='balanced',
+            min_child_samples=20,       # Minimum data in leaf
+            subsample=0.8,              # Row sampling
+            colsample_bytree=0.8,       # Column sampling
+            reg_alpha=0.1,              # L1 regularization
+            reg_lambda=1.0,             # L2 regularization
             random_state=42,
             n_jobs=-1,
-            verbose=-1
+            verbose=-1,
+            force_col_wise=True         # Avoid OpenMP issues
         )
         lgb_result = train_and_evaluate_model(lgb_model, X_train_scaled, X_test_scaled, y_train, y_test, "LightGBM")
         models_results.append(lgb_result)
