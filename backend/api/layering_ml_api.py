@@ -18,6 +18,7 @@ import subprocess
 import json
 import asyncio
 import sys
+import numpy as np
 
 from backend.core.logger import get_logger
 from backend.config import get_project_data_path
@@ -37,6 +38,39 @@ router = APIRouter(prefix="/api/ml-management/layering", tags=["Layering ML"])
 # ============================================================
 # Helper Functions
 # ============================================================
+
+def convert_numpy_types(obj: Any) -> Any:
+    """
+    Recursively convert numpy types to Python native types for JSON serialization.
+
+    Args:
+        obj: Any object that might contain numpy types
+
+    Returns:
+        Object with all numpy types converted to Python native types
+    """
+    if obj is None:
+        return None
+
+    # Handle numpy scalar types
+    if isinstance(obj, (np.integer, np.int_, np.int8, np.int16, np.int32, np.int64)):
+        return int(obj)
+    if isinstance(obj, (np.floating, np.float_, np.float16, np.float32, np.float64)):
+        return float(obj)
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+
+    # Handle containers recursively
+    if isinstance(obj, dict):
+        return {k: convert_numpy_types(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [convert_numpy_types(item) for item in obj]
+
+    # Return as-is for other types
+    return obj
+
 
 def run_script_sync(script_path: str, timeout: int = 300) -> Dict[str, Any]:
     """
@@ -115,17 +149,17 @@ def load_layering_model_info() -> Optional[Dict[str, Any]]:
         with open(model_file, 'rb') as f:
             model_package = pickle.load(f)
 
-        # Extract metadata
+        # Extract metadata and convert numpy types to Python native types
         info = {
             'version': model_package.get('version', '1.0.0'),
             'trained_at': model_package.get('trained_at'),
-            'training_samples': model_package.get('training_samples', 0),
-            'optimal_threshold': model_package.get('optimal_threshold', 0.5),
+            'training_samples': convert_numpy_types(model_package.get('training_samples', 0)),
+            'optimal_threshold': convert_numpy_types(model_package.get('optimal_threshold', 0.5)),
             'feature_names': model_package.get('feature_names', []),
-            'feature_importance': model_package.get('feature_importance', {}),
-            'metrics': model_package.get('metrics', {}),
+            'feature_importance': convert_numpy_types(model_package.get('feature_importance', {})),
+            'metrics': convert_numpy_types(model_package.get('metrics', {})),
             'file_path': str(model_file.absolute()),
-            'file_size_kb': model_file.stat().st_size / 1024,
+            'file_size_kb': float(model_file.stat().st_size / 1024),
             'file_modified': datetime.fromtimestamp(model_file.stat().st_mtime).isoformat()
         }
 
