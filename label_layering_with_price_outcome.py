@@ -46,24 +46,28 @@ class LabelingConfig:
 
     Key insight: Use ACTUAL price movement as ground truth,
     completely independent of pattern features.
+
+    v2: Adjusted thresholds based on actual data distribution:
+    - 95th percentile = 0.41 bps
+    - 99th percentile = 0.94 bps
+    - Max = 14.7 bps
     """
 
     # Time window for matching (milliseconds)
     MATCH_WINDOW_MS = 30_000  # ±30 seconds
 
-    # Price movement thresholds (basis points)
-    # TRUE: Price moved significantly (manipulation worked)
-    MIN_MOVEMENT_FOR_TRUE = 5.0  # > 5 bps = significant movement
+    # Price movement thresholds (basis points) - ADJUSTED based on data
+    # TRUE: Price moved more than typical (above ~90th percentile)
+    MIN_MOVEMENT_FOR_TRUE = 0.5  # > 0.5 bps = above normal movement
 
-    # FALSE: Price barely moved (no manipulation effect)
-    MAX_MOVEMENT_FOR_FALSE = 1.5  # < 1.5 bps = no effect
+    # FALSE: Price barely moved (below ~50th percentile)
+    MAX_MOVEMENT_FOR_FALSE = 0.1  # < 0.1 bps = essentially no movement
 
-    # UNCERTAIN: Between thresholds (ambiguous)
-    # 1.5 - 5.0 bps = uncertain
+    # UNCERTAIN: Between 0.1 and 0.5 bps
 
     # Which future movement to use (10s, 30s, 60s)
-    PRIMARY_HORIZON = "30s"
-    SECONDARY_HORIZON = "60s"  # Fallback if primary is None
+    PRIMARY_HORIZON = "60s"  # Changed to 60s for longer effect window
+    SECONDARY_HORIZON = "30s"  # Fallback if primary is None
 
     # Minimum volume for valid pattern
     MIN_VOLUME_USDT = 1000
