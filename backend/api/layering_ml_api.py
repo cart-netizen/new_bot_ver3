@@ -105,14 +105,14 @@ def load_layering_model_info() -> Optional[Dict[str, Any]]:
         import pickle
 
         model_path = "data/models/layering_adaptive_v1.pkl"
-        model_file = Path(model_path)
+        model_file = _PROJECT_ROOT / model_path
 
         if not model_file.exists():
             return None
 
         # Read model metadata without fully loading the model
         # This avoids triggering ERROR logs on every page load
-        with open(model_path, 'rb') as f:
+        with open(model_file, 'rb') as f:
             model_package = pickle.load(f)
 
         # Extract metadata
