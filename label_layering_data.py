@@ -69,32 +69,34 @@ class LabelingConfig:
     1. Orders are placed but NOT executed (high cancellation)
     2. Price moves in the direction the manipulator wants
     3. Orders are canceled quickly after achieving the goal
+
+    v2.1: Relaxed criteria to get more balanced TRUE/FALSE distribution
     """
 
-    # === BEHAVIORAL CRITERIA ===
+    # === BEHAVIORAL CRITERIA (RELAXED) ===
     # Cancellation rate: real layering has HIGH cancellation (orders are fake)
-    MIN_CANCELLATION_FOR_TRUE = 0.65  # At least 65% orders canceled
-    MAX_CANCELLATION_FOR_FALSE = 0.40  # Less than 40% = likely real orders
+    MIN_CANCELLATION_FOR_TRUE = 0.50  # Relaxed from 0.65 to 0.50
+    MAX_CANCELLATION_FOR_FALSE = 0.35  # Relaxed from 0.40 to 0.35
 
     # Execution ratio: real layering has LOW execution (orders shouldn't be filled)
-    MAX_EXECUTION_FOR_TRUE = 0.35  # Less than 35% executed
-    MIN_EXECUTION_FOR_FALSE = 0.50  # More than 50% executed = not layering
+    MAX_EXECUTION_FOR_TRUE = 0.50  # Relaxed from 0.35 to 0.50
+    MIN_EXECUTION_FOR_FALSE = 0.60  # Relaxed from 0.50 to 0.60
 
-    # === PRICE IMPACT CRITERIA ===
+    # === PRICE IMPACT CRITERIA (RELAXED) ===
     # Real layering causes price movement
-    MIN_PRICE_CHANGE_BPS_FOR_TRUE = 3.0  # At least 3 bps price movement
+    MIN_PRICE_CHANGE_BPS_FOR_TRUE = 1.5  # Relaxed from 3.0 to 1.5 bps
 
     # Impact ratio: expected vs actual impact
-    MIN_IMPACT_RATIO_FOR_TRUE = 0.3  # Price moved at least 30% of expected
+    MIN_IMPACT_RATIO_FOR_TRUE = 0.2  # Relaxed from 0.3 to 0.2
 
-    # === TIMING CRITERIA ===
+    # === TIMING CRITERIA (RELAXED) ===
     # Real layering: orders placed and canceled quickly
-    MAX_DURATION_FOR_TRUE = 60.0  # Seconds - fast patterns more likely real
-    MIN_DURATION_FOR_FALSE = 120.0  # Very slow patterns less likely manipulation
+    MAX_DURATION_FOR_TRUE = 90.0  # Relaxed from 60 to 90 seconds
+    MIN_DURATION_FOR_FALSE = 180.0  # Relaxed from 120 to 180 seconds
 
-    # === VOLUME CRITERIA ===
+    # === VOLUME CRITERIA (RELAXED) ===
     # Minimum volume to be considered significant
-    MIN_VOLUME_USDT = 5000  # At least $5k volume
+    MIN_VOLUME_USDT = 2000  # Relaxed from $5k to $2k
 
     # === CONFIDENCE THRESHOLDS ===
     # How confident we are in the label
@@ -207,12 +209,12 @@ def label_data_improved():
         (np.abs(df['price_change_bps']) >= config.MIN_PRICE_CHANGE_BPS_FOR_TRUE)
     )
 
-    # Medium confidence TRUE: Good behavioral signals
+    # Medium confidence TRUE: Good behavioral signals (relaxed thresholds)
     medium_true_mask = (
-        # Good cancellation rate
-        (df['cancellation_rate'] >= 0.55) &
-        # Reasonable execution ratio
-        (df['spoofing_execution_ratio'] <= 0.45) &
+        # Good cancellation rate (slightly below strong threshold)
+        (df['cancellation_rate'] >= config.MIN_CANCELLATION_FOR_TRUE - 0.10) &
+        # Reasonable execution ratio (slightly above strong threshold)
+        (df['spoofing_execution_ratio'] <= config.MAX_EXECUTION_FOR_TRUE + 0.10) &
         # Fast pattern (typical for manipulation)
         (df['placement_duration'] <= config.MAX_DURATION_FOR_TRUE) &
         # Not already matched
@@ -240,8 +242,8 @@ def label_data_improved():
 
     # Medium confidence FALSE: Indicators of non-manipulation
     medium_false_mask = (
-        # Moderate-low cancellation
-        (df['cancellation_rate'] <= 0.50) &
+        # Moderate-low cancellation (slightly above strong threshold)
+        (df['cancellation_rate'] <= config.MAX_CANCELLATION_FOR_FALSE + 0.10) &
         # Slow pattern (less typical for manipulation)
         (df['placement_duration'] >= config.MIN_DURATION_FOR_FALSE) &
         # Not already matched
