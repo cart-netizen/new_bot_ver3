@@ -274,6 +274,31 @@ def match_and_label(
             layering_df.at[idx, 'outcome_source'] = 'uncertain'
             uncertain_count += 1
 
+    # Analyze movement distribution
+    movements = layering_df['outcome_movement_bps'].dropna()
+    if len(movements) > 0:
+        print(f"\n{'='*80}")
+        print("PRICE MOVEMENT DISTRIBUTION (matched patterns)")
+        print(f"{'='*80}")
+        print(f"  Count:  {len(movements):,}")
+        print(f"  Mean:   {movements.mean():.3f} bps")
+        print(f"  Median: {movements.median():.3f} bps")
+        print(f"  Std:    {movements.std():.3f} bps")
+        print(f"  Min:    {movements.min():.3f} bps")
+        print(f"  Max:    {movements.max():.3f} bps")
+
+        abs_movements = movements.abs()
+        print(f"\n  Absolute movement percentiles:")
+        for p in [25, 50, 75, 90, 95, 99]:
+            print(f"    {p}%: {abs_movements.quantile(p/100):.3f} bps")
+
+        print(f"\n  Movement brackets:")
+        print(f"    |mov| < 1 bps:   {(abs_movements < 1).sum():,} ({(abs_movements < 1).sum()/len(abs_movements)*100:.1f}%)")
+        print(f"    |mov| < 2 bps:   {(abs_movements < 2).sum():,} ({(abs_movements < 2).sum()/len(abs_movements)*100:.1f}%)")
+        print(f"    |mov| < 5 bps:   {(abs_movements < 5).sum():,} ({(abs_movements < 5).sum()/len(abs_movements)*100:.1f}%)")
+        print(f"    |mov| >= 5 bps:  {(abs_movements >= 5).sum():,} ({(abs_movements >= 5).sum()/len(abs_movements)*100:.1f}%)")
+        print(f"    |mov| >= 10 bps: {(abs_movements >= 10).sum():,} ({(abs_movements >= 10).sum()/len(abs_movements)*100:.1f}%)")
+
     # Print statistics
     print(f"\n{'='*80}")
     print("MATCHING RESULTS")
