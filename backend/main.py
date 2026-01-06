@@ -1073,9 +1073,12 @@ class BotController:
       try:
         from backend.ml_engine.detection.adaptive_layering_model import AdaptiveLayeringModel
 
-        model_path = "data/models/layering_adaptive_v1.pkl"
+        # Use absolute path from project root
+        model_path = get_project_data_path("models/layering_adaptive_v1.pkl")
+        model_exists = Path(model_path).exists()
+
         self.adaptive_layering_model = AdaptiveLayeringModel(
-          model_path=model_path if Path(model_path).exists() else None,
+          model_path=model_path if model_exists else None,
           enabled=True
         )
 
