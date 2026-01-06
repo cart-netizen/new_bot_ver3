@@ -758,7 +758,40 @@ async def start_training(request: TrainingRequest):
     symbols_with_data = []
     symbols_without_data = []
 
-    for symbol in request.symbols:
+    # Функция для получения доступных символов
+    def get_available_symbols_for_model(model_type: str) -> set:
+        available = set()
+        if model_type == "tlob":
+            raw_lob_path = data_path / "raw_lob"
+            if raw_lob_path.exists():
+                for symbol_dir in raw_lob_path.iterdir():
+                    if symbol_dir.is_dir() and list(symbol_dir.rglob("*.parquet")):
+                        available.add(symbol_dir.name)
+        else:
+            feature_path = data_path / "feature_store" / "offline" / "training_features"
+            if feature_path.exists():
+                for pq_file in feature_path.rglob("*.parquet"):
+                    try:
+                        df = pd.read_parquet(pq_file, columns=['symbol'])
+                        available.update(df['symbol'].unique())
+                    except Exception:
+                        pass
+        return available
+
+    # Если символы не указаны - автоматически используем все доступные
+    symbols_to_check = request.symbols
+    if not symbols_to_check:
+        available_symbols = get_available_symbols_for_model(request.model_type)
+        if available_symbols:
+            symbols_to_check = sorted(list(available_symbols))
+            logger.info(f"No symbols specified, auto-selecting all available: {symbols_to_check}")
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No symbols specified and no data available for {request.model_type}"
+            )
+
+    for symbol in symbols_to_check:
         if request.model_type == "tlob":
             # Проверяем raw_lob или raw_lob_labeled
             raw_path = data_path / "raw_lob" / symbol
@@ -788,18 +821,10 @@ async def start_training(request: TrainingRequest):
 
     # Если нет данных ни для одного символа - ошибка
     if not symbols_with_data:
-        # Предлагаем доступные символы
-        available_symbols = set()
-        if request.model_type == "tlob":
-            raw_lob_path = data_path / "raw_lob"
-            if raw_lob_path.exists():
-                for symbol_dir in raw_lob_path.iterdir():
-                    if symbol_dir.is_dir() and list(symbol_dir.rglob("*.parquet")):
-                        available_symbols.add(symbol_dir.name)
-
+        available_symbols = get_available_symbols_for_model(request.model_type)
         raise HTTPException(
             status_code=400,
-            detail=f"No data found for symbols: {request.symbols}. "
+            detail=f"No data found for symbols: {symbols_to_check}. "
                    f"Available symbols: {sorted(list(available_symbols)) if available_symbols else 'None'}"
         )
 
