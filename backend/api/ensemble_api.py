@@ -752,6 +752,64 @@ async def start_training(request: TrainingRequest):
                 detail=f"Model {request.model_type} is already training"
             )
 
+    # ===== ВАЛИДАЦИЯ СИМВОЛОВ =====
+    # Проверяем наличие данных для запрошенных символов
+    data_path = _get_data_path()
+    symbols_with_data = []
+    symbols_without_data = []
+
+    for symbol in request.symbols:
+        if request.model_type == "tlob":
+            # Проверяем raw_lob или raw_lob_labeled
+            raw_path = data_path / "raw_lob" / symbol
+            labeled_path = data_path / "raw_lob_labeled" / symbol
+            has_data = (
+                (raw_path.exists() and list(raw_path.rglob("*.parquet"))) or
+                (labeled_path.exists() and list(labeled_path.rglob("*.parquet")))
+            )
+        else:
+            # Проверяем feature_store для CNN-LSTM и MPD
+            feature_path = data_path / "feature_store" / "offline" / "training_features"
+            has_data = False
+            if feature_path.exists():
+                for pq_file in feature_path.rglob("*.parquet"):
+                    try:
+                        df = pd.read_parquet(pq_file, columns=['symbol'])
+                        if symbol in df['symbol'].values:
+                            has_data = True
+                            break
+                    except Exception:
+                        pass
+
+        if has_data:
+            symbols_with_data.append(symbol)
+        else:
+            symbols_without_data.append(symbol)
+
+    # Если нет данных ни для одного символа - ошибка
+    if not symbols_with_data:
+        # Предлагаем доступные символы
+        available_symbols = set()
+        if request.model_type == "tlob":
+            raw_lob_path = data_path / "raw_lob"
+            if raw_lob_path.exists():
+                for symbol_dir in raw_lob_path.iterdir():
+                    if symbol_dir.is_dir() and list(symbol_dir.rglob("*.parquet")):
+                        available_symbols.add(symbol_dir.name)
+
+        raise HTTPException(
+            status_code=400,
+            detail=f"No data found for symbols: {request.symbols}. "
+                   f"Available symbols: {sorted(list(available_symbols)) if available_symbols else 'None'}"
+        )
+
+    # Предупреждаем о символах без данных
+    if symbols_without_data:
+        logger.warning(f"No data for symbols: {symbols_without_data}, training only with: {symbols_with_data}")
+
+    # Используем только символы с данными
+    validated_symbols = symbols_with_data
+
     # Создаем задачу
     _training_tasks[task_id] = {
         'task_id': task_id,
@@ -782,7 +840,7 @@ async def start_training(request: TrainingRequest):
                     model_type=request.model_type,
                     epochs=request.epochs,
                     learning_rate=request.learning_rate,
-                    symbols=request.symbols,
+                    symbols=validated_symbols,  # Используем только символы с данными
                     days=request.days,
                     main_loop=main_loop  # Передаём main event loop
                 )
@@ -794,11 +852,14 @@ async def start_training(request: TrainingRequest):
     _training_executor.submit(run_training_sync)
 
     logger.info(f"Training task {task_id} submitted to ThreadPoolExecutor")
+    logger.info(f"  Training symbols: {validated_symbols}")
 
     return {
         'success': True,
         'task_id': task_id,
-        'message': f"Training started for {request.model_type} in separate thread"
+        'message': f"Training started for {request.model_type} in separate thread",
+        'symbols_used': validated_symbols,
+        'symbols_skipped': symbols_without_data if symbols_without_data else None
     }
 
 
@@ -1522,13 +1583,8 @@ async def _run_training(
                     all_labels.append(seq_labels)
                     logger.info(f"  {symbol}: {len(sequences)} LOB sequences")
                 else:
-                    logger.warning(f"  {symbol}: недостаточно LOB данных, генерируем синтетические")
-                    # Генерируем синтетические данные для демонстрации
-                    synthetic_lob = np.random.randn(10000, 20, 4).astype(np.float32)
-                    synthetic_labels = np.random.randint(0, 3, size=10000)
-                    sequences, seq_labels = _create_sequences(synthetic_lob, synthetic_labels, 60)
-                    all_sequences.append(sequences)
-                    all_labels.append(seq_labels)
+                    # Пропускаем символ - не генерируем синтетические данные (они вызывают nan loss)
+                    logger.warning(f"  {symbol}: недостаточно LOB данных ({len(lob_data) if lob_data is not None else 0} snapshots), пропускаем")
             else:
                 # Загрузка feature данных для CNN-LSTM и MPD
                 features, labels = _load_feature_data_from_parquet(symbol, days)
@@ -1539,13 +1595,8 @@ async def _run_training(
                     all_labels.append(seq_labels)
                     logger.info(f"  {symbol}: {len(sequences)} feature sequences")
                 else:
-                    logger.warning(f"  {symbol}: недостаточно feature данных, генерируем синтетические")
-                    # Генерируем синтетические данные
-                    synthetic_features = np.random.randn(10000, 110).astype(np.float32)
-                    synthetic_labels = np.random.randint(0, 3, size=10000)
-                    sequences, seq_labels = _create_sequences(synthetic_features, synthetic_labels, 60)
-                    all_sequences.append(sequences)
-                    all_labels.append(seq_labels)
+                    # Пропускаем символ - не генерируем синтетические данные
+                    logger.warning(f"  {symbol}: недостаточно feature данных ({len(features) if features is not None else 0} samples), пропускаем")
 
         if not all_sequences:
             raise ValueError("Не удалось загрузить данные ни для одного символа")
