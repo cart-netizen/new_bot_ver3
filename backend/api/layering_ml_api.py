@@ -138,10 +138,14 @@ def load_layering_model_info() -> Optional[Dict[str, Any]]:
     try:
         import pickle
 
-        model_path = "data/models/layering_adaptive_v1.pkl"
-        model_file = _PROJECT_ROOT / model_path
+        # Use get_project_data_path for consistent absolute path resolution
+        model_path = get_project_data_path("models/layering_adaptive_v1.pkl")
+        model_file = Path(model_path)
+
+        logger.debug(f"Checking model at: {model_file}")
 
         if not model_file.exists():
+            logger.debug(f"Model file not found: {model_file}")
             return None
 
         # Read model metadata without fully loading the model
