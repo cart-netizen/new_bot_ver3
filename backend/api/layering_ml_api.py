@@ -222,11 +222,18 @@ async def get_layering_model_status() -> Dict[str, Any]:
     try:
         model_info = load_layering_model_info()
 
+        # Debug: show actual path being checked
+        actual_model_path = get_project_data_path("models/layering_adaptive_v1.pkl")
+        model_file = Path(actual_model_path)
+
         if not model_info:
             return {
                 "loaded": False,
                 "message": "Layering model not found or not trained yet",
-                "model_path": "data/models/layering_adaptive_v1.pkl"
+                "model_path": actual_model_path,
+                "model_path_exists": model_file.exists(),
+                "model_path_parent_exists": model_file.parent.exists(),
+                "project_data_root": get_project_data_path("")
             }
 
         return {
