@@ -900,6 +900,14 @@ async def get_available_symbols():
         if available_in_group:
             filtered_groups[group_name] = available_in_group
 
+    # Add "all" preset with ALL available symbols (both raw_lob and feature_store)
+    if all_available:
+        filtered_groups['all'] = sorted(list(all_available))
+
+    # Add "raw_lob_all" preset specifically for TLOB training
+    if raw_lob_symbols:
+        filtered_groups['raw_lob_all'] = sorted(list(raw_lob_symbols))
+
     return {
         'feature_store_symbols': sorted(list(feature_store_symbols)),
         'raw_lob_symbols': sorted(list(raw_lob_symbols)),
