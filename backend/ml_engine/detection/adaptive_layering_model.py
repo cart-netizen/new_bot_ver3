@@ -577,6 +577,12 @@ class AdaptiveLayeringModel:
       return
 
     try:
+      # NumPy 2.0 compatibility: add aliases for removed types
+      if not hasattr(np, 'float_'):
+        np.float_ = np.float64
+      if not hasattr(np, 'int_'):
+        np.int_ = np.int64
+
       with open(filepath, 'rb') as f:
         model_package = pickle.load(f)
 

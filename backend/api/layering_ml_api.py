@@ -148,6 +148,12 @@ def load_layering_model_info() -> Optional[Dict[str, Any]]:
             logger.debug(f"Model file not found: {model_file}")
             return None
 
+        # NumPy 2.0 compatibility: add aliases for removed types
+        if not hasattr(np, 'float_'):
+            np.float_ = np.float64
+        if not hasattr(np, 'int_'):
+            np.int_ = np.int64
+
         # Read model metadata without fully loading the model
         # This avoids triggering ERROR logs on every page load
         with open(model_file, 'rb') as f:
