@@ -172,7 +172,8 @@ def load_layering_model_info() -> Optional[Dict[str, Any]]:
     except Exception as e:
         # Use debug instead of error - model info not loading is not critical
         logger.debug(f"Could not load layering model info: {e}")
-        return None
+        # Return error info instead of None for debugging
+        return {"error": str(e), "error_type": type(e).__name__}
 
 
 def load_data_statistics() -> Dict[str, Any]:
@@ -234,6 +235,16 @@ async def get_layering_model_status() -> Dict[str, Any]:
                 "model_path_exists": model_file.exists(),
                 "model_path_parent_exists": model_file.parent.exists(),
                 "project_data_root": get_project_data_path("")
+            }
+
+        # Check if model_info contains error
+        if "error" in model_info:
+            return {
+                "loaded": False,
+                "message": f"Error loading model: {model_info['error']}",
+                "error_type": model_info.get("error_type"),
+                "model_path": actual_model_path,
+                "model_path_exists": model_file.exists()
             }
 
         return {
