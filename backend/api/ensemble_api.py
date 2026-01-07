@@ -189,6 +189,7 @@ async def _load_production_models():
         return
 
     try:
+        from dataclasses import fields
         from backend.ml_engine.inference.model_registry import get_model_registry, ModelStage
 
         registry = get_model_registry()
@@ -200,6 +201,11 @@ async def _load_production_models():
             'mpd_transformer': ModelType.MPD_TRANSFORMER,
             'tlob_transformer': ModelType.TLOB,
         }
+
+        def filter_config_fields(config_class, config_dict: dict) -> dict:
+            """Фильтрует config dict, оставляя только поля, существующие в dataclass."""
+            known_fields = {f.name for f in fields(config_class)}
+            return {k: v for k, v in config_dict.items() if k in known_fields}
 
         loaded_count = 0
 
@@ -219,7 +225,9 @@ async def _load_production_models():
                         checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
                         # Получаем конфиг из checkpoint или используем default
                         if 'config' in checkpoint:
-                            config = ModelConfigV2(**checkpoint['config'])
+                            # Фильтруем только известные поля (исключаем 'architecture' и др.)
+                            filtered_config = filter_config_fields(ModelConfigV2, checkpoint['config'])
+                            config = ModelConfigV2(**filtered_config)
                         else:
                             config = ModelConfigV2()
                         model = HybridCNNLSTMv2(config)
@@ -232,7 +240,9 @@ async def _load_production_models():
                         from backend.ml_engine.models.mpd_transformer import MPDTransformer, MPDTransformerConfig
                         checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
                         if 'config' in checkpoint:
-                            config = MPDTransformerConfig(**checkpoint['config'])
+                            # Фильтруем только известные поля (исключаем 'architecture' и др.)
+                            filtered_config = filter_config_fields(MPDTransformerConfig, checkpoint['config'])
+                            config = MPDTransformerConfig(**filtered_config)
                         else:
                             config = MPDTransformerConfig()
                         model = MPDTransformer(config)
@@ -245,7 +255,9 @@ async def _load_production_models():
                         from backend.ml_engine.models.tlob_transformer import TLOBTransformer, TLOBConfig
                         checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
                         if 'config' in checkpoint:
-                            config = TLOBConfig(**checkpoint['config'])
+                            # Фильтруем только известные поля (исключаем 'architecture' и др.)
+                            filtered_config = filter_config_fields(TLOBConfig, checkpoint['config'])
+                            config = TLOBConfig(**filtered_config)
                         else:
                             config = TLOBConfig()
                         model = TLOBTransformer(config)
