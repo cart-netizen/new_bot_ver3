@@ -501,7 +501,10 @@ export function MLManagementPage() {
   });
 
   // Available symbols from API (for MPD/TLOB multi-symbol training)
+  // MPD uses Feature Store data, TLOB uses Raw LOB data
   const [availableSymbols, setAvailableSymbols] = useState<string[]>([]);
+  const [featureStoreSymbols, setFeatureStoreSymbols] = useState<string[]>([]); // For MPD
+  const [rawLobSymbols, setRawLobSymbols] = useState<string[]>([]); // For TLOB
   const [symbolGroups, setSymbolGroups] = useState<{[key: string]: string[]}>({});
   const [loadingSymbols, setLoadingSymbols] = useState(false);
   const [showMpdSymbolSelector, setShowMpdSymbolSelector] = useState(false);
@@ -906,9 +909,19 @@ export function MLManagementPage() {
       // Fixed: use correct ensemble API endpoint
       const response = await fetch('/api/ensemble/training/available-symbols');
       const data = await response.json();
-      // API returns: { all_symbols: [...], preset_groups: {...}, ... }
+      // API returns: { feature_store_symbols, raw_lob_symbols, all_symbols, preset_groups, ... }
       setAvailableSymbols(data.all_symbols || []);
+      setFeatureStoreSymbols(data.feature_store_symbols || []); // For MPD training
+      setRawLobSymbols(data.raw_lob_symbols || []); // For TLOB training
       setSymbolGroups(data.preset_groups || {});
+
+      // Auto-select all available symbols if none selected
+      if (mpdTrainingParams.symbols.length === 0 && data.feature_store_symbols?.length > 0) {
+        setMpdTrainingParams(prev => ({ ...prev, symbols: data.feature_store_symbols }));
+      }
+      if (tlobTrainingParams.symbols.length === 0 && data.raw_lob_symbols?.length > 0) {
+        setTlobTrainingParams(prev => ({ ...prev, symbols: data.raw_lob_symbols }));
+      }
     } catch (err) {
       console.error('Failed to fetch available symbols:', err);
     } finally {
@@ -3900,7 +3913,7 @@ export function MLManagementPage() {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <label className="block text-sm font-medium text-gray-400">
-                Symbols ({mpdTrainingParams.symbols.length} selected)
+                Symbols ({mpdTrainingParams.symbols.length} / {featureStoreSymbols.length} Feature Store)
               </label>
               <button
                 onClick={() => setShowMpdSymbolSelector(!showMpdSymbolSelector)}
@@ -3946,11 +3959,11 @@ export function MLManagementPage() {
                     </button>
                   ))}
                   <button
-                    onClick={() => selectAllSymbols(setMpdTrainingParams, mpdTrainingParams)}
+                    onClick={() => setMpdTrainingParams({ ...mpdTrainingParams, symbols: [...featureStoreSymbols] })}
                     className="px-2 py-1 text-xs bg-green-900/50 hover:bg-green-900 rounded border border-green-700 text-green-400"
                     disabled={mpdTrainingStatus.is_training}
                   >
-                    All ({availableSymbols.length})
+                    All Feature Store ({featureStoreSymbols.length})
                   </button>
                   <button
                     onClick={() => clearAllSymbols(setMpdTrainingParams, mpdTrainingParams)}
@@ -3961,14 +3974,14 @@ export function MLManagementPage() {
                   </button>
                 </div>
 
-                {/* Symbol checkboxes */}
+                {/* Symbol checkboxes - MPD uses Feature Store data */}
                 <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-1 max-h-48 overflow-y-auto">
                   {loadingSymbols ? (
                     <span className="text-gray-500 col-span-full">Loading symbols...</span>
-                  ) : availableSymbols.length === 0 ? (
-                    <span className="text-gray-500 col-span-full">No data available. Collect data first.</span>
+                  ) : featureStoreSymbols.length === 0 ? (
+                    <span className="text-gray-500 col-span-full">No Feature Store data available. Run data collection first.</span>
                   ) : (
-                    availableSymbols.map(symbol => (
+                    featureStoreSymbols.map(symbol => (
                       <label
                         key={symbol}
                         className={cn(
@@ -4321,7 +4334,7 @@ export function MLManagementPage() {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <label className="block text-sm font-medium text-gray-400">
-                Symbols ({tlobTrainingParams.symbols.length} selected)
+                Symbols ({tlobTrainingParams.symbols.length} / {rawLobSymbols.length} Raw LOB)
                 <span className="ml-2 text-xs text-green-400">[Normalized for multi-symbol]</span>
               </label>
               <button
@@ -4375,11 +4388,11 @@ export function MLManagementPage() {
                     </button>
                   ))}
                   <button
-                    onClick={() => selectAllSymbols(setTlobTrainingParams, tlobTrainingParams)}
+                    onClick={() => setTlobTrainingParams({ ...tlobTrainingParams, symbols: [...rawLobSymbols] })}
                     className="px-2 py-1 text-xs bg-green-900/50 hover:bg-green-900 rounded border border-green-700 text-green-400"
                     disabled={tlobTrainingStatus.is_training}
                   >
-                    All ({availableSymbols.length})
+                    All Raw LOB ({rawLobSymbols.length})
                   </button>
                   <button
                     onClick={() => clearAllSymbols(setTlobTrainingParams, tlobTrainingParams)}
@@ -4390,14 +4403,14 @@ export function MLManagementPage() {
                   </button>
                 </div>
 
-                {/* Symbol checkboxes */}
+                {/* Symbol checkboxes - TLOB uses Raw LOB data */}
                 <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-1 max-h-48 overflow-y-auto">
                   {loadingSymbols ? (
                     <span className="text-gray-500 col-span-full">Loading symbols...</span>
-                  ) : availableSymbols.length === 0 ? (
-                    <span className="text-gray-500 col-span-full">No data available. Collect Raw LOB data first.</span>
+                  ) : rawLobSymbols.length === 0 ? (
+                    <span className="text-gray-500 col-span-full">No Raw LOB data available. Collect Raw LOB data first.</span>
                   ) : (
-                    availableSymbols.map(symbol => (
+                    rawLobSymbols.map(symbol => (
                       <label
                         key={symbol}
                         className={cn(
