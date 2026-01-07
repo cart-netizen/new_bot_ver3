@@ -903,12 +903,12 @@ export function MLManagementPage() {
   const fetchAvailableSymbols = async () => {
     try {
       setLoadingSymbols(true);
-      const response = await fetch('/api/training/available-symbols');
+      // Fixed: use correct ensemble API endpoint
+      const response = await fetch('/api/ensemble/training/available-symbols');
       const data = await response.json();
-      if (data.success) {
-        setAvailableSymbols(data.symbols || []);
-        setSymbolGroups(data.groups || {});
-      }
+      // API returns: { all_symbols: [...], preset_groups: {...}, ... }
+      setAvailableSymbols(data.all_symbols || []);
+      setSymbolGroups(data.preset_groups || {});
     } catch (err) {
       console.error('Failed to fetch available symbols:', err);
     } finally {
