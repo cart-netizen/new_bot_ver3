@@ -242,14 +242,32 @@ async def _load_production_models():
                         if 'config' in checkpoint:
                             # Фильтруем только известные поля (исключаем 'architecture' и др.)
                             filtered_config = filter_config_fields(MPDTransformerConfig, checkpoint['config'])
+                            logger.debug(f"MPD config from checkpoint: {filtered_config}")
                             config = MPDTransformerConfig(**filtered_config)
                         else:
                             config = MPDTransformerConfig()
                         model = MPDTransformer(config)
-                        if 'model_state_dict' in checkpoint:
-                            model.load_state_dict(checkpoint['model_state_dict'])
-                        else:
-                            model.load_state_dict(checkpoint)
+
+                        state_dict = checkpoint.get('model_state_dict', checkpoint)
+
+                        # Проверяем и исправляем размер pos_embed если нужно
+                        pos_key = 'pos_embed.pos_embed'
+                        if pos_key in state_dict:
+                            saved_pos = state_dict[pos_key]
+                            model_pos = model.state_dict()[pos_key]
+                            if saved_pos.shape != model_pos.shape:
+                                logger.warning(
+                                    f"MPD pos_embed shape mismatch: checkpoint {saved_pos.shape} vs model {model_pos.shape}. "
+                                    f"Resizing via interpolation."
+                                )
+                                # Resize через интерполяцию (1, seq_len, embed_dim)
+                                saved_pos = saved_pos.permute(0, 2, 1)  # (1, embed, seq)
+                                resized = torch.nn.functional.interpolate(
+                                    saved_pos, size=model_pos.shape[1], mode='linear', align_corners=False
+                                )
+                                state_dict[pos_key] = resized.permute(0, 2, 1)  # (1, seq, embed)
+
+                        model.load_state_dict(state_dict)
 
                     elif model_type == ModelType.TLOB:
                         from backend.ml_engine.models.tlob_transformer import TLOBTransformer, TLOBConfig
@@ -257,14 +275,32 @@ async def _load_production_models():
                         if 'config' in checkpoint:
                             # Фильтруем только известные поля (исключаем 'architecture' и др.)
                             filtered_config = filter_config_fields(TLOBConfig, checkpoint['config'])
+                            logger.debug(f"TLOB config from checkpoint: {filtered_config}")
                             config = TLOBConfig(**filtered_config)
                         else:
                             config = TLOBConfig()
                         model = TLOBTransformer(config)
-                        if 'model_state_dict' in checkpoint:
-                            model.load_state_dict(checkpoint['model_state_dict'])
-                        else:
-                            model.load_state_dict(checkpoint)
+
+                        state_dict = checkpoint.get('model_state_dict', checkpoint)
+
+                        # Проверяем и исправляем размер pos_embed если нужно
+                        pos_key = 'pos_embed'
+                        if pos_key in state_dict:
+                            saved_pos = state_dict[pos_key]
+                            model_pos = model.state_dict()[pos_key]
+                            if saved_pos.shape != model_pos.shape:
+                                logger.warning(
+                                    f"TLOB pos_embed shape mismatch: checkpoint {saved_pos.shape} vs model {model_pos.shape}. "
+                                    f"Resizing via interpolation."
+                                )
+                                # Resize через интерполяцию (1, seq_len, embed_dim)
+                                saved_pos = saved_pos.permute(0, 2, 1)  # (1, embed, seq)
+                                resized = torch.nn.functional.interpolate(
+                                    saved_pos, size=model_pos.shape[1], mode='linear', align_corners=False
+                                )
+                                state_dict[pos_key] = resized.permute(0, 2, 1)  # (1, seq, embed)
+
+                        model.load_state_dict(state_dict)
 
                     model.eval()  # Переключаем в режим inference
 
