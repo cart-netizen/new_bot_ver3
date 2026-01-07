@@ -172,6 +172,113 @@ def set_ensemble(ensemble: EnsembleConsensus):
     _ensemble_instance = ensemble
 
 
+# Флаг для отслеживания загрузки моделей
+_models_loaded: bool = False
+
+
+async def _load_production_models():
+    """
+    Загружает production модели из Model Registry в Ensemble.
+
+    Вызывается при первом запросе статуса ensemble.
+    Это позволяет показывать корректный статус моделей на странице /strategies.
+    """
+    global _models_loaded
+
+    if _models_loaded:
+        return
+
+    try:
+        from backend.ml_engine.inference.model_registry import get_model_registry, ModelStage
+
+        registry = get_model_registry()
+        ensemble = get_ensemble()
+
+        # Маппинг имен моделей в registry на ModelType
+        model_mapping = {
+            'hybrid_cnn_lstm': ModelType.CNN_LSTM,
+            'mpd_transformer': ModelType.MPD_TRANSFORMER,
+            'tlob_transformer': ModelType.TLOB,
+        }
+
+        loaded_count = 0
+
+        for registry_name, model_type in model_mapping.items():
+            try:
+                # Пытаемся получить production модель
+                model_info = await registry.get_production_model(registry_name)
+
+                if model_info and model_info.model_exists():
+                    # Загружаем модель
+                    model_path = model_info.model_path
+
+                    # Определяем класс модели по типу
+                    if model_type == ModelType.CNN_LSTM:
+                        from backend.ml_engine.models.hybrid_cnn_lstm_v2 import HybridCNNLSTMv2, ModelConfigV2
+                        # Загружаем checkpoint
+                        checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
+                        # Получаем конфиг из checkpoint или используем default
+                        if 'config' in checkpoint:
+                            config = ModelConfigV2(**checkpoint['config'])
+                        else:
+                            config = ModelConfigV2()
+                        model = HybridCNNLSTMv2(config)
+                        if 'model_state_dict' in checkpoint:
+                            model.load_state_dict(checkpoint['model_state_dict'])
+                        else:
+                            model.load_state_dict(checkpoint)
+
+                    elif model_type == ModelType.MPD_TRANSFORMER:
+                        from backend.ml_engine.models.mpd_transformer import MPDTransformer, MPDTransformerConfig
+                        checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
+                        if 'config' in checkpoint:
+                            config = MPDTransformerConfig(**checkpoint['config'])
+                        else:
+                            config = MPDTransformerConfig()
+                        model = MPDTransformer(config)
+                        if 'model_state_dict' in checkpoint:
+                            model.load_state_dict(checkpoint['model_state_dict'])
+                        else:
+                            model.load_state_dict(checkpoint)
+
+                    elif model_type == ModelType.TLOB:
+                        from backend.ml_engine.models.tlob_transformer import TLOBTransformer, TLOBConfig
+                        checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
+                        if 'config' in checkpoint:
+                            config = TLOBConfig(**checkpoint['config'])
+                        else:
+                            config = TLOBConfig()
+                        model = TLOBTransformer(config)
+                        if 'model_state_dict' in checkpoint:
+                            model.load_state_dict(checkpoint['model_state_dict'])
+                        else:
+                            model.load_state_dict(checkpoint)
+
+                    model.eval()  # Переключаем в режим inference
+
+                    # Регистрируем в ensemble
+                    ensemble.register_model(model_type, model)
+                    loaded_count += 1
+
+                    logger.info(
+                        f"Loaded production model: {registry_name} v{model_info.metadata.version} "
+                        f"-> {model_type.value}"
+                    )
+                else:
+                    logger.debug(f"No production model found for {registry_name}")
+
+            except Exception as e:
+                logger.warning(f"Failed to load model {registry_name}: {e}")
+                continue
+
+        _models_loaded = True
+        logger.info(f"Ensemble models loaded: {loaded_count}/3 production models")
+
+    except Exception as e:
+        logger.error(f"Failed to load production models: {e}")
+        _models_loaded = True  # Помечаем как выполненное чтобы не пытаться снова
+
+
 # ============================================================================
 # STATUS ENDPOINTS
 # ============================================================================
@@ -186,6 +293,9 @@ async def get_ensemble_status():
     - Состояние всех моделей
     - Статистику предсказаний
     """
+    # Автозагрузка production моделей из Model Registry при первом запросе
+    await _load_production_models()
+
     ensemble = get_ensemble()
     stats = ensemble.get_stats()
     config = ensemble.get_config()
@@ -216,6 +326,9 @@ async def get_models():
     """
     Получить список всех моделей и их состояние.
     """
+    # Автозагрузка production моделей из Model Registry при первом запросе
+    await _load_production_models()
+
     ensemble = get_ensemble()
     stats = ensemble.get_stats()
 
