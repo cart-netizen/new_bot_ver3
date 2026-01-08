@@ -653,10 +653,12 @@ class ExecutionManager:
                 # ШАГ 2.6: ЗАПИСЬ ДЕТАЛЬНОГО ОТЧЁТА (trades.log)
                 # ==========================================
                 try:
-                    # entry_signal - это dict, не объект Signal
+                    # entry_signal - это dict из signal.to_dict()
+                    # strategy_results и ml_validation_result находятся внутри metadata
                     signal_data = entry_signal if entry_signal else {}
-                    strategy_results = signal_data.get('strategy_results')
-                    ml_validation_result = signal_data.get('ml_validation_result')
+                    metadata = signal_data.get('metadata', {})
+                    strategy_results = metadata.get('strategy_results')
+                    ml_validation_result = metadata.get('ml_validation_result')
 
                     # Создаём и записываем отчёт
                     trade_report = trade_reporter.create_report_from_dict(
