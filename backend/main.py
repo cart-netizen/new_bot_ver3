@@ -2561,8 +2561,25 @@ class BotController:
                     final_signal.metadata['contributing_strategies'] = contributing_strategies
 
                     # Strategy Results для детального отчёта в trades.log
-                    # Сохраняем полную информацию о каждой стратегии
-                    final_signal.metadata['strategy_results'] = consensus.strategy_results
+                    # Сериализуем в словари для совместимости с JSON/БД
+                    serialized_strategy_results = []
+                    for sr in consensus.strategy_results:
+                      sr_dict = {
+                        'strategy_name': sr.strategy_name,
+                        'strategy_type': sr.strategy_type.value if hasattr(sr.strategy_type, 'value') else str(sr.strategy_type),
+                        'weight': sr.weight,
+                        'execution_time_ms': sr.execution_time_ms,
+                        'signal': None
+                      }
+                      if sr.signal:
+                        sr_dict['signal'] = {
+                          'signal_type': sr.signal.signal_type.value if hasattr(sr.signal.signal_type, 'value') else str(sr.signal.signal_type),
+                          'confidence': sr.signal.confidence,
+                          'reason': sr.signal.reason,
+                          'metadata': sr.signal.metadata if sr.signal.metadata else {}
+                        }
+                      serialized_strategy_results.append(sr_dict)
+                    final_signal.metadata['strategy_results'] = serialized_strategy_results
 
                   # MTF Signal Info
                   if integrated_signal.mtf_signal:
@@ -2721,13 +2738,31 @@ class BotController:
                       ml_validation_confidence = validation_result.ml_confidence
 
                       # Добавляем ML validation метаданные
+                      # Сериализуем ValidationResult в dict для совместимости с JSON/БД
+                      ml_validation_dict = {
+                        'ml_direction': validation_result.ml_direction,
+                        'ml_confidence': validation_result.ml_confidence,
+                        'ml_expected_return': validation_result.ml_expected_return,
+                        'validated': validation_result.validated,
+                        'final_signal_type': validation_result.final_signal_type.value if hasattr(validation_result.final_signal_type, 'value') else str(validation_result.final_signal_type),
+                        'final_confidence': validation_result.final_confidence,
+                        'agreement': validation_result.agreement,
+                        'reason': validation_result.reason,
+                        'inference_time_ms': validation_result.inference_time_ms,
+                        'used_fallback': validation_result.used_fallback,
+                        'predicted_mae': validation_result.predicted_mae,
+                        'manipulation_risk': validation_result.manipulation_risk,
+                        'market_regime': validation_result.market_regime.value if validation_result.market_regime and hasattr(validation_result.market_regime, 'value') else str(validation_result.market_regime) if validation_result.market_regime else None,
+                        'feature_quality': validation_result.feature_quality
+                      }
+
                       final_signal.metadata.update({
                         'ml_validated': True,
                         'ml_should_trade': ml_should_trade,
                         'ml_validation_confidence': ml_validation_confidence,
                         'ml_validation_reason': validation_result.reason if not ml_should_trade else None,
-                        # Полный результат ML валидации для детального отчёта в trades.log
-                        'ml_validation_result': validation_result
+                        # Сериализованный результат ML валидации для детального отчёта в trades.log
+                        'ml_validation_result': ml_validation_dict
                       })
 
                       # Логирование результата
