@@ -423,13 +423,13 @@ class MLDataCollector:
       labels_list = self.label_buffers[symbol]
       metadata_list = self.metadata_buffers[symbol]
 
-      # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем правильные названия колонок из FeatureStoreSchema
+      # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем базовые 112 признаков (без extended)
       from backend.ml_engine.feature_store.feature_schema import DEFAULT_SCHEMA
-      feature_column_names = DEFAULT_SCHEMA.get_all_feature_columns()
+      feature_column_names = DEFAULT_SCHEMA.get_base_feature_columns()
 
       if len(feature_column_names) != 112:
         logger.error(
-          f"Feature schema mismatch: expected 112 columns, got {len(feature_column_names)}"
+          f"Feature schema mismatch: expected 112 base columns, got {len(feature_column_names)}"
         )
         return
 
