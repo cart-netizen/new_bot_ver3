@@ -9,7 +9,6 @@ import time
 import traceback
 import logging
 import sys
-import platform
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, Any, List
@@ -20,10 +19,6 @@ import psutil
 import uvicorn
 import subprocess
 from fastapi import WebSocket, WebSocketDisconnect
-
-# ПРИМЕЧАНИЕ: С Python 3.12 на Windows используем ProactorEventLoop (по умолчанию)
-# WindowsSelectorEventLoopPolicy вызывает зависания из-за ограничений select()
-# Ошибка "IndexError: pop from an empty deque" решается отключением uvicorn reload
 
 # from analysis_loop_ml_data_collection import ml_data_collection_loop
 from backend.config import settings, get_project_data_path
@@ -5567,30 +5562,17 @@ signal.signal(signal.SIGTERM, handle_shutdown_signal)
 if __name__ == "__main__":
   """Точка входа при запуске напрямую."""
 
-  is_windows = platform.system() == "Windows"
-
-  if is_windows:
-    logger.info("✅ Windows обнаружена: используем ProactorEventLoop (Python 3.12+)")
-
   logger.info("=" * 80)
   logger.info(f"Запуск {settings.APP_NAME} v{settings.APP_VERSION}")
   logger.info(f"Режим: {settings.BYBIT_MODE.upper()}")
   logger.info(f"Хост: {settings.API_HOST}:{settings.API_PORT}")
   logger.info("=" * 80)
 
-  # На Windows отключаем reload - он создаёт subprocess-ы
-  # которые не наследуют event loop policy и падают
-  use_reload = settings.DEBUG and not is_windows
-
-  if is_windows and settings.DEBUG:
-    logger.warning("⚠️ На Windows режим reload отключён для стабильности asyncio")
-    logger.warning("   Для auto-reload используйте: watchmedo auto-restart --pattern='*.py' -- python -m backend.main")
-
   # Запускаем Uvicorn сервер
   uvicorn.run(
     "backend.main:app",
     host=settings.API_HOST,
     port=settings.API_PORT,
-    reload=use_reload,
+    reload=settings.DEBUG,
     log_level=settings.LOG_LEVEL.lower(),
   )
