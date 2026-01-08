@@ -1933,13 +1933,25 @@ async def get_exchange_positions(current_user: dict = Depends(require_auth)):
     }
 
   except ValueError as e:
-    logger.warning(f"API ключи не настроены: {e}")
-    return {
-      "positions": [],
-      "count": 0,
-      "timestamp": int(datetime.now().timestamp() * 1000),
-      "error": "API ключи не настроены"
-    }
+    error_msg = str(e)
+    # Проверяем, действительно ли это ошибка API ключей
+    if "API" in error_msg or "ключ" in error_msg.lower() or "key" in error_msg.lower():
+      logger.warning(f"API ключи не настроены: {e}")
+      return {
+        "positions": [],
+        "count": 0,
+        "timestamp": int(datetime.now().timestamp() * 1000),
+        "error": "API ключи не настроены"
+      }
+    else:
+      # Другая ValueError - логируем реальную ошибку
+      logger.error(f"ValueError при получении позиций: {e}", exc_info=True)
+      return {
+        "positions": [],
+        "count": 0,
+        "timestamp": int(datetime.now().timestamp() * 1000),
+        "error": f"Ошибка: {error_msg}"
+      }
 
   except Exception as e:
     logger.error(f"Ошибка получения позиций с биржи: {e}", exc_info=True)
@@ -2001,13 +2013,23 @@ async def get_open_orders(
     }
 
   except ValueError as e:
-    logger.warning(f"API ключи не настроены: {e}")
-    return {
-      "orders": [],
-      "count": 0,
-      "timestamp": int(datetime.now().timestamp() * 1000),
-      "error": "API ключи не настроены"
-    }
+    error_msg = str(e)
+    if "API" in error_msg or "ключ" in error_msg.lower() or "key" in error_msg.lower():
+      logger.warning(f"API ключи не настроены: {e}")
+      return {
+        "orders": [],
+        "count": 0,
+        "timestamp": int(datetime.now().timestamp() * 1000),
+        "error": "API ключи не настроены"
+      }
+    else:
+      logger.error(f"ValueError при получении ордеров: {e}", exc_info=True)
+      return {
+        "orders": [],
+        "count": 0,
+        "timestamp": int(datetime.now().timestamp() * 1000),
+        "error": f"Ошибка: {error_msg}"
+      }
 
   except Exception as e:
     logger.error(f"Ошибка получения ордеров: {e}", exc_info=True)

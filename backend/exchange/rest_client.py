@@ -32,6 +32,22 @@ class BybitRESTClient:
 
     logger.info(f"Инициализирован REST клиент Bybit: {self.base_url}")
 
+  def _validate_api_credentials(self) -> None:
+    """
+    Проверка наличия API ключей для текущего режима работы.
+
+    Raises:
+        ValueError: Если API ключи не настроены
+    """
+    try:
+      api_key, api_secret = settings.get_bybit_credentials()
+      if not api_key or not api_secret:
+        raise ValueError("Пустые API ключи")
+    except ValueError as e:
+      error_msg = f"API ключи Bybit не настроены для режима {settings.BYBIT_MODE}: {e}"
+      logger.error(error_msg)
+      raise ValueError(error_msg)
+
   async def __aenter__(self):
     """Асинхронный вход в контекст."""
     await self.initialize()
@@ -232,13 +248,7 @@ class BybitRESTClient:
     logger.info("Запрос баланса кошелька")
 
     # Проверяем наличие API ключей
-    if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
-      error_msg = (
-        "API ключи Bybit не настроены. "
-        "Установите BYBIT_API_KEY и BYBIT_API_SECRET в файле .env"
-      )
-      logger.error(error_msg)
-      raise ValueError(error_msg)
+    self._validate_api_credentials()
 
     # Реальный запрос к API
     params = {"accountType": account_type}
@@ -292,13 +302,7 @@ class BybitRESTClient:
     )
 
     # Проверяем наличие API ключей
-    if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
-      error_msg = (
-        "API ключи Bybit не настроены. "
-        "Установите BYBIT_API_KEY и BYBIT_API_SECRET в файле .env"
-      )
-      logger.error(error_msg)
-      raise ValueError(error_msg)
+    self._validate_api_credentials()
 
     # Реальный запрос к API для фьючерсов
     params = {
@@ -350,13 +354,7 @@ class BybitRESTClient:
     logger.info(f"Отмена ордера: {symbol} order_id={order_id}")
 
     # Проверяем наличие API ключей
-    if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
-      error_msg = (
-        "API ключи Bybit не настроены. "
-        "Установите BYBIT_API_KEY и BYBIT_API_SECRET в файле .env"
-      )
-      logger.error(error_msg)
-      raise ValueError(error_msg)
+    self._validate_api_credentials()
 
     # Реальный запрос к API
     params = {
@@ -391,13 +389,7 @@ class BybitRESTClient:
     logger.info(f"Запрос открытых ордеров{f' для {symbol}' if symbol else ''}")
 
     # Проверяем наличие API ключей
-    if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
-      error_msg = (
-        "API ключи Bybit не настроены. "
-        "Установите BYBIT_API_KEY и BYBIT_API_SECRET в файле .env"
-      )
-      logger.error(error_msg)
-      raise ValueError(error_msg)
+    self._validate_api_credentials()
 
     # Реальный запрос к API
     # ИСПРАВЛЕНО: Добавлен settleCoin - обязательный параметр если symbol не указан
@@ -441,13 +433,7 @@ class BybitRESTClient:
         ValueError: Если API ключи не настроены или не указан ни один ID
     """
     # Проверяем наличие API ключей
-    if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
-      error_msg = (
-        "API ключи Bybit не настроены. "
-        "Установите BYBIT_API_KEY и BYBIT_API_SECRET в файле .env"
-      )
-      logger.error(error_msg)
-      raise ValueError(error_msg)
+    self._validate_api_credentials()
 
     # Должен быть указан хотя бы один ID
     if not order_id and not order_link_id:
@@ -537,13 +523,7 @@ class BybitRESTClient:
     logger.info(f"Запрос истории ордеров{f' для {symbol}' if symbol else ''}")
 
     # Проверяем наличие API ключей
-    if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
-      error_msg = (
-        "API ключи Bybit не настроены. "
-        "Установите BYBIT_API_KEY и BYBIT_API_SECRET в файле .env"
-      )
-      logger.error(error_msg)
-      raise ValueError(error_msg)
+    self._validate_api_credentials()
 
     # Параметры запроса
     params = {
@@ -581,13 +561,7 @@ class BybitRESTClient:
     logger.info(f"Запрос позиций{f' для {symbol}' if symbol else ''}")
 
     # Проверяем наличие API ключей
-    if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
-      error_msg = (
-        "API ключи Bybit не настроены. "
-        "Установите BYBIT_API_KEY и BYBIT_API_SECRET в файле .env"
-      )
-      logger.error(error_msg)
-      raise ValueError(error_msg)
+    self._validate_api_credentials()
 
     # ИСПРАВЛЕНО: Добавлен параметр settleCoin для категории LINEAR
     params = {
@@ -680,13 +654,7 @@ class BybitRESTClient:
     logger.info("Запрос информации об API ключе")
 
     # Проверяем наличие API ключей
-    if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
-      error_msg = (
-        "API ключи Bybit не настроены. "
-        "Установите BYBIT_API_KEY и BYBIT_API_SECRET в файле .env"
-      )
-      logger.error(error_msg)
-      raise ValueError(error_msg)
+    self._validate_api_credentials()
 
     response = await self._request(
       "GET",
@@ -716,13 +684,7 @@ class BybitRESTClient:
     logger.info(f"Установка плеча для {symbol}: Buy={buy_leverage}x, Sell={sell_leverage}x")
 
     # Проверяем наличие API ключей
-    if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
-      error_msg = (
-        "API ключи Bybit не настроены. "
-        "Установите BYBIT_API_KEY и BYBIT_API_SECRET в файле .env"
-      )
-      logger.error(error_msg)
-      raise ValueError(error_msg)
+    self._validate_api_credentials()
 
     params = {
       "category": BybitCategory.LINEAR.value,
@@ -840,13 +802,7 @@ class BybitRESTClient:
     )
 
     # Проверка наличия API ключей
-    if not settings.BYBIT_API_KEY or not settings.BYBIT_API_SECRET:
-      error_msg = (
-        "API ключи Bybit не настроены. "
-        "Установите BYBIT_API_KEY и BYBIT_API_SECRET в файле .env"
-      )
-      logger.error(error_msg)
-      raise ValueError(error_msg)
+    self._validate_api_credentials()
 
     # Параметры запроса
     params = {
