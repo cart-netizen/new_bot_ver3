@@ -135,6 +135,16 @@ class Settings(BaseSettings):
       le=1.0,
       description="Вес стратегии в гибридном решении")
 
+  # NEW: HOLD handling settings
+  ML_ALLOW_HOLD_SIGNALS: bool = Field(
+      default=True,
+      description="Пропускать сигналы со штрафом, когда ML предлагает HOLD (True) или полностью отклонять (False)")
+  ML_HOLD_PENALTY_FACTOR: float = Field(
+      default=0.5,
+      ge=0.1,
+      le=1.0,
+      description="Множитель штрафа при ML HOLD (0.5 = 50% от оригинальной уверенности)")
+
   ONLY_TRAINING: bool = Field(
       default=False,
       description="Режим только сбора данных для ML (без поиска сигналов). True - только сбор данных, False - полная работа бота"
