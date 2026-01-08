@@ -938,6 +938,12 @@ class Settings(BaseSettings):
     description="Включить сбор данных для обучения ML модели (может влиять на производительность)"
   )
 
+  # Layering Data Collection (для обучения детектора манипуляций)
+  LAYERING_DATA_COLLECTION_ENABLED: bool = Field(
+    default=os.getenv("LAYERING_DATA_COLLECTION_ENABLED", "false").lower() == "true",
+    description="Включить сбор layering данных для обучения ML модели детектора манипуляций"
+  )
+
   # ==================== RAW LOB Collection (TLOB Transformer) ====================
   RAW_LOB_COLLECTION_ENABLED: bool = Field(
     default=os.getenv("RAW_LOB_COLLECTION_ENABLED", "true").lower() == "true",
