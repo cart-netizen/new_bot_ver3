@@ -40,6 +40,7 @@ from backend.strategy.sltp_calculator import sltp_calculator
 from backend.strategy.trailing_stop_manager import trailing_stop_manager
 from backend.utils.balance_tracker import balance_tracker
 from backend.utils.helpers import get_timestamp_ms, round_price, round_quantity, safe_enum_value
+from backend.core.trade_reporter import trade_reporter
 
 logger = get_logger(__name__)
 
@@ -647,6 +648,33 @@ class ExecutionManager:
                         exc_info=True
                     )
                     # Продолжаем, т.к. позиция уже создана на бирже
+
+                # ==========================================
+                # ШАГ 2.6: ЗАПИСЬ ДЕТАЛЬНОГО ОТЧЁТА (trades.log)
+                # ==========================================
+                try:
+                    # Извлекаем данные из metadata сигнала
+                    signal_metadata = signal.metadata if signal.metadata else {}
+                    strategy_results = signal_metadata.get('strategy_results')
+                    ml_validation_result = signal_metadata.get('ml_validation_result')
+
+                    # Создаём и записываем отчёт
+                    trade_report = trade_reporter.create_report_from_signal(
+                        signal=signal,
+                        strategy_results=strategy_results,
+                        ml_validation_result=ml_validation_result,
+                        sl_price=stop_loss,
+                        tp_price=take_profit,
+                        position_size=float(quantity) * entry_price
+                    )
+
+                    trade_reporter.log_trade(trade_report)
+
+                    logger.info(f"📝 Детальный отчёт записан в trades.log")
+
+                except Exception as report_error:
+                    logger.warning(f"⚠ Ошибка записи отчёта: {report_error}")
+                    # Не критично - продолжаем
 
                 # ==========================================
                 # ШАГ 3: ОБНОВЛЕНИЕ ПРИВЯЗКИ (ЕСЛИ НУЖНО)

@@ -147,6 +147,9 @@ def setup_logging(
         error_file_handler.setFormatter(FileFormatter())
         root_logger.addHandler(error_file_handler)
 
+        # ===== TRADES LOG - ДЕТАЛЬНЫЕ ОТЧЕТЫ О СДЕЛКАХ =====
+        _setup_trades_logger(log_path)
+
     # Отключаем избыточное логирование от сторонних библиотек
     logging.getLogger("asyncio").setLevel(logging.WARNING)
     logging.getLogger("aiohttp").setLevel(logging.WARNING)
@@ -163,6 +166,71 @@ def setup_logging(
     logger.info(f"Bybit режим: {settings.BYBIT_MODE.upper()}")
     logger.info(f"Торговые пары: {settings.get_trading_pairs_list()}")
     logger.info("=" * 80)
+
+
+class TradesFileFormatter(logging.Formatter):
+    """Форматтер для trades.log - чистый формат без лишней информации."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        """Форматирование записи для файла сделок."""
+        timestamp = datetime.fromtimestamp(record.created).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+        return f"[{timestamp}]\n{record.getMessage()}\n"
+
+
+# Глобальная ссылка на trades logger
+_trades_logger: Optional[logging.Logger] = None
+
+
+def _setup_trades_logger(log_path: Path) -> None:
+    """
+    Настройка отдельного логгера для детальных отчетов о сделках.
+
+    Записывает в trades.log только реализованные ордера с полным анализом:
+    - Индикаторы каждой стратегии
+    - ML прогнозы от всех моделей
+    - MTF анализ
+    - Причины принятия решения
+    """
+    global _trades_logger
+
+    trades_logger = logging.getLogger("trades")
+    trades_logger.setLevel(logging.INFO)
+    trades_logger.propagate = False  # Не дублировать в основной лог
+
+    # Очищаем существующие обработчики
+    trades_logger.handlers.clear()
+
+    # Файловый обработчик с ротацией по дням
+    trades_filepath = log_path / "trades.log"
+
+    trades_handler = logging.handlers.TimedRotatingFileHandler(
+        trades_filepath,
+        when='midnight',
+        interval=1,
+        backupCount=90,  # Храним 90 дней для анализа
+        encoding='utf-8'
+    )
+    trades_handler.suffix = "%Y-%m-%d"
+    trades_handler.setLevel(logging.INFO)
+    trades_handler.setFormatter(TradesFileFormatter())
+    trades_logger.addHandler(trades_handler)
+
+    _trades_logger = trades_logger
+
+
+def get_trades_logger() -> logging.Logger:
+    """
+    Получение логгера для записи детальных отчетов о сделках.
+
+    Returns:
+        logging.Logger: Логгер для trades.log
+    """
+    global _trades_logger
+    if _trades_logger is None:
+        # Fallback - создаем базовый логгер если setup_logging еще не вызван
+        _trades_logger = logging.getLogger("trades")
+        _trades_logger.setLevel(logging.INFO)
+    return _trades_logger
 
 
 def get_logger(name: str) -> logging.Logger:

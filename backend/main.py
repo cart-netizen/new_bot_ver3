@@ -2560,6 +2560,10 @@ class BotController:
                     contributing_strategies = consensus.contributing_strategies
                     final_signal.metadata['contributing_strategies'] = contributing_strategies
 
+                    # Strategy Results для детального отчёта в trades.log
+                    # Сохраняем полную информацию о каждой стратегии
+                    final_signal.metadata['strategy_results'] = consensus.strategy_results
+
                   # MTF Signal Info
                   if integrated_signal.mtf_signal:
                     mtf = integrated_signal.mtf_signal
@@ -2721,7 +2725,9 @@ class BotController:
                         'ml_validated': True,
                         'ml_should_trade': ml_should_trade,
                         'ml_validation_confidence': ml_validation_confidence,
-                        'ml_validation_reason': validation_result.reason if not ml_should_trade else None
+                        'ml_validation_reason': validation_result.reason if not ml_should_trade else None,
+                        # Полный результат ML валидации для детального отчёта в trades.log
+                        'ml_validation_result': validation_result
                       })
 
                       # Логирование результата
