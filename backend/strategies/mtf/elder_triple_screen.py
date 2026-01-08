@@ -33,7 +33,7 @@ from backend.core.logger import get_logger
 from backend.models.signal import SignalType, SignalStrength, TradingSignal, SignalSource
 
 from .timeframe_coordinator import Timeframe
-from .timeframe_analyzer import TimeframeAnalysisResult, MarketRegimeType
+from .timeframe_analyzer import TimeframeAnalysisResult, MarketRegime, VolatilityRegime
 
 logger = get_logger(__name__)
 
@@ -268,14 +268,14 @@ class ElderTripleScreen:
         reasons = []
 
         # 1. Market regime direction
-        if regime == MarketRegimeType.TRENDING_UP:
+        if regime in [MarketRegime.STRONG_UPTREND, MarketRegime.WEAK_UPTREND]:
             direction = ScreenDirection.BULLISH
-            confidence += 0.3
+            confidence += 0.3 if regime == MarketRegime.STRONG_UPTREND else 0.2
             indicators_used.append("market_regime")
             reasons.append("H1 uptrend")
-        elif regime == MarketRegimeType.TRENDING_DOWN:
+        elif regime in [MarketRegime.STRONG_DOWNTREND, MarketRegime.WEAK_DOWNTREND]:
             direction = ScreenDirection.BEARISH
-            confidence += 0.3
+            confidence += 0.3 if regime == MarketRegime.STRONG_DOWNTREND else 0.2
             indicators_used.append("market_regime")
             reasons.append("H1 downtrend")
 
@@ -320,7 +320,7 @@ class ElderTripleScreen:
             indicators_used.append("strategy_consensus")
 
         # 4. Volatility check (высокая волатильность = осторожность)
-        if result.regime.volatility_state == "high":
+        if result.regime.volatility_regime == VolatilityRegime.HIGH:
             confidence *= 0.9
             reasons.append("High volatility caution")
 
@@ -377,17 +377,17 @@ class ElderTripleScreen:
         # Определяем фазу волны относительно tide
         if tide_direction == ScreenDirection.BULLISH:
             # В бычьем тренде ищем откат вниз (opportunity)
-            if regime in [MarketRegimeType.TRENDING_DOWN, MarketRegimeType.VOLATILE_DOWN]:
+            if regime in [MarketRegime.STRONG_DOWNTREND, MarketRegime.WEAK_DOWNTREND]:
                 wave_phase = WavePhase.PULLBACK_IN_UPTREND
                 direction = ScreenDirection.BULLISH  # Готовимся покупать!
                 confidence = 0.7
                 reasons.append("Pullback in uptrend - buy opportunity")
-            elif regime == MarketRegimeType.RANGING:
+            elif regime == MarketRegime.RANGING:
                 wave_phase = WavePhase.PULLBACK_IN_UPTREND
                 direction = ScreenDirection.BULLISH
                 confidence = 0.5
                 reasons.append("Consolidation in uptrend - potential entry")
-            elif regime == MarketRegimeType.TRENDING_UP:
+            elif regime in [MarketRegime.STRONG_UPTREND, MarketRegime.WEAK_UPTREND]:
                 wave_phase = WavePhase.WITH_TREND
                 direction = ScreenDirection.NEUTRAL  # Слишком поздно
                 confidence = 0.3
@@ -400,17 +400,17 @@ class ElderTripleScreen:
 
         elif tide_direction == ScreenDirection.BEARISH:
             # В медвежьем тренде ищем откат вверх (opportunity)
-            if regime in [MarketRegimeType.TRENDING_UP, MarketRegimeType.VOLATILE_UP]:
+            if regime in [MarketRegime.STRONG_UPTREND, MarketRegime.WEAK_UPTREND]:
                 wave_phase = WavePhase.PULLBACK_IN_DOWNTREND
                 direction = ScreenDirection.BEARISH  # Готовимся продавать!
                 confidence = 0.7
                 reasons.append("Pullback in downtrend - sell opportunity")
-            elif regime == MarketRegimeType.RANGING:
+            elif regime == MarketRegime.RANGING:
                 wave_phase = WavePhase.PULLBACK_IN_DOWNTREND
                 direction = ScreenDirection.BEARISH
                 confidence = 0.5
                 reasons.append("Consolidation in downtrend - potential entry")
-            elif regime == MarketRegimeType.TRENDING_DOWN:
+            elif regime in [MarketRegime.STRONG_DOWNTREND, MarketRegime.WEAK_DOWNTREND]:
                 wave_phase = WavePhase.WITH_TREND
                 direction = ScreenDirection.NEUTRAL  # Слишком поздно
                 confidence = 0.3
@@ -543,7 +543,7 @@ class ElderTripleScreen:
             regime = result.regime.market_regime
 
             if expected_direction == ScreenDirection.BULLISH:
-                if regime in [MarketRegimeType.TRENDING_UP, MarketRegimeType.VOLATILE_UP]:
+                if regime in [MarketRegime.STRONG_UPTREND, MarketRegime.WEAK_UPTREND]:
                     direction = ScreenDirection.BULLISH
                     confidence = 0.5
                     reasons.append("M5 turning bullish - entry possible")
@@ -553,7 +553,7 @@ class ElderTripleScreen:
                     reasons.append("M5 not yet bullish - wait")
 
             elif expected_direction == ScreenDirection.BEARISH:
-                if regime in [MarketRegimeType.TRENDING_DOWN, MarketRegimeType.VOLATILE_DOWN]:
+                if regime in [MarketRegime.STRONG_DOWNTREND, MarketRegime.WEAK_DOWNTREND]:
                     direction = ScreenDirection.BEARISH
                     confidence = 0.5
                     reasons.append("M5 turning bearish - entry possible")
@@ -799,7 +799,7 @@ class ElderTripleScreen:
         signal = TradingSignal(
             symbol=symbol,
             signal_type=result.final_signal_type,
-            source=SignalSource.MTF_CONSENSUS,
+            source=SignalSource.CONSENSUS,
             strength=strength,
             price=current_price,
             confidence=result.combined_confidence,
