@@ -16,6 +16,7 @@ Features:
 Path: backend/ml_engine/detection/layering_data_collector.py
 """
 
+import asyncio
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -237,9 +238,15 @@ class LayeringDataCollector:
     if label is not None:
       self.total_labeled += 1
 
-    # Auto-save if buffer full
+    # Auto-save if buffer full (в background task чтобы не блокировать)
     if len(self.data_buffer) >= self.auto_save_interval:
-      self.save_to_disk()
+      try:
+        loop = asyncio.get_running_loop()
+        # Создаём background task для сохранения
+        asyncio.create_task(self.save_to_disk_async())
+      except RuntimeError:
+        # Нет event loop (sync контекст) - сохраняем синхронно
+        self.save_to_disk()
 
     logger.debug(
       f"📊 Data collected: {data_id}, "
@@ -287,12 +294,57 @@ class LayeringDataCollector:
         logger.info(f"🏷️  Label updated: {data_id}, label={label}")
         return
 
-    # Check disk files (more expensive)
+    # Check disk files (more expensive) - синхронная версия
     self._update_label_in_files(data_id, label, label_source, label_confidence, notes)
 
+  async def update_label_async(
+      self,
+      data_id: str,
+      label: bool,
+      label_source: str = "manual",
+      label_confidence: float = 1.0,
+      notes: str = ""
+  ):
+    """
+    Async version of update_label - НЕ блокирует event loop.
+
+    Используется из async контекста (например, _validate_pattern_price_action).
+    Файловые операции выполняются в thread pool.
+    """
+    if not self.enabled:
+      return
+
+    # Check buffer first (быстрая операция, не нужен thread)
+    for i, data_point in enumerate(self.data_buffer):
+      if data_point.data_id == data_id:
+        self.data_buffer[i].is_true_layering = label
+        self.data_buffer[i].label_source = label_source
+        self.data_buffer[i].label_confidence = label_confidence
+        if notes:
+          self.data_buffer[i].notes = notes
+
+        if data_point.is_true_layering is None:
+          self.total_labeled += 1
+
+        logger.info(f"🏷️  Label updated: {data_id}, label={label}")
+        return
+
+    # Check disk files в отдельном потоке (не блокирует event loop)
+    await asyncio.to_thread(
+      self._update_label_in_files,
+      data_id, label, label_source, label_confidence, notes
+    )
+
   def save_to_disk(self):
-    """Save buffer to Parquet file."""
+    """Save buffer to Parquet file (синхронная версия для shutdown)."""
     if not self.enabled or not self.data_buffer:
+      return
+
+    self._save_to_disk_sync()
+
+  def _save_to_disk_sync(self):
+    """Внутренняя синхронная реализация сохранения."""
+    if not self.data_buffer:
       return
 
     # Convert to DataFrame
@@ -305,10 +357,11 @@ class LayeringDataCollector:
     # Save to Parquet
     df.to_parquet(filepath, engine='pyarrow', compression='snappy')
 
-    self.total_saved += len(self.data_buffer)
+    saved_count = len(self.data_buffer)
+    self.total_saved += saved_count
 
     logger.info(
-      f"💾 Saved {len(self.data_buffer)} samples to {filename}"
+      f"💾 Saved {saved_count} samples to {filename}"
     )
 
     # Clear buffer
@@ -316,6 +369,14 @@ class LayeringDataCollector:
 
     # Update statistics
     self._save_statistics()
+
+  async def save_to_disk_async(self):
+    """Async version - НЕ блокирует event loop."""
+    if not self.enabled or not self.data_buffer:
+      return
+
+    # Выполняем сохранение в thread pool
+    await asyncio.to_thread(self._save_to_disk_sync)
 
   def load_all_data(self) -> pd.DataFrame:
     """

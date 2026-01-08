@@ -1711,10 +1711,10 @@ class LayeringDetector:
       else:  # "up"
         price_moved_as_expected = price_change_bps > threshold_bps
 
-      # Update ML data label
+      # Update ML data label (используем async версию чтобы не блокировать event loop)
       label_confidence = min(abs(price_change_bps) / 10.0, 1.0)  # Scale confidence
 
-      self.data_collector.update_label(
+      await self.data_collector.update_label_async(
         data_id=pending.data_id,
         label=price_moved_as_expected,
         label_source="price_action_30s",
