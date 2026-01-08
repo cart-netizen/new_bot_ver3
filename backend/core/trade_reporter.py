@@ -411,6 +411,77 @@ class TradeReporter:
         if 'volume_ratio' in metadata:
             report.volume_ratio = metadata['volume_ratio']
 
+    def create_report_from_dict(
+        self,
+        signal_dict: Dict,
+        strategy_results: Optional[List] = None,
+        ml_validation_result: Optional[Any] = None,
+        sl_price: Optional[float] = None,
+        tp_price: Optional[float] = None,
+        position_size: Optional[float] = None
+    ) -> TradeReport:
+        """
+        Создать отчёт из словаря сигнала (entry_signal).
+
+        Args:
+            signal_dict: Словарь с данными сигнала
+            strategy_results: Результаты от стратегий (List[dict])
+            ml_validation_result: Результат ML валидации (dict)
+            sl_price: Цена Stop Loss
+            tp_price: Цена Take Profit
+            position_size: Размер позиции в USDT
+
+        Returns:
+            TradeReport готовый к записи
+        """
+        # Извлекаем данные из словаря
+        symbol = signal_dict.get('symbol', 'UNKNOWN')
+        signal_type = signal_dict.get('signal_type', 'UNKNOWN')
+        price = signal_dict.get('price', 0.0)
+        timestamp_ms = signal_dict.get('timestamp', 0)
+        confidence = signal_dict.get('confidence', 0.0)
+        reason = signal_dict.get('reason', 'No reason provided')
+
+        # Создаём базовый отчёт
+        report = TradeReport(
+            symbol=symbol,
+            direction=signal_type,
+            price=price,
+            timestamp=datetime.fromtimestamp(timestamp_ms / 1000) if timestamp_ms else datetime.now(),
+            final_confidence=confidence,
+            final_reason=reason,
+            stop_loss=sl_price,
+            take_profit=tp_price,
+            position_size_usdt=position_size
+        )
+
+        # Рассчитываем R/R ratio
+        if sl_price and tp_price and price:
+            if signal_type == 'BUY':
+                risk = abs(price - sl_price)
+                reward = abs(tp_price - price)
+            else:
+                risk = abs(sl_price - price)
+                reward = abs(price - tp_price)
+
+            if risk > 0:
+                report.risk_reward_ratio = reward / risk
+
+        # Обрабатываем стратегии
+        if strategy_results:
+            report.strategies = self._extract_strategy_indicators(strategy_results)
+            report.strategies_agreeing = len([s for s in report.strategies if s.signal_type])
+            report.strategies_disagreeing = len(report.strategies) - report.strategies_agreeing
+
+        # Обрабатываем ML результаты
+        if ml_validation_result:
+            self._extract_ml_data(report, ml_validation_result)
+
+        # Обрабатываем metadata из signal_dict (если есть вложенные данные)
+        self._extract_metadata(report, signal_dict)
+
+        return report
+
 
 # Глобальный экземпляр репортера
 trade_reporter = TradeReporter()
