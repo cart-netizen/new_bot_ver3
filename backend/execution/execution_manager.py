@@ -1955,9 +1955,12 @@ class ExecutionManager:
             # (если ML validation недоступна или произошла ошибка)
             # ==========================================
             if stop_loss is None or take_profit is None:
+                # Проверяем, есть ли ML данные из signal validation (main.py)
+                has_ml_metadata = (signal.metadata and
+                                  signal.metadata.get('ml_validation_result') is not None)
                 logger.info(
-                    f"{signal.symbol} | ML validation недоступна или failed, "
-                    f"используем fallback расчет SL/TP"
+                    f"{signal.symbol} | ML-enhanced SL/TP не рассчитан, "
+                    f"используем fallback (ML metadata: {'есть' if has_ml_metadata else 'нет'})"
                 )
 
                 try:
@@ -1965,13 +1968,20 @@ class ExecutionManager:
                     atr = signal.metadata.get('atr') if signal.metadata else None
 
                     ml_sltp_data = None
-                    if hasattr(signal, 'ml_validation_result') and signal.ml_validation_result:
-                        ml_result = signal.ml_validation_result
+                    # ml_validation_result хранится в metadata как dict, а не как атрибут signal
+                    ml_validation_dict = signal.metadata.get('ml_validation_result') if signal.metadata else None
+                    if ml_validation_dict:
                         ml_sltp_data = {
-                            'predicted_mae': ml_result.metadata.get('predicted_mae', 0.012),
-                            'predicted_return': ml_result.predicted_return,
-                            'confidence': ml_result.confidence
+                            'predicted_mae': ml_validation_dict.get('predicted_mae', 0.012),
+                            'predicted_return': ml_validation_dict.get('ml_expected_return', 0.0),
+                            'confidence': ml_validation_dict.get('final_confidence', 0.0)
                         }
+                        logger.debug(
+                            f"{signal.symbol} | ML данные для SL/TP: "
+                            f"mae={ml_sltp_data['predicted_mae']:.4f}, "
+                            f"return={ml_sltp_data['predicted_return']:.4f}, "
+                            f"confidence={ml_sltp_data['confidence']:.4f}"
+                        )
 
                     market_regime_str = signal.metadata.get('market_regime') if signal.metadata else None
                     market_regime = None
