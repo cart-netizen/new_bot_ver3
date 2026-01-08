@@ -3,15 +3,15 @@
 
 Исправление для случаев, когда база была создана без этого значения.
 
-Revision ID: 003_add_config_change_audit
+Revision ID: 006_add_config_change_audit
 Create Date: 2026-01-08
 """
 
 from alembic import op
 
 # revision identifiers
-revision = '003_add_config_change_audit'
-down_revision = '002_add_emergency_shutdown'
+revision = '006_add_config_change_audit'
+down_revision = '005_add_ml_backtesting_tables'
 branch_labels = None
 depends_on = None
 
