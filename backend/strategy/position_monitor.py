@@ -521,28 +521,40 @@ class PositionMonitor:
             side = position.side.value
 
             if side == "BUY":
-              # LONG: Подтягиваем SL вверх (к текущей цене)
+              # LONG: SL должен быть НИЖЕ текущей цены
+              # Проверяем что позиция в прибыли для tighten SL
+              if current_price <= entry_price:
+                # Позиция в убытке - не подтягиваем SL
+                logger.debug(f"{symbol} | BUY position in loss, skipping SL tighten")
+                return False
+
               # Переводим в breakeven + 0.3% для защиты прибыли
               new_sl = entry_price * 1.003
 
               # Проверяем, что новый SL лучше старого и ниже текущей цены
-              if new_sl > current_sl and new_sl < current_price:
-                pass  # Новый SL валиден
-              else:
-                # Фоллбэк: середина между entry и current
-                new_sl = (entry_price + current_price) / 2
+              if not (new_sl > current_sl and new_sl < current_price):
+                # Фоллбэк: 70% от пути entry->current (защищаем 70% прибыли)
+                new_sl = entry_price + (current_price - entry_price) * 0.3
+                # Убеждаемся что SL ниже current_price с буфером 0.1%
+                new_sl = min(new_sl, current_price * 0.999)
 
             else:  # SELL
-              # SHORT: Подтягиваем SL вниз (к текущей цене)
+              # SHORT: SL должен быть ВЫШЕ текущей цены
+              # Проверяем что позиция в прибыли для tighten SL
+              if current_price >= entry_price:
+                # Позиция в убытке - не подтягиваем SL
+                logger.debug(f"{symbol} | SELL position in loss, skipping SL tighten")
+                return False
+
               # Переводим в breakeven - 0.3% для защиты прибыли
               new_sl = entry_price * 0.997
 
               # Проверяем, что новый SL лучше старого и выше текущей цены
-              if new_sl < current_sl and new_sl > current_price:
-                pass  # Новый SL валиден
-              else:
-                # Фоллбэк: середина между entry и current
-                new_sl = (entry_price + current_price) / 2
+              if not (new_sl < current_sl and new_sl > current_price):
+                # Фоллбэк: 70% от пути entry->current (защищаем 70% прибыли)
+                new_sl = entry_price - (entry_price - current_price) * 0.3
+                # Убеждаемся что SL выше current_price с буфером 0.1%
+                new_sl = max(new_sl, current_price * 1.001)
 
             # Обновляем SL через ExecutionManager
             result = await self.execution_manager.update_stop_loss(
