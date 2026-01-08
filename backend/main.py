@@ -280,6 +280,9 @@ class BotController:
         strategy_weight=settings.STRATEGY_WEIGHT,
         use_fallback_on_error=True,
         fallback_to_strategy=True,
+        # NEW: HOLD handling settings
+        allow_hold_signals=settings.ML_ALLOW_HOLD_SIGNALS,
+        hold_penalty_factor=settings.ML_HOLD_PENALTY_FACTOR,
         cache_predictions=True,
         cache_ttl_seconds=30,
         enable_mae_prediction=True,

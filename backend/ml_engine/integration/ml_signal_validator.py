@@ -50,6 +50,10 @@ class ValidationConfig:
   use_fallback_on_error: bool = True
   fallback_to_strategy: bool = True
 
+  # HOLD handling - NEW
+  allow_hold_signals: bool = True  # Если True, сигналы не отклоняются при ML HOLD, а штрафуются
+  hold_penalty_factor: float = 0.5  # Штраф при HOLD (0.5 = 50% от оригинальной уверенности)
+
   # Caching
   cache_predictions: bool = True
   cache_ttl_seconds: int = 30
@@ -381,27 +385,59 @@ class MLSignalValidator:
 
       # ML и стратегия не согласны
       if ml_direction == "HOLD":
-        logger.info(
-          f"✗ Сигнал ОТКЛОНЕН {signal.symbol}: ML предлагает HOLD"
-        )
+        # ========================================
+        # НОВАЯ ЛОГИКА: Мягкая обработка HOLD
+        # ========================================
+        if self.config.allow_hold_signals:
+          # Применяем штраф вместо полного отклонения
+          final_confidence = signal.confidence * self.config.hold_penalty_factor
 
-        return ValidationResult(
-          original_signal=signal,
-          ml_direction=ml_direction,
-          ml_confidence=ml_confidence,
-          ml_expected_return=ml_expected_return,
-          validated=False,
-          final_signal_type=signal.signal_type,
-          final_confidence=0.0,
-          agreement=False,
-          reason="ML suggests HOLD, rejecting signal",
-          inference_time_ms=inference_time,
-          used_fallback=False,
-          predicted_mae=predicted_mae,
-          manipulation_risk=manipulation_risk,
-          market_regime=market_regime,
-          feature_quality=feature_quality
-        )
+          logger.info(
+            f"⚠️ Сигнал ОСЛАБЛЕН {signal.symbol}: ML предлагает HOLD, "
+            f"применён штраф {self.config.hold_penalty_factor:.0%}, "
+            f"confidence={final_confidence:.4f}"
+          )
+
+          return ValidationResult(
+            original_signal=signal,
+            ml_direction=ml_direction,
+            ml_confidence=ml_confidence,
+            ml_expected_return=ml_expected_return,
+            validated=True,  # Сигнал проходит, но с пониженной уверенностью
+            final_signal_type=signal.signal_type,
+            final_confidence=final_confidence,
+            agreement=False,
+            reason=f"ML suggests HOLD, signal penalized by {self.config.hold_penalty_factor:.0%}",
+            inference_time_ms=inference_time,
+            used_fallback=False,
+            predicted_mae=predicted_mae,
+            manipulation_risk=manipulation_risk,
+            market_regime=market_regime,
+            feature_quality=feature_quality
+          )
+        else:
+          # Старая логика: полное отклонение
+          logger.info(
+            f"✗ Сигнал ОТКЛОНЕН {signal.symbol}: ML предлагает HOLD"
+          )
+
+          return ValidationResult(
+            original_signal=signal,
+            ml_direction=ml_direction,
+            ml_confidence=ml_confidence,
+            ml_expected_return=ml_expected_return,
+            validated=False,
+            final_signal_type=signal.signal_type,
+            final_confidence=0.0,
+            agreement=False,
+            reason="ML suggests HOLD, rejecting signal",
+            inference_time_ms=inference_time,
+            used_fallback=False,
+            predicted_mae=predicted_mae,
+            manipulation_risk=manipulation_risk,
+            market_regime=market_regime,
+            feature_quality=feature_quality
+          )
 
       # ML предлагает противоположное направление - штрафуем
       final_confidence = signal.confidence * self.config.confidence_penalty_factor
