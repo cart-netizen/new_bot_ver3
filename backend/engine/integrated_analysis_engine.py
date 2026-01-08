@@ -124,6 +124,9 @@ class IntegratedAnalysisConfig:
   hybrid_min_agreement: bool = True  # Требовать согласия MTF и single-TF
   hybrid_conflict_resolution: str = "mtf"  # "mtf", "single_tf", "highest_quality"
 
+  # MTF требования
+  require_single_tf_consensus_for_mtf: bool = True  # MTF сигнал только если single-TF консенсус достигнут
+
   # Adaptive mode settings
   adaptive_use_mtf_when: List[str] = field(default_factory=lambda: [
     "trending_market",
@@ -652,6 +655,13 @@ class IntegratedAnalysisEngine:
       return single_tf_signal
 
     if mtf_signal and not single_tf_signal:
+      # Проверяем, требуется ли single-TF консенсус для MTF
+      if self.config.require_single_tf_consensus_for_mtf:
+        logger.warning(
+          f"{symbol}: MTF сигнал отклонён - single-TF консенсус не достигнут "
+          f"(требуется MIN_STRATEGIES стратегий с сигналами)"
+        )
+        return None
       logger.debug("Используем MTF (single-TF недоступен)")
       return mtf_signal
 

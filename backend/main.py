@@ -712,7 +712,10 @@ class BotController:
           hybrid_conflict_resolution=settings.HYBRID_CONFLICT_RESOLUTION,  # НЕ ConflictResolutionMode!
           hybrid_mtf_priority=settings.HYBRID_MTF_PRIORITY,
           hybrid_min_agreement=settings.HYBRID_MIN_AGREEMENT,
-          min_combined_quality=settings.MIN_COMBINED_QUALITY
+          min_combined_quality=settings.MIN_COMBINED_QUALITY,
+
+          # MTF требования
+          require_single_tf_consensus_for_mtf=settings.MTF_REQUIRE_SINGLE_TF_CONSENSUS
         )
 
         self.integrated_engine = IntegratedAnalysisEngine(integrated_config)

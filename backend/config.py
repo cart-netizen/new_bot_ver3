@@ -240,6 +240,11 @@ class Settings(BaseSettings):
     description="Основной таймфрейм для тренда"
   )
 
+  MTF_REQUIRE_SINGLE_TF_CONSENSUS: bool = Field(
+    default=True,
+    description="MTF сигнал только если single-TF консенсус достигнут (MIN_STRATEGIES стратегий)"
+  )
+
   MTF_EXECUTION_TIMEFRAME: str = Field(
     default="1m",
 
