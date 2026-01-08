@@ -468,9 +468,9 @@ class BotController:
 
       # Конфигурация Extended Strategy Manager
       strategy_config = ExtendedStrategyManagerConfig(
-        consensus_mode="weighted",  # weighted / majority / unanimous
-        min_strategies_for_signal=2,
-        min_consensus_confidence=0.6,
+        consensus_mode=settings.CONSENSUS_MODE,  # weighted / majority / unanimous
+        min_strategies_for_signal=settings.MIN_STRATEGIES,  # ← Из .env
+        min_consensus_confidence=settings.MIN_CONSENSUS_CONFIDENCE,
 
         # Веса CANDLE стратегий
         candle_strategy_weights={
@@ -655,7 +655,9 @@ class BotController:
           strategy_manager_config=ExtendedStrategyManagerConfig(
             enable_orderbook_strategies=True,
             enable_hybrid_strategies=True,
-            consensus_mode="weighted"
+            consensus_mode=settings.CONSENSUS_MODE,
+            min_strategies_for_signal=settings.MIN_STRATEGIES,  # ← Из .env
+            min_consensus_confidence=settings.MIN_CONSENSUS_CONFIDENCE
           ),
 
           # Adaptive Consensus Config
