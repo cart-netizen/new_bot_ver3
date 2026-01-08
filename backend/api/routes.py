@@ -1878,14 +1878,23 @@ async def get_exchange_positions(current_user: dict = Depends(require_auth)):
     response = await rest_client.get_positions()
     positions_list = response.get("result", {}).get("list", [])
 
+    # Хелпер для безопасной конвертации в float (Bybit возвращает "" вместо null)
+    def safe_float(value, default=0.0):
+      if value is None or value == "":
+        return default
+      try:
+        return float(value)
+      except (ValueError, TypeError):
+        return default
+
     # Фильтруем только позиции с размером > 0
     active_positions = []
     for pos in positions_list:
-      size = float(pos.get("size", 0))
+      size = safe_float(pos.get("size"), 0)
       if size > 0:
         # Вычисляем ROE%
-        unrealised_pnl = float(pos.get("unrealisedPnl", 0))
-        position_im = float(pos.get("positionIM", 0))
+        unrealised_pnl = safe_float(pos.get("unrealisedPnl"), 0)
+        position_im = safe_float(pos.get("positionIM"), 0)
         roe_percent = (unrealised_pnl / position_im * 100) if position_im > 0 else 0
 
         active_positions.append({
@@ -1893,21 +1902,21 @@ async def get_exchange_positions(current_user: dict = Depends(require_auth)):
           "symbol": pos.get("symbol", ""),
           "side": pos.get("side", ""),  # Buy = Long, Sell = Short
           "size": size,
-          "avgPrice": float(pos.get("avgPrice", 0)),
-          "positionValue": float(pos.get("positionValue", 0)),
+          "avgPrice": safe_float(pos.get("avgPrice"), 0),
+          "positionValue": safe_float(pos.get("positionValue"), 0),
 
           # Плечо и маржа
           "leverage": pos.get("leverage", "1"),
           "positionIM": position_im,  # Initial Margin
-          "positionMM": float(pos.get("positionMM", 0)),  # Maintenance Margin
+          "positionMM": safe_float(pos.get("positionMM"), 0),  # Maintenance Margin
 
           # Цены
-          "markPrice": float(pos.get("markPrice", 0)),
-          "liqPrice": float(pos.get("liqPrice", 0)),
+          "markPrice": safe_float(pos.get("markPrice"), 0),
+          "liqPrice": safe_float(pos.get("liqPrice"), 0),
 
           # P&L
           "unrealisedPnl": unrealised_pnl,
-          "cumRealisedPnl": float(pos.get("cumRealisedPnl", 0)),
+          "cumRealisedPnl": safe_float(pos.get("cumRealisedPnl"), 0),
           "roePercent": round(roe_percent, 2),
 
           # TP/SL
@@ -1983,6 +1992,15 @@ async def get_open_orders(
     response = await rest_client.get_open_orders(symbol)
     orders_list = response.get("result", {}).get("list", [])
 
+    # Хелпер для безопасной конвертации в float
+    def safe_float(value, default=0.0):
+      if value is None or value == "":
+        return default
+      try:
+        return float(value)
+      except (ValueError, TypeError):
+        return default
+
     orders = []
     for order in orders_list:
       orders.append({
@@ -1991,10 +2009,10 @@ async def get_open_orders(
         "symbol": order.get("symbol", ""),
         "side": order.get("side", ""),
         "orderType": order.get("orderType", ""),
-        "price": float(order.get("price", 0)),
-        "qty": float(order.get("qty", 0)),
-        "cumExecQty": float(order.get("cumExecQty", 0)),
-        "cumExecValue": float(order.get("cumExecValue", 0)),
+        "price": safe_float(order.get("price"), 0),
+        "qty": safe_float(order.get("qty"), 0),
+        "cumExecQty": safe_float(order.get("cumExecQty"), 0),
+        "cumExecValue": safe_float(order.get("cumExecValue"), 0),
         "orderStatus": order.get("orderStatus", ""),
         "timeInForce": order.get("timeInForce", ""),
         "stopLoss": order.get("stopLoss", ""),
@@ -2058,6 +2076,15 @@ async def close_position(
   try:
     from backend.exchange.rest_client import rest_client
 
+    # Хелпер для безопасной конвертации в float
+    def safe_float(value, default=0.0):
+      if value is None or value == "":
+        return default
+      try:
+        return float(value)
+      except (ValueError, TypeError):
+        return default
+
     # Получаем текущую позицию
     positions_response = await rest_client.get_positions(request.symbol)
     positions_list = positions_response.get("result", {}).get("list", [])
@@ -2065,7 +2092,7 @@ async def close_position(
     # Ищем позицию с размером > 0
     position = None
     for pos in positions_list:
-      if float(pos.get("size", 0)) > 0:
+      if safe_float(pos.get("size"), 0) > 0:
         position = pos
         break
 
@@ -2076,7 +2103,7 @@ async def close_position(
       )
 
     # Вычисляем размер для закрытия
-    total_size = float(position.get("size", 0))
+    total_size = safe_float(position.get("size"), 0)
     close_size = round(total_size * request.percent / 100, 8)
 
     if close_size <= 0:
