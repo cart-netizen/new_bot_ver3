@@ -1473,6 +1473,10 @@ class BotController:
             self.trade_managers[symbol] = TradeManager(symbol, max_history=5000, enable_statistics=True)
             self.candle_managers[symbol] = CandleManager(symbol, "1m", 200)
             self.market_analyzer.add_symbol(symbol)
+            # КРИТИЧНО: Добавляем в ML Feature Pipeline для ML Validation
+            if self.ml_feature_pipeline:
+              self.ml_feature_pipeline.add_symbol(symbol)
+              logger.debug(f"  + {symbol} добавлен в ML Feature Pipeline")
 
           # Удаляем старые пары
           for symbol in removed:
@@ -1483,6 +1487,10 @@ class BotController:
               del self.trade_managers[symbol]
             if symbol in self.candle_managers:
               del self.candle_managers[symbol]
+            # Удаляем из ML Feature Pipeline
+            if self.ml_feature_pipeline and symbol in self.ml_feature_pipeline.pipelines:
+              del self.ml_feature_pipeline.pipelines[symbol]
+              logger.debug(f"  - {symbol} удален из ML Feature Pipeline")
 
           # Обновляем LayeringDetector trade_managers после изменений
           if self.layering_detector and (added or removed):
