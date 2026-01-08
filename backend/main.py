@@ -2788,7 +2788,44 @@ class BotController:
                     except Exception as e:
                       logger.error(f"[{symbol}] Ошибка ML Validation: {e}")
                       logger.debug(traceback.format_exc())
-                      # Продолжаем без ML validation
+                      # Продолжаем без ML validation - добавляем информацию об ошибке
+                      final_signal.metadata.update({
+                        'ml_validated': False,
+                        'ml_should_trade': True,
+                        'ml_validation_result': {
+                          'skipped': True,
+                          'skip_reason': f'ML Validation error: {str(e)}',
+                          'ml_direction': None,
+                          'ml_confidence': None,
+                          'validated': True
+                        }
+                      })
+
+                  else:
+                    # ML Validation не запущена - логируем причину
+                    skip_reason_parts = []
+                    if not has_ml_validator:
+                      skip_reason_parts.append("ml_validator=None")
+                    if not feature_vector:
+                      skip_reason_parts.append("feature_vector=None")
+                    skip_reason = ", ".join(skip_reason_parts)
+
+                    logger.info(
+                      f"⏭️ [{symbol}] ML Validation пропущена: {skip_reason}"
+                    )
+
+                    # Добавляем информацию о пропуске в metadata для trades.log
+                    final_signal.metadata.update({
+                      'ml_validated': False,
+                      'ml_should_trade': True,  # Разрешаем торговлю без ML
+                      'ml_validation_result': {
+                        'skipped': True,
+                        'skip_reason': skip_reason,
+                        'ml_direction': None,
+                        'ml_confidence': None,
+                        'validated': True  # По умолчанию разрешаем
+                      }
+                    })
 
                   # ========================================================
                   # ШАГ 8: QUALITY & RISK CHECKS

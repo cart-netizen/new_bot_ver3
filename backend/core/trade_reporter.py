@@ -163,15 +163,30 @@ class TradeReporter:
             lines.append("")
 
         # ===== ML ENSEMBLE =====
-        if report.ml_predictions:
-            lines.append("🤖 ML ENSEMBLE ПРОГНОЗЫ:")
-            lines.append(f"  Итоговое направление: {report.ml_ensemble_direction or 'N/A'}")
-            lines.append(f"  Итоговая уверенность: {report.ml_ensemble_confidence:.2%}" if report.ml_ensemble_confidence else "  Итоговая уверенность: N/A")
-            lines.append(f"  ML валидация: {'✅ PASSED' if report.ml_validation_passed else '❌ FAILED'}")
-            if report.ml_validation_reason:
-                lines.append(f"  Причина: {report.ml_validation_reason}")
+        # Показываем ML данные если есть direction/confidence или причина пропуска/ошибки
+        has_ml_data = (report.ml_ensemble_direction is not None or
+                       report.ml_ensemble_confidence is not None or
+                       report.ml_validation_reason)
+
+        if has_ml_data or report.ml_predictions:
+            lines.append("🤖 ML ENSEMBLE:")
+
+            # Проверяем, была ли валидация пропущена
+            if report.ml_validation_reason and report.ml_validation_reason.startswith("SKIPPED:"):
+                lines.append(f"  ⏭️ {report.ml_validation_reason}")
+            else:
+                lines.append(f"  Направление: {report.ml_ensemble_direction or 'N/A'}")
+                if report.ml_ensemble_confidence is not None:
+                    lines.append(f"  Уверенность: {report.ml_ensemble_confidence:.2%}")
+                else:
+                    lines.append(f"  Уверенность: N/A")
+                lines.append(f"  Валидация: {'✅ PASSED' if report.ml_validation_passed else '❌ FAILED'}")
+                if report.ml_validation_reason and not report.ml_validation_reason.startswith("SKIPPED:"):
+                    lines.append(f"  Причина: {report.ml_validation_reason}")
+
             lines.append("")
 
+            # Детальные прогнозы моделей (если есть)
             for pred in report.ml_predictions:
                 lines.append(f"  [{pred.model_name}]")
                 lines.append(f"    Направление: {pred.direction} | Confidence: {pred.confidence:.2%}")
@@ -347,7 +362,15 @@ class TradeReporter:
         """Извлечение данных ML валидации (поддержка dict и объектов)."""
         # Поддержка как dict, так и объектов
         if isinstance(validation_result, dict):
-            # Сериализованный формат (dict)
+            # Проверяем, была ли ML validation пропущена
+            if validation_result.get('skipped'):
+                # ML validation была пропущена - записываем причину
+                report.ml_validation_reason = f"SKIPPED: {validation_result.get('skip_reason', 'unknown')}"
+                report.ml_validation_passed = validation_result.get('validated', True)
+                # direction и confidence остаются None
+                return
+
+            # Сериализованный формат (dict) - нормальный результат
             report.ml_ensemble_direction = validation_result.get('ml_direction')
             report.ml_ensemble_confidence = validation_result.get('ml_confidence')
             report.ml_validation_passed = validation_result.get('validated', True)
