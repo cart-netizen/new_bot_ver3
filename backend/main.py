@@ -1054,27 +1054,30 @@ class BotController:
         self.pattern_database = None
 
       # 3. Layering Data Collector (for ML training)
-      try:
-        from backend.ml_engine.detection.layering_data_collector import LayeringDataCollector
+      # Управляется через LAYERING_DATA_COLLECTION_ENABLED в .env
+      if settings.LAYERING_DATA_COLLECTION_ENABLED:
+        try:
+          from backend.ml_engine.detection.layering_data_collector import LayeringDataCollector
 
-        # Enable in both ONLY_TRAINING and full mode
-        data_collection_enabled = True  # Always collect data
-        # ВАЖНО: Используем абсолютный путь к project_root/data/
-        data_collector_path = get_project_data_path("ml_training/layering")
+          # ВАЖНО: Используем абсолютный путь к project_root/data/
+          data_collector_path = get_project_data_path("ml_training/layering")
 
-        self.layering_data_collector = LayeringDataCollector(
-          data_dir=data_collector_path,
-          enabled=data_collection_enabled,
-          auto_save_interval=100
-        )
+          self.layering_data_collector = LayeringDataCollector(
+            data_dir=data_collector_path,
+            enabled=True,
+            auto_save_interval=100
+          )
 
-        if settings.ONLY_TRAINING:
-          logger.info("✅ LayeringDataCollector активен (ONLY_TRAINING mode)")
-        else:
-          logger.info("✅ LayeringDataCollector активен (full trading mode)")
+          if settings.ONLY_TRAINING:
+            logger.info("✅ LayeringDataCollector активен (ONLY_TRAINING mode)")
+          else:
+            logger.info("✅ LayeringDataCollector активен (full trading mode)")
 
-      except Exception as e:
-        logger.warning(f"⚠️  LayeringDataCollector не доступен: {e}")
+        except Exception as e:
+          logger.warning(f"⚠️  LayeringDataCollector не доступен: {e}")
+          self.layering_data_collector = None
+      else:
+        logger.info("⏭️ LayeringDataCollector отключен (LAYERING_DATA_COLLECTION_ENABLED=false)")
         self.layering_data_collector = None
 
       # 4. Adaptive ML Model (load if exists)
