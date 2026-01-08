@@ -22,5 +22,9 @@ export const API_ENDPOINTS = {
   },
   trading: {
     signals: '/trading/signals',
+    positions: '/trading/positions/exchange',
+    openOrders: '/trading/orders/open',
+    closePosition: '/trading/position/close',
+    cancelOrder: '/trading/order/cancel',
   },
 } as const;

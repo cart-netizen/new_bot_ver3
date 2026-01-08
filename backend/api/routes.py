@@ -1852,3 +1852,310 @@ async def get_current_weights(symbol: str):
   current_weights = optimizer.current_weights.get(symbol, {})
 
   return {"symbol": symbol, "weights": current_weights}
+
+
+# ==================== POSITIONS & ORDERS (BYBIT) ====================
+
+class ClosePositionRequest(BaseModel):
+  """Запрос на закрытие позиции."""
+  symbol: str
+  percent: int = 100  # 25, 50, 75, 100
+
+
+@trading_router.get("/positions/exchange")
+async def get_exchange_positions(current_user: dict = Depends(require_auth)):
+  """
+  Получение открытых позиций напрямую с биржи Bybit.
+
+  Returns:
+      dict: Список позиций с полной информацией
+  """
+  logger.info("Запрос позиций с биржи")
+
+  try:
+    from backend.exchange.rest_client import rest_client
+
+    response = await rest_client.get_positions()
+    positions_list = response.get("result", {}).get("list", [])
+
+    # Фильтруем только позиции с размером > 0
+    active_positions = []
+    for pos in positions_list:
+      size = float(pos.get("size", 0))
+      if size > 0:
+        # Вычисляем ROE%
+        unrealised_pnl = float(pos.get("unrealisedPnl", 0))
+        position_im = float(pos.get("positionIM", 0))
+        roe_percent = (unrealised_pnl / position_im * 100) if position_im > 0 else 0
+
+        active_positions.append({
+          # Основная информация
+          "symbol": pos.get("symbol", ""),
+          "side": pos.get("side", ""),  # Buy = Long, Sell = Short
+          "size": size,
+          "avgPrice": float(pos.get("avgPrice", 0)),
+          "positionValue": float(pos.get("positionValue", 0)),
+
+          # Плечо и маржа
+          "leverage": pos.get("leverage", "1"),
+          "positionIM": position_im,  # Initial Margin
+          "positionMM": float(pos.get("positionMM", 0)),  # Maintenance Margin
+
+          # Цены
+          "markPrice": float(pos.get("markPrice", 0)),
+          "liqPrice": float(pos.get("liqPrice", 0)),
+
+          # P&L
+          "unrealisedPnl": unrealised_pnl,
+          "cumRealisedPnl": float(pos.get("cumRealisedPnl", 0)),
+          "roePercent": round(roe_percent, 2),
+
+          # TP/SL
+          "takeProfit": pos.get("takeProfit", ""),
+          "stopLoss": pos.get("stopLoss", ""),
+          "trailingStop": pos.get("trailingStop", ""),
+          "tpslMode": pos.get("tpslMode", ""),
+
+          # Метаданные
+          "positionIdx": pos.get("positionIdx", 0),
+          "tradeMode": pos.get("tradeMode", 0),
+          "positionStatus": pos.get("positionStatus", ""),
+          "updatedTime": pos.get("updatedTime", ""),
+          "createdTime": pos.get("createdTime", ""),
+        })
+
+    logger.info(f"Получено {len(active_positions)} активных позиций с биржи")
+
+    return {
+      "positions": active_positions,
+      "count": len(active_positions),
+      "timestamp": int(datetime.now().timestamp() * 1000)
+    }
+
+  except ValueError as e:
+    logger.warning(f"API ключи не настроены: {e}")
+    return {
+      "positions": [],
+      "count": 0,
+      "timestamp": int(datetime.now().timestamp() * 1000),
+      "error": "API ключи не настроены"
+    }
+
+  except Exception as e:
+    logger.error(f"Ошибка получения позиций с биржи: {e}", exc_info=True)
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=str(e)
+    )
+
+
+@trading_router.get("/orders/open")
+async def get_open_orders(
+    symbol: Optional[str] = None,
+    current_user: dict = Depends(require_auth)
+):
+  """
+  Получение открытых ордеров с биржи Bybit.
+
+  Args:
+      symbol: Торговая пара (опционально)
+
+  Returns:
+      dict: Список открытых ордеров
+  """
+  logger.info(f"Запрос открытых ордеров{f' для {symbol}' if symbol else ''}")
+
+  try:
+    from backend.exchange.rest_client import rest_client
+
+    response = await rest_client.get_open_orders(symbol)
+    orders_list = response.get("result", {}).get("list", [])
+
+    orders = []
+    for order in orders_list:
+      orders.append({
+        "orderId": order.get("orderId", ""),
+        "orderLinkId": order.get("orderLinkId", ""),
+        "symbol": order.get("symbol", ""),
+        "side": order.get("side", ""),
+        "orderType": order.get("orderType", ""),
+        "price": float(order.get("price", 0)),
+        "qty": float(order.get("qty", 0)),
+        "cumExecQty": float(order.get("cumExecQty", 0)),
+        "cumExecValue": float(order.get("cumExecValue", 0)),
+        "orderStatus": order.get("orderStatus", ""),
+        "timeInForce": order.get("timeInForce", ""),
+        "stopLoss": order.get("stopLoss", ""),
+        "takeProfit": order.get("takeProfit", ""),
+        "reduceOnly": order.get("reduceOnly", False),
+        "createdTime": order.get("createdTime", ""),
+        "updatedTime": order.get("updatedTime", ""),
+      })
+
+    logger.info(f"Получено {len(orders)} открытых ордеров")
+
+    return {
+      "orders": orders,
+      "count": len(orders),
+      "timestamp": int(datetime.now().timestamp() * 1000)
+    }
+
+  except ValueError as e:
+    logger.warning(f"API ключи не настроены: {e}")
+    return {
+      "orders": [],
+      "count": 0,
+      "timestamp": int(datetime.now().timestamp() * 1000),
+      "error": "API ключи не настроены"
+    }
+
+  except Exception as e:
+    logger.error(f"Ошибка получения ордеров: {e}", exc_info=True)
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=str(e)
+    )
+
+
+@trading_router.post("/position/close")
+async def close_position(
+    request: ClosePositionRequest,
+    current_user: dict = Depends(require_auth)
+):
+  """
+  Закрытие позиции по рыночной цене.
+
+  Args:
+      request: Параметры закрытия (symbol, percent)
+
+  Returns:
+      dict: Результат закрытия
+  """
+  logger.info(f"Закрытие позиции: {request.symbol}, {request.percent}%")
+
+  try:
+    from backend.exchange.rest_client import rest_client
+
+    # Получаем текущую позицию
+    positions_response = await rest_client.get_positions(request.symbol)
+    positions_list = positions_response.get("result", {}).get("list", [])
+
+    # Ищем позицию с размером > 0
+    position = None
+    for pos in positions_list:
+      if float(pos.get("size", 0)) > 0:
+        position = pos
+        break
+
+    if not position:
+      raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Нет открытой позиции для {request.symbol}"
+      )
+
+    # Вычисляем размер для закрытия
+    total_size = float(position.get("size", 0))
+    close_size = round(total_size * request.percent / 100, 8)
+
+    if close_size <= 0:
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Размер для закрытия слишком мал"
+      )
+
+    # Определяем сторону для закрытия (противоположная)
+    position_side = position.get("side", "")
+    close_side = "Sell" if position_side == "Buy" else "Buy"
+
+    logger.info(
+      f"Закрытие {request.percent}% позиции {request.symbol}: "
+      f"size={close_size}, side={close_side}"
+    )
+
+    # Размещаем рыночный ордер с reduceOnly=True
+    from backend.utils.constants import BybitCategory, BybitAPIPaths
+
+    params = {
+      "category": BybitCategory.LINEAR.value,
+      "symbol": request.symbol,
+      "side": close_side,
+      "orderType": "Market",
+      "qty": str(close_size),
+      "reduceOnly": True,
+      "timeInForce": "IOC"  # Immediate or Cancel для рыночных
+    }
+
+    response = await rest_client._request(
+      "POST",
+      BybitAPIPaths.PLACE_ORDER,
+      params,
+      authenticated=True
+    )
+
+    order_id = response.get("result", {}).get("orderId", "")
+
+    logger.info(f"Позиция закрыта: orderId={order_id}")
+
+    return {
+      "success": True,
+      "orderId": order_id,
+      "symbol": request.symbol,
+      "closedSize": close_size,
+      "closedPercent": request.percent,
+      "message": f"Закрыто {request.percent}% позиции ({close_size})"
+    }
+
+  except HTTPException:
+    raise
+
+  except ValueError as e:
+    logger.warning(f"API ключи не настроены: {e}")
+    raise HTTPException(
+      status_code=status.HTTP_401_UNAUTHORIZED,
+      detail="API ключи не настроены"
+    )
+
+  except Exception as e:
+    logger.error(f"Ошибка закрытия позиции: {e}", exc_info=True)
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=str(e)
+    )
+
+
+@trading_router.post("/order/cancel")
+async def cancel_order_endpoint(
+    symbol: str,
+    order_id: str,
+    current_user: dict = Depends(require_auth)
+):
+  """
+  Отмена ордера.
+
+  Args:
+      symbol: Торговая пара
+      order_id: ID ордера
+
+  Returns:
+      dict: Результат отмены
+  """
+  logger.info(f"Отмена ордера: {symbol}, orderId={order_id}")
+
+  try:
+    from backend.exchange.rest_client import rest_client
+
+    response = await rest_client.cancel_order(symbol, order_id)
+
+    return {
+      "success": True,
+      "orderId": order_id,
+      "symbol": symbol,
+      "message": "Ордер отменен"
+    }
+
+  except Exception as e:
+    logger.error(f"Ошибка отмены ордера: {e}", exc_info=True)
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=str(e)
+    )
