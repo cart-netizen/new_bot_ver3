@@ -400,7 +400,11 @@ class BybitRESTClient:
       raise ValueError(error_msg)
 
     # Реальный запрос к API
-    params = {"category": BybitCategory.LINEAR.value}
+    # ИСПРАВЛЕНО: Добавлен settleCoin - обязательный параметр если symbol не указан
+    params = {
+      "category": BybitCategory.LINEAR.value,
+      "settleCoin": "USDT"  # ← ОБЯЗАТЕЛЬНЫЙ параметр для LINEAR без symbol
+    }
     if symbol:
       params["symbol"] = symbol
 
