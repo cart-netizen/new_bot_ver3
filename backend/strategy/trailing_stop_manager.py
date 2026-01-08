@@ -183,7 +183,7 @@ class TrailingStopManager:
                     logger.debug(
                         f"{position.symbol} | Загружен trailing stop: "
                         f"entry=${position.entry_price:.2f}, "
-                        f"SL=${position.stop_loss:.2f}"
+                        f"SL=${position.stop_loss:.2f}" if position.stop_loss else f"SL=None"
                     )
 
                 except Exception as e:
