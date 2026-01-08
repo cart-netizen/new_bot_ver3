@@ -61,8 +61,23 @@ class BybitRESTClient:
     """Инициализация HTTP сессии."""
     if self.session is None:
       timeout = aiohttp.ClientTimeout(total=30)
-      self.session = aiohttp.ClientSession(timeout=timeout)
-      logger.info("HTTP сессия инициализирована")
+
+      # Настройки для стабильности на Windows
+      # - ttl_dns_cache: Кэшируем DNS на 300 секунд чтобы уменьшить DNS запросы
+      # - limit: Ограничиваем количество соединений
+      # - force_close: Закрываем соединения после использования (избегаем проблем keep-alive на Windows)
+      connector = aiohttp.TCPConnector(
+          ttl_dns_cache=300,
+          limit=100,
+          force_close=True,
+          enable_cleanup_closed=True
+      )
+
+      self.session = aiohttp.ClientSession(
+          timeout=timeout,
+          connector=connector
+      )
+      logger.info("HTTP сессия инициализирована (с DNS кэшированием)")
 
   async def close(self):
     """Закрытие HTTP сессии."""
