@@ -5569,7 +5569,9 @@ signal.signal(signal.SIGTERM, handle_shutdown_signal)
 if __name__ == "__main__":
   """Точка входа при запуске напрямую."""
 
-  if platform.system() == "Windows":
+  is_windows = platform.system() == "Windows"
+
+  if is_windows:
     logger.info("✅ WindowsSelectorEventLoopPolicy установлен для Windows")
 
   logger.info("=" * 80)
@@ -5578,11 +5580,19 @@ if __name__ == "__main__":
   logger.info(f"Хост: {settings.API_HOST}:{settings.API_PORT}")
   logger.info("=" * 80)
 
+  # На Windows отключаем reload - он создаёт subprocess-ы
+  # которые не наследуют event loop policy и падают
+  use_reload = settings.DEBUG and not is_windows
+
+  if is_windows and settings.DEBUG:
+    logger.warning("⚠️ На Windows режим reload отключён для стабильности asyncio")
+    logger.warning("   Для auto-reload используйте: watchmedo auto-restart --pattern='*.py' -- python -m backend.main")
+
   # Запускаем Uvicorn сервер
   uvicorn.run(
     "backend.main:app",
     host=settings.API_HOST,
     port=settings.API_PORT,
-    reload=settings.DEBUG,
+    reload=use_reload,
     log_level=settings.LOG_LEVEL.lower(),
   )
