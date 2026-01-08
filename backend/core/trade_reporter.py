@@ -477,8 +477,11 @@ class TradeReporter:
         if ml_validation_result:
             self._extract_ml_data(report, ml_validation_result)
 
-        # Обрабатываем metadata из signal_dict (если есть вложенные данные)
-        self._extract_metadata(report, signal_dict)
+        # Обрабатываем metadata из signal_dict
+        # В signal.to_dict() metadata вложена под ключом 'metadata'
+        metadata = signal_dict.get('metadata', {})
+        if metadata:
+            self._extract_metadata(report, metadata)
 
         return report
 
