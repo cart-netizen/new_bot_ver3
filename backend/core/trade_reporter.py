@@ -294,27 +294,47 @@ class TradeReporter:
         return report
 
     def _extract_strategy_indicators(self, strategy_results: List) -> List[StrategyIndicators]:
-        """Извлечение индикаторов из результатов стратегий."""
+        """Извлечение индикаторов из результатов стратегий (сериализованных в dict)."""
         strategies = []
 
         for result in strategy_results:
-            indicators = {}
-            signal_type = None
-            confidence = None
-            reason = ""
+            # Поддержка как dict, так и объектов
+            if isinstance(result, dict):
+                # Сериализованный формат (dict)
+                strategy_name = result.get('strategy_name', 'unknown')
+                signal_data = result.get('signal')
 
-            if result.signal:
-                signal_type = result.signal.signal_type.value if hasattr(result.signal.signal_type, 'value') else str(result.signal.signal_type)
-                confidence = result.signal.confidence
-                reason = result.signal.reason or ""
-
-                # Извлекаем индикаторы из metadata сигнала
-                if result.signal.metadata:
-                    indicators = {k: v for k, v in result.signal.metadata.items()
+                if signal_data:
+                    signal_type = signal_data.get('signal_type')
+                    confidence = signal_data.get('confidence')
+                    reason = signal_data.get('reason', '')
+                    signal_metadata = signal_data.get('metadata', {})
+                    indicators = {k: v for k, v in signal_metadata.items()
                                  if k not in ['strategy', 'consensus_mode']}
+                else:
+                    signal_type = None
+                    confidence = None
+                    reason = ""
+                    indicators = {}
+            else:
+                # Объект StrategyResult (для обратной совместимости)
+                strategy_name = result.strategy_name
+                indicators = {}
+                signal_type = None
+                confidence = None
+                reason = ""
+
+                if result.signal:
+                    signal_type = result.signal.signal_type.value if hasattr(result.signal.signal_type, 'value') else str(result.signal.signal_type)
+                    confidence = result.signal.confidence
+                    reason = result.signal.reason or ""
+
+                    if result.signal.metadata:
+                        indicators = {k: v for k, v in result.signal.metadata.items()
+                                     if k not in ['strategy', 'consensus_mode']}
 
             strategies.append(StrategyIndicators(
-                strategy_name=result.strategy_name,
+                strategy_name=strategy_name,
                 signal_type=signal_type,
                 confidence=confidence,
                 indicators=indicators,
@@ -324,30 +344,44 @@ class TradeReporter:
         return strategies
 
     def _extract_ml_data(self, report: TradeReport, validation_result: Any) -> None:
-        """Извлечение данных ML валидации."""
-        report.ml_ensemble_direction = validation_result.ml_direction
-        report.ml_ensemble_confidence = validation_result.ml_confidence
-        report.ml_validation_passed = validation_result.validated
-        report.ml_validation_reason = validation_result.reason
+        """Извлечение данных ML валидации (поддержка dict и объектов)."""
+        # Поддержка как dict, так и объектов
+        if isinstance(validation_result, dict):
+            # Сериализованный формат (dict)
+            report.ml_ensemble_direction = validation_result.get('ml_direction')
+            report.ml_ensemble_confidence = validation_result.get('ml_confidence')
+            report.ml_validation_passed = validation_result.get('validated', True)
+            report.ml_validation_reason = validation_result.get('reason', '')
 
-        # Если есть детальные прогнозы в metadata
-        if hasattr(validation_result, 'metadata') and validation_result.metadata:
-            meta = validation_result.metadata
+            # Market regime из сериализованного результата
+            if validation_result.get('market_regime'):
+                report.market_regime = validation_result['market_regime']
 
-            # Извлекаем прогнозы отдельных моделей если они есть
-            if 'model_predictions' in meta:
-                for model_name, pred_data in meta['model_predictions'].items():
-                    report.ml_predictions.append(MLModelPrediction(
-                        model_name=model_name,
-                        direction=pred_data.get('direction', 'UNKNOWN'),
-                        confidence=pred_data.get('confidence', 0.0),
-                        probabilities=pred_data.get('probabilities', {}),
-                        expected_return=pred_data.get('expected_return')
-                    ))
+        else:
+            # Объект ValidationResult (для обратной совместимости)
+            report.ml_ensemble_direction = validation_result.ml_direction
+            report.ml_ensemble_confidence = validation_result.ml_confidence
+            report.ml_validation_passed = validation_result.validated
+            report.ml_validation_reason = validation_result.reason
 
-            # Рыночный режим
-            if 'market_regime' in meta:
-                report.market_regime = meta['market_regime']
+            # Если есть детальные прогнозы в metadata
+            if hasattr(validation_result, 'metadata') and validation_result.metadata:
+                meta = validation_result.metadata
+
+                # Извлекаем прогнозы отдельных моделей если они есть
+                if 'model_predictions' in meta:
+                    for model_name, pred_data in meta['model_predictions'].items():
+                        report.ml_predictions.append(MLModelPrediction(
+                            model_name=model_name,
+                            direction=pred_data.get('direction', 'UNKNOWN'),
+                            confidence=pred_data.get('confidence', 0.0),
+                            probabilities=pred_data.get('probabilities', {}),
+                            expected_return=pred_data.get('expected_return')
+                        ))
+
+                # Рыночный режим
+                if 'market_regime' in meta:
+                    report.market_regime = meta['market_regime']
 
     def _extract_metadata(self, report: TradeReport, metadata: Dict) -> None:
         """Извлечение данных из metadata сигнала."""
