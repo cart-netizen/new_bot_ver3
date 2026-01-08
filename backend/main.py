@@ -9,6 +9,7 @@ import time
 import traceback
 import logging
 import sys
+import platform
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, Any, List
@@ -19,6 +20,12 @@ import psutil
 import uvicorn
 import subprocess
 from fastapi import WebSocket, WebSocketDisconnect
+
+# КРИТИЧНО: На Windows устанавливаем WindowsSelectorEventLoopPolicy
+# ДО импорта любых модулей, использующих asyncio
+# Это исправляет ошибку: IndexError: pop from an empty deque
+if platform.system() == "Windows":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 # from analysis_loop_ml_data_collection import ml_data_collection_loop
 from backend.config import settings, get_project_data_path
@@ -5561,6 +5568,9 @@ signal.signal(signal.SIGTERM, handle_shutdown_signal)
 
 if __name__ == "__main__":
   """Точка входа при запуске напрямую."""
+
+  if platform.system() == "Windows":
+    logger.info("✅ WindowsSelectorEventLoopPolicy установлен для Windows")
 
   logger.info("=" * 80)
   logger.info(f"Запуск {settings.APP_NAME} v{settings.APP_VERSION}")
