@@ -1879,8 +1879,12 @@ class ExecutionManager:
                     # (хотя это не ML, но используем ту же структуру)
                     from strategy.risk_models import MLRiskAdjustments, MarketRegime
 
+                    # Ограничиваем position_size_multiplier в допустимом диапазоне [0.5, 2.5]
+                    raw_multiplier = signal.metadata.get('mtf_position_multiplier', 1.0)
+                    clamped_multiplier = max(0.5, min(2.5, raw_multiplier))
+
                     ml_adjustments = MLRiskAdjustments(
-                        position_size_multiplier=signal.metadata.get('mtf_position_multiplier', 1.0),
+                        position_size_multiplier=clamped_multiplier,
                         stop_loss_price=stop_loss,
                         take_profit_price=take_profit,
                         ml_confidence=mtf_reliability,  # Используем reliability как confidence
