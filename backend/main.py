@@ -21,11 +21,9 @@ import uvicorn
 import subprocess
 from fastapi import WebSocket, WebSocketDisconnect
 
-# КРИТИЧНО: На Windows устанавливаем WindowsSelectorEventLoopPolicy
-# ДО импорта любых модулей, использующих asyncio
-# Это исправляет ошибку: IndexError: pop from an empty deque
-if platform.system() == "Windows":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+# ПРИМЕЧАНИЕ: С Python 3.12 на Windows используем ProactorEventLoop (по умолчанию)
+# WindowsSelectorEventLoopPolicy вызывает зависания из-за ограничений select()
+# Ошибка "IndexError: pop from an empty deque" решается отключением uvicorn reload
 
 # from analysis_loop_ml_data_collection import ml_data_collection_loop
 from backend.config import settings, get_project_data_path
@@ -5572,7 +5570,7 @@ if __name__ == "__main__":
   is_windows = platform.system() == "Windows"
 
   if is_windows:
-    logger.info("✅ WindowsSelectorEventLoopPolicy установлен для Windows")
+    logger.info("✅ Windows обнаружена: используем ProactorEventLoop (Python 3.12+)")
 
   logger.info("=" * 80)
   logger.info(f"Запуск {settings.APP_NAME} v{settings.APP_VERSION}")
