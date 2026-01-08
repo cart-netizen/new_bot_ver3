@@ -869,13 +869,15 @@ class TimeframeAnalyzer:
     # Эти индикаторы рассчитываем отдельно т.к. зависят от таймфрейма
 
     # Price structure (Swing High/Low)
+    # ИСПРАВЛЕНИЕ: Используем _find_swing_pair для гарантии swing_high > swing_low
     highs = np.array([c.high for c in candles])
     lows = np.array([c.low for c in candles])
 
     swing_lookback = 10
-    if len(candles) >= swing_lookback:
-      indicators.swing_high = self._find_swing_high(highs, swing_lookback)
-      indicators.swing_low = self._find_swing_low(lows, swing_lookback)
+    if len(candles) >= swing_lookback * 2:
+      swing_high, swing_low, _, _ = self._find_swing_pair(highs, lows, swing_lookback)
+      indicators.swing_high = swing_high
+      indicators.swing_low = swing_low
 
     # Ichimoku (только для высших TF)
     periods = self.lookback_periods.get(timeframe, {})
@@ -1400,40 +1402,146 @@ class TimeframeAnalyzer:
   # теперь рассчитываются через IndicatorFeatureExtractor для обеспечения single source of truth.
   # Здесь остались только timeframe-specific методы.
 
-  def _find_swing_high(self, highs: np.ndarray, lookback: int = 10) -> Optional[float]:
-    """Найти последний swing high."""
-    if len(highs) < lookback * 2:
-      return None
+  def _find_swing_pair(
+      self,
+      highs: np.ndarray,
+      lows: np.ndarray,
+      lookback: int = 10
+  ) -> Tuple[Optional[float], Optional[float], Optional[int], Optional[int]]:
+    """
+    Найти корректную пару swing_high и swing_low.
 
-    # Простая логика: локальный максимум в окне lookback
-    for i in range(len(highs) - lookback - 1, lookback, -1):
+    Industry Standard Fix: Гарантирует что swing_high > swing_low,
+    и точки относятся к одному ценовому диапазону (не из разных трендов).
+
+    Проблема старой реализации: _find_swing_high и _find_swing_low
+    искали точки независимо, что могло привести к ситуации когда
+    swing_high из старого downtrend < swing_low из нового uptrend.
+
+    Args:
+        highs: Массив high цен
+        lows: Массив low цен
+        lookback: Период для определения swing point
+
+    Returns:
+        (swing_high, swing_low, high_index, low_index)
+        Гарантируется что swing_high > swing_low или оба None
+    """
+    if len(highs) < lookback * 2 or len(lows) < lookback * 2:
+      return None, None, None, None
+
+    # Находим ВСЕ swing points с их индексами
+    swing_highs: List[Tuple[int, float]] = []  # [(index, price), ...]
+    swing_lows: List[Tuple[int, float]] = []
+
+    for i in range(lookback, len(highs) - lookback):
+      # Check swing high: локальный максимум в окне
       is_swing_high = all(
         highs[i] > highs[j]
         for j in range(i - lookback, i + lookback + 1)
-        if j != i
+        if j != i and 0 <= j < len(highs)
       )
-
       if is_swing_high:
-        return float(highs[i])
+        swing_highs.append((i, float(highs[i])))
 
-    return None
-
-  def _find_swing_low(self, lows: np.ndarray, lookback: int = 10) -> Optional[float]:
-    """Найти последний swing low."""
-    if len(lows) < lookback * 2:
-      return None
-
-    for i in range(len(lows) - lookback - 1, lookback, -1):
+      # Check swing low: локальный минимум в окне
       is_swing_low = all(
         lows[i] < lows[j]
         for j in range(i - lookback, i + lookback + 1)
-        if j != i
+        if j != i and 0 <= j < len(lows)
       )
-
       if is_swing_low:
-        return float(lows[i])
+        swing_lows.append((i, float(lows[i])))
 
-    return None
+    if not swing_highs or not swing_lows:
+      # Fallback: использовать период high/low
+      return self._fallback_swing_levels(highs, lows, lookback)
+
+    # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Находим корректную пару
+    # Приоритет: недавние данные (ищем с конца массива)
+    max_distance = len(highs) // 2  # Точки должны быть в пределах 50% данных
+
+    for high_idx, high_price in reversed(swing_highs):
+      for low_idx, low_price in reversed(swing_lows):
+        # Условие 1: ОБЯЗАТЕЛЬНО high > low
+        if high_price <= low_price:
+          continue
+
+        # Условие 2: Точки должны быть достаточно близко по времени
+        if abs(high_idx - low_idx) > max_distance:
+          continue
+
+        # Условие 3: Минимальный диапазон (не менее 0.1% разницы)
+        range_pct = (high_price - low_price) / low_price * 100
+        if range_pct < 0.1:
+          continue
+
+        # Нашли корректную пару
+        logger.debug(
+          f"Swing pair found: high={high_price:.4f}@{high_idx}, "
+          f"low={low_price:.4f}@{low_idx}, range={range_pct:.2f}%"
+        )
+        return high_price, low_price, high_idx, low_idx
+
+    # Не нашли подходящую пару - используем fallback
+    return self._fallback_swing_levels(highs, lows, lookback)
+
+  def _fallback_swing_levels(
+      self,
+      highs: np.ndarray,
+      lows: np.ndarray,
+      lookback: int
+  ) -> Tuple[Optional[float], Optional[float], Optional[int], Optional[int]]:
+    """
+    Fallback метод для определения swing уровней.
+
+    Использует простой max/min за период когда не найдены
+    явные swing points.
+
+    Returns:
+        (swing_high, swing_low, None, None)
+    """
+    # Берем последние N*5 свечей для более стабильного диапазона
+    period = min(lookback * 5, len(highs))
+
+    overall_high = float(np.max(highs[-period:]))
+    overall_low = float(np.min(lows[-period:]))
+
+    # Проверяем корректность
+    if overall_high > overall_low:
+      logger.debug(
+        f"Swing fallback: using period high={overall_high:.4f}, "
+        f"low={overall_low:.4f}"
+      )
+      return overall_high, overall_low, None, None
+
+    # Крайний случай: данные некорректны
+    logger.warning(
+      f"Swing levels invalid even in fallback: "
+      f"high={overall_high:.4f}, low={overall_low:.4f}"
+    )
+    return None, None, None, None
+
+  # Legacy методы для обратной совместимости (deprecated)
+  def _find_swing_high(self, highs: np.ndarray, lookback: int = 10) -> Optional[float]:
+    """
+    DEPRECATED: Использовать _find_swing_pair() вместо этого.
+
+    Оставлен для обратной совместимости.
+    """
+    swing_high, _, _, _ = self._find_swing_pair(highs, np.zeros_like(highs), lookback)
+    return swing_high
+
+  def _find_swing_low(self, lows: np.ndarray, lookback: int = 10) -> Optional[float]:
+    """
+    DEPRECATED: Использовать _find_swing_pair() вместо этого.
+
+    Оставлен для обратной совместимости.
+    """
+    # Создаем фиктивный highs массив с заведомо большими значениями
+    fake_highs = np.full_like(lows, fill_value=np.max(lows) * 2)
+    _, swing_low, _, _ = self._find_swing_pair(fake_highs, lows, lookback)
+    return swing_low
 
   def _calculate_ichimoku(self, candles: List[Candle]) -> Optional[Dict]:
     """Ichimoku Cloud (упрощенная версия)."""

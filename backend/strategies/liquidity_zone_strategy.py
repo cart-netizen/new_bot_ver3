@@ -22,6 +22,7 @@ from backend.models.signal import TradingSignal, SignalType, SignalStrength, Sig
 from backend.models.orderbook import OrderBookSnapshot, OrderBookMetrics
 from backend.strategy.candle_manager import Candle
 from backend.strategies.base_orderbook_strategy import BaseOrderBookStrategy
+from backend.strategies.signal_stabilizer import SignalStabilizer
 # Импортируем SRLevel и SRLevelDetector, если нужны типы
 # from ml_engine.detection.sr_level_detector import SRLevel, SRLevelDetector
 
@@ -107,19 +108,31 @@ class LiquidityZoneStrategy(BaseOrderBookStrategy):
         """
         super().__init__("liquidity_zone")
         self.config = config
-        
+
         # Зоны ликвидности для каждого символа
         self.liquidity_zones: Dict[str, List[LiquidityZone]] = {}
-        
+
+        # НОВОЕ: Стабилизатор сигналов для предотвращения мерцания
+        # Mean Reversion особенно чувствителен к колебаниям цены около зон
+        self._signal_stabilizer = SignalStabilizer(
+            cooldown_ms=5000,  # 5 секунд между сменами направления
+            history_size=5,  # Анализируем последние 5 сигналов
+            min_consistency=0.6,  # 60% консистентность
+            hysteresis_pct=0.15,  # 0.15% изменение цены для смены направления
+            max_history_age_ms=30000  # 30 секунд максимум
+        )
+
         # Статистика
         self.mean_reversion_signals = 0
         self.breakout_signals = 0
         self.rejection_signals = 0
-        
+        self.signals_filtered_by_stabilizer = 0
+
         logger.info(
             f"Инициализирована LiquidityZoneStrategy: "
             f"mean_reversion={config.mean_reversion_enabled}, "
-            f"breakout={config.breakout_enabled}"
+            f"breakout={config.breakout_enabled}, "
+            f"with SignalStabilizer"
         )
 
     def analyze(
@@ -236,11 +249,32 @@ class LiquidityZoneStrategy(BaseOrderBookStrategy):
         signal_type = signal_analysis['signal_type']
         confidence = signal_analysis['confidence']
         pattern_type = signal_analysis['pattern_type']
-        
+
         # Проверка минимальной confidence
         if confidence < 0.6:
             return None
-        
+
+        # НОВОЕ: Стабилизация сигнала для предотвращения мерцания
+        # Особенно важно для Mean Reversion около зон ликвидности
+        stabilized = self._signal_stabilizer.stabilize(
+            symbol=symbol,
+            signal_type=signal_type,
+            confidence=confidence,
+            price=current_price
+        )
+
+        if not stabilized.should_emit:
+            logger.debug(
+                f"[{self.strategy_name}] {symbol}: Signal filtered by stabilizer - "
+                f"{stabilized.reason}"
+            )
+            self.signals_filtered_by_stabilizer += 1
+            return None
+
+        # Используем стабилизированные значения
+        signal_type = stabilized.signal_type
+        confidence = stabilized.confidence
+
         # Определение силы
         if confidence >= 0.85:
             signal_strength = SignalStrength.STRONG
@@ -248,24 +282,27 @@ class LiquidityZoneStrategy(BaseOrderBookStrategy):
             signal_strength = SignalStrength.MEDIUM
         else:
             signal_strength = SignalStrength.WEAK
-        
+
         # Reason
         reason_parts = [
             f"{pattern_type} {signal_type.value}: confidence={confidence:.2f}"
         ]
-        
+
+        if stabilized.stability_score < 1.0:
+            reason_parts.append(f"Stability: {stabilized.stability_score:.2f}")
+
         involved_zones = signal_analysis.get('involved_zones', [])
         if involved_zones:
             zone_types = [z.zone_type for z in involved_zones]
             reason_parts.append(f"Zones: {', '.join(zone_types)}")
-        
+
         # Stop-loss based on nearest level
         stop_info = self._calculate_level_based_stop(
-            signal_type, 
-            current_price, 
+            signal_type,
+            current_price,
             nearest_zones
         )
-        
+
         # Создание сигнала
         signal = TradingSignal(
             symbol=symbol,

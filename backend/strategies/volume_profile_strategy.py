@@ -21,6 +21,7 @@ from backend.core.logger import get_logger
 from backend.models.signal import TradingSignal, SignalType, SignalStrength, SignalSource
 from backend.strategy.candle_manager import Candle
 from backend.strategies.volume_distributor import VolumeDistributor, VolumeDistributionConfig
+from backend.strategies.signal_stabilizer import DirectionStabilizer
 
 logger = get_logger(__name__)
 
@@ -284,14 +285,24 @@ class VolumeProfileStrategy:
     self.active_signals: Dict[str, TradingSignal] = {}
     self.last_profile_update: Dict[str, int] = {}
 
+    # НОВОЕ: Стабилизатор направления для предотвращения мерцания
+    # Особенно важно для торговли около POC где цена колеблется
+    self._direction_stabilizer = DirectionStabilizer(
+      window_size=5,  # Анализируем последние 5 сигналов
+      dominance_threshold=0.65,  # Требуем 65% доминирование направления
+      cooldown_signals=3  # 3 последовательных сигнала для смены направления
+    )
+
     # Статистика
     self.signals_generated = 0
     self.profiles_built = 0
+    self.signals_stabilized = 0
 
     logger.info(
       f"Инициализирована VolumeProfileStrategy: "
       f"lookback={config.lookback_periods}, "
-      f"bins={config.price_bins}"
+      f"bins={config.price_bins}, "
+      f"with DirectionStabilizer"
     )
 
   def _should_rebuild_profile(
@@ -453,6 +464,28 @@ class VolumeProfileStrategy:
 
     # Ограничиваем confidence
     confidence = min(confidence, 1.0)
+
+    # НОВОЕ: Стабилизация направления для предотвращения мерцания
+    # Особенно важно около POC где цена часто колеблется
+    stable_direction, stable_confidence = self._direction_stabilizer.get_stable_direction(
+      symbol=symbol,
+      signal_type=signal_type,
+      confidence=confidence
+    )
+
+    if stable_direction is None:
+      # Сигнал нестабилен - не выдаём
+      logger.debug(
+        f"[volume_profile] {symbol}: Signal unstable "
+        f"(raw={signal_type.value}, conf={confidence:.2f}), skipping"
+      )
+      self.signals_stabilized += 1
+      return None
+
+    # Используем стабилизированные значения
+    signal_type = stable_direction
+    confidence = stable_confidence
+    reason_parts.append("Stabilized")
 
     # Определяем силу сигнала
     if confidence > 0.7:
