@@ -48,6 +48,15 @@ from .multi_timeframe_manager import (
   MTFManagerConfig
 )
 
+from .elder_triple_screen import (
+  ElderTripleScreen,
+  ElderTripleScreenConfig,
+  TripleScreenResult,
+  ScreenAnalysis,
+  ScreenDirection,
+  WavePhase
+)
+
 __all__ = [
   # Coordinator
   'TimeframeCoordinator',
@@ -80,4 +89,12 @@ __all__ = [
   # Manager
   'MultiTimeframeManager',
   'MTFManagerConfig',
+
+  # Elder Triple Screen
+  'ElderTripleScreen',
+  'ElderTripleScreenConfig',
+  'TripleScreenResult',
+  'ScreenAnalysis',
+  'ScreenDirection',
+  'WavePhase',
 ]

@@ -4,12 +4,16 @@ Strategy Manager - объединение всех торговых страте
 ИСПРАВЛЕНИЕ: Добавлена валидация минимального количества стратегий
 в побеждающей группе для всех режимов consensus.
 
+ИСПРАВЛЕНИЕ 2: Добавлено кэширование результатов стратегий для
+предотвращения множественных вызовов за один цикл анализа.
+
 Функциональность:
 - Управление множественными стратегиями
 - Объединение сигналов (consensus)
 - Приоритизация стратегий
 - Конфликт-резолюция
 - Статистика по стратегиям
+- Кэширование результатов (НОВОЕ)
 
 Путь: backend/strategies/strategy_manager.py
 """
@@ -18,6 +22,7 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 import numpy as np
+import time as time_module
 
 from backend.core.logger import get_logger
 from backend.models.orderbook import OrderBookSnapshot, OrderBookMetrics
@@ -170,6 +175,45 @@ class StrategyResult:
 
 
 @dataclass
+class CachedStrategyResults:
+    """
+    Кэш результатов стратегий.
+
+    Предотвращает множественные вызовы analyze_all_strategies
+    за один цикл анализа (например, из MTF + Single-TF mode).
+    """
+    results: List[StrategyResult]
+    candle_timestamp: int  # timestamp последней свечи (идентификатор данных)
+    calculated_at: int  # когда посчитано (для TTL)
+    cache_key: str  # уникальный ключ кэша
+
+    def is_valid(self, current_candle_ts: int, max_age_ms: int = 2000) -> bool:
+        """
+        Проверить актуальность кэша.
+
+        Кэш валиден если:
+        1. Timestamp свечи совпадает (те же входные данные)
+        2. Не старше max_age_ms (защита от stale данных)
+
+        Args:
+            current_candle_ts: Timestamp текущей последней свечи
+            max_age_ms: Максимальный возраст кэша в мс (default 2 сек)
+
+        Returns:
+            True если кэш валиден
+        """
+        # Проверка 1: Данные те же (timestamp свечи совпадает)
+        if self.candle_timestamp != current_candle_ts:
+            return False
+
+        # Проверка 2: Не слишком старый
+        current_time = int(time_module.time() * 1000)
+        age_ms = current_time - self.calculated_at
+
+        return age_ms < max_age_ms
+
+
+@dataclass
 class ConsensusSignal:
   """Объединенный сигнал от нескольких стратегий."""
   final_signal: TradingSignal
@@ -240,6 +284,11 @@ class ExtendedStrategyManager:
     self.consensus_achieved = 0
     self.conflicts_resolved = 0
 
+    # Кэширование результатов стратегий
+    self._strategy_cache: Dict[str, CachedStrategyResults] = {}
+    self._cache_hits = 0
+    self._cache_misses = 0
+
     logger.info(
       f"Инициализирован ExtendedStrategyManager: "
       f"candle_strategies={list(self.candle_strategies.keys())}, "
@@ -283,6 +332,26 @@ class ExtendedStrategyManager:
         Список результатов от каждой стратегии
     """
     import time
+
+    # ========== КЭШИРОВАНИЕ: Проверка кэша ==========
+    # Генерируем ключ кэша (symbol + orderbook hash)
+    cache_key = self._generate_cache_key(symbol, candles, orderbook)
+
+    # Получаем timestamp последней свечи как идентификатор данных
+    candle_timestamp = candles[-1].timestamp if candles else 0
+
+    # Проверяем кэш
+    cached = self._strategy_cache.get(cache_key)
+    if cached and cached.is_valid(candle_timestamp):
+      self._cache_hits += 1
+      logger.debug(
+        f"[{symbol}] analyze_all_strategies: CACHE HIT "
+        f"(key={cache_key[:16]}..., hits={self._cache_hits})"
+      )
+      return cached.results
+
+    self._cache_misses += 1
+    # ========== END КЭШИРОВАНИЕ ==========
 
     logger.info(
       f"[{symbol}] analyze_all_strategies: "
@@ -447,7 +516,61 @@ class ExtendedStrategyManager:
       f"with_signals={signals_count}"
     )
 
+    # ========== КЭШИРОВАНИЕ: Сохранение результатов ==========
+    self._strategy_cache[cache_key] = CachedStrategyResults(
+      results=results,
+      candle_timestamp=candle_timestamp,
+      calculated_at=int(time_module.time() * 1000),
+      cache_key=cache_key
+    )
+
+    # Очистка старых записей кэша (храним максимум 50)
+    if len(self._strategy_cache) > 50:
+      oldest_key = min(
+        self._strategy_cache.keys(),
+        key=lambda k: self._strategy_cache[k].calculated_at
+      )
+      del self._strategy_cache[oldest_key]
+    # ========== END КЭШИРОВАНИЕ ==========
+
     return results
+
+  def _generate_cache_key(
+      self,
+      symbol: str,
+      candles: List[Candle],
+      orderbook: Optional[OrderBookSnapshot]
+  ) -> str:
+    """
+    Генерация ключа кэша на основе входных данных.
+
+    Ключ включает:
+    - symbol
+    - timestamp последней свечи
+    - hash от orderbook (если есть)
+    """
+    import hashlib
+
+    # Базовый ключ
+    key_parts = [symbol]
+
+    # Timestamp последней свечи
+    if candles:
+      key_parts.append(str(candles[-1].timestamp))
+      # Также включаем close price для дополнительной уникальности
+      key_parts.append(f"{candles[-1].close:.8f}")
+    else:
+      key_parts.append("no_candles")
+
+    # Hash от orderbook
+    if orderbook:
+      # Используем простой hash от best bid/ask
+      ob_data = f"{orderbook.best_bid}:{orderbook.best_ask}:{orderbook.timestamp}"
+      key_parts.append(hashlib.md5(ob_data.encode()).hexdigest()[:8])
+    else:
+      key_parts.append("no_ob")
+
+    return "|".join(key_parts)
 
   def build_consensus(
       self,
@@ -492,6 +615,38 @@ class ExtendedStrategyManager:
     # Анализ согласованности
     buy_signals = [r for r in results_with_signals if r.signal.signal_type == SignalType.BUY]
     sell_signals = [r for r in results_with_signals if r.signal.signal_type == SignalType.SELL]
+
+    # ========== ПРОВЕРКА КОНФЛИКТА НАПРАВЛЕНИЙ ==========
+    # Если есть и BUY и SELL сигналы - это конфликт
+    if buy_signals and sell_signals:
+      total_with_direction = len(buy_signals) + len(sell_signals)
+      buy_ratio = len(buy_signals) / total_with_direction
+      sell_ratio = len(sell_signals) / total_with_direction
+
+      # Вычисляем dominance (насколько одно направление доминирует)
+      dominance = max(buy_ratio, sell_ratio)
+
+      # Логируем конфликт
+      logger.warning(
+        f"[{symbol}] ⚠️ Direction conflict: BUY={len(buy_signals)}, SELL={len(sell_signals)}, "
+        f"dominance={dominance:.2f}"
+      )
+
+      # Если конфликт сильный (dominance < 65%) - отклоняем сигнал
+      if dominance < 0.65:
+        logger.info(
+          f"[{symbol}] ❌ Сигнал отклонён: сильный конфликт направлений "
+          f"(BUY={len(buy_signals)}, SELL={len(sell_signals)}, dominance={dominance:.2f} < 0.65)"
+        )
+        self.conflicts_resolved += 1
+        return None
+
+      # Если конфликт средний (65-75%) - продолжаем, но помечаем
+      if dominance < 0.75:
+        logger.info(
+          f"[{symbol}] ⚠️ Средний конфликт направлений, продолжаем с пониженной уверенностью"
+        )
+    # ========== END ПРОВЕРКА КОНФЛИКТА ==========
 
     # Проверка минимального количества стратегий
     if len(results_with_signals) < self.config.min_strategies_for_signal:
@@ -575,6 +730,19 @@ class ExtendedStrategyManager:
 
     # Итоговая confidence: комбинация consensus и средней confidence
     final_confidence = (consensus_confidence + avg_confidence) / 2.0
+
+    # Penalty за конфликт направлений (если есть несогласные стратегии)
+    if disagreement_count > 0:
+      # Чем больше несогласных, тем больше penalty
+      conflict_ratio = disagreement_count / (agreement_count + disagreement_count)
+      # Penalty от 0% (нет несогласных) до 25% (50/50 конфликт)
+      conflict_penalty = conflict_ratio * 0.5  # Max 25% penalty
+      final_confidence *= (1.0 - conflict_penalty)
+
+      logger.debug(
+        f"[{symbol}] Applied conflict penalty: {conflict_penalty:.2%}, "
+        f"final_confidence={final_confidence:.2f}"
+      )
 
     # Определение силы
     if final_confidence >= 0.8:
@@ -777,6 +945,13 @@ class ExtendedStrategyManager:
       if self.signals_generated > 0 else 0.0
     )
 
+    # Статистика кэша
+    total_cache_requests = self._cache_hits + self._cache_misses
+    cache_hit_rate = (
+      self._cache_hits / total_cache_requests
+      if total_cache_requests > 0 else 0.0
+    )
+
     # Статистика по каждой стратегии
     strategy_stats = {}
     for name, strategy in self.all_strategies.items():
@@ -791,6 +966,11 @@ class ExtendedStrategyManager:
       'candle_strategies_count': len(self.candle_strategies),
       'orderbook_strategies_count': len(self.orderbook_strategies),
       'hybrid_strategies_count': len(self.hybrid_strategies),
+      # Статистика кэша
+      'cache_hits': self._cache_hits,
+      'cache_misses': self._cache_misses,
+      'cache_hit_rate': cache_hit_rate,
+      'cache_size': len(self._strategy_cache),
       'strategies': strategy_stats
     }
 #

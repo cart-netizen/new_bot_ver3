@@ -46,6 +46,12 @@ from .timeframe_signal_synthesizer import (
   SynthesisMode
 )
 
+from .elder_triple_screen import (
+  ElderTripleScreen,
+  ElderTripleScreenConfig,
+  TripleScreenResult
+)
+
 logger = get_logger(__name__)
 
 
@@ -59,6 +65,11 @@ class MTFManagerConfig:
   coordinator_config: MultiTimeframeConfig = field(default_factory=MultiTimeframeConfig)
   aligner_config: AlignmentConfig = field(default_factory=AlignmentConfig)
   synthesizer_config: SynthesizerConfig = field(default_factory=SynthesizerConfig)
+
+  # Elder's Triple Screen
+  enable_triple_screen: bool = True  # Использовать Triple Screen для валидации
+  triple_screen_config: ElderTripleScreenConfig = field(default_factory=ElderTripleScreenConfig)
+  triple_screen_override: bool = False  # True = Triple Screen заменяет стандартный синтез
 
   # Обновление данных
   auto_update_enabled: bool = True
@@ -106,10 +117,17 @@ class MultiTimeframeManager:
 
     self.synthesizer = TimeframeSignalSynthesizer(config.synthesizer_config)
 
+    # Elder's Triple Screen
+    self.triple_screen: Optional[ElderTripleScreen] = None
+    if config.enable_triple_screen:
+      self.triple_screen = ElderTripleScreen(config.triple_screen_config)
+      logger.info("Elder's Triple Screen enabled")
+
     # Кэш последних результатов
     self._last_tf_results: Dict[str, Dict[Timeframe, TimeframeAnalysisResult]] = {}
     self._last_alignment: Dict[str, TimeframeAlignment] = {}
     self._last_mtf_signal: Dict[str, MultiTimeframeSignal] = {}
+    self._last_triple_screen: Dict[str, TripleScreenResult] = {}
 
     # Статистика
     self.total_analyses = 0
@@ -265,6 +283,51 @@ class MultiTimeframeManager:
           f"recommended={alignment.recommended_action.value}"
         )
 
+      # Шаг 4.5: Elder's Triple Screen анализ (если включён)
+      triple_screen_result: Optional[TripleScreenResult] = None
+      if self.triple_screen:
+        triple_screen_result = self.triple_screen.analyze(tf_results, current_price)
+        self._last_triple_screen[symbol] = triple_screen_result
+
+        if self.config.verbose_logging:
+          logger.debug(
+            f"Triple Screen: aligned={triple_screen_result.all_screens_aligned}, "
+            f"direction={triple_screen_result.final_direction.value if triple_screen_result.final_direction else 'NONE'}, "
+            f"quality={triple_screen_result.entry_quality}"
+          )
+
+        # Если Triple Screen override включён, используем его сигнал напрямую
+        if self.config.triple_screen_override and triple_screen_result.all_screens_aligned:
+          ts_signal = self.triple_screen.create_trading_signal(
+            triple_screen_result, symbol, current_price
+          )
+          if ts_signal:
+            from .timeframe_aligner import AlignmentType
+            mtf_signal = MultiTimeframeSignal(
+              signal=ts_signal,
+              synthesis_mode=SynthesisMode.TOP_DOWN,
+              timeframes_analyzed=3,
+              timeframes_agreeing=3,
+              alignment_score=triple_screen_result.timing_score,
+              alignment_type=AlignmentType.FULL,
+              signal_quality=triple_screen_result.combined_confidence,
+              reliability_score=triple_screen_result.combined_confidence,
+              recommended_position_size_multiplier=1.0 if triple_screen_result.entry_quality == "excellent" else 0.8,
+              warnings=triple_screen_result.warnings,
+              risk_level=triple_screen_result.risk_level,
+              timestamp=triple_screen_result.timestamp
+            )
+            self.mtf_signals_generated += 1
+            self._last_mtf_signal[symbol] = mtf_signal
+
+            logger.info(
+              f"🎯 TRIPLE SCREEN SIGNAL [{symbol}]: {mtf_signal.signal.signal_type.value}, "
+              f"confidence={mtf_signal.signal.confidence:.2f}, "
+              f"quality={triple_screen_result.entry_quality}"
+            )
+
+            return mtf_signal
+
       # Шаг 5: Синтез финального сигнала
       mtf_signal = self.synthesizer.synthesize_signal(
         tf_results=tf_results,
@@ -272,6 +335,45 @@ class MultiTimeframeManager:
         symbol=symbol,
         current_price=current_price
       )
+
+      # Шаг 5.5: Валидация через Triple Screen (если включён и не в override)
+      if mtf_signal and self.triple_screen and triple_screen_result and not self.config.triple_screen_override:
+        # Triple Screen используется как фильтр/валидатор
+        if triple_screen_result.all_screens_aligned:
+          # Проверяем согласованность направлений
+          ts_direction = triple_screen_result.final_signal_type
+          synth_direction = mtf_signal.signal.signal_type
+
+          if ts_direction and ts_direction != synth_direction:
+            # Направления не совпадают - блокируем сигнал
+            logger.warning(
+              f"⚠️ [{symbol}] Triple Screen отклонил сигнал: "
+              f"synth={synth_direction.value}, triple_screen={ts_direction.value}"
+            )
+            mtf_signal.warnings.append(
+              f"Triple Screen conflict: expected {ts_direction.value}"
+            )
+            # Понижаем confidence
+            mtf_signal.signal.confidence *= 0.6
+            mtf_signal.signal_quality *= 0.7
+          else:
+            # Направления совпадают - усиливаем сигнал
+            logger.debug(
+              f"✓ [{symbol}] Triple Screen подтверждает сигнал: {synth_direction.value}"
+            )
+            mtf_signal.signal.confidence = min(
+              mtf_signal.signal.confidence * 1.1,
+              1.0
+            )
+            mtf_signal.signal_quality = min(
+              mtf_signal.signal_quality * 1.1,
+              1.0
+            )
+        else:
+          # Triple Screen не выровнен - предупреждаем
+          mtf_signal.warnings.append(
+            f"Triple Screen not aligned (quality={triple_screen_result.entry_quality})"
+          )
 
       if mtf_signal:
         self.mtf_signals_generated += 1
@@ -330,6 +432,10 @@ class MultiTimeframeManager:
   def get_last_mtf_signal(self, symbol: str) -> Optional[MultiTimeframeSignal]:
     """Получить последний MTF сигнал."""
     return self._last_mtf_signal.get(symbol)
+
+  def get_last_triple_screen(self, symbol: str) -> Optional[TripleScreenResult]:
+    """Получить последний результат Triple Screen анализа."""
+    return self._last_triple_screen.get(symbol)
 
   def validate_data_consistency(self, symbol: str) -> Dict:
     """
@@ -428,6 +534,11 @@ class MultiTimeframeManager:
     aligner_stats = self.aligner.get_statistics()
     synthesizer_stats = self.synthesizer.get_statistics()
 
+    # Triple Screen статистика
+    triple_screen_stats = {}
+    if self.triple_screen:
+      triple_screen_stats = self.triple_screen.get_statistics()
+
     return {
       'manager': {
         'enabled': self.config.enabled,
@@ -442,12 +553,15 @@ class MultiTimeframeManager:
         'fallback_rate': (
           self.fallback_used / self.total_analyses
           if self.total_analyses > 0 else 0.0
-        )
+        ),
+        'triple_screen_enabled': self.config.enable_triple_screen,
+        'triple_screen_override': self.config.triple_screen_override
       },
       'coordinator': coordinator_stats,
       'analyzer': analyzer_stats,
       'aligner': aligner_stats,
-      'synthesizer': synthesizer_stats
+      'synthesizer': synthesizer_stats,
+      'triple_screen': triple_screen_stats
     }
 
   def get_health_status(self) -> Dict:
