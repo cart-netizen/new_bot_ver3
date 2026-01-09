@@ -1559,12 +1559,13 @@ def _load_lob_parquet_files(
 
 def _run_tlob_label_preprocessing(symbol: str, days: int) -> bool:
     """
-    Запускает синхронизацию labels для TLOB.
+    Генерирует Triple Barrier labels для TLOB из raw_lob mid_price.
 
-    Использует TLOBLabelProcessor для merge raw LOB с LSTM labels.
+    ОБНОВЛЕНО: Теперь использует TLOBLabelGenerator вместо TLOBLabelProcessor.
+    Не требует Feature Store - работает полностью автономно.
     """
     try:
-        # Импортируем процессор
+        # Импортируем генератор (новый режим)
         import sys
         from pathlib import Path as PathLib
 
@@ -1573,36 +1574,40 @@ def _run_tlob_label_preprocessing(symbol: str, days: int) -> bool:
         if str(project_root) not in sys.path:
             sys.path.insert(0, str(project_root))
 
-        # Импортируем процессор
-        from preprocessing_add_tlob_labels import TLOBLabelProcessor, TLOBLabelConfig
+        # Импортируем генератор (новый режим - не требует Feature Store)
+        from preprocessing_add_tlob_labels import TLOBLabelGenerator, TripleBarrierConfigLOB
 
-        # Вычисляем даты
-        end_date = datetime.now().strftime("%Y-%m-%d")
-        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        # Конфигурация Triple Barrier
+        tb_config = TripleBarrierConfigLOB(
+            tp_multiplier=1.2,
+            sl_multiplier=1.2,
+            max_holding_period=60
+        )
 
-        # Конфигурация
-        config = TLOBLabelConfig(
-            lstm_feature_store_path=str(_get_data_path() / "feature_store" / "offline" / "training_features"),
+        # Генерируем labels напрямую из raw_lob
+        generator = TLOBLabelGenerator(
             raw_lob_path=str(_get_data_path() / "raw_lob"),
             output_path=str(_get_data_path() / "raw_lob_labeled"),
-            timestamp_tolerance_ms=2000
+            tb_config=tb_config
         )
 
-        # Обработка
-        processor = TLOBLabelProcessor(config)
-        stats = processor.process(
-            start_date=start_date,
-            end_date=end_date,
-            symbols=[symbol]
+        stats = generator.process(
+            symbols=[symbol],
+            days=days
         )
 
-        return stats.get('total_merged', 0) > 0
+        success = stats.get('total_labeled', 0) > 0
+        if success:
+            logger.info(f"[TLOB] Generated {stats.get('total_labeled', 0):,} Triple Barrier labels for {symbol}")
+        return success
 
     except ImportError as e:
-        logger.warning(f"TLOBLabelProcessor not available: {e}")
+        logger.warning(f"TLOBLabelGenerator not available: {e}")
         return False
     except Exception as e:
-        logger.error(f"Label preprocessing failed: {e}")
+        logger.error(f"Label generation failed for {symbol}: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -1933,6 +1938,36 @@ async def _run_training(
         # ==================== ЗАГРУЗКА ДАННЫХ ====================
         task['status'] = 'loading_data'
         task['progress'] = 5
+
+        # ===== AUTO-PREPROCESSING для TLOB (генерация Triple Barrier labels) =====
+        if model_type == "tlob":
+            try:
+                logger.info("=" * 60)
+                logger.info("[TLOB] Запуск автоматической генерации Triple Barrier labels")
+                logger.info("=" * 60)
+
+                # Импортируем генератор labels
+                from preprocessing_add_tlob_labels import generate_tlob_labels
+
+                preprocessing_stats = generate_tlob_labels(
+                    symbols=symbols,
+                    days=days,
+                    tp_multiplier=1.2,
+                    sl_multiplier=1.2,
+                    max_holding_period=60
+                )
+
+                logger.info(f"[TLOB] Preprocessing завершен:")
+                logger.info(f"  Символов: {preprocessing_stats.get('symbols_processed', 0)}")
+                logger.info(f"  Samples: {preprocessing_stats.get('total_labeled', 0):,}")
+                logger.info(f"  Distribution: {preprocessing_stats.get('label_distribution', {})}")
+                logger.info("=" * 60)
+
+            except Exception as prep_error:
+                logger.warning(f"[TLOB] Preprocessing failed: {prep_error}")
+                logger.warning("[TLOB] Продолжаем с существующими данными или fallback labels")
+                import traceback
+                traceback.print_exc()
 
         all_sequences = []
         all_labels = []
