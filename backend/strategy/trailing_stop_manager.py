@@ -18,6 +18,7 @@ from backend.database.models import PositionStatus, OrderSide
 from backend.strategy.risk_models import TrailingStopState
 from backend.infrastructure.repositories.position_repository import position_repository
 from backend.exchange.rest_client import rest_client
+from backend.core.trade_reporter import trade_reporter, PositionEvent, PositionEventType
 
 logger = get_logger(__name__)
 
@@ -325,6 +326,21 @@ class TrailingStopManager:
                     f"Прибыль: {profit_percent:.2%}, "
                     f"Порог активации: {trail_state.activation_profit_percent:.2%}"
                 )
+
+                # Логируем в trades.log
+                trade_reporter.log_position_event(PositionEvent(
+                    event_type=PositionEventType.TRAILING_ACTIVATED,
+                    symbol=symbol,
+                    timestamp=datetime.now(),
+                    position_id=str(position.id),
+                    side=position.side.value,
+                    entry_price=trail_state.entry_price,
+                    current_price=current_price,
+                    quantity=position.quantity,
+                    unrealized_pnl_percent=profit_percent,
+                    activation_profit_percent=trail_state.activation_profit_percent,
+                    reason=f"Profit {profit_percent:.2%} >= activation {trail_state.activation_profit_percent:.2%}"
+                ))
             else:
                 return
 
@@ -409,6 +425,39 @@ class TrailingStopManager:
                 f"(Δ{((new_stop_loss - old_sl) / old_sl):.2%}), "
                 f"Заблокирована прибыль: ${locked_profit:.2f}"
             )
+
+            # Логируем в trades.log
+            # Получаем market stats если доступны
+            arrival_rate = None
+            buy_sell_ratio = None
+            trade_manager = self.trade_managers.get(symbol)
+            if trade_manager:
+                try:
+                    stats = trade_manager.get_statistics(window_seconds=60)
+                    if stats:
+                        arrival_rate = stats.trades_per_second
+                        buy_sell_ratio = stats.buy_sell_ratio
+                except Exception:
+                    pass
+
+            trade_reporter.log_position_event(PositionEvent(
+                event_type=PositionEventType.TRAILING_UPDATED,
+                symbol=symbol,
+                timestamp=datetime.now(),
+                position_id=str(position.id),
+                side=position.side.value,
+                entry_price=trail_state.entry_price,
+                current_price=current_price,
+                quantity=position.quantity,
+                unrealized_pnl_percent=profit_percent,
+                old_stop_loss=old_sl,
+                new_stop_loss=new_stop_loss,
+                trail_distance_percent=trail_distance,
+                locked_profit=locked_profit,
+                arrival_rate=arrival_rate,
+                buy_sell_ratio=buy_sell_ratio,
+                reason=f"Distance: {trail_distance:.2%}, Locked: ${locked_profit:.2f}"
+            ))
 
         except asyncio.TimeoutError:
             logger.error(

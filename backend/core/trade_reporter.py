@@ -53,6 +53,67 @@ class MTFAnalysis:
     recommended_tp: Optional[float] = None
 
 
+class PositionEventType(Enum):
+    """Типы событий с позицией."""
+    TRAILING_ACTIVATED = "trailing_activated"
+    TRAILING_UPDATED = "trailing_updated"
+    STOP_LOSS_TRIGGERED = "stop_loss_triggered"
+    TAKE_PROFIT_TRIGGERED = "take_profit_triggered"
+    REVERSAL_DETECTED = "reversal_detected"
+    POSITION_CLOSED = "position_closed"
+    PARTIAL_CLOSE = "partial_close"
+    STOP_LOSS_UPDATED = "stop_loss_updated"
+    BREAKEVEN_MOVED = "breakeven_moved"
+
+
+@dataclass
+class PositionEvent:
+    """Событие с позицией для логирования в trades.log."""
+    event_type: PositionEventType
+    symbol: str
+    timestamp: datetime
+    position_id: Optional[str] = None
+
+    # Данные позиции
+    side: Optional[str] = None
+    entry_price: Optional[float] = None
+    current_price: Optional[float] = None
+    quantity: Optional[float] = None
+
+    # PnL
+    unrealized_pnl: Optional[float] = None
+    unrealized_pnl_percent: Optional[float] = None
+    realized_pnl: Optional[float] = None
+
+    # Stop Loss / Take Profit
+    old_stop_loss: Optional[float] = None
+    new_stop_loss: Optional[float] = None
+    take_profit: Optional[float] = None
+
+    # Trailing Stop
+    trail_distance_percent: Optional[float] = None
+    locked_profit: Optional[float] = None
+    activation_profit_percent: Optional[float] = None
+
+    # Reversal
+    reversal_strength: Optional[str] = None  # CRITICAL, STRONG, MODERATE, WEAK
+    reversal_indicators: List[str] = field(default_factory=list)
+    reversal_action: Optional[str] = None  # close_position, reduce_size, tighten_sl
+
+    # Закрытие
+    exit_price: Optional[float] = None
+    exit_reason: Optional[str] = None
+    close_percentage: Optional[float] = None  # Для частичного закрытия
+
+    # Контекст рынка
+    arrival_rate: Optional[float] = None
+    buy_sell_ratio: Optional[float] = None
+
+    # Дополнительно
+    reason: str = ""
+    metadata: Dict = field(default_factory=dict)
+
+
 @dataclass
 class TradeReport:
     """Полный отчёт о сделке."""
@@ -518,6 +579,170 @@ class TradeReporter:
             self._extract_metadata(report, metadata)
 
         return report
+
+    # ========================================
+    # ЛОГИРОВАНИЕ СОБЫТИЙ С ПОЗИЦИЯМИ
+    # ========================================
+
+    def log_position_event(self, event: PositionEvent) -> None:
+        """
+        Записать событие с позицией в trades.log.
+
+        Args:
+            event: Событие с позицией (PositionEvent)
+        """
+        report_text = self._format_position_event(event)
+        self.trades_logger.info(report_text)
+
+    def _format_position_event(self, event: PositionEvent) -> str:
+        """Форматирование события с позицией в читаемый текст."""
+        lines = []
+
+        # Эмодзи и заголовок в зависимости от типа события
+        event_headers = {
+            PositionEventType.TRAILING_ACTIVATED: ("📈", "TRAILING STOP ACTIVATED"),
+            PositionEventType.TRAILING_UPDATED: ("📊", "TRAILING STOP UPDATED"),
+            PositionEventType.STOP_LOSS_TRIGGERED: ("🛑", "STOP LOSS TRIGGERED"),
+            PositionEventType.TAKE_PROFIT_TRIGGERED: ("🎯", "TAKE PROFIT TRIGGERED"),
+            PositionEventType.REVERSAL_DETECTED: ("🔄", "REVERSAL DETECTED"),
+            PositionEventType.POSITION_CLOSED: ("📤", "POSITION CLOSED"),
+            PositionEventType.PARTIAL_CLOSE: ("📦", "PARTIAL CLOSE"),
+            PositionEventType.STOP_LOSS_UPDATED: ("⚙️", "STOP LOSS UPDATED"),
+            PositionEventType.BREAKEVEN_MOVED: ("⚖️", "BREAKEVEN MOVED"),
+        }
+
+        emoji, title = event_headers.get(event.event_type, ("📋", "POSITION EVENT"))
+
+        # ===== ЗАГОЛОВОК =====
+        lines.append("=" * 80)
+        lines.append(f"{emoji} {title}: {event.symbol}")
+        lines.append("=" * 80)
+
+        # ===== ОСНОВНАЯ ИНФОРМАЦИЯ =====
+        lines.append(f"  Время:        {event.timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        if event.side:
+            side_name = "LONG" if event.side == "BUY" else "SHORT"
+            lines.append(f"  Позиция:      {side_name} ({event.side})")
+
+        if event.entry_price:
+            lines.append(f"  Entry:        ${event.entry_price:,.2f}")
+
+        if event.current_price:
+            lines.append(f"  Текущая цена: ${event.current_price:,.2f}")
+
+        if event.exit_price:
+            lines.append(f"  Exit:         ${event.exit_price:,.2f}")
+
+        if event.quantity:
+            lines.append(f"  Quantity:     {event.quantity}")
+
+        # ===== PnL =====
+        if event.unrealized_pnl is not None or event.unrealized_pnl_percent is not None:
+            pnl_str = ""
+            if event.unrealized_pnl is not None:
+                sign = "+" if event.unrealized_pnl >= 0 else ""
+                pnl_str = f"${sign}{event.unrealized_pnl:,.2f}"
+            if event.unrealized_pnl_percent is not None:
+                sign = "+" if event.unrealized_pnl_percent >= 0 else ""
+                pnl_pct = f"{sign}{event.unrealized_pnl_percent:.2%}"
+                pnl_str = f"{pnl_str} ({pnl_pct})" if pnl_str else pnl_pct
+            lines.append(f"  PnL:          {pnl_str}")
+
+        if event.realized_pnl is not None:
+            sign = "+" if event.realized_pnl >= 0 else ""
+            lines.append(f"  Realized PnL: ${sign}{event.realized_pnl:,.2f}")
+            if event.entry_price and event.exit_price:
+                pnl_pct = (event.exit_price - event.entry_price) / event.entry_price
+                if event.side == "SELL":
+                    pnl_pct = -pnl_pct
+                sign = "+" if pnl_pct >= 0 else ""
+                lines.append(f"                ({sign}{pnl_pct:.2%})")
+
+        lines.append("")
+
+        # ===== СПЕЦИФИЧНЫЕ ДАННЫЕ ПО ТИПУ СОБЫТИЯ =====
+
+        # Trailing Stop
+        if event.event_type == PositionEventType.TRAILING_ACTIVATED:
+            if event.activation_profit_percent is not None and event.unrealized_pnl_percent is not None:
+                lines.append(f"  Активация:    {event.unrealized_pnl_percent:.2%} >= порог {event.activation_profit_percent:.2%}")
+            lines.append(f"  Трейлинг:     ВКЛЮЧЕН")
+
+        elif event.event_type == PositionEventType.TRAILING_UPDATED:
+            if event.old_stop_loss and event.new_stop_loss:
+                sl_change = (event.new_stop_loss - event.old_stop_loss) / event.old_stop_loss * 100
+                lines.append(f"  Stop Loss:    ${event.old_stop_loss:,.2f} → ${event.new_stop_loss:,.2f} ({sl_change:+.2f}%)")
+            if event.trail_distance_percent:
+                lines.append(f"  Дистанция:    {event.trail_distance_percent:.2%}")
+            if event.locked_profit:
+                lines.append(f"  Заблокировано: ${event.locked_profit:,.2f}")
+
+            # Контекст рынка
+            if event.arrival_rate or event.buy_sell_ratio:
+                lines.append("")
+                lines.append("  Контекст рынка:")
+                if event.arrival_rate:
+                    lines.append(f"    Arrival Rate:   {event.arrival_rate:.1f} trades/sec")
+                if event.buy_sell_ratio:
+                    lines.append(f"    Buy/Sell Ratio: {event.buy_sell_ratio:.2f}")
+
+        # Stop Loss / Take Profit triggered
+        elif event.event_type == PositionEventType.STOP_LOSS_TRIGGERED:
+            if event.new_stop_loss:
+                lines.append(f"  Stop Loss:    ${event.new_stop_loss:,.2f}")
+
+        elif event.event_type == PositionEventType.TAKE_PROFIT_TRIGGERED:
+            if event.take_profit:
+                lines.append(f"  Take Profit:  ${event.take_profit:,.2f}")
+
+        # Reversal
+        elif event.event_type == PositionEventType.REVERSAL_DETECTED:
+            if event.reversal_strength:
+                lines.append(f"  Сила разворота: {event.reversal_strength}")
+            if event.reversal_indicators:
+                lines.append("  Индикаторы:")
+                for indicator in event.reversal_indicators:
+                    lines.append(f"    - {indicator}")
+            if event.reversal_action:
+                lines.append(f"")
+                lines.append(f"  Рекомендуемое действие: {event.reversal_action}")
+
+        # Position Closed
+        elif event.event_type == PositionEventType.POSITION_CLOSED:
+            if event.exit_reason:
+                lines.append(f"  Причина:      {event.exit_reason}")
+
+        # Partial Close
+        elif event.event_type == PositionEventType.PARTIAL_CLOSE:
+            if event.close_percentage:
+                lines.append(f"  Закрыто:      {event.close_percentage:.0%} позиции")
+            if event.exit_reason:
+                lines.append(f"  Причина:      {event.exit_reason}")
+
+        # Stop Loss Updated
+        elif event.event_type == PositionEventType.STOP_LOSS_UPDATED:
+            if event.old_stop_loss and event.new_stop_loss:
+                sl_change = (event.new_stop_loss - event.old_stop_loss) / event.old_stop_loss * 100
+                lines.append(f"  Stop Loss:    ${event.old_stop_loss:,.2f} → ${event.new_stop_loss:,.2f} ({sl_change:+.2f}%)")
+
+        # Breakeven
+        elif event.event_type == PositionEventType.BREAKEVEN_MOVED:
+            if event.new_stop_loss:
+                lines.append(f"  Новый SL:     ${event.new_stop_loss:,.2f} (breakeven)")
+
+        # ===== ПРИЧИНА =====
+        if event.reason and event.event_type not in [
+            PositionEventType.REVERSAL_DETECTED,
+            PositionEventType.POSITION_CLOSED,
+            PositionEventType.PARTIAL_CLOSE
+        ]:
+            lines.append(f"  Причина:      {event.reason}")
+
+        lines.append("=" * 80)
+        lines.append("")
+
+        return "\n".join(lines)
 
 
 # Глобальный экземпляр репортера

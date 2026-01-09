@@ -35,6 +35,7 @@ from backend.ml_engine.features.candle_feature_extractor import Candle
 import numpy as np
 
 from backend.strategy.trailing_stop_manager import trailing_stop_manager
+from backend.core.trade_reporter import trade_reporter, PositionEvent, PositionEventType
 
 logger = get_logger(__name__)
 
@@ -450,6 +451,30 @@ class PositionMonitor:
         f"Action: {reversal.suggested_action}"
       )
 
+      # Логируем в trades.log
+      entry_price = position.entry_price
+      side = position_info.get('side', 'BUY')
+      quantity = position.quantity or 0
+      unrealized_pnl = self._calculate_pnl(entry_price, current_price, quantity, side)
+      pnl_percent = (current_price - entry_price) / entry_price if side == "BUY" else (entry_price - current_price) / entry_price
+
+      trade_reporter.log_position_event(PositionEvent(
+          event_type=PositionEventType.REVERSAL_DETECTED,
+          symbol=symbol,
+          timestamp=datetime.now(),
+          position_id=str(position.id),
+          side=side,
+          entry_price=entry_price,
+          current_price=current_price,
+          quantity=quantity,
+          unrealized_pnl=unrealized_pnl,
+          unrealized_pnl_percent=pnl_percent,
+          reversal_strength=reversal.strength.value,
+          reversal_indicators=reversal.indicators_confirming,
+          reversal_action=reversal.suggested_action,
+          reason=f"Strength: {reversal.strength.value}, Action: {reversal.suggested_action}"
+      ))
+
       # Обработка reversal
       position_id = str(position.id)
 
@@ -741,6 +766,28 @@ class PositionMonitor:
           f"Price: {current_price:.8f} | SL: {stop_loss:.8f}"
         )
 
+        # Логируем в trades.log
+        entry_price = position.entry_price
+        quantity = position.quantity or 0
+        pnl_percent = (current_price - entry_price) / entry_price if side == "BUY" else (entry_price - current_price) / entry_price
+
+        trade_reporter.log_position_event(PositionEvent(
+            event_type=PositionEventType.STOP_LOSS_TRIGGERED,
+            symbol=symbol,
+            timestamp=datetime.now(),
+            position_id=str(position.id),
+            side=side,
+            entry_price=entry_price,
+            current_price=current_price,
+            exit_price=current_price,
+            quantity=quantity,
+            new_stop_loss=stop_loss,
+            unrealized_pnl=unrealized_pnl,
+            unrealized_pnl_percent=pnl_percent,
+            exit_reason="Stop Loss triggered",
+            reason=f"Price ${current_price:.2f} hit SL ${stop_loss:.2f}"
+        ))
+
         await self.execution_manager.close_position(
           position_id=str(position.id),
           exit_reason=f"Stop Loss triggered at {current_price:.8f}",
@@ -763,6 +810,28 @@ class PositionMonitor:
           f"{symbol} | 🎯 TAKE PROFIT TRIGGERED | "
           f"Price: {current_price:.8f} | TP: {take_profit:.8f}"
         )
+
+        # Логируем в trades.log
+        entry_price = position.entry_price
+        quantity = position.quantity or 0
+        pnl_percent = (current_price - entry_price) / entry_price if side == "BUY" else (entry_price - current_price) / entry_price
+
+        trade_reporter.log_position_event(PositionEvent(
+            event_type=PositionEventType.TAKE_PROFIT_TRIGGERED,
+            symbol=symbol,
+            timestamp=datetime.now(),
+            position_id=str(position.id),
+            side=side,
+            entry_price=entry_price,
+            current_price=current_price,
+            exit_price=current_price,
+            quantity=quantity,
+            take_profit=take_profit,
+            unrealized_pnl=unrealized_pnl,
+            unrealized_pnl_percent=pnl_percent,
+            exit_reason="Take Profit triggered",
+            reason=f"Price ${current_price:.2f} hit TP ${take_profit:.2f}"
+        ))
 
         await self.execution_manager.close_position(
           position_id=str(position.id),
