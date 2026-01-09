@@ -772,20 +772,20 @@ def main():
     parser.add_argument(
         '--tp-mult',
         type=float,
-        default=2.0,
-        help='Take Profit множитель ATR (default: 2.0)'
+        default=1.2,
+        help='Take Profit множитель ATR (default: 1.2)'
     )
     parser.add_argument(
         '--sl-mult',
         type=float,
-        default=2.0,
-        help='Stop Loss множитель ATR (default: 2.0)'
+        default=1.2,
+        help='Stop Loss множитель ATR (default: 1.2)'
     )
     parser.add_argument(
         '--min-movement',
         type=float,
-        default=0.05,
-        help='Минимальное движение в %% (default: 0.05)'
+        default=0.03,
+        help='Минимальное движение в %% (default: 0.03)'
     )
     parser.add_argument(
         '--fixed-pct',
@@ -812,7 +812,7 @@ def main():
 
     # Создаем конфигурацию
     use_fixed = args.fixed_pct is not None
-    fixed_threshold = args.fixed_pct if use_fixed else 0.15
+    fixed_threshold = args.fixed_pct if use_fixed else 0.10
 
     config = LabelingConfig(
         horizons=[60, 180, 300],  # 1, 3, 5 минут
