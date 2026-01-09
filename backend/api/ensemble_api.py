@@ -1695,14 +1695,19 @@ async def _run_training(
 
     def broadcast_to_main_loop(coro):
         """Отправляет coroutine в main event loop для WebSocket broadcast."""
-        if main_loop and main_loop.is_running():
-            asyncio.run_coroutine_threadsafe(coro, main_loop)
-        else:
-            # Fallback - выполняем в текущем loop (может не работать для WebSocket)
-            try:
-                asyncio.create_task(coro)
-            except RuntimeError:
-                pass  # Игнорируем если loop не running
+        try:
+            if main_loop and main_loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(coro, main_loop)
+                # Добавляем callback для логирования ошибок
+                def on_done(f):
+                    exc = f.exception()
+                    if exc:
+                        logger.warning(f"[WS] Broadcast coroutine failed: {exc}")
+                future.add_done_callback(on_done)
+            else:
+                logger.warning(f"[WS] Main loop not available: main_loop={main_loop is not None}, running={main_loop.is_running() if main_loop else 'N/A'}")
+        except Exception as e:
+            logger.warning(f"[WS] Failed to schedule broadcast: {e}")
 
     try:
         # Import here to avoid circular imports
@@ -1976,6 +1981,9 @@ async def _run_training(
             # Отправляем прогресс обучения через WebSocket
             try:
                 ws_manager = get_ws_manager()
+                # Логируем для диагностики
+                if (epoch + 1) % 5 == 0 or epoch == 0:
+                    logger.info(f"[WS] Broadcasting epoch {epoch + 1}/{epochs} to WebSocket clients")
                 broadcast_to_main_loop(
                     ws_manager.broadcast_training_progress(
                         task_id=task_id,
@@ -1987,8 +1995,8 @@ async def _run_training(
                     )
                 )
             except Exception as ws_error:
-                # Не прерываем обучение из-за ошибки WebSocket
-                logger.debug(f"WebSocket broadcast error: {ws_error}")
+                # Логируем ошибки для диагностики (было debug, теперь info)
+                logger.info(f"[WS] WebSocket broadcast error: {ws_error}")
 
             # Небольшая задержка для асинхронности
             await asyncio.sleep(0.01)
