@@ -4189,7 +4189,14 @@ export function MLManagementPage() {
           epochs: tlobTrainingParams.epochs,
           learning_rate: tlobTrainingParams.learning_rate,
           symbols: tlobTrainingParams.symbols,
-          days: tlobTrainingParams.days
+          days: tlobTrainingParams.days,
+          // TLOB-specific parameters
+          batch_size: tlobTrainingParams.batch_size,
+          num_levels: tlobTrainingParams.num_levels,
+          sequence_length: tlobTrainingParams.sequence_length,
+          num_temporal_layers: tlobTrainingParams.num_temporal_layers,
+          dropout: tlobTrainingParams.dropout,
+          use_amp: tlobTrainingParams.use_amp
         })
       });
 
