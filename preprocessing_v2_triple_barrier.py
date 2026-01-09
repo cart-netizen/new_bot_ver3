@@ -47,15 +47,15 @@ class LabelingConfig:
 
     # ATR множители для ширины барьеров
     # Чем выше - тем шире барьеры, тем меньше HOLD
-    tp_multiplier: float = 2.0   # Take Profit = entry + tp_mult * ATR
-    sl_multiplier: float = 2.0   # Stop Loss = entry - sl_mult * ATR
+    tp_multiplier: float = 1.2   # Take Profit = entry + tp_mult * ATR
+    sl_multiplier: float = 1.2   # Stop Loss = entry - sl_mult * ATR
 
     # Fallback threshold если ATR недоступен (в % от цены)
-    fixed_threshold_pct: float = 0.15  # 0.15% для криптовалют
+    fixed_threshold_pct: float = 0.10  # 0.15% для криптовалют
 
     # Минимальный порог движения для non-HOLD (в %)
     # Если движение < min_movement_pct -> HOLD
-    min_movement_pct: float = 0.05  # 0.05%
+    min_movement_pct: float = 0.03  # 0.05%
 
     # === Режим фиксированного процента ===
     # Если True - игнорирует ATR и использует fixed_threshold_pct для всех символов
@@ -69,7 +69,7 @@ class LabelingConfig:
 
     # === Фильтрация "плоских" символов ===
     # Символы, где HOLD > max_hold_pct во всех горизонтах, исключаются
-    max_hold_pct: float = 85.0  # Максимальный % HOLD для включения символа
+    max_hold_pct: float = 80.0  # Максимальный % HOLD для включения символа
 
     def __post_init__(self):
         if self.horizons is None:
