@@ -2764,7 +2764,13 @@ class BotController:
                         'predicted_mae': validation_result.predicted_mae,
                         'manipulation_risk': validation_result.manipulation_risk,
                         'market_regime': validation_result.market_regime.value if validation_result.market_regime and hasattr(validation_result.market_regime, 'value') else str(validation_result.market_regime) if validation_result.market_regime else None,
-                        'feature_quality': validation_result.feature_quality
+                        'feature_quality': validation_result.feature_quality,
+                        # Ensemble model predictions
+                        'model_predictions': validation_result.metadata.get('model_predictions', {}),
+                        'models_used': validation_result.metadata.get('models_used', []),
+                        'meta_confidence': validation_result.metadata.get('meta_confidence', 0.0),
+                        'agreement_ratio': validation_result.metadata.get('agreement_ratio', 0.0),
+                        'consensus_type': validation_result.metadata.get('consensus_type', 'unknown')
                       }
 
                       final_signal.metadata.update({
