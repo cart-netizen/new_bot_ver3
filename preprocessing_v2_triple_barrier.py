@@ -10,7 +10,7 @@ Preprocessing V2 - Triple Barrier Labeling с улучшенными парам�
 5. Добавлены derived фичи на основе top-корреляций
 
 Запуск:
-    python preprocessing_v2_triple_barrier.py --start-date 2025-11-01
+    python preprocessing_v2_triple_barrier.py --start-date 2025-11-16
 
 Файл: preprocessing_v2_triple_barrier.py
 """
