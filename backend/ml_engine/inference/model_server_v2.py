@@ -1,16 +1,23 @@
 """
-ML Model Server v2 - FastAPI сервер для ML inference
+ML Model Server v2 - FastAPI сервер для ML inference с поддержкой Ensemble Consensus.
 
 Отдельный процесс для обслуживания ML моделей:
 - Port: 8001
 - Endpoints: /predict, /reload, /health
+- **Ensemble Consensus** - объединение предсказаний 3 моделей
 - A/B Testing support
 - ONNX optimization
 - Model Registry integration
+
+Поддерживаемые модели в Ensemble:
+1. CNN-LSTM (HybridCNNLSTMv2) - основная модель
+2. MPD-Transformer - Vision Transformer для временных рядов
+3. TLOB - Transformer для данных стакана
 """
 
 import time
 import asyncio
+from dataclasses import fields as dataclass_fields
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Union
 from pathlib import Path
@@ -32,11 +39,38 @@ from backend.ml_engine.inference.ab_testing import (
     ModelVariant,
     PredictionOutcome
 )
-# UPDATED: Используем v2 модель для совместимости с обученными моделями
+# Модели
 from backend.ml_engine.models.hybrid_cnn_lstm_v2 import HybridCNNLSTMv2 as HybridCNNLSTM
+from backend.ml_engine.models.hybrid_cnn_lstm_v2 import ModelConfigV2 as CNNLSTMConfig
+
+# Ensemble Consensus
+from backend.ml_engine.ensemble import (
+    EnsembleConsensus,
+    EnsembleConfig,
+    ModelType,
+    ConsensusStrategy,
+    Direction,
+    ModelPrediction,
+    create_ensemble_consensus
+)
+
 from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+# === Direction Mapping ===
+DIRECTION_NAMES = {
+    0: "SELL",
+    1: "HOLD",
+    2: "BUY"
+}
+
+def direction_to_string(direction: Union[int, Direction]) -> str:
+    """Конвертирует direction в строку."""
+    if isinstance(direction, Direction):
+        return direction.name
+    return DIRECTION_NAMES.get(direction, "HOLD")
 
 
 # === Helper Functions ===
@@ -183,10 +217,11 @@ class ABTestRequest(BaseModel):
 
 class ModelServer:
     """
-    ML Model Server
+    ML Model Server с Ensemble Consensus.
 
     Функции:
-    - Загрузка моделей из Model Registry
+    - Загрузка всех 3 моделей из Model Registry
+    - **Ensemble Consensus** - объединение предсказаний
     - Inference (single + batch)
     - A/B testing
     - Hot reload
@@ -197,7 +232,16 @@ class ModelServer:
         self.registry: ModelRegistry = get_model_registry()
         self.ab_manager: ABTestManager = get_ab_test_manager()
 
-        # Loaded models cache
+        # Ensemble Consensus для объединения предсказаний
+        self.ensemble: EnsembleConsensus = create_ensemble_consensus(
+            strategy="weighted_voting",
+            cnn_lstm_weight=0.4,
+            mpd_weight=0.35,
+            tlob_weight=0.25
+        )
+        self.ensemble_loaded: bool = False
+
+        # Loaded models cache (для backward compatibility)
         self.loaded_models: Dict[str, torch.nn.Module] = {}
         self.model_metadata: Dict[str, Dict[str, Any]] = {}
 
@@ -208,8 +252,142 @@ class ModelServer:
         self.start_time = datetime.now()
         self.total_predictions = 0
         self.total_latency_ms = 0.0
+        self.ensemble_predictions = 0
 
-        logger.info("Model Server initialized")
+        logger.info("Model Server initialized with Ensemble Consensus support")
+
+    async def load_ensemble_models(self) -> int:
+        """
+        Загружает все модели для Ensemble из Model Registry.
+
+        Returns:
+            Количество успешно загруженных моделей
+        """
+        if self.ensemble_loaded:
+            logger.info("Ensemble models already loaded")
+            return len(self.ensemble._models)
+
+        model_mapping = {
+            'hybrid_cnn_lstm': ModelType.CNN_LSTM,
+            'mpd_transformer': ModelType.MPD_TRANSFORMER,
+            'tlob_transformer': ModelType.TLOB,
+        }
+
+        def filter_config_fields(config_class, config_dict: dict) -> dict:
+            """Фильтрует config dict, оставляя только поля, существующие в dataclass."""
+            known_fields = {f.name for f in dataclass_fields(config_class)}
+            return {k: v for k, v in config_dict.items() if k in known_fields}
+
+        loaded_count = 0
+
+        for registry_name, model_type in model_mapping.items():
+            try:
+                # Пытаемся получить production модель
+                model_info = await self.registry.get_production_model(registry_name)
+
+                if model_info and model_info.model_exists():
+                    model_path = model_info.model_path
+
+                    # Загружаем модель в зависимости от типа
+                    if model_type == ModelType.CNN_LSTM:
+                        from backend.ml_engine.models.hybrid_cnn_lstm_v2 import HybridCNNLSTMv2, ModelConfigV2
+                        checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
+                        if 'config' in checkpoint:
+                            filtered_config = filter_config_fields(ModelConfigV2, checkpoint['config'])
+                            config = ModelConfigV2(**filtered_config)
+                        else:
+                            config = ModelConfigV2()
+                        model = HybridCNNLSTMv2(config)
+                        state_dict = checkpoint.get('model_state_dict', checkpoint)
+                        model.load_state_dict(state_dict)
+
+                    elif model_type == ModelType.MPD_TRANSFORMER:
+                        from backend.ml_engine.models.mpd_transformer import MPDTransformer, MPDTransformerConfig
+                        checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
+                        if 'config' in checkpoint:
+                            filtered_config = filter_config_fields(MPDTransformerConfig, checkpoint['config'])
+                            config = MPDTransformerConfig(**filtered_config)
+                        else:
+                            config = MPDTransformerConfig()
+                        model = MPDTransformer(config)
+                        state_dict = checkpoint.get('model_state_dict', checkpoint)
+
+                        # Resize pos_embed if needed
+                        pos_key = 'pos_embed.pos_embed'
+                        if pos_key in state_dict:
+                            saved_pos = state_dict[pos_key]
+                            model_pos = model.state_dict()[pos_key]
+                            if saved_pos.shape != model_pos.shape:
+                                logger.warning(f"MPD pos_embed shape mismatch, resizing...")
+                                saved_pos = saved_pos.permute(0, 2, 1)
+                                resized = torch.nn.functional.interpolate(
+                                    saved_pos, size=model_pos.shape[1], mode='linear', align_corners=False
+                                )
+                                state_dict[pos_key] = resized.permute(0, 2, 1)
+
+                        model.load_state_dict(state_dict)
+
+                    elif model_type == ModelType.TLOB:
+                        from backend.ml_engine.models.tlob_transformer import TLOBTransformer, TLOBConfig
+                        checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
+                        if 'config' in checkpoint:
+                            filtered_config = filter_config_fields(TLOBConfig, checkpoint['config'])
+                            config = TLOBConfig(**filtered_config)
+                        else:
+                            config = TLOBConfig()
+                        model = TLOBTransformer(config)
+                        state_dict = checkpoint.get('model_state_dict', checkpoint)
+
+                        # Resize pos_embed if needed
+                        pos_key = 'pos_embed'
+                        if pos_key in state_dict:
+                            saved_pos = state_dict[pos_key]
+                            model_pos = model.state_dict()[pos_key]
+                            if saved_pos.shape != model_pos.shape:
+                                logger.warning(f"TLOB pos_embed shape mismatch, resizing...")
+                                saved_pos = saved_pos.permute(0, 2, 1)
+                                resized = torch.nn.functional.interpolate(
+                                    saved_pos, size=model_pos.shape[1], mode='linear', align_corners=False
+                                )
+                                state_dict[pos_key] = resized.permute(0, 2, 1)
+
+                        model.load_state_dict(state_dict)
+
+                    model.eval()  # Режим inference
+
+                    # Регистрируем в ensemble
+                    self.ensemble.register_model(model_type, model)
+                    loaded_count += 1
+
+                    # Также сохраняем в loaded_models для backward compatibility
+                    model_key = f"{registry_name}:{model_info.metadata.version}"
+                    self.loaded_models[model_key] = model
+
+                    stage_value = model_info.metadata.stage.value if hasattr(model_info.metadata.stage, 'value') else str(model_info.metadata.stage)
+                    self.model_metadata[model_key] = {
+                        "name": registry_name,
+                        "version": model_info.metadata.version,
+                        "stage": stage_value,
+                        "model_type": model_info.metadata.model_type,
+                        "metrics": model_info.metadata.metrics,
+                        "size_mb": model_info.metadata.model_size_mb,
+                        "ensemble_type": model_type.value,
+                        "loaded_at": datetime.now()
+                    }
+
+                    logger.info(
+                        f"✓ Loaded {registry_name} v{model_info.metadata.version} -> {model_type.value}"
+                    )
+                else:
+                    logger.debug(f"No production model found for {registry_name}")
+
+            except Exception as e:
+                logger.warning(f"Failed to load model {registry_name}: {e}")
+                continue
+
+        self.ensemble_loaded = True
+        logger.info(f"Ensemble models loaded: {loaded_count}/3 production models")
+        return loaded_count
 
     async def load_model(
         self,
@@ -342,6 +520,150 @@ class ModelServer:
             del self.model_metadata[model_key]
 
         return True
+
+    async def predict_ensemble(
+        self,
+        symbol: str,
+        features: np.ndarray,
+        raw_lob: Optional[np.ndarray] = None
+    ) -> Dict[str, Any]:
+        """
+        Ensemble prediction - использует консенсус всех загруженных моделей.
+
+        Args:
+            symbol: Trading symbol
+            features: Feature tensor (batch, seq, features) для CNN-LSTM и MPD
+            raw_lob: Raw LOB tensor (batch, seq, levels, 4) для TLOB (опционально)
+
+        Returns:
+            Dict с direction (строка), confidence, expected_return, model_predictions
+        """
+        start_time = time.perf_counter()
+
+        try:
+            # Убедимся что модели загружены
+            if not self.ensemble_loaded or not self.ensemble._models:
+                logger.info(f"[ENSEMBLE] {symbol} | Loading ensemble models...")
+                await self.load_ensemble_models()
+
+            # Проверяем что хотя бы одна модель загружена
+            if not self.ensemble._models:
+                logger.warning(f"[ENSEMBLE] {symbol} | No models loaded, returning HOLD")
+                return {
+                    "direction": "HOLD",
+                    "confidence": 0.0,
+                    "expected_return": 0.0,
+                    "meta_confidence": 0.0,
+                    "should_trade": False,
+                    "consensus_type": "no_models",
+                    "agreement_ratio": 0.0,
+                    "model_predictions": {},
+                    "models_used": []
+                }
+
+            # Конвертируем в tensor
+            if isinstance(features, np.ndarray):
+                features_tensor = torch.from_numpy(features).float()
+            else:
+                features_tensor = features
+
+            # Добавляем batch dimension если нужно
+            if features_tensor.ndim == 2:
+                features_tensor = features_tensor.unsqueeze(0)
+
+            # Готовим raw_lob tensor для TLOB
+            raw_lob_tensor = None
+            if raw_lob is not None:
+                if isinstance(raw_lob, np.ndarray):
+                    raw_lob_tensor = torch.from_numpy(raw_lob).float()
+                else:
+                    raw_lob_tensor = raw_lob
+                if raw_lob_tensor.ndim == 3:
+                    raw_lob_tensor = raw_lob_tensor.unsqueeze(0)
+
+            logger.info(
+                f"[ENSEMBLE] {symbol} | Predicting with {len(self.ensemble._models)} models, "
+                f"features shape: {features_tensor.shape}"
+            )
+
+            # Получаем консенсусное предсказание
+            ensemble_result = await self.ensemble.predict(
+                features=features_tensor,
+                raw_lob=raw_lob_tensor
+            )
+
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            self.ensemble_predictions += 1
+            self.total_predictions += 1
+            self.total_latency_ms += latency_ms
+
+            # Формируем ответ с direction как STRING (BUY/SELL/HOLD)
+            direction_str = direction_to_string(ensemble_result.direction)
+
+            # Формируем model_predictions для отчёта
+            model_preds = {}
+            for model_type, pred in ensemble_result.model_predictions.items():
+                model_preds[model_type.value] = {
+                    "direction": direction_to_string(pred.direction),
+                    "confidence": pred.confidence,
+                    "expected_return": pred.expected_return,
+                    "probabilities": {
+                        "SELL": float(pred.direction_probs[0]),
+                        "HOLD": float(pred.direction_probs[1]),
+                        "BUY": float(pred.direction_probs[2])
+                    }
+                }
+
+            result = {
+                # Основные поля - НАПРЯМУЮ, не вложенные в prediction
+                "direction": direction_str,
+                "confidence": ensemble_result.confidence,
+                "expected_return": ensemble_result.expected_return,
+
+                # Ensemble метаданные
+                "meta_confidence": ensemble_result.meta_confidence,
+                "should_trade": ensemble_result.should_trade,
+                "consensus_type": ensemble_result.consensus_type,
+                "agreement_ratio": ensemble_result.agreement_ratio,
+                "strategy_used": ensemble_result.strategy_used.value,
+
+                # Предсказания отдельных моделей
+                "model_predictions": model_preds,
+                "models_used": [m.value for m in ensemble_result.enabled_models],
+
+                # Метаданные запроса
+                "latency_ms": latency_ms,
+                "timestamp": datetime.now().isoformat()
+            }
+
+            logger.info(
+                f"[ENSEMBLE] {symbol} | Result: {direction_str}, "
+                f"confidence={ensemble_result.confidence:.3f}, "
+                f"meta_confidence={ensemble_result.meta_confidence:.3f}, "
+                f"agreement={ensemble_result.agreement_ratio:.2%}, "
+                f"models={list(model_preds.keys())}"
+            )
+
+            return result
+
+        except Exception as e:
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            logger.error(f"[ENSEMBLE] {symbol} | Error: {e}", exc_info=True)
+
+            # Возвращаем HOLD при ошибке
+            return {
+                "direction": "HOLD",
+                "confidence": 0.0,
+                "expected_return": 0.0,
+                "meta_confidence": 0.0,
+                "should_trade": False,
+                "consensus_type": "error",
+                "agreement_ratio": 0.0,
+                "model_predictions": {},
+                "models_used": [],
+                "error": str(e),
+                "latency_ms": latency_ms
+            }
 
     async def predict(
         self,
@@ -643,24 +965,37 @@ server = ModelServer()
 
 @app.on_event("startup")
 async def startup():
-    """Startup: загрузить production модели"""
-    logger.info("ML Model Server starting up...")
+    """Startup: загрузить все Ensemble модели"""
+    logger.info("=" * 60)
+    logger.info("ML Model Server v2 with Ensemble Consensus starting up...")
+    logger.info("=" * 60)
 
-    # Загрузить default production модель
+    # Загрузить все ensemble модели (CNN-LSTM, MPD-Transformer, TLOB)
+    try:
+        loaded_count = await server.load_ensemble_models()
+        if loaded_count > 0:
+            logger.info(f"✓ Ensemble loaded: {loaded_count}/3 models ready")
+            logger.info(f"   Loaded models: {list(server.ensemble._models.keys())}")
+        else:
+            logger.warning(
+                "⚠️ No ensemble models loaded. Server will attempt to load on first request. "
+                "Make sure trained models exist in the registry."
+            )
+    except Exception as e:
+        logger.error(f"❌ Failed to load ensemble models: {e}", exc_info=True)
+        logger.warning(
+            "Server will continue running and attempt to load models on first predict request"
+        )
+
+    # Также пытаемся загрузить single model для backward compatibility
     try:
         success = await server.load_model("hybrid_cnn_lstm", version=None)
         if success:
-            logger.info("✓ Production model loaded successfully")
-        else:
-            logger.warning(
-                "⚠️ Production model not loaded. Server will attempt to load on first request. "
-                "This may be because no trained model exists in the registry."
-            )
+            logger.info("✓ Backward compatibility: single model also loaded")
     except Exception as e:
-        logger.error(f"❌ Failed to load production model: {e}", exc_info=True)
-        logger.warning(
-            "Server will continue running and attempt to load model on first predict request"
-        )
+        logger.debug(f"Single model load skipped: {e}")
+
+    logger.info("=" * 60)
 
 
 @app.on_event("shutdown")
@@ -671,7 +1006,7 @@ async def shutdown():
 
 @app.post("/api/ml/predict", response_model=PredictResponse)
 async def predict(request: PredictRequest):
-    """Single prediction"""
+    """Single prediction с Ensemble Consensus (backward compatible endpoint)"""
     try:
         logger.info(f"Predict request for {request.symbol}, features type: {type(request.features)}")
 
@@ -687,55 +1022,58 @@ async def predict(request: PredictRequest):
                 raise HTTPException(status_code=400, detail=f"Failed to flatten features: {str(e)}")
 
             # Reshape для sequence (60 timesteps)
-            # Если feature_count не делится на 60, используем 1 timestep
             try:
                 if len(features_array) % 60 == 0:
                     features_array = features_array.reshape(60, -1)
                     logger.info(f"{request.symbol} | Reshaped to 60 timesteps: {features_array.shape}")
                 else:
-                    # Fallback: 1 timestep с всеми признаками
                     features_array = features_array.reshape(1, -1)
                     logger.info(f"{request.symbol} | Reshaped to 1 timestep: {features_array.shape}")
             except Exception as e:
                 logger.error(f"{request.symbol} | Error reshaping features: {e}", exc_info=True)
                 raise HTTPException(status_code=400, detail=f"Failed to reshape features: {str(e)}")
         else:
-            # List format - стандартная обработка
+            # List format
             logger.debug(f"{request.symbol} | Received List format features, length={len(request.features)}")
             try:
-                features_array = np.array(request.features).reshape(60, -1)  # Предполагаем 60 timesteps
+                features_array = np.array(request.features).reshape(60, -1)
                 logger.info(f"{request.symbol} | Reshaped list to: {features_array.shape}")
             except Exception as e:
                 logger.error(f"{request.symbol} | Error reshaping list features: {e}", exc_info=True)
                 raise HTTPException(status_code=400, detail=f"Failed to reshape list features: {str(e)}")
 
-        logger.info(f"{request.symbol} | Calling server.predict with features shape: {features_array.shape}")
+        # Используем Ensemble prediction
+        logger.info(f"{request.symbol} | Calling ensemble prediction with features shape: {features_array.shape}")
 
-        result = await server.predict(
+        result = await server.predict_ensemble(
             symbol=request.symbol,
-            features=features_array,
-            model_name=request.model_name,
-            model_version=request.model_version
+            features=features_array
         )
 
-        logger.info(f"{request.symbol} | Prediction successful")
+        logger.info(f"{request.symbol} | Ensemble prediction successful: {result.get('direction')}")
 
+        # Формируем response в формате PredictResponse (backward compatible)
         return PredictResponse(
             symbol=request.symbol,
-            prediction=result["prediction"],
-            model_name=result["model_name"],
-            model_version=result["model_version"],
-            variant=result.get("variant"),
-            latency_ms=result["latency_ms"],
+            prediction={
+                "direction": result["direction"],
+                "confidence": result["confidence"],
+                "expected_return": result["expected_return"],
+                "meta_confidence": result.get("meta_confidence", 0.0),
+                "consensus_type": result.get("consensus_type", "unknown"),
+                "model_predictions": result.get("model_predictions", {})
+            },
+            model_name="ensemble",
+            model_version="v2",
+            variant=None,
+            latency_ms=result.get("latency_ms", 0.0),
             timestamp=datetime.now()
         )
 
     except HTTPException:
-        # Re-raise HTTPExceptions as-is
         raise
     except Exception as e:
         logger.error(f"Prediction endpoint error for {request.symbol}: {e}", exc_info=True)
-        logger.error(f"Request details - features type: {type(request.features)}, model_name: {request.model_name}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -872,8 +1210,78 @@ async def health_alias():
 
 @app.post("/predict")
 async def predict_alias(request: PredictRequest):
-    """Single prediction (alias for compatibility)"""
-    return await predict(request)
+    """
+    Single prediction для MLSignalValidator.
+
+    ВАЖНО: Этот endpoint возвращает данные НАПРЯМУЮ (не вложенные в 'prediction'),
+    потому что MLSignalValidator ожидает:
+        ml_direction = result.get("direction", "HOLD")
+        ml_confidence = result.get("confidence", 0.0)
+
+    Формат ответа:
+    {
+        "direction": "BUY" | "SELL" | "HOLD",  # STRING, не int!
+        "confidence": float,
+        "expected_return": float,
+        "meta_confidence": float,
+        "model_predictions": {...},
+        ...
+    }
+    """
+    try:
+        logger.info(f"[/predict] Request for {request.symbol}")
+
+        # Преобразование features
+        if isinstance(request.features, dict):
+            try:
+                features_array = flatten_feature_dict(request.features)
+                if len(features_array) % 60 == 0:
+                    features_array = features_array.reshape(60, -1)
+                else:
+                    features_array = features_array.reshape(1, -1)
+            except Exception as e:
+                logger.error(f"Error processing features: {e}")
+                raise HTTPException(status_code=400, detail=f"Failed to process features: {str(e)}")
+        else:
+            try:
+                features_array = np.array(request.features).reshape(60, -1)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Failed to reshape features: {str(e)}")
+
+        # Используем Ensemble prediction
+        result = await server.predict_ensemble(
+            symbol=request.symbol,
+            features=features_array
+        )
+
+        logger.info(
+            f"[/predict] {request.symbol} | Ensemble result: "
+            f"direction={result['direction']}, confidence={result['confidence']:.3f}, "
+            f"models={result.get('models_used', [])}"
+        )
+
+        # Возвращаем результат НАПРЯМУЮ (не через PredictResponse)
+        # Это критично для MLSignalValidator который ожидает:
+        # result.get("direction") и result.get("confidence") на верхнем уровне
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[/predict] Error: {e}", exc_info=True)
+        # При ошибке возвращаем HOLD с 0 confidence
+        return {
+            "direction": "HOLD",
+            "confidence": 0.0,
+            "expected_return": 0.0,
+            "meta_confidence": 0.0,
+            "should_trade": False,
+            "consensus_type": "error",
+            "agreement_ratio": 0.0,
+            "model_predictions": {},
+            "models_used": [],
+            "error": str(e)
+        }
 
 
 if __name__ == "__main__":
