@@ -249,28 +249,28 @@ class TimeframeAnalyzer:
         'ema_fast': 12, 'ema_slow': 26,
         'rsi': 14, 'atr': 14,
         'adx': 14, 'stochastic': 14,
-        'volume_sma': 20, 'bollinger': 20
+        'volume_sma': 100, 'bollinger': 20  # volume_sma расширен для лучшего baseline
       },
       Timeframe.M5: {
         'sma_fast': 20, 'sma_slow': 50,
         'ema_fast': 12, 'ema_slow': 26,
         'rsi': 14, 'atr': 14,
         'adx': 14, 'stochastic': 14,
-        'volume_sma': 20, 'bollinger': 20
+        'volume_sma': 100, 'bollinger': 20  # volume_sma расширен для лучшего baseline
       },
       Timeframe.M15: {
         'sma_fast': 50, 'sma_slow': 100,
         'ema_fast': 12, 'ema_slow': 26,
         'rsi': 14, 'atr': 14,
         'adx': 14, 'stochastic': 14,
-        'volume_sma': 20, 'bollinger': 20
+        'volume_sma': 100, 'bollinger': 20  # volume_sma расширен для лучшего baseline
       },
       Timeframe.H1: {
         'sma_fast': 50, 'sma_slow': 200,
         'ema_fast': 12, 'ema_slow': 26,
         'rsi': 14, 'atr': 14,
         'adx': 14, 'stochastic': 14,
-        'volume_sma': 20, 'bollinger': 20,
+        'volume_sma': 100, 'bollinger': 20,  # volume_sma расширен для лучшего baseline
         'ichimoku': True  # Включаем Ichimoku для высших TF
       }
     }
@@ -858,9 +858,11 @@ class TimeframeAnalyzer:
     indicators.vwap = features.vwap
 
     # Volume SMA - рассчитываем отдельно (не в IndicatorFeatures)
-    if candles and len(candles) >= 20:
+    # Используем 100 свечей для лучшего понимания baseline объёма
+    volume_period = 100
+    if candles and len(candles) >= volume_period:
       volumes = np.array([c.volume for c in candles])
-      indicators.volume_sma = float(np.mean(volumes[-20:]))
+      indicators.volume_sma = float(np.mean(volumes[-volume_period:]))
       if indicators.volume_sma > 0:
         current_volume = candles[-1].volume
         indicators.volume_ratio = current_volume / indicators.volume_sma

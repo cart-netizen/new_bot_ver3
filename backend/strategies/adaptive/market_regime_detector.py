@@ -96,7 +96,7 @@ class RegimeDetectorConfig:
     volatility_lookback: int = 100
     
     # Liquidity
-    volume_ma_period: int = 20
+    volume_ma_period: int = 100  # Расширено с 20 для лучшего baseline
     liquidity_high_threshold: float = 1.2  # 120% of average
     liquidity_low_threshold: float = 0.8   # 80% of average
     

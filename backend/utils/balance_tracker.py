@@ -20,12 +20,12 @@ logger = get_logger(__name__)
 class BalanceTracker:
   """Трекер баланса аккаунта."""
 
-  def __init__(self, save_interval: int = 60):
+  def __init__(self, save_interval: int = 10):
     """
     Инициализация трекера баланса.
 
     Args:
-        save_interval: Интервал сохранения баланса в секундах (по умолчанию 60 = 1 минута)
+        save_interval: Интервал сохранения баланса в секундах (по умолчанию 10 секунд)
     """
     self.save_interval = save_interval
     self.is_running = False
@@ -325,4 +325,5 @@ class BalanceTracker:
 
 
 # Глобальный экземпляр трекера
-balance_tracker = BalanceTracker(save_interval=60)
+# Интервал 10 секунд для быстрого обновления после закрытия позиций
+balance_tracker = BalanceTracker(save_interval=10)
