@@ -824,18 +824,26 @@ class TLOBLabelGenerator:
         logger.info(f"\n{symbol}: {len(combined_df):,} samples")
         label_results = self.generator.generate_multi_horizon_labels(mid_prices, timestamps)
 
+        # Проверяем что основной горизонт (60s) имеет достаточно данных
+        main_horizon_col = 'future_direction_60s'
+        if main_horizon_col in label_results:
+            _, _, main_stats = label_results[main_horizon_col]
+            if 'error' in main_stats:
+                logger.warning(f"{symbol}: Пропущен (insufficient data для {main_horizon_col})")
+                return
+
         # Добавляем labels в DataFrame
         for col_name, (labels, returns, stats) in label_results.items():
             combined_df[col_name] = labels
             movement_col = col_name.replace('direction', 'movement')
             combined_df[movement_col] = returns
 
-            # Обновляем статистику
-            if '60s' in col_name:  # Основной горизонт
+            # Обновляем статистику (только если есть distribution)
+            if '60s' in col_name and 'distribution' in stats:
                 self.stats['label_distribution']['SELL'] += stats['distribution']['SELL']
                 self.stats['label_distribution']['HOLD'] += stats['distribution']['HOLD']
                 self.stats['label_distribution']['BUY'] += stats['distribution']['BUY']
-                self.stats['total_labeled'] += stats['labeled_samples']
+                self.stats['total_labeled'] += stats.get('labeled_samples', 0)
 
         # Добавляем symbol колонку если нет
         if 'symbol' not in combined_df.columns:
