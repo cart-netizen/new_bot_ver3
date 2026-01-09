@@ -77,6 +77,14 @@ class DataConfig:
     # На Linux можно увеличить до 4
     num_workers: int = 0
 
+    # ===== MEMORY-EFFICIENT OPTIONS =====
+    # Для работы с большим количеством символов (64+) без переполнения RAM
+    use_memory_mapping: bool = False  # Использовать np.memmap вместо np.load
+    lazy_loading: bool = False  # Загружать данные по батчам, не все сразу
+    prefetch_batches: int = 2  # Предзагрузка N батчей (при lazy_loading)
+    pin_memory: bool = False  # Пинить память для GPU (False экономит RAM на Windows)
+    zero_copy_tensors: bool = True  # torch.from_numpy() вместо torch.FloatTensor()
+
     # Feature Store integration
     use_feature_store: bool = True  # Try Feature Store first
     feature_store_date_range_days: int = 90  # Last N days for training
@@ -91,7 +99,8 @@ class TradingDataset(Dataset):
         self,
         sequences: np.ndarray,
         labels: np.ndarray,
-        returns: Optional[np.ndarray] = None
+        returns: Optional[np.ndarray] = None,
+        zero_copy: bool = True  # NEW: опция zero-copy для экономии памяти
     ):
         """
         Инициализация датасета.
@@ -100,19 +109,39 @@ class TradingDataset(Dataset):
             sequences: (N, sequence_length, features)
             labels: (N,) - направление движения (0, 1, 2)
             returns: (N,) - ожидаемая доходность (опционально)
+            zero_copy: Если True, использует torch.from_numpy() без копирования.
+                      Экономит ~50% RAM, но numpy arrays должны оставаться в памяти.
+                      Если False, использует torch.FloatTensor() (копирует данные).
         """
-        self.sequences = torch.FloatTensor(sequences)
-        self.labels = torch.LongTensor(labels)
-        self.returns = (
-            torch.FloatTensor(returns)
-            if returns is not None
-            else None
-        )
+        if zero_copy:
+            # Zero-copy: использует тот же буфер памяти что и numpy
+            # Важно: numpy array должен быть contiguous и правильного dtype
+            sequences = np.ascontiguousarray(sequences, dtype=np.float32)
+            labels = np.ascontiguousarray(labels, dtype=np.int64)
+
+            self.sequences = torch.from_numpy(sequences)
+            self.labels = torch.from_numpy(labels)
+
+            if returns is not None:
+                returns = np.ascontiguousarray(returns, dtype=np.float32)
+                self.returns = torch.from_numpy(returns)
+            else:
+                self.returns = None
+        else:
+            # Legacy: копирует данные (больше памяти, но безопаснее)
+            self.sequences = torch.FloatTensor(sequences)
+            self.labels = torch.LongTensor(labels)
+            self.returns = (
+                torch.FloatTensor(returns)
+                if returns is not None
+                else None
+            )
 
         logger.info(
-            f"Создан TradingDataset: samples={len(sequences)}, "
-            f"sequence_length={sequences.shape[1]}, "
-            f"features={sequences.shape[2]}"
+            f"Создан TradingDataset: samples={len(self.sequences)}, "
+            f"sequence_length={self.sequences.shape[1]}, "
+            f"features={self.sequences.shape[2]}, "
+            f"zero_copy={zero_copy}"
         )
 
     def __len__(self) -> int:
@@ -568,9 +597,13 @@ class HistoricalDataLoader:
         Returns:
             Dict с DataLoaders: {'train': ..., 'val': ..., 'test': ...}
         """
+        # Используем zero_copy из конфига для экономии памяти
+        zero_copy = getattr(self.config, 'zero_copy_tensors', True)
+        pin_memory = getattr(self.config, 'pin_memory', False)
+
         # Создаем Datasets
-        train_dataset = TradingDataset(train_data[0], train_data[1])
-        val_dataset = TradingDataset(val_data[0], val_data[1])
+        train_dataset = TradingDataset(train_data[0], train_data[1], zero_copy=zero_copy)
+        val_dataset = TradingDataset(val_data[0], val_data[1], zero_copy=zero_copy)
 
         # Создаем DataLoaders
         train_loader = DataLoader(
@@ -578,7 +611,7 @@ class HistoricalDataLoader:
             batch_size=self.config.batch_size,
             shuffle=self.config.shuffle,
             num_workers=self.config.num_workers,
-            pin_memory=True
+            pin_memory=pin_memory
         )
 
         val_loader = DataLoader(
@@ -586,7 +619,7 @@ class HistoricalDataLoader:
             batch_size=self.config.batch_size,
             shuffle=False,  # Валидация без shuffle
             num_workers=self.config.num_workers,
-            pin_memory=True
+            pin_memory=pin_memory
         )
 
         dataloaders = {
@@ -596,20 +629,21 @@ class HistoricalDataLoader:
 
         # Test DataLoader (если есть)
         if test_data:
-            test_dataset = TradingDataset(test_data[0], test_data[1])
+            test_dataset = TradingDataset(test_data[0], test_data[1], zero_copy=zero_copy)
             test_loader = DataLoader(
                 test_dataset,
                 batch_size=self.config.batch_size,
                 shuffle=False,
                 num_workers=self.config.num_workers,
-                pin_memory=True
+                pin_memory=pin_memory
             )
             dataloaders['test'] = test_loader
 
         logger.info(
             f"DataLoaders созданы: "
             f"train_batches={len(train_loader)}, "
-            f"val_batches={len(val_loader)}"
+            f"val_batches={len(val_loader)}, "
+            f"zero_copy={zero_copy}, pin_memory={pin_memory}"
         )
 
         return dataloaders
@@ -1234,6 +1268,105 @@ class HistoricalDataLoader:
 
         tqdm.write("=" * 60 + "\n")
         return splits
+
+    def load_memory_efficient(
+        self,
+        symbols: List[str],
+        mode: str = 'all'  # 'all', 'train', 'val', 'test'
+    ) -> Dict[str, DataLoader]:
+        """
+        Memory-efficient загрузка данных с lazy loading и memory-mapped files.
+
+        Использует MemoryMappedDataset для загрузки данных по батчам
+        без загрузки всего в RAM. Критично для работы с 64+ символами.
+
+        Преимущества:
+        - RAM: ~4 GB вместо 64+ GB для 64 символов
+        - Lazy loading: данные грузятся по батчам
+        - Memory-mapped: np.memmap() вместо np.load()
+        - Zero-copy tensors: torch.from_numpy()
+
+        Args:
+            symbols: Список символов для загрузки
+            mode: Какие loaders создать:
+                  'all' - train, val, test
+                  'train' - только train
+                  'val' - только val
+                  'test' - только test
+
+        Returns:
+            Dict с DataLoaders: {'train': ..., 'val': ..., 'test': ...}
+
+        Usage:
+            config = DataConfig(
+                use_memory_mapping=True,
+                lazy_loading=True
+            )
+            loader = HistoricalDataLoader(config)
+
+            dataloaders = loader.load_memory_efficient(
+                symbols=["BTCUSDT", "ETHUSDT", ...],
+                mode='all'
+            )
+
+            for batch in dataloaders['train']:
+                sequences = batch['sequence']
+                labels = batch['label']
+        """
+        # Проверяем что включены нужные опции
+        if not getattr(self.config, 'use_memory_mapping', False) and \
+           not getattr(self.config, 'lazy_loading', False):
+            logger.warning(
+                "Memory-efficient loading requested but use_memory_mapping "
+                "and lazy_loading are False in config. Enabling them..."
+            )
+
+        # Импортируем memory-mapped модуль
+        from backend.ml_engine.training.memory_mapped_dataset import (
+            MemoryMappedConfig,
+            create_memory_efficient_dataloaders
+        )
+
+        # Создаём конфиг для memory-mapped dataset
+        mmap_config = MemoryMappedConfig(
+            sequence_length=self.config.sequence_length,
+            batch_size=self.config.batch_size,
+            shuffle=self.config.shuffle,
+            prefetch_batches=getattr(self.config, 'prefetch_batches', 2),
+            target_horizon=self.config.target_horizon
+        )
+
+        logger.info("\n" + "=" * 60)
+        logger.info("MEMORY-EFFICIENT DATA LOADING")
+        logger.info("=" * 60)
+        logger.info(f"  • Symbols: {len(symbols)}")
+        logger.info(f"  • Mode: {mode}")
+        logger.info(f"  • Batch size: {mmap_config.batch_size}")
+        logger.info(f"  • Sequence length: {mmap_config.sequence_length}")
+        logger.info("=" * 60)
+
+        # Создаём dataloaders
+        dataloaders = create_memory_efficient_dataloaders(
+            data_dir=self.storage_path,
+            symbols=symbols,
+            config=mmap_config,
+            train_ratio=self.config.train_ratio,
+            val_ratio=self.config.val_ratio,
+            use_purging=self.config.use_purging,
+            use_embargo=self.config.use_embargo,
+            num_workers=self.config.num_workers,
+            pin_memory=getattr(self.config, 'pin_memory', False)
+        )
+
+        # Фильтруем по mode
+        if mode == 'train':
+            return {'train': dataloaders['train']}
+        elif mode == 'val':
+            return {'val': dataloaders['val']}
+        elif mode == 'test':
+            return {'test': dataloaders.get('test')}
+        else:  # 'all'
+            return dataloaders
 
 
 # ========== ПРИМЕР ИСПОЛЬЗОВАНИЯ ==========

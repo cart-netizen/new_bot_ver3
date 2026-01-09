@@ -324,27 +324,58 @@ class TrainingOrchestratorV2:
                     undersample_strategy='auto'
                 )
 
+                # Check if memory-efficient loading should be used
+                # Use it when loading 32+ symbols to avoid OOM
+                use_memory_efficient = len(symbols) >= 32
+
                 data_config = DataConfig(
                     storage_path=self.config.legacy_storage_path,
                     batch_size=256,
-                    sequence_length=60
+                    sequence_length=60,
+                    # Enable memory-efficient options for large datasets
+                    use_memory_mapping=use_memory_efficient,
+                    lazy_loading=use_memory_efficient,
+                    pin_memory=False,  # Save RAM on Windows
+                    zero_copy_tensors=True
                 )
 
                 # КРИТИЧНО: передаём balancing_config!
                 data_loader = HistoricalDataLoader(data_config, balancing_config=balancing_config)
-                train_loader, val_loader, test_loader = data_loader.load_and_split(
-                    symbols=symbols,
-                    apply_resampling=True
-                )
-                
+
+                if use_memory_efficient:
+                    # Memory-efficient path: lazy loading + memory-mapped files
+                    logger.info(f"Using MEMORY-EFFICIENT loading for {len(symbols)} symbols...")
+                    dataloaders = data_loader.load_memory_efficient(
+                        symbols=symbols,
+                        mode='all'
+                    )
+                    train_loader = dataloaders.get('train')
+                    val_loader = dataloaders.get('val')
+                    test_loader = dataloaders.get('test')
+                else:
+                    # Standard path
+                    train_loader, val_loader, test_loader = data_loader.load_and_split(
+                        symbols=symbols,
+                        apply_resampling=True
+                    )
+
                 if train_loader is not None:
-                    data_stats['source'] = 'legacy'
-                    data_stats['total_samples'] = len(train_loader.dataset)
-                    
+                    data_stats['source'] = 'legacy' + (' (memory-efficient)' if use_memory_efficient else '')
+                    # Handle both standard Dataset and IterableDataset
+                    try:
+                        if hasattr(train_loader.dataset, '__len__'):
+                            data_stats['total_samples'] = len(train_loader.dataset)
+                        elif hasattr(train_loader.dataset, 'total_sequences'):
+                            data_stats['total_samples'] = train_loader.dataset.total_sequences
+                        else:
+                            data_stats['total_samples'] = len(train_loader) * 256  # Estimate
+                    except:
+                        data_stats['total_samples'] = 0
+
                     logger.info(f"✓ Загружено из legacy: {data_stats['total_samples']} samples")
-                    
+
                     return train_loader, val_loader, test_loader, data_stats
-                
+
             except Exception as e:
                 logger.error(f"Legacy загрузка не удалась: {e}")
         

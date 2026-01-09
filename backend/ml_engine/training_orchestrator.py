@@ -681,6 +681,8 @@ class TrainingOrchestrator:
         """
         Safely get dataset size from DataLoader
 
+        Supports both standard Dataset and IterableDataset (memory-mapped).
+
         Args:
             dataloader: DataLoader instance or None
 
@@ -690,13 +692,28 @@ class TrainingOrchestrator:
         if dataloader is None:
             return 0
         try:
-            return len(dataloader.dataset)  # type: ignore[arg-type]
+            # Try standard Dataset first
+            if hasattr(dataloader, 'dataset') and hasattr(dataloader.dataset, '__len__'):
+                return len(dataloader.dataset)
+            # For IterableDataset, try to get total_sequences
+            elif hasattr(dataloader, 'dataset') and hasattr(dataloader.dataset, 'total_sequences'):
+                return dataloader.dataset.total_sequences
+            # Try len on dataloader itself (number of batches)
+            elif hasattr(dataloader, '__len__'):
+                # Return batch_count * batch_size as estimate
+                batch_size = getattr(dataloader, 'batch_size', 64) or 64
+                return len(dataloader) * batch_size
+            return 0
         except (AttributeError, TypeError):
             return 0
 
     def _load_from_legacy(self) -> tuple:
         """
         Load data from legacy .npy files
+
+        Supports memory-efficient loading when config options are set:
+        - use_memory_mapping: True - use np.memmap for lazy file access
+        - lazy_loading: True - load batches on demand
 
         Returns:
             Tuple of (train_loader, val_loader, test_loader) or (None, None, None)
@@ -707,7 +724,44 @@ class TrainingOrchestrator:
             self.data_config,
             balancing_config=self.balancing_config
         )
-        train_data, val_data, test_data = data_loader.load_and_split()
+
+        # Check if memory-efficient loading is enabled
+        use_memory_efficient = getattr(self.data_config, 'use_memory_mapping', False) or \
+                               getattr(self.data_config, 'lazy_loading', False)
+
+        if use_memory_efficient:
+            # Memory-efficient path: lazy loading + memory-mapped files
+            logger.info("Using MEMORY-EFFICIENT loading (lazy + mmap)...")
+
+            # Find available symbols in storage
+            storage_path = data_loader.storage_path
+            symbols = [d.name for d in storage_path.iterdir()
+                      if d.is_dir() and (d / "features").exists()]
+
+            if not symbols:
+                logger.error("No symbols found in legacy storage")
+                return None, None, None
+
+            logger.info(f"Found {len(symbols)} symbols for memory-efficient loading")
+
+            try:
+                dataloaders = data_loader.load_memory_efficient(
+                    symbols=symbols,
+                    mode='all'
+                )
+
+                train_data = dataloaders.get('train')
+                val_data = dataloaders.get('val')
+                test_data = dataloaders.get('test')
+
+            except Exception as e:
+                logger.error(f"Memory-efficient loading failed: {e}")
+                logger.info("Falling back to standard loading...")
+                use_memory_efficient = False
+
+        if not use_memory_efficient:
+            # Standard path: load all data into memory
+            train_data, val_data, test_data = data_loader.load_and_split()
 
         if train_data is None:
             logger.error("No training data available in legacy storage")
