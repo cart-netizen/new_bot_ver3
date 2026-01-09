@@ -1186,7 +1186,7 @@ def _generate_labels_from_prices(
     threshold_pct: float = 0.0005,
     use_dynamic_threshold: bool = True,
     volatility_window: int = 20,
-    volatility_multiplier: float = 1.5
+    volatility_multiplier: float = 1.0  # Уменьшено с 1.5 для лучшего баланса классов
 ) -> np.ndarray:
     """
     Генерирует labels на основе будущих изменений цены.
@@ -1201,7 +1201,7 @@ def _generate_labels_from_prices(
         threshold_pct: Фиксированный порог (используется если use_dynamic_threshold=False)
         use_dynamic_threshold: Использовать динамический порог на основе волатильности
         volatility_window: Окно для расчёта волатильности (по умолчанию 20)
-        volatility_multiplier: Множитель волатильности для порога (по умолчанию 1.5)
+        volatility_multiplier: Множитель волатильности для порога (1.0 = 1 sigma)
 
     Returns:
         labels: Массив меток (0=SELL, 1=HOLD, 2=BUY)
