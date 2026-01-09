@@ -38,8 +38,9 @@ class MomentumConfig:
   rsi_oversold: float = 30.0
 
   # Volume confirmation
-  volume_ma_period: int = 20
+  volume_ma_period: int = 100  # Расширено с 20 для лучшего понимания volume baseline
   volume_threshold: float = 1.2  # 1.2x средний объем
+  volume_explosion_threshold: float = 5.0  # >5x = экстремальный объём
 
   # Momentum strength
   momentum_ma_short: int = 5
@@ -144,8 +145,17 @@ class MomentumIndicators:
         rsi_component = (50 - rsi) / 20
         strength += rsi_component * 0.3
 
-    # Volume component (30% веса)
-    if volume_ratio >= config.volume_threshold:
+    # Volume component (30% веса, но explosion получает больше)
+    if volume_ratio >= config.volume_explosion_threshold:
+      # Volume explosion! >5x - максимальный boost
+      volume_component = 1.0
+      strength += volume_component * 0.4  # Увеличиваем до 40% для explosion
+      # Логируем explosion
+      import logging
+      logging.getLogger(__name__).info(
+        f"🚀 VOLUME EXPLOSION detected: {volume_ratio:.1f}x average!"
+      )
+    elif volume_ratio >= config.volume_threshold:
       volume_component = min((volume_ratio - 1.0) / 1.0, 1.0)
       strength += volume_component * 0.3
 

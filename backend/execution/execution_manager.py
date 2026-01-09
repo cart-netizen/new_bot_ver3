@@ -1289,11 +1289,12 @@ class ExecutionManager:
                 closed_value = close_quantity * exit_price
 
                 if symbol in self.risk_manager.open_positions:
-                    current_exposure = self.risk_manager.open_positions[symbol]
+                    position_data = self.risk_manager.open_positions[symbol]
+                    current_exposure = position_data.get("size_usdt", 0)
                     new_exposure = current_exposure - closed_value
 
                     if new_exposure > 0:
-                        self.risk_manager.open_positions[symbol] = new_exposure
+                        position_data["size_usdt"] = new_exposure
                         logger.debug(
                             f"RiskManager exposure updated: "
                             f"{symbol} ${current_exposure:.2f} → ${new_exposure:.2f}"

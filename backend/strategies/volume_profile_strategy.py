@@ -44,6 +44,10 @@ class VolumeProfileConfig:
 
   # Volume confirmation
   volume_surge_threshold: float = 1.5  # 1.5x средний объем
+  volume_explosion_threshold: float = 5.0  # >5x = экстремальный объём (генерирует сильный сигнал)
+
+  # Profile update interval
+  profile_update_interval_minutes: int = 5  # Уменьшено с 30 до 5 минут
 
   # Risk management
   stop_loss_pct: float = 1.5
@@ -317,9 +321,10 @@ class VolumeProfileStrategy:
     if symbol not in self.last_profile_update:
       return True
 
-    # Обновляем профиль каждые 30 минут
+    # Обновляем профиль по настроенному интервалу
     time_since_update = current_timestamp - self.last_profile_update[symbol]
-    return time_since_update > (30 * 60 * 1000)  # 30 минут в ms
+    interval_ms = self.config.profile_update_interval_minutes * 60 * 1000
+    return time_since_update > interval_ms
 
   def _build_profile(
       self,
@@ -452,13 +457,22 @@ class VolumeProfileStrategy:
     if signal_type is None or confidence < 0.3:
       return None
 
-    # Volume confirmation
-    volumes = np.array([c.volume for c in candles[-20:]])
+    # Volume confirmation - используем расширенное окно (100 свечей)
+    volume_period = min(100, len(candles))
+    volumes = np.array([c.volume for c in candles[-volume_period:]])
     avg_volume = np.mean(volumes)
     current_volume = candles[-1].volume
     volume_ratio = current_volume / avg_volume if avg_volume > 0 else 0
 
-    if volume_ratio >= self.config.volume_surge_threshold:
+    # Volume Explosion detector - >5x от среднего = экстремальный объём
+    if volume_ratio >= self.config.volume_explosion_threshold:
+      confidence += 0.5  # Значительный boost для explosion
+      reason_parts.append(f"🚀 VOLUME EXPLOSION: {volume_ratio:.1f}x avg")
+      logger.info(
+        f"🚀 VOLUME EXPLOSION [{symbol}]: {volume_ratio:.1f}x average volume! "
+        f"Current={current_volume:,.0f}, Avg={avg_volume:,.0f}"
+      )
+    elif volume_ratio >= self.config.volume_surge_threshold:
       confidence += 0.2
       reason_parts.append(f"Volume surge: {volume_ratio:.2f}x")
 

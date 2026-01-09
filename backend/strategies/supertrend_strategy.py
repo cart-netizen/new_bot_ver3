@@ -35,7 +35,7 @@ class SuperTrendConfig:
   momentum_threshold: float = 0.0  # Momentum > 0 для long
 
   use_volume_filter: bool = True
-  volume_ma_period: int = 20
+  volume_ma_period: int = 100  # Расширено с 20 для лучшего baseline
   volume_threshold: float = 1.1  # 1.1x средний объем
 
   # Risk management
