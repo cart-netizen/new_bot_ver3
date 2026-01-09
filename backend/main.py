@@ -2738,10 +2738,11 @@ class BotController:
                       logger.debug(f"[{symbol}] Запуск ML Validation...")
 
                       # ML Validator проверяет финальный сигнал
+                      # orderbook_snapshot передаётся для TLOB модели
                       validation_result = await self.ml_validator.validate(
-
                         signal=final_signal,
-                        feature_vector=feature_vector
+                        feature_vector=feature_vector,
+                        orderbook_snapshot=orderbook_snapshot
                       )
 
                       ml_should_trade = validation_result.validated
