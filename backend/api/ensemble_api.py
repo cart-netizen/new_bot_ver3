@@ -1264,6 +1264,123 @@ def _generate_labels_from_prices(
     return labels
 
 
+def _load_labels_from_feature_store(
+    symbol: str,
+    lob_timestamps: np.ndarray,
+    days: int,
+    timestamp_tolerance_ms: int = 2000
+) -> Optional[np.ndarray]:
+    """
+    Загружает labels из Feature Store и синхронизирует с LOB timestamps.
+
+    Args:
+        symbol: Торговая пара
+        lob_timestamps: Timestamps из LOB данных (миллисекунды)
+        days: Количество дней данных
+        timestamp_tolerance_ms: Допуск при merge (±2 секунды по умолчанию)
+
+    Returns:
+        Массив labels синхронизированный с LOB timestamps или None
+    """
+    import pandas as pd
+
+    data_path = _get_data_path()
+    feature_store_path = data_path / "feature_store" / "offline" / "training_features"
+
+    if not feature_store_path.exists():
+        logger.debug(f"Feature Store not found: {feature_store_path}")
+        return None
+
+    # Вычисляем даты
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days)
+
+    all_dfs = []
+
+    # Загружаем partitions
+    for partition_dir in feature_store_path.iterdir():
+        if not partition_dir.is_dir():
+            continue
+
+        if partition_dir.name.startswith("date="):
+            date_str = partition_dir.name.split("=")[1]
+            try:
+                part_date = datetime.strptime(date_str, "%Y-%m-%d")
+
+                # Фильтр по дате
+                if part_date.date() < start_date.date() or part_date.date() > end_date.date():
+                    continue
+
+                for pq_file in partition_dir.glob("*.parquet"):
+                    try:
+                        df = pd.read_parquet(pq_file)
+
+                        # Фильтр по символу
+                        if 'symbol' in df.columns:
+                            df = df[df['symbol'] == symbol]
+
+                        # Проверяем наличие label колонки
+                        if 'future_direction_60s' not in df.columns:
+                            continue
+
+                        if df.empty:
+                            continue
+
+                        # Оставляем только нужные колонки
+                        df = df[['timestamp', 'future_direction_60s']].copy()
+                        all_dfs.append(df)
+
+                    except Exception as e:
+                        logger.debug(f"Error reading {pq_file}: {e}")
+
+            except ValueError:
+                continue
+
+    if not all_dfs:
+        logger.debug(f"No Feature Store data found for {symbol}")
+        return None
+
+    # Объединяем данные
+    fs_df = pd.concat(all_dfs, ignore_index=True)
+    fs_df = fs_df.sort_values('timestamp').drop_duplicates(subset=['timestamp'])
+
+    logger.info(f"  Feature Store: {len(fs_df)} samples for {symbol}")
+
+    # Создаем DataFrame из LOB timestamps
+    lob_df = pd.DataFrame({'lob_ts': lob_timestamps})
+    lob_df = lob_df.sort_values('lob_ts')
+
+    # merge_asof для синхронизации по timestamp
+    merged = pd.merge_asof(
+        lob_df,
+        fs_df.rename(columns={'timestamp': 'fs_ts'}),
+        left_on='lob_ts',
+        right_on='fs_ts',
+        tolerance=timestamp_tolerance_ms,
+        direction='nearest'
+    )
+
+    # Проверяем качество merge
+    matched = merged['future_direction_60s'].notna().sum()
+    total = len(merged)
+    match_rate = 100.0 * matched / total if total > 0 else 0
+
+    logger.info(f"  Label sync: {matched}/{total} ({match_rate:.1f}%) matched")
+
+    if match_rate < 50:
+        logger.warning(f"  Low match rate ({match_rate:.1f}%), falling back to generated labels")
+        return None
+
+    # Извлекаем labels, заполняем NaN как HOLD (1)
+    labels = merged['future_direction_60s'].fillna(1).values.astype(np.int64)
+
+    # Конвертируем -1,0,1 → 0,1,2 если нужно
+    if labels.min() < 0:
+        labels = labels + 1
+
+    return labels
+
+
 def _load_lob_data_from_parquet(
     symbol: str,
     days: int,
@@ -1365,17 +1482,28 @@ def _load_lob_data_from_parquet(
 
     logger.info(f"  LOB data normalized: prices in basis points, volumes log-transformed")
 
-    # Используем synchronized labels если есть
+    # ===== ПОЛУЧЕНИЕ LABELS =====
+    labels = None
+
+    # 1. Используем synchronized labels если есть в LOB данных
     if 'future_direction_60s' in combined_df.columns:
         labels = combined_df['future_direction_60s'].values.astype(np.int64)
         # Конвертируем -1,0,1 → 0,1,2 если нужно
         if labels.min() < 0:
             labels = labels + 1
-        logger.info(f"  Using synchronized labels: {np.bincount(labels)}")
-    else:
-        # Fallback: генерируем labels из цен
+        logger.info(f"  Using synchronized labels from LOB data: {np.bincount(labels)}")
+
+    # 2. Пробуем загрузить labels из Feature Store напрямую (NEW!)
+    if labels is None:
+        feature_store_labels = _load_labels_from_feature_store(symbol, combined_df['timestamp'].values, days)
+        if feature_store_labels is not None and len(feature_store_labels) == len(combined_df):
+            labels = feature_store_labels
+            logger.info(f"  Using labels from Feature Store: {np.bincount(labels)}")
+
+    # 3. Fallback: генерируем labels из цен
+    if labels is None:
         labels = _generate_labels_from_prices(mid_prices, horizon=60, threshold_pct=0.0005)
-        logger.info(f"  Using generated labels: {np.bincount(labels)}")
+        logger.info(f"  Using generated labels (fallback): {np.bincount(labels)}")
 
     return lob_data, labels, mid_prices
 
