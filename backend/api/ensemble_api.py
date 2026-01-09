@@ -89,6 +89,14 @@ class TrainingRequest(BaseModel):
     symbols: List[str] = Field(default=["BTCUSDT"])
     days: int = Field(default=30, ge=1, le=365)
 
+    # ===== TLOB-specific parameters =====
+    batch_size: int = Field(default=64, ge=1, le=512, description="Размер батча")
+    num_levels: int = Field(default=20, ge=5, le=50, description="Уровни стакана для TLOB")
+    sequence_length: int = Field(default=100, ge=10, le=500, description="Длина последовательности")
+    num_temporal_layers: int = Field(default=4, ge=1, le=12, description="Число Transformer слоёв")
+    dropout: float = Field(default=0.1, ge=0.0, le=0.5, description="Dropout rate")
+    use_amp: bool = Field(default=True, description="Mixed precision training")
+
 
 class PerformanceUpdate(BaseModel):
     """Обновление производительности модели."""
@@ -1028,7 +1036,14 @@ async def start_training(request: TrainingRequest):
                     learning_rate=request.learning_rate,
                     symbols=validated_symbols,  # Используем только символы с данными
                     days=request.days,
-                    main_loop=main_loop  # Передаём main event loop
+                    main_loop=main_loop,  # Передаём main event loop
+                    # TLOB-specific parameters
+                    batch_size=request.batch_size,
+                    num_levels=request.num_levels,
+                    sequence_length=request.sequence_length,
+                    num_temporal_layers=request.num_temporal_layers,
+                    dropout=request.dropout,
+                    use_amp=request.use_amp
                 )
             )
         finally:
@@ -1854,7 +1869,14 @@ async def _run_training(
     learning_rate: float,
     symbols: List[str],
     days: int,
-    main_loop: asyncio.AbstractEventLoop = None
+    main_loop: asyncio.AbstractEventLoop = None,
+    # TLOB-specific parameters
+    batch_size: int = 64,
+    num_levels: int = 20,
+    sequence_length: int = 100,
+    num_temporal_layers: int = 4,
+    dropout: float = 0.1,
+    use_amp: bool = True
 ):
     """
     Фоновая функция обучения с реальной загрузкой данных.
@@ -1869,6 +1891,12 @@ async def _run_training(
 
     Args:
         main_loop: Main FastAPI event loop для WebSocket broadcasts
+        batch_size: Размер батча (для всех моделей)
+        num_levels: Уровни стакана (для TLOB)
+        sequence_length: Длина последовательности (для TLOB)
+        num_temporal_layers: Число Transformer слоёв (для TLOB)
+        dropout: Dropout rate (для TLOB)
+        use_amp: Mixed precision training (для TLOB)
     """
     task = _training_tasks[task_id]
     task['status'] = 'running'
@@ -1905,8 +1933,11 @@ async def _run_training(
         logger.info("=" * 60)
         logger.info(f"  Epochs: {epochs}")
         logger.info(f"  Learning rate: {learning_rate}")
+        logger.info(f"  Batch size: {batch_size}")
         logger.info(f"  Symbols: {symbols}")
         logger.info(f"  Days: {days}")
+        if model_type == "tlob":
+            logger.info(f"  TLOB params: num_levels={num_levels}, seq_len={sequence_length}, layers={num_temporal_layers}, dropout={dropout}, amp={use_amp}")
         print(f"\n{'='*60}\nНАЧАЛО ОБУЧЕНИЯ: {model_type}\n{'='*60}", flush=True)  # Debug print
 
         # ========== WEBSOCKET: TRAINING STARTED (через main event loop) ==========
@@ -2024,7 +2055,7 @@ async def _run_training(
         # ==================== СОЗДАНИЕ DATALOADERS ====================
         task['progress'] = 15
 
-        batch_size = 64
+        # batch_size передаётся как параметр функции
 
         if model_type == "tlob":
             # LOB Dataset для TLOB
@@ -2055,9 +2086,12 @@ async def _run_training(
         elif model_type == "tlob":
             from backend.ml_engine.models.tlob_transformer import create_tlob_transformer, TLOBConfig
             config = TLOBConfig(
-                num_levels=train_seq.shape[2],
-                sequence_length=train_seq.shape[1]
+                num_levels=train_seq.shape[2],  # Из данных (фактическое число уровней)
+                sequence_length=train_seq.shape[1],  # Из данных (фактическая длина)
+                num_layers=num_temporal_layers,  # Параметр от пользователя
+                dropout=dropout  # Параметр от пользователя
             )
+            logger.info(f"TLOBConfig: num_levels={config.num_levels}, seq_len={config.sequence_length}, layers={config.num_layers}, dropout={config.dropout}")
             model = create_tlob_transformer(config)
 
         # ==================== ОБУЧЕНИЕ ====================

@@ -297,12 +297,16 @@ class TripleBarrierLOBGenerator:
             labels, returns, stats = self.generate_labels(mid_prices, timestamps, horizon)
             results[col_name] = (labels, returns, stats)
 
-            logger.info(
-                f"  {col_name}: "
-                f"SELL={stats['percentages']['SELL']:.1f}%, "
-                f"HOLD={stats['percentages']['HOLD']:.1f}%, "
-                f"BUY={stats['percentages']['BUY']:.1f}%"
-            )
+            # Проверяем что stats содержит percentages (может быть error при недостатке данных)
+            if 'percentages' in stats:
+                logger.info(
+                    f"  {col_name}: "
+                    f"SELL={stats['percentages']['SELL']:.1f}%, "
+                    f"HOLD={stats['percentages']['HOLD']:.1f}%, "
+                    f"BUY={stats['percentages']['BUY']:.1f}%"
+                )
+            elif 'error' in stats:
+                logger.warning(f"  {col_name}: {stats['error']}")
 
         return results
 
