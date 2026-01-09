@@ -92,12 +92,13 @@ class LabelingConfig:
 
 
 # Конфигурация по умолчанию - оптимизирована для уменьшения HOLD
+# Уменьшены множители для получения большего количества BUY/SELL сигналов
 DEFAULT_CONFIG = LabelingConfig(
     horizons=[60, 180, 300],  # 1, 3, 5 минут
-    tp_multiplier=2.0,
-    sl_multiplier=2.0,
-    fixed_threshold_pct=0.15,
-    min_movement_pct=0.05
+    tp_multiplier=1.2,        # Было 2.0 - сужаем барьеры
+    sl_multiplier=1.2,        # Было 2.0 - сужаем барьеры
+    fixed_threshold_pct=0.10, # Было 0.15% - меньше порог для non-HOLD
+    min_movement_pct=0.03     # Было 0.05% - меньше движения считается значимым
 )
 
 
