@@ -81,7 +81,14 @@ class WebSocketManager:
             recipients = self.subscriptions[event_type].copy()
         recipients.update(self.subscriptions["all"])
 
+        # Логируем для диагностики (только для training, не спамим)
+        msg_type = message.get('type', 'unknown')
+        if msg_type == 'training_progress':
+            epoch = message.get('epoch', '?')
+            logger.debug(f"[WS BROADCAST] event={event_type}, type={msg_type}, epoch={epoch}, recipients={len(recipients)}, all_subs={len(self.subscriptions['all'])}")
+
         if not recipients:
+            logger.warning(f"[WS BROADCAST] No recipients for {event_type}! (active_connections={len(self.active_connections)})")
             return  # Нет подписчиков
 
         # Добавляем метаданные
