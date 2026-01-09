@@ -1183,36 +1183,84 @@ def _get_data_path() -> Path:
 def _generate_labels_from_prices(
     mid_prices: np.ndarray,
     horizon: int = 60,
-    threshold_pct: float = 0.0005
+    threshold_pct: float = 0.0005,
+    use_dynamic_threshold: bool = True,
+    volatility_window: int = 20,
+    volatility_multiplier: float = 1.5
 ) -> np.ndarray:
     """
     Генерирует labels на основе будущих изменений цены.
 
+    Поддерживает два режима:
+    1. Фиксированный порог (threshold_pct) - для обратной совместимости
+    2. Динамический порог на основе волатильности (ATR-подобный) - рекомендуется
+
     Args:
         mid_prices: Массив средних цен (mid_price)
         horizon: Горизонт предсказания (количество шагов вперед)
-        threshold_pct: Порог изменения цены для определения направления (0.05% = 0.0005)
+        threshold_pct: Фиксированный порог (используется если use_dynamic_threshold=False)
+        use_dynamic_threshold: Использовать динамический порог на основе волатильности
+        volatility_window: Окно для расчёта волатильности (по умолчанию 20)
+        volatility_multiplier: Множитель волатильности для порога (по умолчанию 1.5)
 
     Returns:
         labels: Массив меток (0=SELL, 1=HOLD, 2=BUY)
     """
+    import pandas as pd
+
     n_samples = len(mid_prices)
     labels = np.ones(n_samples, dtype=np.int64)  # По умолчанию HOLD (1)
 
+    # ===== РАСЧЁТ ДИНАМИЧЕСКИХ ПОРОГОВ =====
+    if use_dynamic_threshold and n_samples > volatility_window:
+        # Вычисляем returns
+        returns = np.diff(mid_prices) / np.where(mid_prices[:-1] > 0, mid_prices[:-1], 1)
+
+        # Rolling standard deviation (аналог ATR для returns)
+        returns_series = pd.Series(returns)
+        rolling_volatility = returns_series.rolling(
+            window=volatility_window,
+            min_periods=max(5, volatility_window // 4)
+        ).std().fillna(returns_series.std()).values
+
+        # Добавляем первый элемент чтобы размеры совпадали
+        rolling_volatility = np.insert(rolling_volatility, 0, rolling_volatility[0] if len(rolling_volatility) > 0 else threshold_pct)
+
+        # Минимальный порог чтобы избежать слишком чувствительных labels
+        min_threshold = 0.0002  # 0.02%
+        dynamic_thresholds = np.maximum(rolling_volatility * volatility_multiplier, min_threshold)
+
+        logger.debug(f"[Labels] Dynamic thresholds: mean={np.mean(dynamic_thresholds):.6f}, "
+                     f"min={np.min(dynamic_thresholds):.6f}, max={np.max(dynamic_thresholds):.6f}")
+    else:
+        # Фиксированный порог для всех точек
+        dynamic_thresholds = np.full(n_samples, threshold_pct)
+
+    # ===== ГЕНЕРАЦИЯ LABELS =====
     for i in range(n_samples - horizon):
         current_price = mid_prices[i]
         future_price = mid_prices[i + horizon]
 
         if current_price > 0:
             price_change = (future_price - current_price) / current_price
+            threshold = dynamic_thresholds[i]
 
-            if price_change > threshold_pct:
+            if price_change > threshold:
                 labels[i] = 2  # BUY
-            elif price_change < -threshold_pct:
+            elif price_change < -threshold:
                 labels[i] = 0  # SELL
             # else: HOLD (1) - уже установлено
 
     # Последние horizon элементов оставляем как HOLD
+
+    # Логируем распределение результирующих labels
+    label_counts = np.bincount(labels, minlength=3)
+    total = len(labels)
+    logger.info(f"[Fallback Labels] Generated with {'dynamic' if use_dynamic_threshold else 'fixed'} threshold:")
+    logger.info(f"  SELL: {label_counts[0]:,} ({100*label_counts[0]/total:.1f}%)")
+    logger.info(f"  HOLD: {label_counts[1]:,} ({100*label_counts[1]/total:.1f}%)")
+    logger.info(f"  BUY:  {label_counts[2]:,} ({100*label_counts[2]/total:.1f}%)")
+
     return labels
 
 
@@ -1867,7 +1915,36 @@ async def _run_training(
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         model = model.to(device)
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
-        criterion = torch.nn.CrossEntropyLoss()
+
+        # ===== CLASS WEIGHTS для борьбы с дисбалансом классов =====
+        # Подсчёт распределения классов
+        from collections import Counter
+        class_counts = Counter(train_labels.tolist() if hasattr(train_labels, 'tolist') else train_labels)
+        total_samples = sum(class_counts.values())
+        num_classes = 3  # SELL=0, HOLD=1, BUY=2
+
+        # Вычисляем веса: больший вес для меньшинства
+        # Формула: weight[c] = total / (num_classes * count[c])
+        class_weights = []
+        for c in range(num_classes):
+            count = class_counts.get(c, 1)  # Избегаем деления на 0
+            weight = total_samples / (num_classes * count)
+            class_weights.append(weight)
+
+        class_weights_tensor = torch.tensor(class_weights, dtype=torch.float32, device=device)
+
+        # Логируем распределение и веса
+        logger.info(f"\n{'=' * 50}")
+        logger.info("CLASS DISTRIBUTION & WEIGHTS")
+        logger.info(f"{'=' * 50}")
+        for c in range(num_classes):
+            label_name = {0: 'SELL', 1: 'HOLD', 2: 'BUY'}[c]
+            count = class_counts.get(c, 0)
+            pct = 100.0 * count / total_samples if total_samples > 0 else 0
+            logger.info(f"  {label_name}: {count:,} ({pct:.1f}%) → weight={class_weights[c]:.3f}")
+        logger.info(f"{'=' * 50}\n")
+
+        criterion = torch.nn.CrossEntropyLoss(weight=class_weights_tensor)
 
         best_val_loss = float('inf')
         best_accuracy = 0.0
