@@ -9,7 +9,7 @@ ML Signal Validator с расширенным ValidationResult.
 
 import asyncio
 import aiohttp
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Union, List
 from dataclasses import dataclass, field
 from datetime import datetime
 import numpy as np
@@ -17,6 +17,7 @@ from collections import deque
 
 from backend.core.logger import get_logger
 from backend.models.signal import TradingSignal, SignalType, SignalStrength
+from backend.models.orderbook import OrderBookSnapshot
 from backend.ml_engine.features import FeatureVector
 from backend.strategy.risk_models import MarketRegime
 from backend.utils.helpers import safe_enum_value
@@ -188,7 +189,8 @@ class MLSignalValidator:
   async def validate(
       self,
       signal: TradingSignal,
-      feature_vector: Union[FeatureVector, Dict]
+      feature_vector: Union[FeatureVector, Dict],
+      orderbook_snapshot: Optional[OrderBookSnapshot] = None
   ) -> ValidationResult:
     """
     Валидация торгового сигнала с расширенной ML аналитикой.
@@ -196,6 +198,7 @@ class MLSignalValidator:
     Args:
         signal: Торговый сигнал от стратегии
         feature_vector: Вектор признаков (FeatureVector или Dict)
+        orderbook_snapshot: Снимок orderbook для TLOB модели (опционально)
 
     Returns:
         ValidationResult с полной аналитикой
@@ -256,10 +259,11 @@ class MLSignalValidator:
       ml_prediction = cached_prediction
       logger.debug(f"{signal.symbol} | ML prediction из кэша")
     else:
-      # Запрос к ML серверу
+      # Запрос к ML серверу (с orderbook_snapshot для TLOB)
       ml_prediction = await self._request_ml_prediction(
         signal.symbol,
-        feature_dict
+        feature_dict,
+        orderbook_snapshot
       )
 
       # Кэшируем результат
@@ -374,11 +378,12 @@ class MLSignalValidator:
         1.0
       )
 
+      mae_str = f"{predicted_mae:.4f}" if predicted_mae is not None else "N/A"
       logger.info(
         f"✓ Сигнал ВАЛИДИРОВАН {signal.symbol}: "
         f"{safe_enum_value(signal.signal_type)}, "
         f"confidence={final_confidence:.4f}, "
-        f"agreement=True, mae={predicted_mae:.4f if predicted_mae else 'N/A'}"
+        f"agreement=True, mae={mae_str}"
       )
 
       return ValidationResult(
@@ -768,7 +773,8 @@ class MLSignalValidator:
   async def _request_ml_prediction(
       self,
       symbol: str,
-      feature_dict: Dict
+      feature_dict: Dict,
+      orderbook_snapshot: Optional[OrderBookSnapshot] = None
   ) -> Optional[Dict]:
     """Запрос ML предсказания от сервера."""
     if not self.ml_server_available:
@@ -778,9 +784,13 @@ class MLSignalValidator:
     try:
       url = f"{self.config.model_server_url}/predict"
 
+      # Извлечь raw_lob из orderbook_snapshot для TLOB модели
+      raw_lob = self._extract_raw_lob(orderbook_snapshot) if orderbook_snapshot else None
+
       payload = {
         "symbol": symbol,
         "features": feature_dict,
+        "raw_lob": raw_lob,
         "model_version": self.config.model_version
       }
 
@@ -815,6 +825,32 @@ class MLSignalValidator:
     except Exception as e:
       logger.error(f"{symbol} | ML prediction error: {e}", exc_info=True)
       self.ml_error_count += 1
+      return None
+
+  def _extract_raw_lob(self, snapshot: OrderBookSnapshot) -> Optional[List]:
+    """
+    Извлечь raw LOB данные для TLOB модели.
+
+    Args:
+        snapshot: Снимок orderbook
+
+    Returns:
+        [[asks], [bids]] где asks/bids = [[price, qty], ...]
+    """
+    try:
+      # Берём top-10 уровней для asks и bids
+      asks = [[float(a.price), float(a.quantity)] for a in snapshot.asks[:10]]
+      bids = [[float(b.price), float(b.quantity)] for b in snapshot.bids[:10]]
+
+      # Дополняем до 10 уровней если недостаточно
+      while len(asks) < 10:
+        asks.append([0.0, 0.0])
+      while len(bids) < 10:
+        bids.append([0.0, 0.0])
+
+      return [asks, bids]
+    except Exception as e:
+      logger.debug(f"Failed to extract raw_lob: {e}")
       return None
 
   async def _perform_health_check(self) -> bool:

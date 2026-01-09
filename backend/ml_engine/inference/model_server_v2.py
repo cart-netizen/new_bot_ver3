@@ -130,6 +130,8 @@ class PredictRequest(BaseModel):
     """Request для single prediction"""
     symbol: str
     features: Union[List[float], Dict[str, Any]] = Field(...)  # Поддержка Dict и List
+    # Raw LOB данные для TLOB модели: [[asks], [bids]] где asks/bids = [[price, qty], ...]
+    raw_lob: Optional[List[List[List[float]]]] = None
     # Опционально: можно указать конкретную модель
     model_name: Optional[str] = None
     model_version: Optional[str] = None
@@ -1042,12 +1044,22 @@ async def predict(request: PredictRequest):
                 logger.error(f"{request.symbol} | Error reshaping list features: {e}", exc_info=True)
                 raise HTTPException(status_code=400, detail=f"Failed to reshape list features: {str(e)}")
 
+        # Подготовка raw_lob для TLOB модели
+        raw_lob_array = None
+        if request.raw_lob:
+            try:
+                raw_lob_array = np.array(request.raw_lob, dtype=np.float32)
+                logger.debug(f"{request.symbol} | Raw LOB shape: {raw_lob_array.shape}")
+            except Exception as e:
+                logger.warning(f"{request.symbol} | Failed to convert raw_lob: {e}")
+
         # Используем Ensemble prediction
         logger.info(f"{request.symbol} | Calling ensemble prediction with features shape: {features_array.shape}")
 
         result = await server.predict_ensemble(
             symbol=request.symbol,
-            features=features_array
+            features=features_array,
+            raw_lob=raw_lob_array
         )
 
         logger.info(f"{request.symbol} | Ensemble prediction successful: {result.get('direction')}")
@@ -1248,10 +1260,19 @@ async def predict_alias(request: PredictRequest):
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Failed to reshape features: {str(e)}")
 
+        # Подготовка raw_lob для TLOB модели
+        raw_lob_array = None
+        if request.raw_lob:
+            try:
+                raw_lob_array = np.array(request.raw_lob, dtype=np.float32)
+            except Exception as e:
+                logger.warning(f"{request.symbol} | Failed to convert raw_lob: {e}")
+
         # Используем Ensemble prediction
         result = await server.predict_ensemble(
             symbol=request.symbol,
-            features=features_array
+            features=features_array,
+            raw_lob=raw_lob_array
         )
 
         logger.info(
