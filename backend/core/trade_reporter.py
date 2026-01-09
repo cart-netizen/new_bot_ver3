@@ -380,6 +380,17 @@ class TradeReporter:
             if validation_result.get('market_regime'):
                 report.market_regime = validation_result['market_regime']
 
+            # Извлекаем прогнозы отдельных моделей ensemble из dict формата
+            if 'model_predictions' in validation_result and validation_result['model_predictions']:
+                for model_name, pred_data in validation_result['model_predictions'].items():
+                    report.ml_predictions.append(MLModelPrediction(
+                        model_name=model_name,
+                        direction=pred_data.get('direction', 'UNKNOWN'),
+                        confidence=pred_data.get('confidence', 0.0),
+                        probabilities=pred_data.get('probabilities', {}),
+                        expected_return=pred_data.get('expected_return')
+                    ))
+
         else:
             # Объект ValidationResult (для обратной совместимости)
             report.ml_ensemble_direction = validation_result.ml_direction

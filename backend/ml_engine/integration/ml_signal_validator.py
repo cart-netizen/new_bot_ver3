@@ -333,6 +333,24 @@ class MLSignalValidator:
     ml_confidence = ml_prediction.get("confidence", 0.0)
     ml_expected_return = ml_prediction.get("expected_return", 0.0)
 
+    # ========================================
+    # ИЗВЛЕЧЕНИЕ ДАННЫХ ENSEMBLE МОДЕЛЕЙ
+    # ========================================
+    model_predictions = ml_prediction.get("model_predictions", {})
+    models_used = ml_prediction.get("models_used", [])
+    meta_confidence = ml_prediction.get("meta_confidence", 0.0)
+    agreement_ratio = ml_prediction.get("agreement_ratio", 0.0)
+    consensus_type = ml_prediction.get("consensus_type", "unknown")
+
+    # Собираем metadata для передачи в ValidationResult
+    ensemble_metadata = {
+        'model_predictions': model_predictions,
+        'models_used': models_used,
+        'meta_confidence': meta_confidence,
+        'agreement_ratio': agreement_ratio,
+        'consensus_type': consensus_type
+    }
+
     # Извлекаем расширенные метрики из ML ответа
     predicted_mae = ml_prediction.get("predicted_mae")
 
@@ -378,7 +396,8 @@ class MLSignalValidator:
         predicted_mae=predicted_mae,
         manipulation_risk=manipulation_risk,
         market_regime=market_regime,
-        feature_quality=feature_quality
+        feature_quality=feature_quality,
+        metadata=ensemble_metadata
       )
     else:
       self.disagreement_count += 1
@@ -413,7 +432,8 @@ class MLSignalValidator:
             predicted_mae=predicted_mae,
             manipulation_risk=manipulation_risk,
             market_regime=market_regime,
-            feature_quality=feature_quality
+            feature_quality=feature_quality,
+            metadata=ensemble_metadata
           )
         else:
           # Старая логика: полное отклонение
@@ -436,7 +456,8 @@ class MLSignalValidator:
             predicted_mae=predicted_mae,
             manipulation_risk=manipulation_risk,
             market_regime=market_regime,
-            feature_quality=feature_quality
+            feature_quality=feature_quality,
+            metadata=ensemble_metadata
           )
 
       # ML предлагает противоположное направление - штрафуем
@@ -463,7 +484,8 @@ class MLSignalValidator:
         predicted_mae=predicted_mae,
         manipulation_risk=manipulation_risk,
         market_regime=market_regime,
-        feature_quality=feature_quality
+        feature_quality=feature_quality,
+        metadata=ensemble_metadata
       )
 
   # ========================================
