@@ -83,7 +83,7 @@ async def main():
         print(f"  Trades: {len(trades)} сделок")
 
     # Конвертируем в DataFrame и сохраняем
-    output_dir = "/home/user/new_bot_ver3"
+    output_dir = r"/analyse"
 
     # Создаём папку для результатов если нет
     os.makedirs(output_dir, exist_ok=True)

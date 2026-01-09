@@ -1,0 +1,23 @@
+{
+  "symbol": "GMTUSDT",
+  "downloaded_at": "2026-01-09T20:49:10.054129",
+  "timeframes": [
+    "1m",
+    "5m",
+    "15m",
+    "1h",
+    "4h"
+  ],
+  "candle_counts": {
+    "1m": 1000,
+    "5m": 288,
+    "15m": 96,
+    "1h": 48,
+    "4h": 12
+  },
+  "trades_count": 1000,
+  "orderbook_depth": {
+    "asks": 50,
+    "bids": 50
+  }
+}
