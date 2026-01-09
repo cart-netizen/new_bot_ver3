@@ -40,7 +40,7 @@ from backend.strategy.sltp_calculator import sltp_calculator
 from backend.strategy.trailing_stop_manager import trailing_stop_manager
 from backend.utils.balance_tracker import balance_tracker
 from backend.utils.helpers import get_timestamp_ms, round_price, round_quantity, safe_enum_value
-from backend.core.trade_reporter import trade_reporter
+from backend.core.trade_reporter import trade_reporter, PositionEvent, PositionEventType
 
 logger = get_logger(__name__)
 
@@ -953,6 +953,25 @@ class ExecutionManager:
 
                 logger.info(f"💰 Realized PnL: {realized_pnl:.2f} USDT")
 
+                # ==========================================
+                # ЛОГИРОВАНИЕ В trades.log - POSITION_CLOSED
+                # ==========================================
+                pnl_percent = ((exit_price - position.entry_price) / position.entry_price) * 100 if position.side == OrderSide.BUY else ((position.entry_price - exit_price) / position.entry_price) * 100
+                trade_reporter.log_position_event(PositionEvent(
+                    event_type=PositionEventType.POSITION_CLOSED,
+                    symbol=symbol,
+                    timestamp=datetime.now(),
+                    position_id=position_id,
+                    side=position.side.value,
+                    entry_price=position.entry_price,
+                    exit_price=exit_price,
+                    quantity=position.quantity,
+                    realized_pnl=realized_pnl,
+                    unrealized_pnl_percent=pnl_percent,
+                    exit_reason=exit_reason,
+                    reason=f"PnL: ${realized_pnl:+.2f} ({pnl_percent:+.2f}%)"
+                ))
+
                 is_win = realized_pnl > 0
                 # ===== Записываем результат для Adaptive Risk =====
                 self.risk_manager.record_trade_result(
@@ -1197,6 +1216,26 @@ class ExecutionManager:
                     partial_pnl = (position.entry_price - exit_price) * close_quantity
 
                 logger.info(f"💰 Partial PnL: ${partial_pnl:+.2f}")
+
+                # ==========================================
+                # ЛОГИРОВАНИЕ В trades.log - PARTIAL_CLOSE
+                # ==========================================
+                pnl_percent = ((exit_price - position.entry_price) / position.entry_price) * 100 if position.side == OrderSide.BUY else ((position.entry_price - exit_price) / position.entry_price) * 100
+                trade_reporter.log_position_event(PositionEvent(
+                    event_type=PositionEventType.PARTIAL_CLOSE,
+                    symbol=symbol,
+                    timestamp=datetime.now(),
+                    position_id=position_id,
+                    side=position.side.value,
+                    entry_price=position.entry_price,
+                    exit_price=exit_price,
+                    quantity=close_quantity,
+                    close_percentage=close_percentage,
+                    realized_pnl=partial_pnl,
+                    unrealized_pnl_percent=pnl_percent,
+                    exit_reason=exit_reason,
+                    reason=f"Closed {close_percentage:.0%}, PnL: ${partial_pnl:+.2f}"
+                ))
 
                 # ==========================================
                 # ШАГ 6: ОБНОВЛЕНИЕ ПОЗИЦИИ В БД
@@ -1492,6 +1531,22 @@ class ExecutionManager:
                     f"  New SL: ${new_stop_loss:.2f}\n"
                     f"  Reason: {reason}"
                 )
+
+                # ==========================================
+                # ЛОГИРОВАНИЕ В trades.log - STOP_LOSS_UPDATED
+                # ==========================================
+                trade_reporter.log_position_event(PositionEvent(
+                    event_type=PositionEventType.STOP_LOSS_UPDATED,
+                    symbol=symbol,
+                    timestamp=datetime.now(),
+                    position_id=position_id,
+                    side=position.side.value,
+                    entry_price=position.entry_price,
+                    current_price=current_price,
+                    old_stop_loss=old_stop_loss,
+                    new_stop_loss=new_stop_loss,
+                    reason=reason
+                ))
 
                 return {
                     'position_id': position_id,
