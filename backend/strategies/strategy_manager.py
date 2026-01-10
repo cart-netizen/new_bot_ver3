@@ -572,6 +572,82 @@ class ExtendedStrategyManager:
 
     return "|".join(key_parts)
 
+  def _detect_volume_explosion(
+      self,
+      strategy_results: List[StrategyResult]
+  ) -> float:
+    """
+    Детекция volume explosion из результатов стратегий.
+
+    Проверяет metadata от VolumeProfile и других стратегий на наличие volume_ratio.
+
+    Returns:
+        float: Максимальный volume_ratio или 1.0 если не найден
+    """
+    max_volume_ratio = 1.0
+
+    for result in strategy_results:
+      if result.signal and result.signal.metadata:
+        # Проверяем volume_ratio в metadata
+        volume_ratio = result.signal.metadata.get('volume_ratio', 0)
+        if volume_ratio > max_volume_ratio:
+          max_volume_ratio = volume_ratio
+
+    return max_volume_ratio
+
+  def _get_dynamic_weights(
+      self,
+      volume_ratio: float,
+      original_weights: Dict[str, float]
+  ) -> Dict[str, float]:
+    """
+    Динамические веса стратегий при volume explosion.
+
+    При volume_ratio > 5x увеличиваем веса volume-based стратегий.
+    """
+    if volume_ratio < 5.0:
+      return original_weights.copy()
+
+    adjusted = original_weights.copy()
+
+    # При volume explosion увеличиваем веса volume-based стратегий
+    if 'volume_profile' in adjusted:
+      # 15% → 30% при explosion
+      adjusted['volume_profile'] = min(0.30, adjusted['volume_profile'] * 2)
+
+    if 'liquidity_zone' in adjusted:
+      # 10% → 20% при explosion
+      adjusted['liquidity_zone'] = min(0.20, adjusted['liquidity_zone'] * 2)
+
+    logger.info(
+      f"🚀 VOLUME EXPLOSION ({volume_ratio:.1f}x): "
+      f"Adjusted weights: volume_profile={adjusted.get('volume_profile', 0):.0%}, "
+      f"liquidity_zone={adjusted.get('liquidity_zone', 0):.0%}"
+    )
+
+    return adjusted
+
+  def _get_dynamic_consensus_threshold(
+      self,
+      volume_ratio: float
+  ) -> float:
+    """
+    Динамический порог консенсуса при volume explosion.
+
+    При volume_ratio > 5x снижаем требования для быстрого входа.
+    """
+    if volume_ratio >= 8.0:
+      # Extreme explosion - очень низкий порог
+      return 0.35
+    elif volume_ratio >= 5.0:
+      # Strong explosion - сниженный порог
+      return 0.40
+    elif volume_ratio >= 3.0:
+      # Moderate spike - немного сниженный порог
+      return 0.50
+    else:
+      return self.config.min_consensus_confidence
+
   def build_consensus(
       self,
       symbol: str,
@@ -585,7 +661,18 @@ class ExtendedStrategyManager:
     - Разные типы стратегий (candle/orderbook/hybrid)
     - Веса и приоритеты
     - Конфликты между сигналами
+    - НОВОЕ: Dynamic weights и threshold при volume explosion
     """
+    # ========== VOLUME EXPLOSION DETECTION ==========
+    volume_ratio = self._detect_volume_explosion(strategy_results)
+    is_explosion = volume_ratio >= 5.0
+
+    if is_explosion:
+      logger.info(
+        f"[{symbol}] 🚀 VOLUME EXPLOSION DETECTED: {volume_ratio:.1f}x - "
+        f"Activating dynamic weights and threshold"
+      )
+
     # Фильтруем только стратегии с сигналами
     results_with_signals = [r for r in strategy_results if r.signal is not None]
 
@@ -656,10 +743,44 @@ class ExtendedStrategyManager:
       )
       return None
 
+    # ========== APPLY DYNAMIC WEIGHTS ==========
+    # При volume explosion увеличиваем веса volume-based стратегий
+    if is_explosion:
+      # Собираем все веса
+      all_weights = {
+        **self.config.candle_strategy_weights,
+        **self.config.orderbook_strategy_weights,
+        **self.config.hybrid_strategy_weights
+      }
+      dynamic_weights = self._get_dynamic_weights(volume_ratio, all_weights)
+
+      # Применяем динамические веса к результатам
+      for result in results_with_signals:
+        if result.strategy_name in dynamic_weights:
+          old_weight = result.weight
+          result.weight = dynamic_weights[result.strategy_name]
+          if old_weight != result.weight:
+            logger.debug(
+              f"[{symbol}] Dynamic weight: {result.strategy_name} "
+              f"{old_weight:.0%} → {result.weight:.0%}"
+            )
+
+      # Обновляем buy_signals и sell_signals с новыми весами
+      buy_signals = [r for r in results_with_signals if r.signal.signal_type == SignalType.BUY]
+      sell_signals = [r for r in results_with_signals if r.signal.signal_type == SignalType.SELL]
+
+    # Динамический порог консенсуса
+    dynamic_threshold = self._get_dynamic_consensus_threshold(volume_ratio)
+    if dynamic_threshold != self.config.min_consensus_confidence:
+      logger.info(
+        f"[{symbol}] 🎯 Dynamic consensus threshold: "
+        f"{self.config.min_consensus_confidence:.0%} → {dynamic_threshold:.0%}"
+      )
+
     # Определение консенсуса по режиму
     if self.config.consensus_mode == "weighted":
       consensus_signal = self._weighted_consensus(
-        buy_signals, sell_signals, symbol, current_price
+        buy_signals, sell_signals, symbol, current_price, dynamic_threshold
       )
     elif self.config.consensus_mode == "majority":
       consensus_signal = self._majority_consensus(
@@ -671,7 +792,7 @@ class ExtendedStrategyManager:
       )
     else:
       consensus_signal = self._weighted_consensus(
-        buy_signals, sell_signals, symbol, current_price
+        buy_signals, sell_signals, symbol, current_price, dynamic_threshold
       )
 
     if not consensus_signal:
@@ -691,9 +812,18 @@ class ExtendedStrategyManager:
       buy_signals: List[StrategyResult],
       sell_signals: List[StrategyResult],
       symbol: str,
-      current_price: float
+      current_price: float,
+      min_confidence_threshold: Optional[float] = None
   ) -> Optional[ConsensusSignal]:
-    """Взвешенный consensus на основе весов и confidence."""
+    """
+    Взвешенный consensus на основе весов и confidence.
+
+    Args:
+        min_confidence_threshold: Динамический порог (если None, используется config)
+    """
+    # Используем динамический или стандартный порог
+    effective_threshold = min_confidence_threshold or self.config.min_consensus_confidence
+
     # Взвешенные голоса
     buy_score = sum(r.weight * r.signal.confidence for r in buy_signals)
     sell_score = sum(r.weight * r.signal.confidence for r in sell_signals)
@@ -717,11 +847,11 @@ class ExtendedStrategyManager:
       agreement_count = len(sell_signals)
       disagreement_count = len(buy_signals)
 
-    # Проверка минимальной consensus confidence
-    if consensus_confidence < self.config.min_consensus_confidence:
+    # Проверка минимальной consensus confidence (используем динамический порог)
+    if consensus_confidence < effective_threshold:
       logger.info(
         f"[{symbol}] ❌ Consensus confidence слишком низкая: "
-        f"{consensus_confidence:.2f} < {self.config.min_consensus_confidence}, возврат None"
+        f"{consensus_confidence:.2f} < {effective_threshold:.2f}, возврат None"
       )
       return None
 
