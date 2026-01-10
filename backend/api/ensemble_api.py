@@ -34,6 +34,29 @@ from backend.api.websocket_manager import (
 
 # Thread pool для обучения моделей (не блокирует FastAPI event loop)
 _training_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="model_training")
+
+# Global reference to main event loop for WebSocket broadcasts from training threads
+_main_event_loop: asyncio.AbstractEventLoop = None
+
+
+def get_main_loop() -> asyncio.AbstractEventLoop:
+    """Get the main FastAPI event loop, with fallback."""
+    global _main_event_loop
+    if _main_event_loop is not None and _main_event_loop.is_running():
+        return _main_event_loop
+    try:
+        loop = asyncio.get_running_loop()
+        _main_event_loop = loop
+        return loop
+    except RuntimeError:
+        return None
+
+
+def set_main_loop(loop: asyncio.AbstractEventLoop):
+    """Set the main event loop reference (call from FastAPI startup)."""
+    global _main_event_loop
+    _main_event_loop = loop
+    logger.info(f"[WS] Main event loop set: {loop}")
 from backend.ml_engine.ensemble import (
     EnsembleConsensus,
     EnsembleConfig,
@@ -1020,7 +1043,13 @@ async def start_training(request: TrainingRequest):
     # Запускаем в отдельном потоке через ThreadPoolExecutor
     # Это не блокирует FastAPI event loop
     # Сохраняем ссылку на main event loop для WebSocket broadcasts
-    main_loop = asyncio.get_event_loop()
+    # IMPORTANT: Use get_running_loop() and store globally for reliable access from threads
+    try:
+        main_loop = asyncio.get_running_loop()
+        set_main_loop(main_loop)  # Store globally for reliable access
+    except RuntimeError:
+        main_loop = asyncio.get_event_loop()
+        set_main_loop(main_loop)
 
     def run_training_sync():
         """Wrapper для запуска async функции в отдельном потоке."""
@@ -1922,8 +1951,13 @@ async def _run_training(
     def broadcast_to_main_loop(coro):
         """Отправляет coroutine в main event loop для WebSocket broadcast."""
         try:
-            if main_loop and main_loop.is_running():
-                future = asyncio.run_coroutine_threadsafe(coro, main_loop)
+            # IMPORTANT: Try global loop first, then fall back to passed main_loop
+            loop = get_main_loop()
+            if loop is None:
+                loop = main_loop
+
+            if loop and loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(coro, loop)
                 # Добавляем callback для логирования ошибок
                 def on_done(f):
                     exc = f.exception()
@@ -1931,7 +1965,7 @@ async def _run_training(
                         logger.warning(f"[WS] Broadcast coroutine failed: {exc}")
                 future.add_done_callback(on_done)
             else:
-                logger.warning(f"[WS] Main loop not available: main_loop={main_loop is not None}, running={main_loop.is_running() if main_loop else 'N/A'}")
+                logger.warning(f"[WS] Main loop not available: loop={loop is not None}, running={loop.is_running() if loop else 'N/A'}")
         except Exception as e:
             logger.warning(f"[WS] Failed to schedule broadcast: {e}")
 
@@ -2128,7 +2162,15 @@ async def _run_training(
         # Training loop с отслеживанием прогресса
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         model = model.to(device)
-        optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+
+        # Снижаем learning rate для стабильности (было 7e-4, стало 1e-4)
+        effective_lr = min(learning_rate, 1e-4)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=effective_lr)
+
+        # Добавляем LR scheduler для плавного снижения learning rate
+        from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+        scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
+        logger.info(f"Using effective LR: {effective_lr} with CosineAnnealingWarmRestarts scheduler")
 
         # ===== CLASS WEIGHTS для борьбы с дисбалансом классов =====
         # Подсчёт распределения классов
@@ -2139,10 +2181,14 @@ async def _run_training(
 
         # Вычисляем веса: больший вес для меньшинства
         # Формула: weight[c] = total / (num_classes * count[c])
+        # ВАЖНО: Ограничиваем максимальный вес чтобы избежать gradient explosion
+        MAX_CLASS_WEIGHT = 5.0
         class_weights = []
         for c in range(num_classes):
             count = class_counts.get(c, 1)  # Избегаем деления на 0
             weight = total_samples / (num_classes * count)
+            # Ограничиваем вес для стабильности обучения
+            weight = min(weight, MAX_CLASS_WEIGHT)
             class_weights.append(weight)
 
         class_weights_tensor = torch.tensor(class_weights, dtype=torch.float32, device=device)
@@ -2158,7 +2204,8 @@ async def _run_training(
             logger.info(f"  {label_name}: {count:,} ({pct:.1f}%) → weight={class_weights[c]:.3f}")
         logger.info(f"{'=' * 50}\n")
 
-        criterion = torch.nn.CrossEntropyLoss(weight=class_weights_tensor)
+        # Label smoothing для улучшения обобщения и снижения overconfidence
+        criterion = torch.nn.CrossEntropyLoss(weight=class_weights_tensor, label_smoothing=0.1)
 
         best_val_loss = float('inf')
         best_accuracy = 0.0
@@ -2194,6 +2241,10 @@ async def _run_training(
 
                 loss = criterion(logits, labels_batch)
                 loss.backward()
+
+                # CRITICAL: Gradient clipping для предотвращения NaN loss
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
                 optimizer.step()
 
                 train_loss += loss.item()
@@ -2234,6 +2285,9 @@ async def _run_training(
 
             val_loss /= len(val_loader)
             val_acc = val_correct / val_total
+
+            # Обновляем learning rate scheduler
+            scheduler.step()
 
             # Update best metrics
             if val_loss < best_val_loss:
