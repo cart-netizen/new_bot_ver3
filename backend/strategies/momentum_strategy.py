@@ -200,6 +200,52 @@ class MomentumStrategy:
       f"rsi_period={config.rsi_period}"
     )
 
+  def _get_effective_roc_threshold(
+      self,
+      volume_ratio: float,
+      default_threshold: float
+  ) -> float:
+    """
+    Динамический ROC порог на основе volume explosion.
+
+    При высоком volume_ratio снижаем требования к ROC,
+    чтобы войти в рынок раньше при начале большого движения.
+
+    Args:
+        volume_ratio: Текущий объём / средний объём
+        default_threshold: Стандартный порог ROC
+
+    Returns:
+        Эффективный порог ROC (может быть ниже default при explosion)
+    """
+    if volume_ratio >= 8.0:
+      # Extreme explosion (8x+) - практически любое направление
+      new_threshold = 0.3
+      logger.info(
+        f"🚀 EXTREME VOLUME EXPLOSION: {volume_ratio:.1f}x - "
+        f"ROC threshold {default_threshold}% → {new_threshold}%"
+      )
+      return new_threshold
+    elif volume_ratio >= 5.0:
+      # Strong explosion (5x+) - очень низкий порог
+      new_threshold = 0.5
+      logger.info(
+        f"🚀 STRONG VOLUME EXPLOSION: {volume_ratio:.1f}x - "
+        f"ROC threshold {default_threshold}% → {new_threshold}%"
+      )
+      return new_threshold
+    elif volume_ratio >= 3.0:
+      # Moderate spike (3x+) - сниженный порог
+      new_threshold = 1.0
+      logger.debug(
+        f"📈 Volume spike: {volume_ratio:.1f}x - "
+        f"ROC threshold {default_threshold}% → {new_threshold}%"
+      )
+      return new_threshold
+    else:
+      # Normal volume - стандартный порог
+      return default_threshold
+
   def analyze(
       self,
       symbol: str,
@@ -245,13 +291,22 @@ class MomentumStrategy:
     current_volume = volumes[-1]
     volume_ratio = current_volume / volume_ma if volume_ma > 0 else 0
 
+    # ========== DYNAMIC ROC THRESHOLD ==========
+    # При volume explosion снижаем требования к ROC для раннего входа
+    effective_roc_threshold_long = self._get_effective_roc_threshold(
+      volume_ratio, self.config.roc_threshold_long
+    )
+    effective_roc_threshold_short = self._get_effective_roc_threshold(
+      volume_ratio, abs(self.config.roc_threshold_short)
+    ) * -1  # Negative for short
+
     # Проверяем условия для сигналов
     signal_type = None
     reason_parts = []
 
-    # LONG условия
+    # LONG условия (с динамическим порогом)
     if (
-        current_roc >= self.config.roc_threshold_long
+        current_roc >= effective_roc_threshold_long
         and current_rsi < self.config.rsi_overbought
         and volume_ratio >= self.config.volume_threshold
     ):
@@ -259,10 +314,12 @@ class MomentumStrategy:
       reason_parts.append(f"Strong upward momentum: ROC={current_roc:.2f}%")
       reason_parts.append(f"RSI={current_rsi:.1f} (not overbought)")
       reason_parts.append(f"Volume {volume_ratio:.2f}x average")
+      if effective_roc_threshold_long < self.config.roc_threshold_long:
+        reason_parts.append(f"🚀 Volume explosion mode (ROC threshold: {effective_roc_threshold_long:.1f}%)")
 
-    # SHORT условия
+    # SHORT условия (с динамическим порогом)
     elif (
-        current_roc <= self.config.roc_threshold_short
+        current_roc <= effective_roc_threshold_short
         and current_rsi > self.config.rsi_oversold
         and volume_ratio >= self.config.volume_threshold
     ):
@@ -270,6 +327,8 @@ class MomentumStrategy:
       reason_parts.append(f"Strong downward momentum: ROC={current_roc:.2f}%")
       reason_parts.append(f"RSI={current_rsi:.1f} (not oversold)")
       reason_parts.append(f"Volume {volume_ratio:.2f}x average")
+      if abs(effective_roc_threshold_short) < abs(self.config.roc_threshold_short):
+        reason_parts.append(f"🚀 Volume explosion mode (ROC threshold: {effective_roc_threshold_short:.1f}%)")
 
     if signal_type is None:
       return None
