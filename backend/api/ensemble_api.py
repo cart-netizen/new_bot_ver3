@@ -1766,9 +1766,26 @@ def _load_feature_data_from_parquet(
         # Теперь безопасно преобразуем в int
         labels = raw_labels.astype(np.int64)
 
-        # Маппинг {-1, 0, 1} -> {0, 1, 2}
-        label_mapping = {-1: 0, 0: 1, 1: 2}
-        labels = np.array([label_mapping.get(int(l), 1) for l in labels], dtype=np.int64)
+        # CRITICAL FIX: Определяем формат меток перед маппингом
+        # Parquet файлы могут содержать метки в формате {-1, 0, 1} или {0, 1, 2}
+        unique_labels = np.unique(labels)
+        has_negative = np.any(unique_labels == -1)
+        has_two = np.any(unique_labels == 2)
+
+        if has_negative and not has_two:
+            # Old format: {-1, 0, 1} -> {0, 1, 2}
+            label_mapping = {-1: 0, 0: 1, 1: 2}
+            logger.info("Using old label format: {-1, 0, 1} -> {0, 1, 2}")
+            labels = np.array([label_mapping.get(int(l), 1) for l in labels], dtype=np.int64)
+        elif has_two and not has_negative:
+            # New format: {0, 1, 2} - уже правильный, не меняем!
+            logger.info("Using new label format (identity): {0, 1, 2} -> {0, 1, 2}")
+            # labels уже в правильном формате, ничего не делаем
+        else:
+            # Mixed or unclear format
+            label_mapping = {-1: 0, 0: 1, 1: 2, 2: 2}
+            logger.warning("Mixed label format detected, using flexible mapping")
+            labels = np.array([label_mapping.get(int(l), 1) for l in labels], dtype=np.int64)
 
         # Финальная проверка - все метки должны быть в [0, 2]
         invalid_labels = (labels < 0) | (labels > 2)
