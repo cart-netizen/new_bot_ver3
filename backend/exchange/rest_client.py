@@ -708,15 +708,21 @@ class BybitRESTClient:
       "sellLeverage": sell_leverage
     }
 
-    response = await self._request(
-      "POST",
-      BybitAPIPaths.SET_LEVERAGE,
-      params,
-      authenticated=True
-    )
-
-    logger.info(f"Плечо успешно установлено для {symbol}")
-    return response
+    try:
+      response = await self._request(
+        "POST",
+        BybitAPIPaths.SET_LEVERAGE,
+        params,
+        authenticated=True
+      )
+      logger.info(f"Плечо успешно установлено для {symbol}")
+      return response
+    except ExchangeAPIError as e:
+      # 110043 = "leverage not modified" — плечо уже установлено на нужное значение
+      if e.status_code == 110043:
+        logger.debug(f"Плечо для {symbol} уже установлено на Buy={buy_leverage}x, Sell={sell_leverage}x")
+        return {"retCode": 0, "retMsg": "leverage not modified (already set)"}
+      raise
 
   @retry_async(max_attempts=3, delay=1.0)
   async def get_recent_trades(self, symbol: str, limit: int = 60) -> List[Dict]:
