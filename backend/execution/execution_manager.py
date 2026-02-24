@@ -34,7 +34,7 @@ from backend.exchange.rest_client import rest_client
 from backend.strategies.adaptive import adaptive_consensus_manager, AdaptiveConsensusManager
 
 from backend.strategy.risk_manager import RiskManager
-from backend.strategy.risk_models import MarketRegime
+from backend.strategy.risk_models import MarketRegime, MLRiskAdjustments
 from backend.strategy.signal_deduplicator import signal_deduplicator
 from backend.strategy.sltp_calculator import sltp_calculator
 from backend.strategy.trailing_stop_manager import trailing_stop_manager
@@ -1935,8 +1935,6 @@ class ExecutionManager:
 
                     # Создаем ml_adjustments для совместимости с последующим кодом
                     # (хотя это не ML, но используем ту же структуру)
-                    from strategy.risk_models import MLRiskAdjustments, MarketRegime
-
                     # Ограничиваем position_size_multiplier в допустимом диапазоне [0.5, 2.5]
                     raw_multiplier = signal.metadata.get('mtf_position_multiplier', 1.0)
                     clamped_multiplier = max(0.5, min(2.5, raw_multiplier))
@@ -2028,9 +2026,9 @@ class ExecutionManager:
                     ml_validation_dict = signal.metadata.get('ml_validation_result') if signal.metadata else None
                     if ml_validation_dict:
                         ml_sltp_data = {
-                            'predicted_mae': ml_validation_dict.get('predicted_mae', 0.012),
-                            'predicted_return': ml_validation_dict.get('ml_expected_return', 0.0),
-                            'confidence': ml_validation_dict.get('final_confidence', 0.0)
+                            'predicted_mae': ml_validation_dict.get('predicted_mae') or 0.012,
+                            'predicted_return': ml_validation_dict.get('ml_expected_return') or 0.0,
+                            'confidence': ml_validation_dict.get('final_confidence') or 0.0
                         }
                         logger.debug(
                             f"{signal.symbol} | ML данные для SL/TP: "
