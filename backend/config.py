@@ -1023,6 +1023,172 @@ class Settings(BaseSettings):
     description="Telegram уведомления"
   )
 
+  # ==================== LORENTZIAN CLASSIFICATION SETTINGS ====================
+
+  # Включение/отключение Lorentzian Classification стратегии
+  LORENTZIAN_ENABLED: bool = Field(
+    default=False,
+    description="Включить стратегию Lorentzian Classification"
+  )
+
+  # Расширенный буфер свечей для Lorentzian (2000 maxBarsBack + 200 запас)
+  LORENTZIAN_CANDLE_BUFFER: int = Field(
+    default=2200,
+    ge=500,
+    le=5000,
+    description="Размер расширенного буфера свечей для Lorentzian Classification"
+  )
+
+  # ANN параметры
+  LORENTZIAN_NEIGHBORS_COUNT: int = Field(
+    default=8,
+    ge=1,
+    le=50,
+    description="Количество ближайших соседей (K в KNN)"
+  )
+  LORENTZIAN_MAX_BARS_BACK: int = Field(
+    default=2000,
+    ge=100,
+    le=5000,
+    description="Максимальная глубина истории для ANN"
+  )
+  LORENTZIAN_FEATURE_COUNT: int = Field(
+    default=5,
+    ge=2,
+    le=10,
+    description="Количество фичей для классификации"
+  )
+  LORENTZIAN_CHRONOLOGICAL_INTERVAL: int = Field(
+    default=4,
+    ge=1,
+    le=20,
+    description="Хронологический интервал для ANN (пропуск каждого N-го бара, PineScript default=4)"
+  )
+  LORENTZIAN_MIN_NEIGHBORS_FOR_SIGNAL: int = Field(
+    default=4,
+    ge=1,
+    le=20,
+    description="Минимальное количество соседей для генерации сигнала (OctoBot: required_neighbors)"
+  )
+
+  # Kernel Regression
+  LORENTZIAN_KERNEL_LOOKBACK: int = Field(
+    default=8,
+    ge=1,
+    le=50,
+    description="Lookback для Rational Quadratic Kernel"
+  )
+  LORENTZIAN_KERNEL_RELATIVE_WEIGHT: float = Field(
+    default=8.0,
+    ge=0.1,
+    le=50.0,
+    description="Relative weight (alpha) для RQ Kernel"
+  )
+  LORENTZIAN_KERNEL_REGRESSION_LEVEL: int = Field(
+    default=25,
+    ge=1,
+    le=100,
+    description="Start at bar для ядерной регрессии"
+  )
+  LORENTZIAN_KERNEL_LAG: int = Field(
+    default=2,
+    ge=1,
+    le=10,
+    description="Лаг для Gaussian Kernel (lookback = kernel_lookback - lag)"
+  )
+  LORENTZIAN_USE_KERNEL_FILTER: bool = Field(
+    default=True,
+    description="Использовать ядерный тренд-фильтр"
+  )
+  LORENTZIAN_USE_KERNEL_SMOOTHING: bool = Field(
+    default=False,
+    description="Режим Smoothing (crossover yhat2/yhat1) vs Rate of Change"
+  )
+
+  # Фильтры
+  LORENTZIAN_USE_VOLATILITY_FILTER: bool = Field(
+    default=True,
+    description="Volatility Filter: ATR(1) > ATR(10)"
+  )
+  LORENTZIAN_USE_REGIME_FILTER: bool = Field(
+    default=True,
+    description="Regime Filter: Калман-подобный фильтр"
+  )
+  LORENTZIAN_REGIME_THRESHOLD: float = Field(
+    default=-0.1,
+    ge=-1.0,
+    le=0.0,
+    description="Порог для Regime Filter"
+  )
+  LORENTZIAN_USE_ADX_FILTER: bool = Field(
+    default=False,
+    description="ADX Filter: ADX(14) > threshold"
+  )
+  LORENTZIAN_ADX_THRESHOLD: int = Field(
+    default=20,
+    ge=5,
+    le=50,
+    description="Порог для ADX фильтра"
+  )
+  LORENTZIAN_USE_EMA_FILTER: bool = Field(
+    default=False,
+    description="EMA Filter: close vs EMA(200)"
+  )
+  LORENTZIAN_EMA_PERIOD: int = Field(
+    default=200,
+    ge=10,
+    le=500,
+    description="Период EMA фильтра"
+  )
+  LORENTZIAN_USE_SMA_FILTER: bool = Field(
+    default=False,
+    description="SMA Filter: close vs SMA(200)"
+  )
+  LORENTZIAN_SMA_PERIOD: int = Field(
+    default=200,
+    ge=10,
+    le=500,
+    description="Период SMA фильтра"
+  )
+
+  # Выход
+  LORENTZIAN_USE_DYNAMIC_EXITS: bool = Field(
+    default=False,
+    description="Динамический выход по развороту ядерной регрессии"
+  )
+  LORENTZIAN_BARS_TO_HOLD: int = Field(
+    default=4,
+    ge=1,
+    le=20,
+    description="Количество баров для удержания позиции (Fixed exit)"
+  )
+
+  # Вес в консенсусе стратегий
+  LORENTZIAN_STRATEGY_WEIGHT: float = Field(
+    default=0.15,
+    ge=0.0,
+    le=1.0,
+    description="Вес Lorentzian стратегии в консенсусе"
+  )
+
+  # Veto-механизм (LC может заблокировать консенсус)
+  LORENTZIAN_USE_VETO: bool = Field(
+    default=False,
+    description="LC может блокировать сигнал при высокой уверенности в противоположном"
+  )
+  LORENTZIAN_VETO_THRESHOLD: int = Field(
+    default=6,
+    ge=3,
+    le=8,
+    description="Минимальный |prediction| для активации вето (из K=8)"
+  )
+
+  # ML Feature Pipeline интеграция
+  LORENTZIAN_ADD_ML_FEATURES: bool = Field(
+    default=False,
+    description="Добавить LC-фичи в ML Feature Pipeline (112→116)"
+  )
+
   model_config = SettingsConfigDict(
     env_file=".env",
     env_file_encoding="utf-8",

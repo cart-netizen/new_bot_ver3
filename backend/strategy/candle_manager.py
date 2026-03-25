@@ -25,7 +25,8 @@ class CandleManager:
       self,
       symbol: str,
       timeframe: str = "1m",
-      max_candles: int = 200
+      max_candles: int = 200,
+      extended_buffer_size: int = 0
   ):
     """
     Инициализация менеджера свечей.
@@ -34,6 +35,8 @@ class CandleManager:
         symbol: Торговая пара
         timeframe: Таймфрейм свечей (1m, 5m, 15m, etc.)
         max_candles: Максимальное количество свечей в истории
+        extended_buffer_size: Размер расширенного буфера для Lorentzian Classification
+            (0 = отключён). Если > 0, создаётся отдельный deque с этим размером.
     """
     self.symbol = symbol
     self.timeframe = timeframe
@@ -42,6 +45,12 @@ class CandleManager:
     # История свечей (используем deque для эффективности)
     self.candles: deque[Candle] = deque(maxlen=max_candles)
 
+    # Расширенный буфер для Lorentzian Classification (отдельный, не влияет на основной)
+    self._extended_buffer_size = extended_buffer_size
+    self._extended_candles: Optional[deque[Candle]] = None
+    if extended_buffer_size > 0:
+      self._extended_candles = deque(maxlen=extended_buffer_size)
+
     # Текущая (незакрытая) свеча
     self.current_candle: Optional[Candle] = None
 
@@ -49,9 +58,10 @@ class CandleManager:
     self.total_candles_processed = 0
     self.last_update_timestamp: Optional[int] = None
 
+    ext_info = f", extended_buffer={extended_buffer_size}" if extended_buffer_size > 0 else ""
     logger.info(
       f"CandleManager инициализирован для {symbol}, "
-      f"timeframe={timeframe}, max_candles={max_candles}"
+      f"timeframe={timeframe}, max_candles={max_candles}{ext_info}"
     )
 
   async def load_historical_data(self, candles_data: List[Dict[str, Any]]):
@@ -89,6 +99,8 @@ class CandleManager:
           )
 
           self.candles.append(candle)
+          if self._extended_candles is not None:
+            self._extended_candles.append(candle)
           loaded_count += 1
 
         elif isinstance(candle_data, dict):
@@ -103,6 +115,8 @@ class CandleManager:
           )
 
           self.candles.append(candle)
+          if self._extended_candles is not None:
+            self._extended_candles.append(candle)
           loaded_count += 1
 
       self.total_candles_processed += loaded_count
@@ -174,6 +188,10 @@ class CandleManager:
     поэтому не нужно вручную вызывать pop()
     """
     self.candles.append(candle)
+
+    # Также добавляем в расширенный буфер (для Lorentzian Classification)
+    if self._extended_candles is not None:
+      self._extended_candles.append(candle)
 
     # Логирование только если достигли лимита
     if len(self.candles) == self.max_candles:
@@ -254,6 +272,8 @@ class CandleManager:
   def clear_history(self):
     """Очистка истории свечей."""
     self.candles.clear()
+    if self._extended_candles is not None:
+      self._extended_candles.clear()
     self.current_candle = None
     logger.info(f"{self.symbol} | История свечей очищена")
 
@@ -267,4 +287,45 @@ class CandleManager:
     Returns:
         bool: True если готов для ML
     """
+    return len(self.candles) >= min_candles
+
+  def get_extended_candles(self, count: Optional[int] = None) -> List[Candle]:
+    """
+    Получение свечей из расширенного буфера (для Lorentzian Classification).
+    Если расширенный буфер не создан, возвращает свечи из основного буфера.
+
+    Args:
+        count: Количество последних свечей (None = все)
+
+    Returns:
+        List[Candle]: Список свечей из расширенного буфера
+    """
+    source = self._extended_candles if self._extended_candles is not None else self.candles
+    if count is None:
+      return list(source)
+    return list(source)[-count:]
+
+  def get_extended_candles_count(self) -> int:
+    """
+    Количество свечей в расширенном буфере.
+
+    Returns:
+        int: Количество свечей (0 если буфер не создан)
+    """
+    if self._extended_candles is None:
+      return len(self.candles)
+    return len(self._extended_candles)
+
+  def is_ready_for_lorentzian(self, min_candles: int = 2000) -> bool:
+    """
+    Проверка готовности расширенного буфера для Lorentzian Classification.
+
+    Args:
+        min_candles: Минимальное количество свечей (по умолчанию maxBarsBack=2000)
+
+    Returns:
+        bool: True если достаточно данных
+    """
+    if self._extended_candles is not None:
+      return len(self._extended_candles) >= min_candles
     return len(self.candles) >= min_candles

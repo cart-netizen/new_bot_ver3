@@ -78,13 +78,26 @@ class FeatureVector:
     Преобразует в единый numpy array (concatenated).
 
     Returns:
-        np.ndarray: shape (feature_count,)
+        np.ndarray: shape (feature_count,) — 112 базовых фичей
     """
     return np.concatenate([
       self.orderbook_features.to_array(),
       self.candle_features.to_array(),
       self.indicator_features.to_array()
     ])
+
+  def to_array_extended(self) -> np.ndarray:
+    """
+    Преобразует в расширенный numpy array, включая LC-фичи (если есть).
+
+    Returns:
+        np.ndarray: shape (112,) или (116,) если LC-фичи доступны
+    """
+    base = self.to_array()
+    lc_features = self.metadata.get("lc_features")
+    if lc_features is not None:
+      return np.concatenate([base, np.array(lc_features, dtype=np.float32)])
+    return base
 
   def to_channels(self) -> Dict[str, np.ndarray]:
     """
@@ -93,11 +106,15 @@ class FeatureVector:
     Returns:
         Dict с отдельными каналами для каждого типа признаков
     """
-    return {
+    channels = {
       "orderbook": self.orderbook_features.to_array(),
       "candle": self.candle_features.to_array(),
       "indicator": self.indicator_features.to_array()
     }
+    lc_features = self.metadata.get("lc_features")
+    if lc_features is not None:
+      channels["lorentzian"] = np.array(lc_features, dtype=np.float32)
+    return channels
 
   def to_dict(self) -> Dict[str, any]:
     """Преобразование в словарь для Redis/JSON"""
@@ -120,7 +137,17 @@ class FeatureVector:
     indicator_names = [f"ind_{k}" for k in self.indicator_features.to_dict().keys()
                        if k not in ['symbol', 'timestamp']]
 
-    return ob_names + candle_names + indicator_names
+    names = ob_names + candle_names + indicator_names
+
+    if self.metadata.get("lc_features") is not None:
+      names.extend([
+          "lc_prediction_score",
+          "lc_confidence",
+          "lc_kernel_trend",
+          "lc_bars_since_signal",
+      ])
+
+    return names
 
 
 class FeaturePipeline:
@@ -153,6 +180,20 @@ class FeaturePipeline:
     self.orderbook_extractor = OrderBookFeatureExtractor(symbol, trade_manager=trade_manager)
     self.candle_extractor = CandleFeatureExtractor(symbol)
     self.indicator_extractor = IndicatorFeatureExtractor(symbol)
+
+    # Lorentzian Classification features (опционально, 4 фичи: 112→116)
+    self._lc_classifier = None
+    try:
+      from backend.config import settings
+      if getattr(settings, 'LORENTZIAN_ADD_ML_FEATURES', False):
+        from backend.strategy.indicators.lorentzian_classifier import (
+            LorentzianClassifier, LorentzianConfig
+        )
+        lc_config = LorentzianConfig.from_settings(settings)
+        self._lc_classifier = LorentzianClassifier(lc_config)
+        logger.info(f"{symbol} | LC features enabled in pipeline (112→116)")
+    except Exception as e:
+      logger.debug(f"{symbol} | LC features not available: {e}")
 
     # ============================================================================
     # PROFESSIONAL FEATURE SCALER MANAGER
@@ -256,14 +297,36 @@ class FeaturePipeline:
         )
 
       # 4. Объединяем в FeatureVector
+      metadata: Dict = {}
+
+      # 4.1 Опциональные LC-фичи (если включены)
+      if self._lc_classifier is not None and candles and len(candles) >= 60:
+        try:
+          lc_signal = self._lc_classifier.update(candles)
+          if lc_signal is not None:
+            k = self._lc_classifier.config.neighbors_count
+            metadata["lc_features"] = [
+                lc_signal.prediction_score,                        # lc_prediction_score (-1..+1)
+                lc_signal.confidence,                              # lc_confidence (0..1)
+                1.0 if lc_signal.kernel_trend == "BULLISH"         # lc_kernel_trend (-1, 0, +1)
+                    else (-1.0 if lc_signal.kernel_trend == "BEARISH" else 0.0),
+                min(lc_signal.bars_held / 20.0, 1.0),             # lc_bars_since_signal (0..1)
+            ]
+        except Exception as e:
+          logger.debug(f"{self.symbol} | LC features extraction error: {e}")
+
+      feature_count = 50 + 25 + 37  # 112 базовых признаков
+      if "lc_features" in metadata:
+        feature_count += len(metadata["lc_features"])  # 116
+
       feature_vector = FeatureVector(
         symbol=self.symbol,
         timestamp=orderbook_snapshot.timestamp,
         orderbook_features=orderbook_features,
         candle_features=candle_features,
         indicator_features=indicator_features,
-        feature_count=50 + 25 + 37,  # 112 признаков
-        metadata={}
+        feature_count=feature_count,
+        metadata=metadata
       )
 
       # 5. Нормализация (если включена)

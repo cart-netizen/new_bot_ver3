@@ -161,7 +161,8 @@ class AdaptiveConsensusManager:
         metrics: Optional[OrderBookMetrics] = None,
         sr_levels: Optional[List] = None,
         volume_profile: Optional[Dict] = None,
-        ml_prediction: Optional[Dict] = None
+        ml_prediction: Optional[Dict] = None,
+        extended_candles: Optional[List[Candle]] = None
     ):
         """
         Построить adaptive consensus с динамическими весами.
@@ -212,7 +213,8 @@ class AdaptiveConsensusManager:
             metrics=metrics,
             sr_levels=sr_levels,
             volume_profile=volume_profile,
-            ml_prediction=ml_prediction
+            ml_prediction=ml_prediction,
+            extended_candles=extended_candles
         )
         
         # ========== ШАГ 4: ПОСТРОЕНИЕ CONSENSUS ==========

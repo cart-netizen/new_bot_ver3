@@ -1143,13 +1143,17 @@ class BotController:
 
       # ===== Создаем менеджеры свечей для ФИНАЛЬНЫХ пар =====
       logger.info(f"Создание менеджеров свечей для {len(self.symbols)} пар...")
+      # Расширенный буфер для Lorentzian Classification (если включена)
+      lc_buffer = settings.LORENTZIAN_CANDLE_BUFFER if getattr(settings, 'LORENTZIAN_ENABLED', False) else 0
       for symbol in self.symbols:
         self.candle_managers[symbol] = CandleManager(
           symbol=symbol,
           timeframe="1m",
-          max_candles=200
+          max_candles=200,
+          extended_buffer_size=lc_buffer
         )
-      logger.info(f"✓ Создано {len(self.candle_managers)} менеджеров свечей")
+      logger.info(f"✓ Создано {len(self.candle_managers)} менеджеров свечей"
+                  + (f" (Lorentzian buffer={lc_buffer})" if lc_buffer > 0 else ""))
 
       # ========== 11. MARKET ANALYZER - ДОБАВЛЕНИЕ СИМВОЛОВ ==========
       for symbol in self.symbols:
@@ -1474,7 +1478,10 @@ class BotController:
             logger.info(f"  + Добавление пары: {symbol}")
             self.orderbook_managers[symbol] = OrderBookManager(symbol)
             self.trade_managers[symbol] = TradeManager(symbol, max_history=5000, enable_statistics=True)
-            self.candle_managers[symbol] = CandleManager(symbol, "1m", 200)
+            self.candle_managers[symbol] = CandleManager(
+                symbol, "1m", 200,
+                extended_buffer_size=settings.LORENTZIAN_CANDLE_BUFFER if getattr(settings, 'LORENTZIAN_ENABLED', False) else 0
+            )
             self.market_analyzer.add_symbol(symbol)
             # КРИТИЧНО: Добавляем в ML Feature Pipeline для ML Validation
             if self.ml_feature_pipeline:
@@ -5550,7 +5557,8 @@ from backend.api.routes import (
   auth_router, bot_router, data_router, trading_router,
   monitoring_router, screener_router, adaptive_router,
   ml_router, detection_router, strategies_router,
-  ml_management_router, layering_ml_router, hyperopt_router
+  ml_management_router, layering_ml_router, hyperopt_router,
+  lorentzian_router
 )
 from backend.api.backtesting_api import router as backtesting_router
 from backend.api.ml_backtesting_api import router as ml_backtesting_router
@@ -5572,6 +5580,7 @@ app.include_router(backtesting_router)
 app.include_router(ml_backtesting_router)
 app.include_router(hyperopt_router)
 app.include_router(ensemble_router)
+app.include_router(lorentzian_router)
 
 # WebSocket эндпоинт
 @app.websocket("/ws")

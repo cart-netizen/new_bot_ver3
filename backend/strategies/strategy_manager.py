@@ -42,6 +42,14 @@ from backend.strategies.liquidity_zone_strategy import LiquidityZoneStrategy, Li
 from backend.strategies.smart_money_strategy import SmartMoneyStrategy, SmartMoneyConfig
 from backend.strategy.trade_manager import TradeManager
 
+# Lorentzian Classification (опциональная стратегия)
+try:
+    from backend.strategies.lorentzian_strategy import LorentzianStrategy
+    from backend.strategy.indicators.lorentzian_classifier import LorentzianConfig
+    _LORENTZIAN_AVAILABLE = True
+except ImportError:
+    _LORENTZIAN_AVAILABLE = False
+
 from backend.utils.helpers import safe_enum_value
 
 logger = get_logger(__name__)
@@ -108,22 +116,23 @@ class ExtendedStrategyManagerConfig:
 
   # Веса стратегий (candle-based)
   candle_strategy_weights: Dict[str, float] = field(default_factory=lambda: {
-    'momentum': 0.20,
-    'sar_wave': 0.15,
-    'supertrend': 0.20,
-    'volume_profile': 0.15
+    'momentum': 0.15,
+    'sar_wave': 0.10,
+    'supertrend': 0.15,
+    'volume_profile': 0.10,
+    'lorentzian': 0.15,  # Lorentzian Classification (9-я стратегия)
   })
 
   # Веса стратегий (orderbook-based)
   orderbook_strategy_weights: Dict[str, float] = field(default_factory=lambda: {
-    'imbalance': 0.10,
-    'volume_flow': 0.10,
-    'liquidity_zone': 0.10
+    'imbalance': 0.08,
+    'volume_flow': 0.08,
+    'liquidity_zone': 0.08,
   })
 
   # Веса стратегий (hybrid)
   hybrid_strategy_weights: Dict[str, float] = field(default_factory=lambda: {
-    'smart_money': 0.15
+    'smart_money': 0.11
   })
 
   # Приоритеты стратегий
@@ -133,6 +142,7 @@ class ExtendedStrategyManagerConfig:
     'sar_wave': StrategyPriority.MEDIUM,
     'supertrend': StrategyPriority.HIGH,
     'volume_profile': StrategyPriority.MEDIUM,
+    'lorentzian': StrategyPriority.HIGH,
     # OrderBook strategies
     'imbalance': StrategyPriority.MEDIUM,
     'volume_flow': StrategyPriority.MEDIUM,
@@ -147,6 +157,7 @@ class ExtendedStrategyManagerConfig:
     'sar_wave': StrategyType.CANDLE,
     'supertrend': StrategyType.CANDLE,
     'volume_profile': StrategyType.CANDLE,
+    'lorentzian': StrategyType.CANDLE,
     'imbalance': StrategyType.ORDERBOOK,
     'volume_flow': StrategyType.ORDERBOOK,
     'liquidity_zone': StrategyType.ORDERBOOK,
@@ -256,6 +267,19 @@ class ExtendedStrategyManager:
     self.candle_strategies['supertrend'] = SuperTrendStrategy(SuperTrendConfig())
     self.candle_strategies['volume_profile'] = VolumeProfileStrategy(VolumeProfileConfig())
 
+    # Lorentzian Classification (опциональная, зависит от LORENTZIAN_ENABLED)
+    if _LORENTZIAN_AVAILABLE:
+      try:
+        from backend.config import settings
+        if getattr(settings, 'LORENTZIAN_ENABLED', False):
+          lc_config = LorentzianConfig.from_settings(settings)
+          self.candle_strategies['lorentzian'] = LorentzianStrategy(lc_config)
+          logger.info("LorentzianStrategy зарегистрирована в Strategy Manager")
+        else:
+          logger.info("LorentzianStrategy отключена (LORENTZIAN_ENABLED=False)")
+      except Exception as e:
+        logger.warning(f"Не удалось инициализировать LorentzianStrategy: {e}")
+
     # Инициализация OrderBook стратегий (с TradeManager)
     # ПРИМЕЧАНИЕ: trade_manager передается для конкретного символа в analyze_all_strategies
     self.orderbook_strategies: Dict[str, any] = {}
@@ -307,7 +331,8 @@ class ExtendedStrategyManager:
       sr_levels: Optional[List] = None,
       volume_profile: Optional[Dict] = None,
       ml_prediction: Optional[Dict] = None,
-      market_trades: Optional[List] = None  # НОВОЕ: Market trades для анализа
+      market_trades: Optional[List] = None,  # НОВОЕ: Market trades для анализа
+      extended_candles: Optional[List[Candle]] = None  # Расширенный буфер для Lorentzian
   ) -> List[StrategyResult]:
     """
     Запустить ВСЕ стратегии для анализа.
@@ -374,7 +399,27 @@ class ExtendedStrategyManager:
         if hasattr(strategy, 'trade_manager'):
           strategy.trade_manager = trade_manager
 
-        signal = strategy.analyze(symbol, candles, current_price)
+        # Lorentzian использует расширенный буфер свечей (2200), остальные — стандартный (200)
+        candles_for_strategy = (
+            extended_candles if (strategy_name == 'lorentzian' and extended_candles) else candles
+        )
+        signal = strategy.analyze(symbol, candles_for_strategy, current_price)
+
+        # Broadcast Lorentzian update через WebSocket при новом сигнале
+        if strategy_name == 'lorentzian' and signal is not None:
+          try:
+            lc_signal = strategy.active_signals.get(symbol)
+            if lc_signal and lc_signal.is_new_signal:
+              import asyncio
+              from backend.api.websocket import broadcast_lorentzian_update
+              asyncio.create_task(broadcast_lorentzian_update(symbol, {
+                "direction": lc_signal.direction,
+                "prediction_score": lc_signal.prediction_score,
+                "confidence": lc_signal.confidence,
+                "kernel_trend": lc_signal.kernel_trend,
+              }))
+          except Exception as ws_err:
+            logger.debug(f"LC WebSocket broadcast error: {ws_err}")
         execution_time = (time.time() - start_time) * 1000
 
         result = StrategyResult(
@@ -735,6 +780,35 @@ class ExtendedStrategyManager:
         )
     # ========== END ПРОВЕРКА КОНФЛИКТА ==========
 
+    # ========== LORENTZIAN VETO CHECK ==========
+    # LC может заблокировать сигнал при высокой уверенности в противоположном направлении
+    try:
+      from backend.config import settings as _settings
+      use_veto = getattr(_settings, 'LORENTZIAN_USE_VETO', False)
+      veto_threshold = getattr(_settings, 'LORENTZIAN_VETO_THRESHOLD', 6)
+
+      if use_veto and 'lorentzian' in self.candle_strategies:
+        lc_strategy = self.candle_strategies['lorentzian']
+        lc_signal_data = lc_strategy.active_signals.get(symbol)
+        if lc_signal_data and lc_signal_data.classification:
+          lc_prediction = abs(lc_signal_data.classification.prediction)
+          lc_direction = lc_signal_data.direction
+
+          if lc_prediction >= veto_threshold:
+            # Определяем доминирующее направление консенсуса
+            consensus_direction = "BUY" if len(buy_signals) > len(sell_signals) else "SELL"
+
+            if lc_direction != "HOLD" and lc_direction != consensus_direction:
+              logger.warning(
+                f"[{symbol}] LC VETO: LC says {lc_direction} "
+                f"(|prediction|={lc_prediction}/{_settings.LORENTZIAN_NEIGHBORS_COUNT}) "
+                f"vs consensus {consensus_direction} — blocking signal"
+              )
+              return None
+    except Exception as veto_err:
+      logger.debug(f"LC veto check error: {veto_err}")
+    # ========== END LORENTZIAN VETO ==========
+
     # Проверка минимального количества стратегий
     if len(results_with_signals) < self.config.min_strategies_for_signal:
       logger.info(
@@ -1034,7 +1108,8 @@ class ExtendedStrategyManager:
       sr_levels: Optional[List] = None,
       volume_profile: Optional[Dict] = None,
       ml_prediction: Optional[Dict] = None,
-      market_trades: Optional[List] = None  # НОВОЕ: Market trades
+      market_trades: Optional[List] = None,  # НОВОЕ: Market trades
+      extended_candles: Optional[List[Candle]] = None  # Расширенный буфер для Lorentzian
   ) -> Optional[ConsensusSignal]:
     """
     Полный анализ с генерацией consensus сигнала.
@@ -1051,7 +1126,8 @@ class ExtendedStrategyManager:
       sr_levels=sr_levels,
       volume_profile=volume_profile,
       ml_prediction=ml_prediction,
-      market_trades=market_trades  # Передаем market_trades
+      market_trades=market_trades,
+      extended_candles=extended_candles
     )
 
     # Шаг 2: Строим consensus

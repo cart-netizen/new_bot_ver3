@@ -44,6 +44,7 @@ strategies_router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 screener_router = APIRouter(prefix="/screener", tags=["Screener"])
 
 adaptive_router = APIRouter(prefix="/adaptive", tags=["adaptive"])
+lorentzian_router = APIRouter(prefix="/api/lorentzian", tags=["lorentzian"])
 
 # ML Management Router - для управления обучением и моделями через фронтенд
 from backend.api.ml_management_api import router as ml_management_router
@@ -2204,6 +2205,113 @@ async def cancel_order_endpoint(
 
   except Exception as e:
     logger.error(f"Ошибка отмены ордера: {e}", exc_info=True)
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=str(e)
+    )
+
+
+# ==================== LORENTZIAN CLASSIFICATION ====================
+
+@lorentzian_router.get("/{symbol}")
+async def get_lorentzian_status(
+    symbol: str,
+    current_user: dict = Depends(require_auth)
+):
+  """
+  Получение статуса Lorentzian Classification для символа.
+
+  Args:
+      symbol: Торговая пара (e.g., BTCUSDT)
+      current_user: Текущий пользователь
+
+  Returns:
+      dict: prediction_score, confidence, direction, kernel_trend, filters, statistics
+  """
+  try:
+    from backend.main import bot_controller
+
+    if not bot_controller:
+      return {
+        "status": "unavailable",
+        "message": "Бот не инициализирован"
+      }
+
+    # Получаем strategy_manager из bot_controller
+    strategy_manager = getattr(bot_controller, 'strategy_manager', None)
+    if strategy_manager is None:
+      return {
+        "status": "unavailable",
+        "message": "Strategy Manager не инициализирован"
+      }
+
+    # Получаем LorentzianStrategy из candle_strategies
+    lc_strategy = strategy_manager.candle_strategies.get('lorentzian')
+    if lc_strategy is None:
+      return {
+        "status": "disabled",
+        "message": "Lorentzian Classification не включена (LORENTZIAN_ENABLED=False)"
+      }
+
+    # Получаем последний сигнал для символа
+    lc_signal = lc_strategy.active_signals.get(symbol)
+
+    if lc_signal is None:
+      return {
+        "status": "no_data",
+        "symbol": symbol,
+        "message": f"Нет данных Lorentzian Classification для {symbol}",
+        "statistics": lc_strategy.get_statistics()
+      }
+
+    # Формируем ответ
+    response = {
+      "status": "active",
+      "symbol": symbol,
+      "timestamp": int(datetime.now().timestamp() * 1000),
+      "prediction_score": lc_signal.prediction_score,
+      "confidence": lc_signal.confidence,
+      "direction": lc_signal.direction,
+      "kernel_trend": lc_signal.kernel_trend,
+      "is_new_signal": lc_signal.is_new_signal,
+      "bars_held": lc_signal.bars_held,
+      "should_exit": lc_signal.should_exit,
+    }
+
+    # Filters status
+    if lc_signal.filters:
+      response["filters"] = {
+        "volatility_passed": lc_signal.filters.volatility_passed,
+        "regime_passed": lc_signal.filters.regime_passed,
+        "adx_passed": lc_signal.filters.adx_passed,
+        "ema_long": lc_signal.filters.ema_passed_long,
+        "ema_short": lc_signal.filters.ema_passed_short,
+        "sma_long": lc_signal.filters.sma_passed_long,
+        "sma_short": lc_signal.filters.sma_passed_short,
+      }
+
+    # Classification details
+    if lc_signal.classification:
+      response["classification"] = {
+        "prediction": lc_signal.classification.prediction,
+        "neighbors_used": lc_signal.classification.neighbors_used,
+      }
+
+    # Kernel details
+    if lc_signal.kernel:
+      response["kernel"] = {
+        "yhat1": round(lc_signal.kernel.yhat1, 6),
+        "yhat2": round(lc_signal.kernel.yhat2, 6),
+        "is_bullish": lc_signal.kernel.is_bullish,
+        "is_bearish": lc_signal.kernel.is_bearish,
+      }
+
+    response["statistics"] = lc_strategy.get_statistics()
+
+    return response
+
+  except Exception as e:
+    logger.error(f"Ошибка получения Lorentzian статуса: {e}", exc_info=True)
     raise HTTPException(
       status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
       detail=str(e)

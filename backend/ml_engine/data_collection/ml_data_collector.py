@@ -427,9 +427,10 @@ class MLDataCollector:
       from backend.ml_engine.feature_store.feature_schema import DEFAULT_SCHEMA
       feature_column_names = DEFAULT_SCHEMA.get_base_feature_columns()
 
-      if len(feature_column_names) != 112:
+      # Допускаем 112 (базовые) или 116 (с Lorentzian features)
+      if len(feature_column_names) not in (112, 116):
         logger.error(
-          f"Feature schema mismatch: expected 112 base columns, got {len(feature_column_names)}"
+          f"Feature schema mismatch: expected 112 or 116 base columns, got {len(feature_column_names)}"
         )
         return
 
@@ -445,11 +446,15 @@ class MLDataCollector:
 
         # Распаковываем 112 признаков с ПРАВИЛЬНЫМИ НАЗВАНИЯМИ
         # feature_arr имеет shape (112,)
-        if len(feature_arr) != 112:
+        expected_len = len(feature_column_names)
+        if len(feature_arr) < 112:
           logger.warning(
-            f"{symbol} | Feature array length mismatch: expected 112, got {len(feature_arr)}"
+            f"{symbol} | Feature array too short: expected >= 112, got {len(feature_arr)}"
           )
           continue
+        # Обрезаем до ожидаемой длины (если LC-фичи есть, но схема без них — используем базовые 112)
+        if len(feature_arr) > expected_len:
+          feature_arr = feature_arr[:expected_len]
 
         # Используем правильные названия колонок из схемы
         for i, feature_name in enumerate(feature_column_names):

@@ -452,3 +452,29 @@ async def broadcast_reversal_alert(
   logger.debug(
     f"Reversal alert broadcasted: {symbol} - {reversal_data.get('strength')}"
   )
+
+
+async def broadcast_lorentzian_update(
+    symbol: str,
+    lc_data: dict
+):
+  """
+  Рассылка обновления Lorentzian Classification.
+  Отправляется при каждом новом сигнале или смене направления.
+
+  Args:
+      symbol: Торговая пара
+      lc_data: Данные классификации (direction, prediction_score, confidence, kernel_trend)
+  """
+  message = {
+    "type": "lorentzian_update",
+    "symbol": symbol,
+    "data": lc_data,
+    "timestamp": datetime.now().isoformat()
+  }
+
+  await manager.broadcast(message)
+
+  logger.debug(
+    f"Lorentzian update broadcasted: {symbol} - {lc_data.get('direction')}"
+  )
